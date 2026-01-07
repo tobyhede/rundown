@@ -1,0 +1,50 @@
+{
+  "name": "@rundown/core",
+  "version": "1.0.0",
+  "description": "Core workflow state management and execution for Rundown",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "rundown",
+    "workflow",
+    "state-machine",
+    "xstate"
+  ],
+  "author": "Toby Hede",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tobyhede/rundown.git",
+    "directory": "packages/core"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@rundown/parser": "*",
+    "xstate": "^5.25.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.0.0"
+  }
+}

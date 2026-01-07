@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "noEmit": true
+  },
+  "include": [
+    "packages/parser/src/**/*.ts",
+    "packages/parser/__tests__/**/*.ts",
+    "packages/core/src/**/*.ts",
+    "packages/core/__tests__/**/*.ts",
+    "packages/cli/src/**/*.ts",
+    "packages/cli/__tests__/**/*.ts",
+    "eslint.config.js"
+  ],
+  "exclude": ["node_modules", "**/dist/**"]
+}

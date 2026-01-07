@@ -1,0 +1,48 @@
+{
+  "name": "@rundown/cli",
+  "version": "1.0.0",
+  "description": "Workflow orchestration CLI",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "rundown": "dist/cli.js",
+    "rd": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "rundown",
+    "workflow",
+    "cli",
+    "markdown"
+  ],
+  "author": "Toby Hede",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tobyhede/rundown.git",
+    "directory": "packages/cli"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@rundown/core": "*",
+    "commander": "^14.0.2",
+    "minimatch": "^10.1.1"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.0",
+    "typescript": "^5.0.0"
+  }
+}
