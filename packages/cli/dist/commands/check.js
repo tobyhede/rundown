@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseWorkflowDocument, validateWorkflow } from '@rundown/core';
+import { parseWorkflowDocument, validateWorkflow } from '@rundown/parser';
 function formatErrors(errors) {
     return errors
         .map(e => e.line ? `Line ${String(e.line)}: ${e.message}` : e.message)
