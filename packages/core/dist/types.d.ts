@@ -1,78 +1,74 @@
-export * from '@rundown/parser';
-import { type StepId, type StepNumber } from '@rundown/parser';
-/**
- * A step queued for agent binding, optionally with a child workflow.
- * Used in the pending step queue to correlate Step tool dispatch with SubagentStart.
- */
-export interface PendingStep {
-    readonly stepId: StepId;
-    readonly workflow?: string;
+import type { HookInput as SchemaHookInput } from './schemas.js';
+export type HookInput = SchemaHookInput;
+export interface GateResult {
+    additionalContext?: string;
+    decision?: 'block';
+    reason?: string;
+    continue?: false;
+    message?: string;
+}
+export type GateExecute = (input: HookInput) => Promise<GateResult>;
+export interface GateConfig {
+    /** Reference gate from another plugin (requires gate field) */
+    plugin?: string;
+    /** Gate name within the plugin's hooks/gates.json (requires plugin field) */
+    gate?: string;
+    /** Local shell command (mutually exclusive with plugin/gate) */
+    command?: string;
+    /**
+     * Keywords that trigger this gate (UserPromptSubmit hook only).
+     * When specified, the gate only runs if the user message contains one of these keywords.
+     * For all other hooks (PostToolUse, SubagentStop, etc.), this field is ignored.
+     * Gates without keywords always run (backwards compatible).
+     */
+    keywords?: string[];
+    /**
+     * File path glob patterns that trigger this gate (PostToolUse hook only).
+     * When specified, the gate only runs if the modified file matches one of these patterns.
+     * Patterns are matched against relative paths from project root using minimatch.
+     * Multiple patterns use OR logic - gate runs if file matches ANY pattern.
+     * For all other hooks (SubagentStop, UserPromptSubmit, etc.), this field is ignored.
+     * Gates without patterns always run (backwards compatible).
+     *
+     * @example
+     * file_patterns: ["packages/cts/**", "src/**\/*.ts", "*.json"]
+     */
+    file_patterns?: string[];
+    on_pass?: string;
+    on_fail?: string;
+}
+export interface HookConfig {
+    enabled_tools?: string[];
+    enabled_agents?: string[];
+    gates?: string[];
+}
+export interface TurboshovelConfig {
+    hooks: Record<string, HookConfig>;
+    gates: Record<string, GateConfig>;
+}
+export interface SessionState {
+    /** Unique session identifier (timestamp-based) */
+    session_id: string;
+    /** ISO 8601 timestamp when session started */
+    started_at: string;
+    /** Currently active slash command (e.g., "/execute") */
+    active_command: string | null;
+    /** Currently active skill (e.g., "executing-plans") */
+    active_skill: string | null;
+    /** Files edited during this session */
+    edited_files: string[];
+    /** File extensions edited during this session (deduplicated) */
+    file_extensions: string[];
+    /** Custom metadata for specific workflows */
+    metadata: Record<string, unknown>;
 }
 /**
- * Agent binding status
+ * All keys of SessionState as a const array
+ * Using satisfies ensures compile-time validation against interface
  */
-export type AgentStatus = 'running' | 'done' | 'stopped';
-/**
- * Agent binding result (for completed agents)
- */
-export type AgentResult = 'pass' | 'fail';
-/**
- * Runtime state of a substep within a step
- */
-export interface SubstepState {
-    readonly id: string;
-    readonly status: 'pending' | 'running' | 'done';
-    readonly agentId?: string;
-    readonly result?: AgentResult;
-}
-/**
- * Agent binding - tracks which step an agent is working on
- */
-export interface AgentBinding {
-    readonly stepId: StepId;
-    readonly childWorkflowId?: string;
-    readonly status: AgentStatus;
-    readonly result?: AgentResult;
-}
-/**
- * Step state within a workflow
- */
-export interface StepState {
-    readonly id: string;
-    readonly status: 'pending' | 'running' | 'complete' | 'stopped';
-    readonly subagentType?: string;
-    readonly startedAt?: string;
-    readonly completedAt?: string;
-}
-/**
- * Workflow execution state (persisted)
- */
-export interface WorkflowState {
-    readonly id: string;
-    readonly workflow: string;
-    readonly title?: string;
-    readonly description?: string;
-    readonly step: StepNumber;
-    readonly substep?: string;
-    readonly stepName: string;
-    readonly retryCount: number;
-    readonly variables: Record<string, boolean | number | string>;
-    readonly steps: readonly StepState[];
-    readonly pendingSteps: readonly PendingStep[];
-    readonly agentBindings: Readonly<Record<string, AgentBinding>>;
-    readonly substepStates?: readonly SubstepState[];
-    readonly agentId?: string;
-    readonly parentWorkflowId?: string;
-    readonly parentStepId?: StepId;
-    readonly nested?: {
-        readonly workflow: string;
-        readonly instanceId: string;
-    };
-    readonly startedAt: string;
-    readonly updatedAt: string;
-    readonly prompted?: boolean;
-    readonly lastResult?: 'pass' | 'fail';
-    readonly lastAction?: 'START' | 'CONTINUE' | 'GOTO' | 'COMPLETE' | 'STOP' | 'RETRY';
-    readonly snapshot?: unknown;
-}
+export declare const SESSION_STATE_KEYS: readonly ["session_id", "started_at", "active_command", "active_skill", "edited_files", "file_extensions", "metadata"];
+/** Array field keys in SessionState (for type-safe operations) */
+export type SessionStateArrayKey = 'edited_files' | 'file_extensions';
+/** Scalar field keys in SessionState */
+export type SessionStateScalarKey = Exclude<keyof SessionState, SessionStateArrayKey | 'metadata'>;
 //# sourceMappingURL=types.d.ts.map
