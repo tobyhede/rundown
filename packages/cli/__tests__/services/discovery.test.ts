@@ -17,7 +17,7 @@ describe('discovery service', () => {
   beforeEach(async () => {
     // Create isolated temp directories
     tempDir = await mkdtemp(join(tmpdir(), 'discovery-test-'));
-    projectRunbooksDir = join(tempDir, '.claude', 'runbooks');
+    projectRunbooksDir = join(tempDir, '.claude', 'rundown', 'runbooks');
     pluginRunbooksDir = join(tempDir, 'plugin-runbooks');
 
     await mkdir(projectRunbooksDir, { recursive: true });

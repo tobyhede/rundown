@@ -31,7 +31,7 @@ export function getSearchPaths(cwd: string): SearchPath[] {
   const paths: SearchPath[] = [];
 
   // Project runbooks directory
-  const projectRunbooksDir = path.join(cwd, '.claude', 'runbooks');
+  const projectRunbooksDir = path.join(cwd, '.claude', 'rundown', 'runbooks');
   paths.push({
     path: projectRunbooksDir,
     source: 'project',
