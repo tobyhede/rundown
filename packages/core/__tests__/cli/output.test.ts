@@ -51,18 +51,18 @@ describe('output formatter', () => {
     it('prints metadata without prompt line in default mode', () => {
       printMetadata({
         file: 'runbooks/build.md',
-        state: '.claude/rundown/workflows/wf-123.json',
+        state: '.claude/rundown/runs/wf-123.json',
       });
       expect(consoleOutput).toEqual([
         'File:     runbooks/build.md',
-        'State:    .claude/rundown/workflows/wf-123.json',
+        'State:    .claude/rundown/runs/wf-123.json',
       ]);
     });
 
     it('prints prompt line when prompted is true', () => {
       printMetadata({
         file: 'runbooks/build.md',
-        state: '.claude/rundown/workflows/wf-123.json',
+        state: '.claude/rundown/runs/wf-123.json',
         prompted: true,
       });
       expect(consoleOutput).toContain('Prompt:   Yes');
@@ -71,7 +71,7 @@ describe('output formatter', () => {
     it('omits prompt line when prompted is false', () => {
       printMetadata({
         file: 'runbooks/build.md',
-        state: '.claude/rundown/workflows/wf-123.json',
+        state: '.claude/rundown/runs/wf-123.json',
         prompted: false,
       });
       expect(consoleOutput).not.toContain('Prompt:   Yes');

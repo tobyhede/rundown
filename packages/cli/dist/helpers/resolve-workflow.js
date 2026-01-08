@@ -4,7 +4,7 @@ import { findRunbookByName } from '../services/discovery.js';
 /**
  * Resolve runbook file by path (existing logic).
  * Search order:
- * 1. .claude/runbooks/ (project-local)
+ * 1. .claude/rundown/runbooks/ (project-local)
  * 2. $CLAUDE_PLUGIN_ROOT/runbooks/ (plugin directory)
  * 3. Relative to cwd
  *
@@ -13,8 +13,8 @@ import { findRunbookByName } from '../services/discovery.js';
  * @returns Absolute path to runbook file, or null if not found
  */
 async function resolveByPath(cwd, filename) {
-    // 1. Check project-local .claude/runbooks/
-    const localPath = path.join(cwd, '.claude/runbooks', filename);
+    // 1. Check project-local .claude/rundown/runbooks/
+    const localPath = path.join(cwd, '.claude/rundown/runbooks', filename);
     try {
         await fs.access(localPath);
         return localPath;
@@ -53,11 +53,11 @@ function isPathIdentifier(identifier) {
 /**
  * Resolve runbook file from multiple sources.
  * Supports both path-based and name-based resolution:
- * - Path mode: .claude/runbooks/file.md, ./path/to/file.md, etc.
+ * - Path mode: .claude/rundown/runbooks/file.md, ./path/to/file.md, etc.
  * - Name mode: "verify", "my-runbook", etc.
  *
  * Search order for path mode:
- * 1. .claude/runbooks/ (project-local)
+ * 1. .claude/rundown/runbooks/ (project-local)
  * 2. $CLAUDE_PLUGIN_ROOT/runbooks/ (plugin directory)
  * 3. Relative to cwd
  *

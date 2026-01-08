@@ -1,11 +1,11 @@
 /**
  * Resolve runbook file from multiple sources.
  * Supports both path-based and name-based resolution:
- * - Path mode: .claude/runbooks/file.md, ./path/to/file.md, etc.
+ * - Path mode: .claude/rundown/runbooks/file.md, ./path/to/file.md, etc.
  * - Name mode: "verify", "my-runbook", etc.
  *
  * Search order for path mode:
- * 1. .claude/runbooks/ (project-local)
+ * 1. .claude/rundown/runbooks/ (project-local)
  * 2. $CLAUDE_PLUGIN_ROOT/runbooks/ (plugin directory)
  * 3. Relative to cwd
  *

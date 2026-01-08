@@ -5,7 +5,7 @@ import { createActor } from 'xstate';
 import { createStepNumber } from './types.js';
 import { WorkflowStateSchema } from '../schemas.js';
 import { compileWorkflowToMachine } from './compiler.js';
-const STATE_DIR = '.claude/rundown/workflows';
+const STATE_DIR = '.claude/rundown/runs';
 const SESSION_FILE = '.claude/rundown/session.json';
 function generateId() {
     const now = new Date();

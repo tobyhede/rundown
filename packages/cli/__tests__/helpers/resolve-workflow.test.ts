@@ -20,8 +20,8 @@ describe('resolveWorkflowFile', () => {
     await fs.rm(testDir, { recursive: true, force: true });
   });
 
-  it('should find workflow in .claude/runbooks/', async () => {
-    const claudeDir = path.join(testDir, '.claude/runbooks');
+  it('should find workflow in .claude/rundown/runbooks/', async () => {
+    const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
     await fs.mkdir(claudeDir, { recursive: true });
     await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Test');
 
@@ -57,9 +57,9 @@ describe('resolveWorkflowFile', () => {
     expect(result).toBeNull();
   });
 
-  it('should prefer .claude/runbooks over relative path', async () => {
+  it('should prefer .claude/rundown/runbooks over relative path', async () => {
     // Create in both locations
-    const claudeDir = path.join(testDir, '.claude/runbooks');
+    const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
     await fs.mkdir(claudeDir, { recursive: true });
     await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Claude');
     await fs.writeFile(path.join(testDir, 'test.runbook.md'), '# Relative');

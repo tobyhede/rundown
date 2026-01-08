@@ -17,7 +17,7 @@ import type { StepId } from './step-id.js';
 import { WorkflowStateSchema } from '../schemas.js';
 import { compileWorkflowToMachine } from './compiler.js';
 
-const STATE_DIR = '.claude/rundown/workflows';
+const STATE_DIR = '.claude/rundown/runs';
 const SESSION_FILE = '.claude/rundown/session.json';
 
 function generateId(): string {

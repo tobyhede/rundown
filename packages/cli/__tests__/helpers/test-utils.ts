@@ -26,13 +26,13 @@ export interface CliResult {
  */
 export async function createTestWorkspace(): Promise<TestWorkspace> {
   const tempDir = await mkdtemp(join(tmpdir(), 'rd-test-'));
-  const projectRunbooksDir = join(tempDir, '.claude', 'runbooks');
+  const projectRunbooksDir = join(tempDir, '.claude', 'rundown', 'runbooks');
   const pluginDir = join(tempDir, 'plugin');
   const pluginRunbooksDir = join(pluginDir, 'runbooks');
   const rootRunbooksDir = join(tempDir, 'runbooks');
 
   // Create .claude/rundown structure
-  await mkdir(join(tempDir, '.claude', 'rundown', 'workflows'), { recursive: true });
+  await mkdir(join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
   await mkdir(projectRunbooksDir, { recursive: true });
   await mkdir(pluginRunbooksDir, { recursive: true });
   await mkdir(rootRunbooksDir, { recursive: true });
@@ -47,7 +47,7 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
     cwd: tempDir,
     cleanup: () => rm(tempDir, { recursive: true, force: true }),
     workflowPath: (name: string) => join(rootRunbooksDir, name),
-    statePath: () => join(tempDir, '.claude', 'rundown', 'workflows'),
+    statePath: () => join(tempDir, '.claude', 'rundown', 'runs'),
     sessionPath: () => join(tempDir, '.claude', 'rundown', 'session.json'),
   };
 }
