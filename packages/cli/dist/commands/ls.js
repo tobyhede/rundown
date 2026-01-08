@@ -47,7 +47,7 @@ export function registerLsCommand(program) {
                     const description = workflow.description ? ` - ${workflow.description}` : '';
                     console.log(`  ${displayName}${description}`);
                 }
-                console.log("\nUse 'tsv run <name>' to run a workflow.");
+                console.log("\nUse 'rd run <name>' to run a workflow.");
                 return;
             }
             // MODE 2: List active workflows (default)

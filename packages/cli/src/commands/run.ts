@@ -67,7 +67,7 @@ export function registerRunCommand(program: Command): void {
 
           if (!filePath) {
             console.error(`Error: Workflow not found: ${file}`);
-            console.error(`Try 'tsv ls --all' to list available workflows.`);
+            console.error(`Try 'rd ls --all' to list available workflows.`);
             process.exit(1);
           }
 
@@ -182,7 +182,7 @@ export function registerRunCommand(program: Command): void {
       } catch (error) {
         if (isNodeError(error) && error.code === 'ENOENT') {
           console.error(`Error: Workflow not found: ${file ?? 'unknown'}`);
-          console.error(`Try 'tsv ls --all' to list available workflows.`);
+          console.error(`Try 'rd ls --all' to list available workflows.`);
         } else if (error instanceof WorkflowSyntaxError) {
           console.error(`Syntax error: ${error.message}`);
         } else {

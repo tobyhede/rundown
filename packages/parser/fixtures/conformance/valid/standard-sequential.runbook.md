@@ -1,7 +1,7 @@
 ## 1. Setup
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 - PASS: CONTINUE
@@ -10,7 +10,7 @@ tsv echo --result pass
 ## 2. Test
 
 ```bash
-tsv echo --result fail --result fail --result pass
+rd echo --result fail --result fail --result pass
 ```
 
 - PASS: COMPLETE

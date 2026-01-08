@@ -5,7 +5,7 @@ Tests that RETRY exhaustion triggers GOTO fallback action.
 ## 1. Flaky step
 
 ```bash
-tsv echo --result fail --result fail --result fail
+rd echo --result fail --result fail --result fail
 ```
 
 - PASS: CONTINUE
@@ -14,7 +14,7 @@ tsv echo --result fail --result fail --result fail
 ## 2. Skipped step
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 - PASS: COMPLETE
@@ -22,7 +22,7 @@ tsv echo --result pass
 ## 3. Recovery step
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 - PASS: COMPLETE

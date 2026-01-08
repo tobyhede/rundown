@@ -5,7 +5,7 @@ Tests that RETRY exhaustion triggers COMPLETE fallback action.
 ## 1. Flaky step
 
 ```bash
-tsv echo --result fail --result fail
+rd echo --result fail --result fail
 ```
 
 - PASS: CONTINUE
