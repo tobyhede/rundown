@@ -1,18 +1,16 @@
-// Core workflow types and state management
+// @turboshovel/shared - Shared workflow and configuration library
+// Core types and schemas
 export * from './types.js';
-export * from './step-id.js';
-export * from './schemas.js';
-export { WorkflowStateManager } from './state.js';
-export { compileWorkflowToMachine } from './compiler.js';
-export { executeCommand } from './executor.js';
-export { renderWorkflow, renderStep, renderAction, renderTransitions } from './renderer/renderer.js';
-export { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
-// CLI output utilities
-export * from './cli/output.js';
-export * from './cli/render.js';
-export * from './cli/types.js';
-// Utilities
+export { HookInputSchema, parseHookInput, SessionStateSchema, WorkflowStateSchema, 
+// Schema-first exports
+StepNumberSchema, StepIdSchema, ActionSchema, NonRetryActionSchema, TransitionsSchema, } from './schemas.js';
+// Errors
 export * from './errors.js';
+// Utilities
 export * from './utils.js';
-export { logger } from './logger.js';
+export * from './logger.js';
+// Workflow system
+export * from './workflow/index.js';
+// CLI output module
+export * from './cli/index.js';
 //# sourceMappingURL=index.js.map

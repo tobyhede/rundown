@@ -1,4 +1,4 @@
-// src/logger.ts
+// packages/shared/src/logger.ts
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { tmpdir } from 'os';
@@ -104,11 +104,11 @@ function createEntry(level, message, data) {
  * Enable logging: RUNDOWN_LOG=1
  * Set level: RUNDOWN_LOG_LEVEL=debug|info|warn|error
  *
- * Logs are written to: ${TMPDIR}/rundown/rundown-YYYY-MM-DD.log
+ * Logs are written to: ${TMPDIR}/rundown/hooks-YYYY-MM-DD.log
  * Format: JSON lines (one JSON object per line)
  *
  * Example:
- *   {"ts":"2025-11-25T10:30:00.000Z","level":"info","event":"run","workflow":"my-workflow.md"}
+ *   {"ts":"2025-11-25T10:30:00.000Z","level":"info","event":"PostToolUse","tool":"Edit"}
  */
 export const logger = {
     debug: (message, data) => writeLog(createEntry('debug', message, data)),

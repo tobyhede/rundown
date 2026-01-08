@@ -1,4 +1,4 @@
-import type { Step } from '../types.js';
+import type { Step } from '../workflow/types.js';
 import type { WorkflowMetadata, StepPosition, ActionBlockData } from './types.js';
 /**
  * Format step position as n/N
