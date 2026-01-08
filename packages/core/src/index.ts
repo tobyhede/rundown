@@ -1,4 +1,4 @@
-// @turboshovel/shared - Shared workflow and configuration library
+// @rundown/core - Shared workflow and configuration library
 
 // Core types and schemas
 export * from './types.js';

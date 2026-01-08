@@ -62,7 +62,7 @@ export interface HookConfig {
   gates?: string[];
 }
 
-export interface TurboshovelConfig {
+export interface RundownConfig {
   hooks: Record<string, HookConfig>;
   gates: Record<string, GateConfig>;
 }

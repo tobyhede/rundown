@@ -42,7 +42,7 @@ export interface HookConfig {
     enabled_agents?: string[];
     gates?: string[];
 }
-export interface TurboshovelConfig {
+export interface RundownConfig {
     hooks: Record<string, HookConfig>;
     gates: Record<string, GateConfig>;
 }
