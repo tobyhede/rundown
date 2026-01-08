@@ -1,7 +1,7 @@
 // packages/cli/src/services/discovery.ts
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { extractFrontmatter, nameFromFilename } from '@rundown/core';
+import { extractFrontmatter, nameFromFilename } from '@rundown/parser';
 /**
  * Get search paths for runbooks
  * Returns project directory first (takes precedence), then plugin directory
