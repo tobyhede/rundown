@@ -33,7 +33,7 @@ export declare function parseConditional(text: string): ParsedConditional | null
  * Validate that NEXT is only used in dynamic step contexts
  */
 export declare function validateNEXTUsage(conditionals: ParsedConditional[], isDynamicStep: boolean): void;
-export declare function convertToTransitions(conditionals: ParsedConditional[]): Transitions;
+export declare function convertToTransitions(conditionals: ParsedConditional[]): Transitions | null;
 export declare function extractWorkflowList(content: string): string[];
 /**
  * Classify code block by language tag

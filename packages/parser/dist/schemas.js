@@ -47,10 +47,14 @@ export const ActionSchema = z.union([
     }),
 ]);
 /**
- * Transition object with kind information
+ * Valid transition kinds
+ */
+export const TransitionKindSchema = z.enum(['pass', 'fail', 'yes', 'no']);
+/**
+ * Zod schema for TransitionObject (individual transition with kind)
  */
 export const TransitionObjectSchema = z.object({
-    kind: z.enum(['pass', 'fail', 'yes', 'no']),
+    kind: TransitionKindSchema,
     action: ActionSchema,
 });
 /**

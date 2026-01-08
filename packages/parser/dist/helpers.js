@@ -94,6 +94,9 @@ export function parseAction(text) {
         }
         return { type: 'GOTO', target };
     }
+    if (trimmed === 'NEXT') {
+        return { type: 'GOTO', target: { step: 'NEXT' } };
+    }
     if (trimmed === 'RETRY') {
         return { type: 'RETRY', max: 1, then: { type: 'STOP' } };
     }
@@ -172,24 +175,17 @@ function parseConditionalPrefix(rest, type) {
 }
 export function parseConditional(text) {
     const trimmed = text.trim();
-    if (trimmed.startsWith('YES')) {
-        const result = parseConditionalPrefix(trimmed.slice(3), 'yes');
-        if (!result) {
-            throw new WorkflowSyntaxError(`Invalid YES transition: ${trimmed}`);
-        }
-        return result;
-    }
-    if (trimmed.startsWith('NO')) {
-        const result = parseConditionalPrefix(trimmed.slice(2), 'no');
-        if (!result) {
-            throw new WorkflowSyntaxError(`Invalid NO transition: ${trimmed}`);
-        }
-        return result;
-    }
     if (trimmed.startsWith('PASS')) {
         const result = parseConditionalPrefix(trimmed.slice(4), 'pass');
         if (!result) {
             throw new WorkflowSyntaxError(`Invalid PASS transition: ${trimmed}`);
+        }
+        return result;
+    }
+    if (trimmed.startsWith('YES')) {
+        const result = parseConditionalPrefix(trimmed.slice(3), 'pass');
+        if (!result) {
+            throw new WorkflowSyntaxError(`Invalid YES transition: ${trimmed}`);
         }
         return result;
     }
@@ -200,10 +196,14 @@ export function parseConditional(text) {
         }
         return result;
     }
+    if (trimmed.startsWith('NO')) {
+        const result = parseConditionalPrefix(trimmed.slice(2), 'fail');
+        if (!result) {
+            throw new WorkflowSyntaxError(`Invalid NO transition: ${trimmed}`);
+        }
+        return result;
+    }
     return null;
-}
-function isPositive(type) {
-    return type === 'pass' || type === 'yes';
 }
 function resolveAggregationMode(passModifier, failModifier) {
     if (passModifier && failModifier) {
@@ -252,49 +252,45 @@ export function validateNEXTUsage(conditionals, isDynamicStep) {
 }
 export function convertToTransitions(conditionals) {
     if (conditionals.length === 0) {
-        return {
-            all: true,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } },
-        };
+        return null;
     }
-    let passTransition = null;
-    let failTransition = null;
+    let passAction = null;
+    let failAction = null;
     let passModifier = null;
     let failModifier = null;
     for (const conditional of conditionals) {
-        if (isPositive(conditional.type)) {
-            passTransition = { kind: conditional.type, action: conditional.action };
+        if (conditional.type === 'pass') {
+            passAction = conditional.action;
             passModifier = conditional.modifier;
         }
         else {
-            failTransition = { kind: conditional.type, action: conditional.action };
+            failAction = conditional.action;
             failModifier = conditional.modifier;
         }
     }
     const all = resolveAggregationMode(passModifier, failModifier);
-    if (passTransition && failTransition) {
-        return { all, pass: passTransition, fail: failTransition };
-    }
-    if (passTransition && !failTransition) {
+    if (passAction && failAction) {
         return {
             all,
-            pass: passTransition,
+            pass: { kind: 'pass', action: passAction },
+            fail: { kind: 'fail', action: failAction },
+        };
+    }
+    if (passAction && !failAction) {
+        return {
+            all,
+            pass: { kind: 'pass', action: passAction },
             fail: { kind: 'fail', action: { type: 'STOP' } },
         };
     }
-    if (!passTransition && failTransition) {
+    if (!passAction && failAction) {
         return {
             all,
             pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: failTransition,
+            fail: { kind: 'fail', action: failAction },
         };
     }
-    return {
-        all: true,
-        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-        fail: { kind: 'fail', action: { type: 'STOP' } },
-    };
+    return null;
 }
 export function extractWorkflowList(content) {
     const workflows = [];
