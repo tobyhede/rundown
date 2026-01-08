@@ -120,7 +120,7 @@ When executable code blocks run:
 
 | Aspect | Behavior |
 |--------|----------|
-| **Working Directory** | Project root (where `tsv run` was invoked) |
+| **Working Directory** | Project root (where `rd run` was invoked) |
 | **Timeout** | None (commands can run indefinitely) |
 | **Environment** | Inherited from parent process |
 | **Result** | Exit code only (0 = PASS, non-zero = FAIL) |
@@ -129,7 +129,7 @@ When executable code blocks run:
 **Notes:**
 - stderr content does NOT affect pass/fail determination
 - For monorepo patterns, use explicit `cd`: `cd packages/foo && npm test`
-- For long-running commands, use `--prompted` and signal with `tsv pass`/`tsv fail`
+- Long-running commands should use agent-driven mode (`rd pass`/`rd fail`)
 
 ---
 
