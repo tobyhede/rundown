@@ -5,7 +5,7 @@ Tests that RETRY succeeds before count is exhausted.
 ## 1. Flaky step that recovers
 
 ```bash
-tsv echo --result fail --result pass
+rd echo --result fail --result pass
 ```
 
 - PASS: COMPLETE

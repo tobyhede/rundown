@@ -52,7 +52,7 @@ export function registerGotoCommand(program) {
                         process.exit(1);
                     }
                     if (step.substeps.some(s => s.isDynamic)) {
-                        console.error(`Error: Cannot goto substep of dynamic step. Use: tsv goto ${String(target.step)}`);
+                        console.error(`Error: Cannot goto substep of dynamic step. Use: rd goto ${String(target.step)}`);
                         process.exit(1);
                     }
                     const substepExists = step.substeps.some(s => s.id === target.substep);

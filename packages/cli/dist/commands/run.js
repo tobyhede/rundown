@@ -43,7 +43,7 @@ export function registerRunCommand(program) {
                 const filePath = await resolveWorkflowFile(cwd, file);
                 if (!filePath) {
                     console.error(`Error: Workflow not found: ${file}`);
-                    console.error(`Try 'tsv ls --all' to list available workflows.`);
+                    console.error(`Try 'rd ls --all' to list available workflows.`);
                     process.exit(1);
                 }
                 const content = await fs.readFile(filePath, 'utf8');
@@ -135,7 +135,7 @@ export function registerRunCommand(program) {
         catch (error) {
             if (isNodeError(error) && error.code === 'ENOENT') {
                 console.error(`Error: Workflow not found: ${file ?? 'unknown'}`);
-                console.error(`Try 'tsv ls --all' to list available workflows.`);
+                console.error(`Try 'rd ls --all' to list available workflows.`);
             }
             else if (error instanceof WorkflowSyntaxError) {
                 console.error(`Syntax error: ${error.message}`);

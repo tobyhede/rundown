@@ -6,7 +6,7 @@ Tests discrete transitions and navigation at the substep level.
 ### 1.1 Initial
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 Do first thing.
@@ -16,7 +16,7 @@ Do first thing.
 ### 1.2 Branch point
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 Ask a question.
@@ -26,7 +26,7 @@ Ask a question.
 ### 1.3 Alternative path
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 Should be skipped if YES.
@@ -35,7 +35,7 @@ Should be skipped if YES.
 ### 1.4 Target
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 Reached via GOTO or CONTINUE.

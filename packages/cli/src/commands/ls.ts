@@ -60,7 +60,7 @@ export function registerLsCommand(program: Command): void {
               const description = workflow.description ? ` - ${workflow.description}` : '';
               console.log(`  ${displayName}${description}`);
             }
-            console.log("\nUse 'tsv run <name>' to run a workflow.");
+            console.log("\nUse 'rd run <name>' to run a workflow.");
             return;
         }
 

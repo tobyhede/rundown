@@ -1,7 +1,7 @@
 ## 1. Aggregation
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 - PASS ALL: CONTINUE
@@ -10,7 +10,7 @@ tsv echo --result pass
 ## 2. Optimistic
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 - PASS ANY: GOTO 4
@@ -19,7 +19,7 @@ tsv echo --result pass
 ## 3. Empty
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 - PASS: CONTINUE
@@ -27,7 +27,7 @@ tsv echo --result pass
 ## 4. End
 
 ```bash
-tsv echo --result pass
+rd echo --result pass
 ```
 
 - PASS: COMPLETE
