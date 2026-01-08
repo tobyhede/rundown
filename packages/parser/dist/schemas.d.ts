@@ -249,7 +249,12 @@ export declare const ActionSchema: z.ZodUnion<[z.ZodUnion<[z.ZodObject<{
 }>]>;
 export type Action = Readonly<z.output<typeof ActionSchema>>;
 /**
- * Transition object with kind information
+ * Valid transition kinds
+ */
+export declare const TransitionKindSchema: z.ZodEnum<["pass", "fail", "yes", "no"]>;
+export type TransitionKind = z.output<typeof TransitionKindSchema>;
+/**
+ * Zod schema for TransitionObject (individual transition with kind)
  */
 export declare const TransitionObjectSchema: z.ZodObject<{
     kind: z.ZodEnum<["pass", "fail", "yes", "no"]>;
@@ -461,6 +466,7 @@ export declare const TransitionObjectSchema: z.ZodObject<{
         };
     };
 }>;
+export type TransitionObject = Readonly<z.output<typeof TransitionObjectSchema>>;
 /**
  * Zod schema for Transitions
  */

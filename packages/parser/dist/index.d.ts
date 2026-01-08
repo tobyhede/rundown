@@ -2,7 +2,7 @@ export { parseWorkflow, parseWorkflowDocument, type ParseOptions } from './parse
 export { validateWorkflow, validateAction } from './validator.js';
 export type { ValidationError } from './validator.js';
 export { WorkflowSyntaxError, createStepNumber, incrementStepNumber, decrementStepNumber, MAX_STEP_NUMBER } from './types.js';
-export type { ParsedConditional, AggregationModifier, ConditionKind, StepNumber } from './types.js';
+export type { ParsedConditional, AggregationModifier, StepNumber } from './types.js';
 export type * from './ast.js';
 export * from './schemas.js';
 export { stripSeparator, extractStepHeader, parseAction, parseConditional, convertToTransitions, extractSubstepHeader, extractWorkflowList, isPromptedCodeBlock } from './helpers.js';

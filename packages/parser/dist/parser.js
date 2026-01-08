@@ -67,7 +67,7 @@ export function parseWorkflowDocument(markdown, filename, options) {
                 isDynamic: ps.isDynamic,
                 command: ps.command,
                 prompts: prompts,
-                transitions,
+                transitions: transitions ?? undefined,
                 workflows: workflows.length > 0 ? workflows : undefined,
                 line: ps.line
             };
@@ -288,7 +288,7 @@ function finalizeStep(step, pendingConditionals, implicitText) {
         description: step.description,
         command: step.command,
         prompts: prompts,
-        transitions,
+        transitions: transitions ?? undefined,
         substeps: step.substeps.length > 0 ? step.substeps : undefined,
         workflows: workflows.length > 0 ? workflows : undefined,
         line: step.line
