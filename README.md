@@ -60,15 +60,23 @@ rundown run deploy.runbook.md
 
 ## Commands
 
+The `rd` command is an alias for `rundown`.
+
 | Command | Description |
 |---------|-------------|
 | `rundown run <file>` | Start a workflow |
-| `rundown pass` | Mark current step as passed |
-| `rundown fail` | Mark current step as failed |
+| `rundown pass` | Mark current step as passed (evaluates PASS condition) |
+| `rundown fail` | Mark current step as failed (evaluates FAIL condition) |
 | `rundown goto <n>` | Jump to step number |
 | `rundown status` | Show current state |
 | `rundown stop` | Abort workflow |
+| `rundown complete` | Mark workflow as complete |
+| `rundown stash` | Pause enforcement (stash active workflow) |
+| `rundown pop` | Resume enforcement (restore stashed workflow) |
 | `rundown ls` | List active workflows |
+| `rundown ls --all` | List available workflow files |
+| `rundown ls --json` | Output as JSON for programmatic use |
+| `rundown ls --tags <tags>` | Filter workflows by comma-separated tags |
 | `rundown check <file>` | Validate workflow file |
 
 ## Packages
