@@ -34,3 +34,17 @@ jobs:
 
       - name: Test
         run: npm test
+
+  # Trigger turboshovel tests after successful CI on main
+  notify-dependents:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger turboshovel CI
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.CROSS_REPO_PAT }}
+          repository: tobyhede/turboshovel
+          event-type: rundown-updated
+          client-payload: '{"sha": "${{ github.sha }}", "ref": "${{ github.ref }}", "actor": "${{ github.actor }}"}'
