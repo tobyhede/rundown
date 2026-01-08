@@ -35,7 +35,7 @@ The `rd` command is an alias for `rundown`.
 
 ## State Persistence
 
-State persists in `.claude/rundown/workflows/` (workflow files) and `.claude/rundown/session.json` (active workflow tracking). Both survive context clears.
+State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown/session.json` (active workflow tracking). Workflow source files are discovered from `.claude/rundown/runbooks/`. All persist across context clears.
 
 ## Environment Variables
 
