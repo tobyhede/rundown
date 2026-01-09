@@ -317,9 +317,26 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             }
             hasConditional = true;
           } else if (line.trim()) {
+            // NEW: Check ordering - text must come before content
             if (currentStep.pendingSubstep) {
-              currentStep.pendingSubstep.content += line.trim() + '\n';
+              if (currentStep.pendingSubstep.hasSeenContent) {
+                const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+                // E17-R2: Include line number in error for better DX
+                const lineNum = node.position?.start.line ? ` (line ${node.position.start.line})` : '';
+                throw new WorkflowSyntaxError(
+                  `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`
+                );
+              }
+              currentStep.pendingSubstep.promptText += line.trim() + '\n';
             } else {
+              if (currentStep.hasSeenContent) {
+                const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+                // E17-R2: Include line number in error for better DX
+                const lineNum = node.position?.start.line ? ` (line ${node.position.start.line})` : '';
+                throw new WorkflowSyntaxError(
+                  `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`
+                );
+              }
               implicitText += line.trim() + '\n';
             }
           }
