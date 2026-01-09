@@ -74,9 +74,9 @@ export function renderStep(step: Step): string {
     lines.push('');
   }
 
-  // Prompts
-  for (const prompt of step.prompts) {
-    lines.push(prompt.text);
+  // Prompt
+  if (step.prompt) {
+    lines.push(step.prompt);
     lines.push('');
   }
 

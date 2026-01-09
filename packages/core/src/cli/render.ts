@@ -11,10 +11,10 @@ export function renderStepForCLI(step: Step): string {
   // Header
   lines.push(`## ${String(step.number)}. ${step.description}`);
 
-  // Prompts (before command per spec)
-  for (const prompt of step.prompts) {
+  // Prompt (before command per spec)
+  if (step.prompt) {
     lines.push('');
-    lines.push(prompt.text);
+    lines.push(step.prompt);
   }
 
   // Command block

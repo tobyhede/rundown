@@ -8,7 +8,6 @@ describe('GOTO NEXT action handling', () => {
       number: createStepNumber(1)!,
       description: 'Test',
       isDynamic: true,
-      prompts: [],
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'GOTO' as const, target: { step: 'NEXT' as const } } },
@@ -25,7 +24,6 @@ describe('GOTO NEXT action handling', () => {
       number: createStepNumber(1)!,
       description: 'Test',
       isDynamic: true,
-      prompts: [],
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
@@ -113,7 +111,6 @@ describe('evaluateFailCondition with RETRY exhaustion', () => {
     const step = {
       number: createStepNumber(1)!,
       description: 'Test',
-      prompts: [],
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
@@ -129,7 +126,6 @@ describe('evaluateFailCondition with RETRY exhaustion', () => {
     const step = {
       number: createStepNumber(1)!,
       description: 'Test',
-      prompts: [],
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
@@ -145,7 +141,6 @@ describe('evaluateFailCondition with RETRY exhaustion', () => {
     const step = {
       number: createStepNumber(1)!,
       description: 'Test',
-      prompts: [],
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
@@ -161,7 +156,6 @@ describe('evaluateFailCondition with RETRY exhaustion', () => {
     const step = {
       number: createStepNumber(1)!,
       description: 'Test',
-      prompts: [],
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
@@ -177,7 +171,6 @@ describe('evaluateFailCondition with RETRY exhaustion', () => {
     const step = {
       number: createStepNumber(1)!,
       description: 'Test',
-      prompts: [],
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },

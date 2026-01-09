@@ -89,7 +89,6 @@ describe('renderStep', () => {
     const step: Step = {
       number: createStepNumber(1)!,
       description: 'First step',
-      prompts: [],
       isDynamic: false
     };
     const result = renderStep(step);
@@ -100,7 +99,6 @@ describe('renderStep', () => {
     const step: Step = {
       number: createStepNumber(3)!,
       description: 'Dispatch reviewers',
-      prompts: [],
       isDynamic: false,
       substeps: [
         { id: '1', description: 'First reviewer', isDynamic: false },
@@ -116,7 +114,6 @@ describe('renderStep', () => {
     const step: Step = {
       number: createStepNumber(1)!,
       description: 'Run tests',
-      prompts: [],
       isDynamic: false,
       command: { code: 'npm test' }
     };
@@ -131,8 +128,7 @@ describe('renderStep with dynamic steps', () => {
   it('renders dynamic step header with {N}.', () => {
     const step: Step = {
       isDynamic: true,
-      description: 'Process batch item',
-      prompts: []
+      description: 'Process batch item'
     };
 
     const rendered = renderStep(step);
@@ -143,7 +139,6 @@ describe('renderStep with dynamic steps', () => {
     const step: Step = {
       isDynamic: true,
       description: 'Execute task',
-      prompts: [],
       substeps: [
         { id: '1', description: 'Implement', isDynamic: false },
         { id: '2', description: 'Test', isDynamic: false }
@@ -160,8 +155,7 @@ describe('renderStep with dynamic steps', () => {
     const step: Step = {
       number: createStepNumber(1)!,
       isDynamic: false,
-      description: 'Setup',
-      prompts: []
+      description: 'Setup'
     };
 
     const rendered = renderStep(step);

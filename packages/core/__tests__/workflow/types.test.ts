@@ -89,20 +89,19 @@ describe('Substep interface', () => {
       id: '1',
       description: 'Test substep',
       isDynamic: false,
-      command: { code: 'npm test' },
-      prompts: []
+      command: { code: 'npm test' }
     };
     expect(substep.command?.code).toBe('npm test');
   });
 
-  it('supports prompts array', () => {
+  it('supports prompt string', () => {
     const substep: Substep = {
       id: '1',
       description: 'Test substep',
       isDynamic: false,
-      prompts: [{ text: 'Do the thing' }]
+      prompt: 'Do the thing'
     };
-    expect(substep.prompts).toHaveLength(1);
+    expect(substep.prompt).toBe('Do the thing');
   });
 
   it('supports transitions field', () => {
@@ -110,7 +109,6 @@ describe('Substep interface', () => {
       id: '1',
       description: 'Test substep',
       isDynamic: false,
-      prompts: [],
       transitions: {
         all: true,
         pass: { type: 'CONTINUE' },

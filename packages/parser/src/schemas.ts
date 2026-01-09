@@ -10,7 +10,6 @@ export const MAX_STEP_NUMBER = 999999;
  */
 export const CommandSchema = z.object({
   code: z.string(),
-  prompted: z.boolean().optional(),
 });
 
 /**
@@ -112,9 +111,9 @@ export const SubstepSchema = z.object({
   description: z.string(),
   agentType: z.string().optional(),
   isDynamic: z.boolean(),
-  workflows: z.array(z.string()).optional(),
+  workflows: z.array(z.string()).readonly().optional(),
   command: CommandSchema.optional(),
-  prompts: z.array(z.object({ text: z.string() })),
+  prompt: z.string().min(1).optional(),  // .min(1) prevents empty strings
   transitions: TransitionsSchema.optional(),
 });
 
@@ -126,10 +125,10 @@ export const StepSchema = z.object({
   isDynamic: z.boolean(),
   description: z.string(),
   command: CommandSchema.optional(),
-  prompts: z.array(z.object({ text: z.string() })),
+  prompt: z.string().min(1).optional(),  // .min(1) prevents empty strings
   transitions: TransitionsSchema.optional(),
-  substeps: z.array(SubstepSchema).optional(),
-  workflows: z.array(z.string()).optional(),
+  substeps: z.array(SubstepSchema).readonly().optional(),
+  workflows: z.array(z.string()).readonly().optional(),
   nestedWorkflow: z.string().optional(), // @deprecated
 });
 

@@ -11,8 +11,7 @@ describe('WorkflowStateManager', () => {
   const mockSteps: Step[] = [{
     number: 1 as StepNumber,
     description: 'Initial step',
-    isDynamic: false,
-    prompts: []
+    isDynamic: false
   }];
   const mockWorkflow: Workflow = {
     title: 'Test Workflow',

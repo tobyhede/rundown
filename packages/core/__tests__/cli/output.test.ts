@@ -124,7 +124,7 @@ describe('output formatter', () => {
       const step: Step = {
         number: createStepNumber(1)!,
         description: 'First step',
-        prompts: [{ text: 'Do something.' }],
+        prompt: 'Do something.',
         command: { code: 'npm test' },
       };
       printStepBlock({ current: 1, total: 3 }, step);

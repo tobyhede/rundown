@@ -11,14 +11,12 @@ describe('workflow compiler', () => {
         {
           isDynamic: true,
           description: 'Execute task',
-          prompts: [],
           substeps: [
-            { id: '1', description: 'Implement', isDynamic: false, prompts: [] },
+            { id: '1', description: 'Implement', isDynamic: false },
             {
               id: '2',
               description: 'Verify',
               isDynamic: false,
-              prompts: [],
               transitions: {
                 all: true,
                 pass: { kind: 'pass', action: { type: 'CONTINUE' } },
@@ -38,7 +36,6 @@ describe('workflow compiler', () => {
         {
           isDynamic: true,
           description: 'Dynamic step',
-          prompts: [],
           transitions: {
             all: true,
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
@@ -58,10 +55,9 @@ describe('workflow compiler', () => {
           number: createStepNumber(1)!,
           description: 'Parent',
           isDynamic: false,
-          prompts: [],
           substeps: [
-            { id: '1', description: 'Child 1', isDynamic: false, prompts: [] },
-            { id: '2', description: 'Child 2', isDynamic: false, prompts: [] }
+            { id: '1', description: 'Child 1', isDynamic: false },
+            { id: '2', description: 'Child 2', isDynamic: false }
           ]
         }
       ];
@@ -78,8 +74,7 @@ describe('workflow compiler', () => {
         {
           number: createStepNumber(1)!,
           description: 'Simple',
-          isDynamic: false,
-          prompts: []
+          isDynamic: false
         }
       ];
       const machine = compileWorkflowToMachine(steps);
@@ -95,7 +90,6 @@ describe('workflow compiler', () => {
         {
           isDynamic: true,
           description: 'Dynamic step',
-          prompts: [],
           transitions: {
             all: true,
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },

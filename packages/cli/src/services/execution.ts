@@ -66,8 +66,8 @@ export async function runExecutionLoop(
     // Print step block
     printStepBlock({ current: state.step, total: totalSteps, substep: state.substep }, currentStep);
 
-    // If CLI prompted mode, OR no command, OR command is marked as prompted (```prompt blocks)
-    if (prompted || !currentStep.command || currentStep.command.prompted) {
+    // If CLI prompted mode, OR no command
+    if (prompted || !currentStep.command) {
       return 'waiting';
     }
 

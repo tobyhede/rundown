@@ -8,7 +8,7 @@ describe('renderStepForCLI', () => {
     const step: Step = {
       number: createStepNumber(1)!,
       description: 'Install dependencies',
-      prompts: [{ text: 'Run npm install to set up project.' }],
+      prompt: 'Run npm install to set up project.',
       command: { code: 'npm install' },
     };
 
@@ -27,7 +27,7 @@ describe('renderStepForCLI', () => {
     const step: Step = {
       number: createStepNumber(2)!,
       description: 'Review changes',
-      prompts: [{ text: 'Review the diff and approve.' }],
+      prompt: 'Review the diff and approve.',
     };
 
     const result = renderStepForCLI(step);
@@ -41,7 +41,6 @@ describe('renderStepForCLI', () => {
     const step: Step = {
       number: createStepNumber(3)!,
       description: 'Run build',
-      prompts: [],
       command: { code: 'npm run build' },
     };
 
@@ -55,7 +54,6 @@ describe('renderStepForCLI', () => {
     const step: Step = {
       number: createStepNumber(1)!,
       description: 'With extras',
-      prompts: [],
       command: { code: 'npm test' },
       transitions: {
         all: true,
