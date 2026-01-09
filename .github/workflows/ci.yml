@@ -42,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger turboshovel CI
+        continue-on-error: true
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.CROSS_REPO_PAT }}
