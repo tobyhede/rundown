@@ -118,7 +118,8 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
 
       const transitions = convertToTransitions(ps.pendingConditionals);
 
-      let prompt = ps.promptText;
+      // Build prompt from promptText and remaining content
+      let promptText = ps.promptText;
       if (ps.content.trim()) {
         const contentWithoutWorkflows = ps.content
           .split('\n')
@@ -126,7 +127,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           .join('\n')
           .trim();
         if (contentWithoutWorkflows) {
-          prompt = prompt ? prompt + '\n' + contentWithoutWorkflows : contentWithoutWorkflows;
+          promptText += contentWithoutWorkflows + '\n';
         }
       }
 
@@ -136,7 +137,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         agentType: ps.agentType,
         isDynamic: ps.isDynamic,
         command: ps.command,
-        prompt: prompt || undefined,
+        prompt: promptText.trim() || undefined,  // Changed from prompts array
         transitions: transitions ?? undefined,
         workflows: workflows.length > 0 ? workflows : undefined,
         line: ps.line
@@ -433,9 +434,10 @@ function finalizeStep(
   pendingConditionals: ParsedConditional[],
   implicitText: string
 ): Step {
-  let prompt = step.promptText;
+  // Build single prompt string
+  let promptText = step.promptText;
   if (implicitText.trim()) {
-    prompt = prompt ? prompt + '\n' + implicitText.trim() : implicitText.trim();
+    promptText += implicitText.trim();
   }
 
   // Validate NEXT usage before converting to transitions
@@ -449,7 +451,7 @@ function finalizeStep(
     isDynamic: step.isDynamic,
     description: step.description,
     command: step.command,
-    prompt: prompt || undefined,
+    prompt: promptText.trim() || undefined,  // Changed from prompts array
     transitions: transitions ?? undefined,
     substeps: step.substeps.length > 0 ? step.substeps : undefined,
     workflows: workflows.length > 0 ? workflows : undefined,
