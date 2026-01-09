@@ -64,7 +64,7 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
     const stepLabel = step.isDynamic ? '{N}' : String(stepNum);
 
     // Conformance Rule 4: Exclusivity (Step level)
-    const hasBody = (step.command !== undefined) || step.prompts.length > 0;
+    const hasBody = (step.command !== undefined) || (step.prompt !== undefined && step.prompt.length > 0);
     const hasSubsteps = (step.substeps !== undefined && step.substeps.length > 0);
     const hasWorkflows = (step.workflows !== undefined && step.workflows.length > 0);
 
@@ -83,7 +83,7 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
 
     if (step.substeps) {
       for (const substep of step.substeps) {
-        const sHasBody = (substep.command !== undefined) || (substep.prompts.length > 0);
+        const sHasBody = (substep.command !== undefined) || (substep.prompt !== undefined && substep.prompt.length > 0);
         const sHasWorkflows = (substep.workflows !== undefined && substep.workflows.length > 0);
 
         if (sHasBody && sHasWorkflows) {
