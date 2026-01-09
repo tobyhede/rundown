@@ -1,6 +1,5 @@
 ---
 version: 1.0.0
-status: draft
 ---
 
 # Rundown Workflow Specification
