@@ -361,12 +361,41 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             pendingConditionals.push(conditional);
           }
         } else if (currentStep.pendingSubstep) {
+          // FIXED: Check ordering BEFORE adding content (C2 fix)
+          const isRunbookRef = /^\S+\.runbook\.md$/.test(text.trim());
+          if (currentStep.pendingSubstep.hasSeenContent && !isRunbookRef) {
+            const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+            // E17-R2: Include line number in error for better DX
+            const lineNum = node.position?.start.line ? ` (line ${node.position.start.line})` : '';
+            throw new WorkflowSyntaxError(
+              `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`
+            );
+          }
+          // Only add content after validation passes
           currentStep.pendingSubstep.content += ' - ' + text + '\n';
+          // Mark content seen if workflow list
+          if (isRunbookRef) {
+            currentStep.pendingSubstep.hasSeenContent = true;
+          }
         } else {
+          // FIXED: Check ordering BEFORE adding content (C2 fix)
+          const isRunbookRef = /^\S+\.runbook\.md$/.test(text.trim());
+          if (currentStep.hasSeenContent && !isRunbookRef) {
+            const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+            // E17-R2: Include line number in error for better DX
+            const lineNum = node.position?.start.line ? ` (line ${node.position.start.line})` : '';
+            throw new WorkflowSyntaxError(
+              `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`
+            );
+          }
+          // Only add content after validation passes
           const itemText = ' - ' + text + '\n';
           currentStep.content += itemText;
-          if (!/^\S+\.runbook\.md$/.test(text.trim())) {
+          if (!isRunbookRef) {
             implicitText += itemText;
+          } else {
+            // Mark content seen if workflow list
+            currentStep.hasSeenContent = true;
           }
         }
       }
