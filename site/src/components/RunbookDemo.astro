@@ -20,21 +20,7 @@ Run tests.
 
 - PASS: COMPLETE`;
 
-const simpleOutput = `$ rundown run simple.runbook.md
 
-▶ Step 1: Create Plan
-  Create an implementation plan.
-  → rundown pass
-
-▶ Step 2: Implement
-  Write the code.
-  → rundown pass
-
-▶ Step 3: Verify
-  Run tests.
-  → rundown pass
-
-✓ COMPLETE`;
 
 const complexRunbook = `# Code Review Workflow
 
@@ -65,28 +51,7 @@ Implement NON-BLOCKING fixes.
 
 - PASS: COMPLETE`;
 
-const complexOutput = `$ rundown run review.runbook.md
 
-▶ Step 1: Dispatch reviewer
-  Run code-review-agent.
-  → rundown fail
-  ↻ RETRY (1/2)
-  → rundown pass
-
-▶ Step 2: Categorize issues
-  Sort as BLOCKING or NON-BLOCKING.
-  → rundown pass
-
-▶ Step 3: Handle blocking
-  Fix BLOCKING issues first.
-  → rundown yes
-  ↳ GOTO 4
-
-▶ Step 4: Address feedback
-  Implement NON-BLOCKING fixes.
-  → rundown pass
-
-✓ COMPLETE`;
 ---
 
 <div class="runbook-demo">
@@ -120,7 +85,31 @@ const complexOutput = `$ rundown run review.runbook.md
           <h3 class="pane-title">Output</h3>
         </div>
         <div class="pane-body">
-          <pre class="text-gray-300 whitespace-pre-wrap">{simpleOutput}</pre>
+          <div class="space-y-4">
+            <div class="output-cmd">$ rundown run simple.runbook.md</div>
+            
+            <div class="space-y-3">
+              <div>
+                <div class="output-step">▶ Step 1: Create Plan</div>
+                <div class="output-desc">Create an implementation plan.</div>
+                <div class="output-action">→ <span class="output-pass">rundown pass</span></div>
+              </div>
+              
+              <div>
+                <div class="output-step">▶ Step 2: Implement</div>
+                <div class="output-desc">Write the code.</div>
+                <div class="output-action">→ <span class="output-pass">rundown pass</span></div>
+              </div>
+              
+              <div>
+                <div class="output-step">▶ Step 3: Verify</div>
+                <div class="output-desc">Run tests.</div>
+                <div class="output-action">→ <span class="output-pass">rundown pass</span></div>
+              </div>
+            </div>
+            
+            <div class="output-complete">✓ COMPLETE</div>
+          </div>
         </div>
       </div>
     </div>
@@ -146,7 +135,40 @@ const complexOutput = `$ rundown run review.runbook.md
           <h3 class="pane-title">Output</h3>
         </div>
         <div class="pane-body">
-          <pre class="text-gray-300 whitespace-pre-wrap">{complexOutput}</pre>
+          <div class="space-y-4">
+            <div class="output-cmd">$ rundown run review.runbook.md</div>
+            
+            <div class="space-y-3">
+              <div>
+                <div class="output-step">▶ Step 1: Dispatch reviewer</div>
+                <div class="output-desc">Run code-review-agent.</div>
+                <div class="output-action">→ <span class="output-fail">rundown fail</span></div>
+                <div class="output-action"><span class="output-retry">↻ RETRY (1/2)</span></div>
+                <div class="output-action">→ <span class="output-pass">rundown pass</span></div>
+              </div>
+              
+              <div>
+                <div class="output-step">▶ Step 2: Categorize issues</div>
+                <div class="output-desc">Sort as BLOCKING or NON-BLOCKING.</div>
+                <div class="output-action">→ <span class="output-pass">rundown pass</span></div>
+              </div>
+              
+              <div>
+                <div class="output-step">▶ Step 3: Handle blocking</div>
+                <div class="output-desc">Fix BLOCKING issues first.</div>
+                <div class="output-action">→ <span class="output-pass">rundown yes</span></div>
+                <div class="output-action"><span class="output-goto">↳ GOTO 4</span></div>
+              </div>
+              
+              <div>
+                <div class="output-step">▶ Step 4: Address feedback</div>
+                <div class="output-desc">Implement NON-BLOCKING fixes.</div>
+                <div class="output-action">→ <span class="output-pass">rundown pass</span></div>
+              </div>
+            </div>
+            
+            <div class="output-complete">✓ COMPLETE</div>
+          </div>
         </div>
       </div>
     </div>
@@ -280,5 +302,46 @@ const complexOutput = `$ rundown run review.runbook.md
 
   .pane-output .pane-body {
     background-color: rgba(5, 5, 16, 0.5);
+  }
+
+  /* Output styling */
+  .output-cmd {
+    color: rgb(0, 229, 255);
+  }
+
+  .output-step {
+    color: rgb(255, 255, 255);
+    font-weight: 600;
+  }
+
+  .output-desc {
+    color: rgb(156, 163, 175);
+    padding-left: 1rem;
+  }
+
+  .output-action {
+    padding-left: 1rem;
+  }
+
+  .output-pass {
+    color: rgb(34, 197, 94);
+  }
+
+  .output-fail {
+    color: rgb(239, 68, 68);
+  }
+
+  .output-retry {
+    color: rgb(250, 204, 21);
+  }
+
+  .output-goto {
+    color: rgb(236, 72, 153);
+  }
+
+  .output-complete {
+    color: rgb(0, 229, 255);
+    font-weight: 700;
+    margin-top: 1rem;
   }
 </style>
