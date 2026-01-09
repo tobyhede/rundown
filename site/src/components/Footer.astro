@@ -1,0 +1,47 @@
+---
+const currentYear = new Date().getFullYear();
+const githubUrl = 'https://github.com/tobyhede/rundown';
+const npmUrl = 'https://www.npmjs.com/package/@rundown/cli';
+---
+
+<footer class="py-12 px-4 border-t border-cyber-purple/20">
+  <div class="container mx-auto max-w-4xl">
+    <div class="flex flex-col md:flex-row justify-between items-center gap-6">
+      <div class="text-center md:text-left">
+        <p class="text-gray-500 text-sm">
+          MIT License &copy; {currentYear}
+        </p>
+        <p class="text-gray-600 text-xs mt-1">
+          Part of <span class="text-cyber-magenta">Turboshovel</span>
+        </p>
+      </div>
+
+      <div class="flex gap-6">
+        <a
+          href={githubUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-gray-400 hover:text-cyber-cyan transition-colors"
+        >
+          GitHub
+        </a>
+        <a
+          href={npmUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-gray-400 hover:text-cyber-magenta transition-colors"
+        >
+          NPM
+        </a>
+        <a
+          href={`${githubUrl}/blob/main/docs/SPEC.md`}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-gray-400 hover:text-cyber-purple transition-colors"
+        >
+          Spec
+        </a>
+      </div>
+    </div>
+  </div>
+</footer>
