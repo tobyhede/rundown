@@ -58,7 +58,8 @@ interface SubstepBuilder {
   isDynamic: boolean;
   content: string;
   command?: Command;
-  prompts: Prompt[];
+  promptText: string;  // Changed from prompts: Prompt[]
+  hasSeenContent: boolean;  // New: track if we've seen code/runbooks
   pendingConditionals: ParsedConditional[];
   line?: number;
 }
@@ -68,7 +69,8 @@ interface StepBuilder {
   isDynamic: boolean;
   description: string;
   command?: Command;
-  prompts: Prompt[];
+  promptText: string;  // Changed from prompts: Prompt[]
+  hasSeenContent: boolean;  // New: track if we've seen code/substeps/runbooks
   substeps: Substep[];
   pendingSubstep?: SubstepBuilder;
   content: string;
