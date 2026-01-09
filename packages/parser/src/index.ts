@@ -26,7 +26,9 @@ export {
   convertToTransitions,
   extractSubstepHeader,
   extractWorkflowList,
-  isPromptedCodeBlock
+  isExecutableCodeBlock,
+  isPromptCodeBlock,
+  escapeForShellSingleQuote
 } from './helpers.js';
 export type { ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
 export {
@@ -44,3 +46,4 @@ export type {
   WorkflowFrontmatter,
   WorkflowFrontmatterType
 } from './frontmatter.js';
+export { hasPrompt, hasCommand, hasSubsteps, hasWorkflows } from './guards.js';
