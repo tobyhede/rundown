@@ -12,8 +12,7 @@ import {
   type Step,
   type Substep,
   type Workflow,
-  type Command,
-  type Prompt
+  type Command
 } from './ast.js';
 import {
   type StepNumber,

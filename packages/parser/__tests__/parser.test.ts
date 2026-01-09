@@ -370,3 +370,18 @@ npm test
     expect(() => parseWorkflow(markdown)).toThrow(/multiple code blocks/i);
   });
 });
+
+describe('prompt as single string', () => {
+  it('returns prompt as single string instead of array', () => {
+    const markdown = `## 1. Step with prompt
+This is the prompt text.
+Multiple lines here.
+
+- PASS: CONTINUE
+- FAIL: STOP
+`;
+    const steps = parseWorkflow(markdown);
+    expect(steps[0].prompt).toBe('This is the prompt text.\nMultiple lines here.');
+    expect((steps[0] as any).prompts).toBeUndefined();
+  });
+});
