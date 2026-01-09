@@ -95,6 +95,13 @@ export const SessionStateSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).default({})
 });
 
+/**
+ * Override Command schema from parser to remove prompted field
+ */
+export const CommandSchema = z.object({
+  code: z.string(),
+});
+
 export type ValidatedSessionState = z.infer<typeof SessionStateSchema>;
 
 import { 

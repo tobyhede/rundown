@@ -5,7 +5,6 @@ describe('validator strict rules', () => {
   const mockStep = (overrides: Partial<Step>): Step => ({
     description: 'Test',
     isDynamic: false,
-    prompts: [],
     ...overrides
   });
 
@@ -34,7 +33,7 @@ describe('validator strict rules', () => {
       const steps = [mockStep({
         number: createStepNumber(1)!,
         substeps: [{
-          id: '1', description: 'S1', isDynamic: false, prompts: [],
+          id: '1', description: 'S1', isDynamic: false,
           transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 1 as any, substep: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         }]
       })];
@@ -94,7 +93,7 @@ describe('validator strict rules', () => {
     it('accepts GOTO {N}.M in dynamic context', () => {
       const steps = [mockStep({
         isDynamic: true,
-        substeps: [{ id: '1', description: 'Sub', isDynamic: false, prompts: [] }],
+        substeps: [{ id: '1', description: 'Sub', isDynamic: false }],
         transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}', substep: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
       })];
       const errors = validateWorkflow(steps);
@@ -107,8 +106,8 @@ describe('validator strict rules', () => {
     it('rejects H2 step with both body and substeps', () => {
       const steps = [mockStep({
         number: createStepNumber(1)!,
-        prompts: [{ text: 'P' }],
-        substeps: [{ id: '1', description: 'S', isDynamic: false, prompts: [] }]
+        prompt: 'P',
+        substeps: [{ id: '1', description: 'S', isDynamic: false }]
       })];
       const errors = validateWorkflow(steps);
       expect(errors.length).toBeGreaterThan(0);
@@ -120,7 +119,7 @@ describe('validator strict rules', () => {
         number: createStepNumber(1)!,
         substeps: [{
           id: '1', description: 'S', isDynamic: false,
-          prompts: [{ text: 'P' }],
+          prompt: 'P',
           workflows: ['w.runbook.md']
         }]
       })];
@@ -135,8 +134,8 @@ describe('validator strict rules', () => {
       const steps = [
         mockStep({
           number: createStepNumber(1)!,
-          prompts: [{ text: 'P' }],
-          substeps: [{ id: '1', description: 'S', isDynamic: false, prompts: [] }],
+          prompt: 'P',
+          substeps: [{ id: '1', description: 'S', isDynamic: false }],
           transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 1 as any } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         })
       ];
@@ -148,8 +147,8 @@ describe('validator strict rules', () => {
       const steps = [mockStep({
         line: 42,
         number: createStepNumber(1)!,
-        prompts: [{ text: 'P' }],
-        substeps: [{ id: '1', description: 'S', isDynamic: false, prompts: [] }]
+        prompt: 'P',
+        substeps: [{ id: '1', description: 'S', isDynamic: false }]
       })];
       const errors = validateWorkflow(steps);
       expect(errors.length).toBeGreaterThan(0);
