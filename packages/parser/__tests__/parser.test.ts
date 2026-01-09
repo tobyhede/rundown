@@ -385,3 +385,101 @@ Multiple lines here.
     expect((steps[0] as any).prompts).toBeUndefined();
   });
 });
+
+describe('prompt ordering enforcement', () => {
+  it('throws error when text appears after code block', () => {
+    const markdown = `## 1. Bad ordering
+
+\`\`\`bash
+npm test
+\`\`\`
+
+This text appears after the code block.
+
+- PASS: CONTINUE
+- FAIL: STOP
+`;
+    expect(() => parseWorkflow(markdown)).toThrow(/prompt.*must appear before/i);
+  });
+
+  it('allows text before code block', () => {
+    const markdown = `## 1. Good ordering
+
+This prompt appears before the code block.
+
+\`\`\`bash
+npm test
+\`\`\`
+
+- PASS: CONTINUE
+- FAIL: STOP
+`;
+    const steps = parseWorkflow(markdown);
+    expect(steps[0].prompt).toBe('This prompt appears before the code block.');
+    expect(steps[0].command?.code).toBe('npm test');
+  });
+
+  it('throws error when text appears after substep header', () => {
+    const markdown = `## 1. Parent
+
+### 1.1 Substep
+
+Do work.
+
+- PASS: CONTINUE
+
+Text after substep - invalid.
+`;
+    expect(() => parseWorkflow(markdown)).toThrow(/prompt.*must appear before/i);
+  });
+
+  // E5-R1: Edge case tests added from cross-check validation
+  it('throws error when text appears after runbook list', () => {
+    const markdown = `## 1. Step with runbooks
+
+- setup.runbook.md
+- cleanup.runbook.md
+
+This text appears after runbooks - invalid.
+
+- PASS: CONTINUE
+`;
+    expect(() => parseWorkflow(markdown)).toThrow(/prompt.*must appear before/i);
+  });
+
+  it('concatenates multiple paragraphs before code block', () => {
+    const markdown = `## 1. Multi-paragraph prompt
+
+First paragraph of instructions.
+
+Second paragraph with more details.
+
+\`\`\`bash
+npm test
+\`\`\`
+
+- PASS: CONTINUE
+`;
+    const steps = parseWorkflow(markdown);
+    expect(steps[0].prompt).toContain('First paragraph');
+    expect(steps[0].prompt).toContain('Second paragraph');
+  });
+
+  it('ignores whitespace-only paragraphs after code block', () => {
+    const markdown = `## 1. Step with trailing whitespace
+
+Prompt text.
+
+\`\`\`bash
+npm test
+\`\`\`
+
+
+
+- PASS: CONTINUE
+`;
+    // Should not throw - whitespace-only is ignored
+    const steps = parseWorkflow(markdown);
+    expect(steps[0].prompt).toBe('Prompt text.');
+  });
+});
