@@ -13,20 +13,10 @@ export {
 };
 
 /**
- * Code block command
- * - prompted: undefined (default) - executable, runs automatically (bash/sh/shell blocks)
- * - prompted: true - show to agent, don't run (prompt blocks)
+ * Code block command - always executable (bash/sh/shell only)
  */
 export interface Command {
   readonly code: string;
-  readonly prompted?: boolean;
-}
-
-/**
- * Prompt for agent (implicit or explicit)
- */
-export interface Prompt {
-  readonly text: string;
 }
 
 /**
@@ -38,7 +28,7 @@ export interface Substep {
   readonly agentType?: string; // e.g., "code-review-agent" from "(code-review-agent)"
   readonly isDynamic: boolean; // true for ### N.{n}, false for ### N.1
   readonly command?: Command;
-  readonly prompts: readonly Prompt[];
+  readonly prompt?: string;  // Single consolidated prompt text
   readonly transitions?: Transitions;
   readonly workflows?: readonly string[];
   readonly line?: number;
@@ -52,7 +42,7 @@ export interface Step {
   readonly isDynamic: boolean;            // true for {N} steps, false for static
   readonly description: string;
   readonly command?: Command;
-  readonly prompts: readonly Prompt[];
+  readonly prompt?: string;  // Single consolidated prompt text
   readonly transitions?: Transitions;
   readonly substeps?: readonly Substep[];
   readonly workflows?: readonly string[];
