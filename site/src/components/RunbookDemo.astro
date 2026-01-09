@@ -1,0 +1,200 @@
+---
+---
+
+<div class="runbook-demo">
+  <!-- Hidden radio inputs for tab state -->
+  <input type="radio" id="demo-less" name="demo-tab" class="sr-only" checked />
+  <input type="radio" id="demo-more" name="demo-tab" class="sr-only" />
+
+  <!-- Tab bar with labels -->
+  <div class="tab-bar">
+    <label for="demo-less" class="tab-button">Less</label>
+    <label for="demo-more" class="tab-button">More</label>
+  </div>
+
+  <!-- Tab content for "Less" -->
+  <div class="tab-content content-less">
+    <div class="split-pane">
+      <!-- Left pane: Runbook -->
+      <div class="pane pane-runbook">
+        <div class="pane-header">
+          <h3 class="pane-title">Runbook</h3>
+          <p class="pane-filename">example.runbook.md</p>
+        </div>
+        <div class="pane-body">
+          <!-- Placeholder for runbook content -->
+          <!-- Will be added in next task -->
+        </div>
+      </div>
+
+      <!-- Right pane: Output -->
+      <div class="pane pane-output">
+        <div class="pane-header">
+          <h3 class="pane-title">Output</h3>
+        </div>
+        <div class="pane-body">
+          <!-- Placeholder for output content -->
+          <!-- Will be added in next task -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab content for "More" -->
+  <div class="tab-content content-more">
+    <div class="split-pane">
+      <!-- Left pane: Runbook -->
+      <div class="pane pane-runbook">
+        <div class="pane-header">
+          <h3 class="pane-title">Runbook</h3>
+          <p class="pane-filename">advanced.runbook.md</p>
+        </div>
+        <div class="pane-body">
+          <!-- Placeholder for runbook content -->
+          <!-- Will be added in next task -->
+        </div>
+      </div>
+
+      <!-- Right pane: Output -->
+      <div class="pane pane-output">
+        <div class="pane-header">
+          <h3 class="pane-title">Output</h3>
+        </div>
+        <div class="pane-body">
+          <!-- Placeholder for output content -->
+          <!-- Will be added in next task -->
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .runbook-demo {
+    position: relative;
+    width: 100%;
+  }
+
+  /* Hide radio inputs */
+  :global(.sr-only) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* Tab bar styling */
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid rgba(0, 229, 255, 0.3);
+    margin-bottom: 1.5rem;
+  }
+
+  .tab-button {
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    border: none;
+    background-color: transparent;
+    color: rgb(156, 163, 175);
+    font-weight: 500;
+    transition: all 0.2s ease-in-out;
+    position: relative;
+    border-bottom: 2px solid transparent;
+  }
+
+  .tab-button:hover {
+    color: rgb(229, 231, 235);
+  }
+
+  /* Active tab state - Less tab */
+  #demo-less:checked ~ .tab-bar [for="demo-less"] {
+    color: rgb(0, 229, 255);
+    border-bottom-color: rgb(0, 229, 255);
+    text-shadow: 0 0 10px rgba(0, 229, 255, 0.5);
+  }
+
+  /* Active tab state - More tab */
+  #demo-more:checked ~ .tab-bar [for="demo-more"] {
+    color: rgb(0, 229, 255);
+    border-bottom-color: rgb(0, 229, 255);
+    text-shadow: 0 0 10px rgba(0, 229, 255, 0.5);
+  }
+
+  /* Tab content visibility */
+  .tab-content {
+    display: none;
+  }
+
+  #demo-less:checked ~ .content-less {
+    display: block;
+  }
+
+  #demo-more:checked ~ .content-more {
+    display: block;
+  }
+
+  /* Split pane layout */
+  .split-pane {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  @media (min-width: 1024px) {
+    .split-pane {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  /* Pane styling */
+  .pane {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(0, 229, 255, 0.3);
+    border-radius: 0.5rem;
+    overflow: hidden;
+    background-color: rgba(10, 10, 26, 0.5);
+  }
+
+  .pane-header {
+    padding: 1rem;
+    border-bottom: 1px solid rgba(0, 229, 255, 0.3);
+    background-color: rgba(0, 229, 255, 0.05);
+  }
+
+  .pane-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: rgb(0, 229, 255);
+    margin: 0;
+    margin-bottom: 0.25rem;
+  }
+
+  .pane-filename {
+    font-size: 0.875rem;
+    color: rgb(156, 163, 175);
+    margin: 0;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  .pane-body {
+    flex: 1;
+    padding: 1rem;
+    overflow-x: auto;
+    min-height: 300px;
+  }
+
+  .pane-runbook .pane-body {
+    background-color: rgba(10, 10, 26, 0.3);
+  }
+
+  .pane-output .pane-body {
+    background-color: rgba(5, 5, 16, 0.5);
+  }
+</style>
