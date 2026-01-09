@@ -198,6 +198,9 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
       }
       finalizePendingSubstep();
 
+      // Mark that parent step has seen content (substeps count as content)
+      currentStep.hasSeenContent = true;
+
       const headingText = extractText(node);
       const parsed = extractSubstepHeader(headingText);
 
