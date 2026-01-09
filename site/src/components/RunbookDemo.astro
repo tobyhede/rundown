@@ -35,6 +35,58 @@ const simpleOutput = `$ rundown run simple.runbook.md
   → rundown pass
 
 ✓ COMPLETE`;
+
+const complexRunbook = `# Code Review Workflow
+
+## 1. Dispatch reviewer
+
+Run code-review-agent.
+
+- PASS: CONTINUE
+- FAIL: RETRY 2
+
+## 2. Categorize issues
+
+Sort as BLOCKING or NON-BLOCKING.
+
+- PASS: CONTINUE
+- FAIL: STOP "Review failed"
+
+## 3. Handle blocking
+
+Fix BLOCKING issues first.
+
+- YES: CONTINUE
+- NO: GOTO 4
+
+## 4. Address feedback
+
+Implement NON-BLOCKING fixes.
+
+- PASS: COMPLETE`;
+
+const complexOutput = `$ rundown run review.runbook.md
+
+▶ Step 1: Dispatch reviewer
+  Run code-review-agent.
+  → rundown fail
+  ↻ RETRY (1/2)
+  → rundown pass
+
+▶ Step 2: Categorize issues
+  Sort as BLOCKING or NON-BLOCKING.
+  → rundown pass
+
+▶ Step 3: Handle blocking
+  Fix BLOCKING issues first.
+  → rundown yes
+  ↳ GOTO 4
+
+▶ Step 4: Address feedback
+  Implement NON-BLOCKING fixes.
+  → rundown pass
+
+✓ COMPLETE`;
 ---
 
 <div class="runbook-demo">
@@ -81,11 +133,10 @@ const simpleOutput = `$ rundown run simple.runbook.md
       <div class="pane pane-runbook">
         <div class="pane-header">
           <h3 class="pane-title">Runbook</h3>
-          <p class="pane-filename">advanced.runbook.md</p>
+          <p class="pane-filename">review.runbook.md</p>
         </div>
         <div class="pane-body">
-          <!-- Placeholder for runbook content -->
-          <!-- Will be added in next task -->
+          <pre class="text-gray-300 whitespace-pre-wrap">{complexRunbook}</pre>
         </div>
       </div>
 
@@ -95,8 +146,7 @@ const simpleOutput = `$ rundown run simple.runbook.md
           <h3 class="pane-title">Output</h3>
         </div>
         <div class="pane-body">
-          <!-- Placeholder for output content -->
-          <!-- Will be added in next task -->
+          <pre class="text-gray-300 whitespace-pre-wrap">{complexOutput}</pre>
         </div>
       </div>
     </div>
