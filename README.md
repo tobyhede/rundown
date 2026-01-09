@@ -1,6 +1,13 @@
-# Rundown
+<p align="center">
+  <img src="logo.png" alt="Rundown Logo" width="200">
+</p>
 
-A format for defining executable workflows using Markdown.
+<h1 align="center">Rundown</h1>
+
+<p align="center">
+  <strong>Executable Workflows from Markdown Runbooks</strong><br>
+  Enforce process. Track progress. Resume anytime.
+</p>
 
 ## Features
 
