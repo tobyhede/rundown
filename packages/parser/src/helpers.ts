@@ -391,17 +391,31 @@ export function extractWorkflowList(content: string): string[] {
 }
 
 const EXECUTABLE_TAGS = ['bash', 'sh', 'shell'];
-const PROMPTED_TAGS = ['prompt'];
 
 /**
- * Classify code block by language tag
- * @returns false for executable, true for prompted, null for passive
+ * Check if code block is executable (bash/sh/shell)
  */
-export function isPromptedCodeBlock(lang: string | null | undefined): boolean | null {
-  const tag = lang?.split(/\s+/)[0].toLowerCase();
-  if (tag && EXECUTABLE_TAGS.includes(tag)) return false;  // executable
-  if (tag && PROMPTED_TAGS.includes(tag)) return true;     // show, don't run
-  return null;  // passive (not a command)
+export function isExecutableCodeBlock(lang: string | null | undefined): boolean {
+  if (!lang) return false;
+  const tag = lang.split(/\s+/)[0]?.toLowerCase();
+  return tag !== undefined && EXECUTABLE_TAGS.includes(tag);
+}
+
+/**
+ * Check if code block is a prompt block
+ */
+export function isPromptCodeBlock(lang: string | null | undefined): boolean {
+  if (!lang) return false;
+  const tag = lang.split(/\s+/)[0]?.toLowerCase();
+  return tag === 'prompt';
+}
+
+/**
+ * Escape content for shell single-quoted string
+ */
+export function escapeForShellSingleQuote(content: string): string {
+  // In single quotes, escape single quotes as: '\''
+  return content.replace(/'/g, "'\\''");
 }
 
 export function formatAction(action: Action): string {
