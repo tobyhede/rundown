@@ -62,6 +62,7 @@ interface SubstepBuilder {
   command?: Command;
   promptText: string;  // Changed from prompts: Prompt[]
   hasSeenContent: boolean;  // New: track if we've seen code/runbooks
+  hasSeenTransitions: boolean;  // New: track if we've seen PASS/FAIL/etc transitions
   pendingConditionals: ParsedConditional[];
   line?: number;
 }
@@ -251,6 +252,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           command: undefined,
           promptText: '',
           hasSeenContent: false,
+          hasSeenTransitions: false,
           pendingConditionals: [],
           line: node.position?.start.line
         };
@@ -313,14 +315,19 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           if (conditional) {
             if (currentStep.pendingSubstep) {
               currentStep.pendingSubstep.pendingConditionals.push(conditional);
+              // Mark that we've seen a transition in the substep
+              currentStep.pendingSubstep.hasSeenTransitions = true;
             } else {
               pendingConditionals.push(conditional);
+              // Mark that we've seen a transition in the step
+              currentStep.hasSeenContent = true;
             }
             hasConditional = true;
           } else if (line.trim()) {
             // NEW: Check ordering - text must come before content
             if (currentStep.pendingSubstep) {
-              if (currentStep.pendingSubstep.hasSeenContent) {
+              // In substeps: text cannot appear after transitions, but CAN appear after code blocks
+              if (currentStep.pendingSubstep.hasSeenTransitions) {
                 const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
                 // E17-R2: Include line number in error for better DX
                 const lineNum = node.position?.start.line ? ` (line ${node.position.start.line})` : '';
@@ -358,13 +365,18 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         if (conditional) {
           if (currentStep.pendingSubstep) {
             currentStep.pendingSubstep.pendingConditionals.push(conditional);
+            // Mark that we've seen a transition in the substep
+            currentStep.pendingSubstep.hasSeenTransitions = true;
           } else {
             pendingConditionals.push(conditional);
+            // Mark that we've seen a transition in the step
+            currentStep.hasSeenContent = true;
           }
         } else if (currentStep.pendingSubstep) {
           // FIXED: Check ordering BEFORE adding content (C2 fix)
           const isRunbookRef = /^\S+\.runbook\.md$/.test(text.trim());
-          if (currentStep.pendingSubstep.hasSeenContent && !isRunbookRef) {
+          // In substeps: text cannot appear after transitions
+          if (currentStep.pendingSubstep.hasSeenTransitions && !isRunbookRef) {
             const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
             // E17-R2: Include line number in error for better DX
             const lineNum = node.position?.start.line ? ` (line ${node.position.start.line})` : '';
