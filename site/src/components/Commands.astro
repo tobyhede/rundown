@@ -1,0 +1,43 @@
+---
+const commands = [
+  { cmd: 'rundown run <file>', desc: 'Start a workflow' },
+  { cmd: 'rundown pass', desc: 'Mark current step as passed' },
+  { cmd: 'rundown fail', desc: 'Mark current step as failed' },
+  { cmd: 'rundown goto <n>', desc: 'Jump to step number' },
+  { cmd: 'rundown status', desc: 'Show current state' },
+  { cmd: 'rundown stop', desc: 'Abort workflow' },
+  { cmd: 'rundown complete', desc: 'Mark workflow complete' },
+  { cmd: 'rundown stash', desc: 'Pause enforcement' },
+  { cmd: 'rundown pop', desc: 'Resume enforcement' },
+  { cmd: 'rundown ls', desc: 'List active workflows' },
+  { cmd: 'rundown check <file>', desc: 'Validate workflow file' },
+];
+---
+
+<section id="commands" class="py-24 px-4">
+  <div class="container mx-auto max-w-4xl">
+    <h2 class="text-3xl md:text-4xl font-bold text-center mb-4">
+      <span class="text-cyber-purple">Commands</span>
+    </h2>
+    <p class="text-center text-gray-400 mb-12">
+      <code class="text-cyber-cyan">rd</code> is an alias for <code class="text-cyber-cyan">rundown</code>
+    </p>
+
+    <div class="neon-border rounded-xl bg-cyber-dark/50 overflow-hidden">
+      <table class="w-full">
+        <tbody>
+          {commands.map((item, i) => (
+            <tr class={i % 2 === 0 ? 'bg-cyber-dark/30' : ''}>
+              <td class="px-4 py-3 font-mono text-cyber-cyan text-sm">
+                {item.cmd}
+              </td>
+              <td class="px-4 py-3 text-gray-400 text-sm">
+                {item.desc}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
