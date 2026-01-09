@@ -94,6 +94,8 @@ A step may have a prompt and/or a code block.
 - **Prompt**: text instructions for the agent/user.
 - **Code Block**: code block containing a command.
 
+**Ordering Rule:** When a step contains both a prompt and a body (code block, substeps, or runbooks), the prompt MUST appear FIRST.
+
 ````markdown
 ## {Identifier} {Title}
 {Prompt}
@@ -114,6 +116,8 @@ The exit code of an executed command maps to the Step PASS/FAIL transition and a
 |-----------------------|---------------|------------------------------------------|
 | `bash`, `sh`, `shell` | Executable    | Auto-run, exit code determines PASS/FAIL |
 | `prompt`              | Instructional | Output only, never executed              |
+
+**Note:** A `prompt` code block counts as the step's command (it becomes `rd prompt '...'`). Since only one code block is allowed per step, you cannot have both a `bash` command AND a `prompt` block in the same step. Use prompt TEXT (paragraphs before the code block) to provide instructions alongside a command.
 
 #### Execution Semantics
 
@@ -238,8 +242,10 @@ Parsers and executors must adhere to strict validation:
 1. **Hierarchy**: H1 is Metadata. H2 is Step. H3 is Substep. H4+ is invalid.
 2. **Step Pattern**: A runbook contains EITHER static steps OR exactly one dynamic step template at each level.
 3. **Sequencing**: Static steps must be strictly sequential (1, 2, 3...).
-4. **Exclusivity**: Units MUST contain exactly one of their permitted content types.
-5. **Recursion**: `RETRY` actions cannot contain another `RETRY`.
+4. **Ordering**: Within a step or substep, content MUST appear in order: prompt (if any), body (if any), transitions (if any).
+5. **Exclusivity**: Units MUST contain exactly one of their permitted body types (code_block, substeps, or runbooks).
+6. **Single Command**: Each step/substep may have at most one code block (bash, sh, shell, OR prompt).
+7. **Recursion**: `RETRY` actions cannot contain another `RETRY`.
 
 ---
 
