@@ -5,3 +5,4 @@ coverage/
 *.log
 .work/
 .claude/settings.local.json
+.claude/rundown/
