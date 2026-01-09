@@ -330,7 +330,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
               if (currentStep.pendingSubstep.hasSeenTransitions) {
                 const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
                 // E17-R2: Include line number in error for better DX
-                const lineNum = node.position?.start.line ? ` (line ${node.position.start.line})` : '';
+                const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
                 throw new WorkflowSyntaxError(
                   `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`
                 );
@@ -340,7 +340,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
               if (currentStep.hasSeenContent) {
                 const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
                 // E17-R2: Include line number in error for better DX
-                const lineNum = node.position?.start.line ? ` (line ${node.position.start.line})` : '';
+                const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
                 throw new WorkflowSyntaxError(
                   `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`
                 );
@@ -379,7 +379,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           if (currentStep.pendingSubstep.hasSeenTransitions && !isRunbookRef) {
             const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
             // E17-R2: Include line number in error for better DX
-            const lineNum = node.position?.start.line ? ` (line ${node.position.start.line})` : '';
+            const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
             throw new WorkflowSyntaxError(
               `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`
             );
@@ -396,7 +396,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           if (currentStep.hasSeenContent && !isRunbookRef) {
             const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
             // E17-R2: Include line number in error for better DX
-            const lineNum = node.position?.start.line ? ` (line ${node.position.start.line})` : '';
+            const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
             throw new WorkflowSyntaxError(
               `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`
             );

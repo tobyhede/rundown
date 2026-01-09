@@ -397,8 +397,10 @@ const EXECUTABLE_TAGS = ['bash', 'sh', 'shell'];
  */
 export function isExecutableCodeBlock(lang: string | null | undefined): boolean {
   if (!lang) return false;
-  const tag = lang.split(/\s+/)[0]?.toLowerCase();
-  return tag !== undefined && EXECUTABLE_TAGS.includes(tag);
+  const parts = lang.split(/\s+/);
+  const tag = parts[0]?.toLowerCase();
+  if (!tag) return false;
+  return EXECUTABLE_TAGS.includes(tag);
 }
 
 /**
