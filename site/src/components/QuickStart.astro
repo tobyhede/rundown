@@ -1,0 +1,69 @@
+---
+const installCommand = 'npm install -g @rundown/cli';
+const runCommand = 'rundown run deploy.runbook.md';
+
+const exampleWorkflow = `---
+title: Deploy to Production
+---
+
+## 1. Run Tests
+
+\`\`\`bash
+npm test
+\`\`\`
+
+- PASS: CONTINUE
+- FAIL: STOP
+
+## 2. Build Application
+
+\`\`\`bash
+npm run build
+\`\`\`
+
+- PASS: CONTINUE
+- FAIL: STOP
+
+## 3. Deploy
+
+\`\`\`bash
+npm run deploy
+\`\`\`
+
+- PASS: COMPLETE
+- FAIL: STOP`;
+---
+
+<section id="quickstart" class="py-24 px-4">
+  <div class="container mx-auto max-w-4xl">
+    <h2 class="text-3xl md:text-4xl font-bold text-center mb-16">
+      <span class="text-cyber-cyan neon-text-cyan">Quick Start</span>
+    </h2>
+
+    <!-- Install -->
+    <div class="mb-8">
+      <p class="text-gray-400 mb-2">Install the CLI:</p>
+      <div class="neon-border rounded-lg p-4 bg-cyber-dark/80 overflow-x-auto">
+        <code class="text-cyber-cyan">{installCommand}</code>
+      </div>
+    </div>
+
+    <!-- Example workflow -->
+    <div class="mb-8">
+      <p class="text-gray-400 mb-2">
+        Create a workflow file <code class="text-cyber-magenta">deploy.runbook.md</code>:
+      </p>
+      <div class="neon-border rounded-lg p-4 bg-cyber-dark/80 overflow-x-auto">
+        <pre class="text-sm text-gray-300 whitespace-pre">{exampleWorkflow}</pre>
+      </div>
+    </div>
+
+    <!-- Run -->
+    <div>
+      <p class="text-gray-400 mb-2">Run the workflow:</p>
+      <div class="neon-border rounded-lg p-4 bg-cyber-dark/80 overflow-x-auto">
+        <code class="text-cyber-cyan">{runCommand}</code>
+      </div>
+    </div>
+  </div>
+</section>
