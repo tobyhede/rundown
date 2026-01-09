@@ -25,7 +25,9 @@ import {
   parseConditional,
   convertToTransitions,
   extractWorkflowList,
-  isPromptedCodeBlock,
+  isExecutableCodeBlock,
+  isPromptCodeBlock,
+  escapeForShellSingleQuote,
   validateNEXTUsage
 } from './helpers.js';
 import { validateWorkflow } from './validator.js';
@@ -253,22 +255,21 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
 
     if (node.type === 'code' && currentStep) {
       const codeNode = node as Code;
-      const prompted = isPromptedCodeBlock(codeNode.lang);
 
-      if (prompted === null) {
-        // Passive - preserve as prose with fences
-        const promptText = '\n```' + (codeNode.lang ?? '') + '\n' + codeNode.value + '\n```\n';
-        if (currentStep.pendingSubstep) {
-          currentStep.pendingSubstep.content += promptText;
-        } else {
-          implicitText += promptText;
-        }
-      } else {
-        // Command (executable or prompted)
-        const cmd: Command = prompted
-          ? { code: codeNode.value.trim(), prompted: true }
-          : { code: codeNode.value.trim() };
+      // Determine command based on code block type
+      let cmd: Command | undefined;
 
+      if (isExecutableCodeBlock(codeNode.lang)) {
+        // bash/sh/shell → direct command
+        cmd = { code: codeNode.value.trim() };
+      } else if (isPromptCodeBlock(codeNode.lang)) {
+        // prompt → rd prompt command (outputs with fences)
+        const escaped = escapeForShellSingleQuote(codeNode.value.trim());
+        cmd = { code: `rd prompt '${escaped}'` };
+      }
+      // Other code blocks (json, etc.) are ignored - not valid in runbooks
+
+      if (cmd) {
         if (currentStep.pendingSubstep) {
           if (currentStep.pendingSubstep.command) {
             throw new WorkflowSyntaxError(
@@ -276,6 +277,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             );
           }
           currentStep.pendingSubstep.command = cmd;
+          currentStep.pendingSubstep.hasSeenContent = true;
         } else {
           if (currentStep.command) {
             const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
@@ -284,6 +286,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             );
           }
           currentStep.command = cmd;
+          currentStep.hasSeenContent = true;
         }
       }
     }
