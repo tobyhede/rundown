@@ -116,7 +116,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
 
       const transitions = convertToTransitions(ps.pendingConditionals);
 
-      const prompts = [...ps.prompts];
+      let prompt = ps.promptText;
       if (ps.content.trim()) {
         const contentWithoutWorkflows = ps.content
           .split('\n')
@@ -124,7 +124,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           .join('\n')
           .trim();
         if (contentWithoutWorkflows) {
-          prompts.push({ text: contentWithoutWorkflows });
+          prompt = prompt ? prompt + '\n' + contentWithoutWorkflows : contentWithoutWorkflows;
         }
       }
 
@@ -134,7 +134,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         agentType: ps.agentType,
         isDynamic: ps.isDynamic,
         command: ps.command,
-        prompts: prompts,
+        prompt: prompt || undefined,
         transitions: transitions ?? undefined,
         workflows: workflows.length > 0 ? workflows : undefined,
         line: ps.line
@@ -179,7 +179,8 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           number: parsed.number,
           isDynamic: parsed.isDynamic,
           description: parsed.description,
-          prompts: [],
+          promptText: '',
+          hasSeenContent: false,
           substeps: [],
           content: '',
           line: node.position?.start.line
@@ -242,7 +243,8 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           isDynamic: parsed.isDynamic,
           content: '',
           command: undefined,
-          prompts: [],
+          promptText: '',
+          hasSeenContent: false,
           pendingConditionals: [],
           line: node.position?.start.line
         };
@@ -379,9 +381,9 @@ function finalizeStep(
   pendingConditionals: ParsedConditional[],
   implicitText: string
 ): Step {
-  const prompts = [...step.prompts];
+  let prompt = step.promptText;
   if (implicitText.trim()) {
-    prompts.push({ text: implicitText.trim() });
+    prompt = prompt ? prompt + '\n' + implicitText.trim() : implicitText.trim();
   }
 
   // Validate NEXT usage before converting to transitions
@@ -395,7 +397,7 @@ function finalizeStep(
     isDynamic: step.isDynamic,
     description: step.description,
     command: step.command,
-    prompts: prompts,
+    prompt: prompt || undefined,
     transitions: transitions ?? undefined,
     substeps: step.substeps.length > 0 ? step.substeps : undefined,
     workflows: workflows.length > 0 ? workflows : undefined,
