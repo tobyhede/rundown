@@ -1,0 +1,47 @@
+---
+const githubUrl = 'https://github.com/tobyhede/rundown';
+---
+
+<section class="min-h-[80vh] flex flex-col items-center justify-center text-center px-4">
+  <!-- Logo placeholder - will be replaced with actual logo -->
+  <div class="mb-8">
+    <div class="w-32 h-32 rounded-2xl bg-gradient-to-br from-cyber-cyan via-cyber-purple to-cyber-magenta p-[2px]">
+      <div class="w-full h-full rounded-2xl bg-cyber-dark flex items-center justify-center">
+        <span class="text-4xl font-bold bg-gradient-to-r from-cyber-cyan to-cyber-magenta bg-clip-text text-transparent">
+          RD
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <h1 class="text-5xl md:text-7xl font-bold mb-6">
+    <span class="text-cyber-cyan neon-text-cyan">Rundown</span>
+  </h1>
+
+  <p class="text-2xl md:text-3xl text-gray-200 mb-4 max-w-3xl">
+    Executable Workflows in Markdown
+  </p>
+
+  <p class="text-lg text-gray-400 mb-12 max-w-2xl">
+    Define workflows in <code class="text-cyber-magenta">.runbook.md</code> files.
+    State persists across context clears.
+    Compiles to state machines.
+  </p>
+
+  <div class="flex flex-col sm:flex-row gap-4">
+    <a
+      href="#quickstart"
+      class="px-8 py-3 bg-cyber-cyan text-cyber-dark font-bold rounded-lg hover:shadow-neon-cyan transition-shadow"
+    >
+      Get Started
+    </a>
+    <a
+      href={githubUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      class="px-8 py-3 border border-cyber-magenta text-cyber-magenta font-bold rounded-lg hover:shadow-neon-magenta transition-shadow"
+    >
+      View on GitHub
+    </a>
+  </div>
+</section>
