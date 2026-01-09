@@ -92,16 +92,18 @@ pwd
     expect(steps[1].command?.code).toBe('pwd');
   });
 
-  it('treats prompt tag as prompted command (show but do not execute)', () => {
+  it('treats prompt tag as rd prompt command', () => {
     const markdown = `## 1. Instruction
 \`\`\`prompt
 Please look at this example.
 \`\`\`
 `;
     const steps = parseWorkflow(markdown);
-    expect(steps[0].command).toBeDefined();
-    expect(steps[0].command?.code).toBe('Please look at this example.');
-    expect(steps[0].command?.prompted).toBe(true);
+    // prompt blocks become rd prompt commands
+    expect(steps[0].command).toEqual({
+      code: "rd prompt 'Please look at this example.'"
+    });
+    expect(steps[0].prompt).toBeUndefined();  // No prompt text from prompt blocks
   });
 
   it('treats other tags as passive prose', () => {
@@ -111,12 +113,12 @@ Please look at this example.
 \`\`\`
 `;
     const steps = parseWorkflow(markdown);
+    // JSON code blocks are ignored - not valid for execution
     expect(steps[0].command).toBeUndefined();
-    expect(steps[0].prompts[0].text).toContain('```json');
-    expect(steps[0].prompts[0].text).toContain('{"key": "value"}');
+    expect(steps[0].prompt).toBeUndefined();
   });
 
-  it('parses prompt code blocks as prompted commands', () => {
+  it('treats prompt code blocks as rd prompt commands', () => {
     const md = `## 1. Step with prompted code
 
 Show this to agent.
@@ -128,13 +130,28 @@ npm run example --flag value
 - PASS: COMPLETE
 `;
     const steps = parseWorkflow(md);
+    // prompt block becomes command, text before it becomes prompt
     expect(steps[0].command).toEqual({
-      code: 'npm run example --flag value',
-      prompted: true,
+      code: "rd prompt 'npm run example --flag value'"
+    });
+    expect(steps[0].prompt).toBe('Show this to agent.');  // Text BEFORE code block
+  });
+
+  // Test escaping of single quotes in prompt blocks
+  it('escapes single quotes in prompt code blocks', () => {
+    const md = `## 1. Step with quotes
+\`\`\`prompt
+echo 'hello world'
+\`\`\`
+`;
+    const steps = parseWorkflow(md);
+    expect(steps[0].command).toEqual({
+      code: "rd prompt 'echo '\\''hello world'\\'''"
     });
   });
 
-  it('parses bash code blocks as executable commands (no prompted flag)', () => {
+  // Keep but remove prompted check
+  it('parses bash code blocks as executable commands', () => {
     const md = `## 1. Step with bash code
 
 Run this automatically.
@@ -149,7 +166,7 @@ npm run build
     expect(steps[0].command).toEqual({
       code: 'npm run build',
     });
-    expect(steps[0].command?.prompted).toBeUndefined();
+    // No need to check prompted - field doesn't exist anymore
   });
 });
 
@@ -164,9 +181,9 @@ The following instructions are important:
 - FAIL: STOP
 `;
     const steps = parseWorkflow(markdown);
-    expect(steps[0].prompts[0].text).toContain('The following instructions are important:');
-    expect(steps[0].prompts[0].text).toContain('- instruction 1');
-    expect(steps[0].prompts[0].text).toContain('- instruction 2');
+    expect(steps[0].prompt).toContain('The following instructions are important:');
+    expect(steps[0].prompt).toContain('- instruction 1');
+    expect(steps[0].prompt).toContain('- instruction 2');
   });
 });
 
@@ -243,8 +260,7 @@ This is the implicit prompt text.
 - FAIL: STOP
 `;
     const steps = parseWorkflow(markdown);
-    expect(steps[0].substeps![0].prompts).toHaveLength(1);
-    expect(steps[0].substeps![0].prompts[0].text).toBe('This is the implicit prompt text.');
+    expect(steps[0].substeps![0].prompt).toBe('This is the implicit prompt text.');
   });
 });
 
