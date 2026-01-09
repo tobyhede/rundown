@@ -1,7 +1,9 @@
-# Rundown Workflow Specification
+---
+version: 1.0.0
+status: draft
+---
 
-Version: 1.0.0
-Status: Draft
+# Rundown Workflow Specification
 
 Rundown is a format for defining executable workflows using Markdown.
 
