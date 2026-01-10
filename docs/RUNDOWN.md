@@ -165,9 +165,10 @@ Transition evaluation:
 
 | Behavior | Triggered By | What Happens |
 |----------|-------------|--------------|
-| **Automatic** | Step has `bash` code block | CLI runs command, exit code determines PASS/FAIL |
-| **Manual** | `--prompted` flag or `prompt` code block | CLI waits for manual `tsv pass` or `tsv fail` |
-| **Prompt-only** | No code block | CLI shows step, waits for manual signal |
+| **Automatic** | Step has `bash` or `prompt` code block | CLI runs command, exit code determines PASS/FAIL |
+| **Manual** | `--prompted` flag or no code block | CLI waits for manual `rd pass` or `rd fail` |
+
+**Note:** A `prompt` code block becomes an `rd prompt '...'` command that outputs the content wrapped in markdown fences. It executes automatically like `bash` blocks.
 
 Example of a step that auto-executes:
 ````markdown

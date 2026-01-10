@@ -87,4 +87,4 @@ RETRY n action =>  RETRY n action
 
 -- Code block semantics
 ```bash | sh | shell  =>  Command (Executable)
-```prompt            =>  Prompt (Instructional)
+```prompt             =>  Command (rd prompt '...' - outputs content in fences)
