@@ -45,9 +45,12 @@ where parent_ref is:
 
 
 where code_block is:
-  "```" [ tag ]
+  "```" [ info_string ]
     content
   "```"
+
+where info_string is:
+  [ language ] [ " " "prompt" ]
 
 where runbooks is:
   - runbook_path [ ... ]
@@ -86,5 +89,6 @@ RETRY n action =>  RETRY n action
             - FAIL ANY: STOP
 
 -- Code block semantics
-```bash | sh | shell  =>  Command (Executable)
-```prompt             =>  Command (rd prompt '...' - outputs content in fences)
+```bash | sh | shell            =>  Command (Executable)
+```{language} prompt            =>  Command (rd prompt '...' - outputs content in fences)
+```{other language or no lang}  =>  Command (rd prompt '...' - outputs content in fences)
