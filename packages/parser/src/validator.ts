@@ -72,8 +72,6 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
   }
 
   for (const step of steps) {
-    const stepNum = /^\d+$/.test(step.name) ? parseInt(step.name, 10) : 0;
-
     // Conformance Rule 4: Exclusivity (Step level)
     const hasBody = (step.command !== undefined) || (step.prompt !== undefined && step.prompt.length > 0);
     const hasSubsteps = (step.substeps !== undefined && step.substeps.length > 0);
@@ -88,8 +86,8 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
     }
 
     if (step.transitions) {
-      validateAction(step.transitions.pass.action, stepNum, undefined, steps, step, errors);
-      validateAction(step.transitions.fail.action, stepNum, undefined, steps, step, errors);
+      validateAction(step.transitions.pass.action, undefined, steps, step, errors);
+      validateAction(step.transitions.fail.action, undefined, steps, step, errors);
     }
 
     if (step.substeps) {
@@ -105,8 +103,8 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
         }
 
         if (substep.transitions) {
-          validateAction(substep.transitions.pass.action, stepNum, substep.id, steps, step, errors);
-          validateAction(substep.transitions.fail.action, stepNum, substep.id, steps, step, errors);
+          validateAction(substep.transitions.pass.action, substep.id, steps, step, errors);
+          validateAction(substep.transitions.fail.action, substep.id, steps, step, errors);
         }
       }
     }
@@ -120,7 +118,6 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
  */
 export function validateAction(
   action: Action,
-  currentStepNum: number,
   currentSubstepId: string | undefined,
   steps: readonly Step[],
   currentStepObj: Step,
@@ -209,29 +206,29 @@ export function validateAction(
       return;
     }
 
-    // At this point, targetStep is a string (numeric step number or name)
+    // At this point, targetStep is a numeric string (e.g., "1", "2")
     // We've already handled '{N}', 'NEXT', and named steps above
-    // So this must be a numeric step or an error case
-    const targetStepNum = parseInt(targetStep, 10);
+    // Look up by name, not array index (named steps can appear anywhere)
+    const targetStepObj = steps.find(s => s.name === targetStep);
 
-    if (isNaN(targetStepNum) || targetStepNum < 1 || targetStepNum > steps.length) {
+    if (!targetStepObj) {
       const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
       errors.push({
         line: currentStepObj.line,
-        message: `Step ${context}: GOTO target step ${String(targetStepNum)} does not exist (Runbook has ${String(steps.length)} steps).`
+        message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`
       });
       return;
     }
 
-    const targetStepObj = steps[targetStepNum - 1];
     const isTargetDynamic = targetStepObj.isDynamic;
-    const isInsideDynamicStep = isDynamicContext && targetStepNum === currentStepNum;
+    // Check if we're inside the same dynamic step (compare by name, not index)
+    const isInsideDynamicStep = isDynamicContext && targetStep === currentStepObj.name;
 
     if (isTargetDynamic && !isInsideDynamicStep) {
       const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
       errors.push({
         line: currentStepObj.line,
-        message: `Step ${context}: Cannot GOTO into dynamic step ${String(targetStepNum)} from outside. Use GOTO NEXT if it is the current template.`
+        message: `Step ${context}: Cannot GOTO into dynamic step "${targetStep}" from outside. Use GOTO NEXT if it is the current template.`
       });
       return;
     }
@@ -241,7 +238,7 @@ export function validateAction(
         const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO ${String(targetStepNum)}.${targetSubstep} invalid - step ${String(targetStepNum)} has no substeps.`
+          message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`
         });
         return;
       }
@@ -250,7 +247,7 @@ export function validateAction(
         const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO ${String(targetStepNum)}.{n} is invalid. Dynamic substeps cannot be targeted directly via GOTO.`
+          message: `Step ${context}: GOTO ${targetStep}.{n} is invalid. Dynamic substeps cannot be targeted directly via GOTO.`
         });
         return;
       }
@@ -261,7 +258,7 @@ export function validateAction(
           const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
           errors.push({
             line: currentStepObj.line,
-            message: `Step ${context}: cannot GOTO substep of dynamic step. Use GOTO ${String(targetStepNum)} instead.`
+            message: `Step ${context}: cannot GOTO substep of dynamic step. Use GOTO ${targetStep} instead.`
           });
           return;
         }
@@ -269,13 +266,14 @@ export function validateAction(
         const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO ${String(targetStepNum)}.${targetSubstep} invalid - substep does not exist.`
+          message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`
         });
         return;
       }
     }
 
-    if (targetStepNum === currentStepNum && targetSubstep === currentSubstepId) {
+    // Self-loop detection: compare step names, not numeric values
+    if (targetStep === currentStepObj.name && targetSubstep === currentSubstepId) {
       const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
       errors.push({
         line: currentStepObj.line,
@@ -286,6 +284,6 @@ export function validateAction(
   }
 
   if (action.type === 'RETRY') {
-    validateAction(action.then, currentStepNum, currentSubstepId, steps, currentStepObj, errors);
+    validateAction(action.then, currentSubstepId, steps, currentStepObj, errors);
   }
 }
