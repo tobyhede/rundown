@@ -104,10 +104,14 @@ export const CommandSchema = z.object({
 
 export type ValidatedSessionState = z.infer<typeof SessionStateSchema>;
 
-import { 
-  StepIdSchema,
-  StepNumberSchema
+import {
+  StepIdSchema
 } from '@rundown/parser';
+
+/**
+ * For WorkflowState.step - always a string: "1", "ErrorHandler", "{N}"
+ */
+const WorkflowStepSchema = z.string().min(1);
 
 /**
  * Schema for pending step.
@@ -136,7 +140,8 @@ export const WorkflowStateSchema = z.object({
   workflow: z.string(),
   title: z.string().optional(),
   description: z.string().optional(),
-  step: StepNumberSchema,
+  step: WorkflowStepSchema, // UNIFIED: "1", "ErrorHandler", "{N}"
+  instance: z.number().int().positive().optional(), // Dynamic workflow instance (1, 2, 3, ...)
   substep: z.string().optional(),
   stepName: z.string(),
   retryCount: z.number().nonnegative().int(),

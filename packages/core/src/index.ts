@@ -11,7 +11,6 @@ export {
   WorkflowStateSchema,
   type ValidatedWorkflowState,
   // Schema-first exports
-  StepNumberSchema,
   StepIdSchema,
   ActionSchema,
   NonRetryActionSchema,

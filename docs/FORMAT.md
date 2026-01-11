@@ -42,7 +42,17 @@ where substep_id is:
 where parent_ref is:
   integer    -- for static parent
   | "{N}"    -- for dynamic parent
+  | name     -- for named parent
 
+where step-identifier is:
+  integer | "{N}" | name
+
+where substep-identifier is:
+  step-identifier "." ( integer | "{n}" | name )
+
+where name is:
+  [A-Za-z_][A-Za-z0-9_]*
+  (case-sensitive; must not be a reserved word: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY)
 
 where code_block is:
   "```" [ info_string ]
@@ -62,7 +72,13 @@ where result is:
   action | RETRY [ count ] [ action ]
 
 where action is:
-  CONTINUE | COMPLETE | STOP [ "message" ] | GOTO {id | NEXT}
+  CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | RETRY ...
+
+where message is:
+  name | "\"" text "\""
+
+where target is:
+  step-identifier | substep-identifier | "NEXT"
 
 ---
 

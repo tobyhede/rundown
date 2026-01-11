@@ -52,7 +52,7 @@ describe('start command', () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
       const state = await getActiveState(workspace);
-      expect(state?.step).toBe(1);
+      expect(state?.step).toBe('1');
       expect(state?.retryCount).toBe(0);
     });
 
@@ -148,7 +148,9 @@ describe('start command', () => {
     });
 
     it('fails if invalid step format', async () => {
-      const result = runCli('run --step abc', workspace);
+      // Note: 'abc' is now a valid named step identifier
+      // Use '123abc' which starts with digit but contains letters - invalid format
+      const result = runCli('run --step 123abc', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('Invalid step ID');

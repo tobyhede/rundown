@@ -10,7 +10,6 @@ import {
   printActionBlock,
   printWorkflowComplete,
   printWorkflowStoppedAtStep,
-  createStepNumber,
 } from '@rundown/core';
 import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
 import { getCwd } from '../helpers/context.js';
@@ -58,7 +57,8 @@ export function registerFailCommand(program: Command): void {
         }
         const content = await fs.readFile(workflowPath, 'utf8');
         const steps = parseWorkflow(content);
-        const currentStep = steps[state.step - 1];
+        const currentStepIndex = steps.findIndex(s => s.name === state.step);
+        const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
         const actor = await manager.createActor(state.id, steps);
         if (!actor) {
           throw new Error('Failed to initialize workflow engine');
@@ -71,14 +71,15 @@ export function registerFailCommand(program: Command): void {
           if (binding) {
             // Agent binding exists - handle substep fail
             // Evaluate fail condition for the agent's step (preserves RETRY/GOTO behavior)
-            const stepNum = binding.stepId.step as number;
-            const agentStep = steps[stepNum - 1];
+            const stepName = binding.stepId.step;
+            const stepIndex = steps.findIndex(s => s.name === stepName);
+            const agentStep = stepIndex >= 0 ? steps[stepIndex] : steps[0];
             const failResult = evaluateFailCondition(agentStep, state.retryCount);
 
             if (failResult.action === 'retry') {
               actor.send({ type: 'FAIL' });
               await manager.updateFromActor(state.id, actor, steps);
-              console.log(`Agent ${options.agent} retrying step ${String(stepNum)}`);
+              console.log(`Agent ${options.agent} retrying step ${stepName}`);
               // Continue with execution loop for retry
               const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent);
               if (loopResult === 'stopped') process.exit(1);
@@ -86,7 +87,7 @@ export function registerFailCommand(program: Command): void {
             } else if (failResult.action === 'goto') {
               actor.send({ type: 'FAIL' });
               const updated = await manager.updateFromActor(state.id, actor, steps);
-              console.log(`Agent ${options.agent} failed, workflow jumped to step ${String(updated.step)}`);
+              console.log(`Agent ${options.agent} failed, workflow jumped to step ${updated.step}`);
               // Continue with execution loop after GOTO
               const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent);
               if (loopResult === 'stopped') process.exit(1);
@@ -182,7 +183,7 @@ export function registerFailCommand(program: Command): void {
         // Handle completion (rare for fail, but possible with GOTO to end)
         if (isComplete) {
           await manager.update(state.id, {
-            step: createStepNumber(totalSteps) ?? state.step,
+            step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true }
           });
           printWorkflowComplete();

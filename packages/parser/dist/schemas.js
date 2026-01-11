@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 /**
  * Maximum valid step number (prevent overflow, keep IDs reasonable)
  */
@@ -8,7 +9,6 @@ export const MAX_STEP_NUMBER = 999999;
  */
 export const CommandSchema = z.object({
     code: z.string(),
-    prompted: z.boolean().optional(),
 });
 /**
  * Zod schema for StepNumber branded type
@@ -20,10 +20,20 @@ export const StepNumberSchema = z
     .max(MAX_STEP_NUMBER, 'Step number exceeds maximum')
     .brand();
 /**
+ * Schema for named step identifiers
+ * Validates format and rejects reserved words (uses RESERVED_WORDS from step-id.ts)
+ */
+export const NamedIdentifierSchema = z.string().refine((s) => NAMED_IDENTIFIER_PATTERN.test(s) && !isReservedWord(s), { message: 'Invalid named identifier: must be valid identifier and not a reserved word' });
+/**
  * Zod schema for StepId
  */
 export const StepIdSchema = z.object({
-    step: z.union([StepNumberSchema, z.literal('{N}'), z.literal('NEXT')]),
+    step: z.union([
+        StepNumberSchema,
+        z.literal('{N}'),
+        z.literal('NEXT'),
+        NamedIdentifierSchema,
+    ]),
     substep: z.string().optional(),
 }).refine((data) => data.step !== 'NEXT' || data.substep === undefined, { message: 'NEXT target cannot have substep' });
 /**
@@ -31,7 +41,7 @@ export const StepIdSchema = z.object({
  */
 export const NonRetryActionSchema = z.union([
     z.object({ type: z.literal('CONTINUE') }),
-    z.object({ type: z.literal('COMPLETE') }),
+    z.object({ type: z.literal('COMPLETE'), message: z.string().optional() }),
     z.object({ type: z.literal('STOP'), message: z.string().optional() }),
     z.object({ type: z.literal('GOTO'), target: StepIdSchema }),
 ]);
@@ -80,9 +90,10 @@ export const SubstepSchema = z.object({
     description: z.string(),
     agentType: z.string().optional(),
     isDynamic: z.boolean(),
-    workflows: z.array(z.string()).optional(),
+    isNamed: z.boolean(), // New field
+    workflows: z.array(z.string()).readonly().optional(),
     command: CommandSchema.optional(),
-    prompts: z.array(z.object({ text: z.string() })),
+    prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
     transitions: TransitionsSchema.optional(),
 });
 /**
@@ -90,13 +101,15 @@ export const SubstepSchema = z.object({
  */
 export const StepSchema = z.object({
     number: StepNumberSchema.optional(),
+    name: z.string().optional(), // For named steps
     isDynamic: z.boolean(),
+    isNamed: z.boolean(), // New field
     description: z.string(),
     command: CommandSchema.optional(),
-    prompts: z.array(z.object({ text: z.string() })),
+    prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
     transitions: TransitionsSchema.optional(),
-    substeps: z.array(SubstepSchema).optional(),
-    workflows: z.array(z.string()).optional(),
+    substeps: z.array(SubstepSchema).readonly().optional(),
+    workflows: z.array(z.string()).readonly().optional(),
     nestedWorkflow: z.string().optional(), // @deprecated
 });
 /**

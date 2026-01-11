@@ -1,11 +1,10 @@
-import { createStepNumber } from '../../src/workflow/types.js';
 import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation } from '../../src/workflow/transition-handler.js';
 import type { SubstepState } from '../../src/workflow/types.js';
 
 describe('GOTO NEXT action handling', () => {
   it('evaluatePassCondition returns goto for GOTO NEXT action', () => {
     const step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'Test',
       isDynamic: true,
       transitions: {
@@ -21,7 +20,7 @@ describe('GOTO NEXT action handling', () => {
 
   it('evaluateFailCondition returns goto for GOTO NEXT action', () => {
     const step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'Test',
       isDynamic: true,
       transitions: {
@@ -109,23 +108,25 @@ describe('evaluateSubstepAggregation', () => {
 describe('evaluateFailCondition with RETRY exhaustion', () => {
   it('returns GOTO when retries exhausted with GOTO action', () => {
     const step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'Test',
+      isDynamic: false,
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, action: { type: 'RETRY' as const, max: 2, then: { type: 'GOTO' as const, target: { step: createStepNumber(5)! } as any } } }
+        fail: { kind: 'fail' as const, action: { type: 'RETRY' as const, max: 2, then: { type: 'GOTO' as const, target: { step: '5' } } } }
       }
     };
 
     const result = evaluateFailCondition(step, 2);
-    expect(result).toEqual({ action: 'goto', gotoTarget: { step: createStepNumber(5)! } });
+    expect(result).toEqual({ action: 'goto', gotoTarget: { step: '5' } });
   });
 
   it('returns continue when retries exhausted with CONTINUE action', () => {
     const step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'Test',
+      isDynamic: false,
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
@@ -139,8 +140,9 @@ describe('evaluateFailCondition with RETRY exhaustion', () => {
 
   it('returns stopped with message when retries exhausted with STOP', () => {
     const step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'Test',
+      isDynamic: false,
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
@@ -154,8 +156,9 @@ describe('evaluateFailCondition with RETRY exhaustion', () => {
 
   it('returns done when retries exhausted with DONE action', () => {
     const step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'Test',
+      isDynamic: false,
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
@@ -169,8 +172,9 @@ describe('evaluateFailCondition with RETRY exhaustion', () => {
 
   it('returns retry when not yet exhausted', () => {
     const step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'Test',
+      isDynamic: false,
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },

@@ -9,7 +9,6 @@ import {
   printActionBlock,
   printWorkflowComplete,
   printWorkflowStoppedAtStep,
-  createStepNumber,
 } from '@rundown/core';
 import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
 import { getCwd } from '../helpers/context.js';
@@ -118,7 +117,8 @@ export function registerPassCommand(program: Command): void {
         const isStopped = isWorkflowStopped(snapshot);
 
         // Derive action
-        const currentStep = steps[prevStep - 1];
+        const prevStepIndex = steps.findIndex(s => s.name === prevStep);
+        const currentStep = prevStepIndex >= 0 ? steps[prevStepIndex] : steps[0];
         const retryMax = getStepRetryMax(currentStep);
         const action = deriveAction(
           prevStep, updatedState.step,
@@ -149,7 +149,7 @@ export function registerPassCommand(program: Command): void {
         // Handle completion
         if (isComplete) {
           await manager.update(state.id, {
-            step: createStepNumber(totalSteps) ?? state.step,
+            step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true }
           });
           printWorkflowComplete();

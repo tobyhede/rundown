@@ -7,7 +7,7 @@ import {
   renderStep
 } from '../../src/workflow/renderer/renderer.js';
 import { parseWorkflow } from '../../src/workflow/index.js';
-import { createStepNumber, type Step, type Substep, type StepNumber } from '../../src/workflow/types.js';
+import type { Step, Substep } from '../../src/workflow/types.js';
 
 describe('renderAction', () => {
   it('renders CONTINUE', () => {
@@ -27,11 +27,11 @@ describe('renderAction', () => {
   });
 
   it('renders GOTO step only', () => {
-    expect(renderAction({ type: 'GOTO', target: { step: 3 as StepNumber } })).toBe('GOTO 3');
+    expect(renderAction({ type: 'GOTO', target: { step: '3' } })).toBe('GOTO 3');
   });
 
   it('renders GOTO with substep', () => {
-    expect(renderAction({ type: 'GOTO', target: { step: 3 as StepNumber, substep: '2' } })).toBe('GOTO 3.2');
+    expect(renderAction({ type: 'GOTO', target: { step: '3', substep: '2' } })).toBe('GOTO 3.2');
   });
 
   it('renders RETRY with nested action', () => {
@@ -87,7 +87,7 @@ describe('renderSubstep', () => {
 describe('renderStep', () => {
   it('renders basic step', () => {
     const step: Step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'First step',
       isDynamic: false
     };
@@ -97,7 +97,7 @@ describe('renderStep', () => {
 
   it('renders step with substeps including parent step number', () => {
     const step: Step = {
-      number: createStepNumber(3)!,
+      name: '3',
       description: 'Dispatch reviewers',
       isDynamic: false,
       substeps: [
@@ -112,7 +112,7 @@ describe('renderStep', () => {
 
   it('renders step with command', () => {
     const step: Step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'Run tests',
       isDynamic: false,
       command: { code: 'npm test' }
@@ -127,6 +127,7 @@ describe('renderStep', () => {
 describe('renderStep with dynamic steps', () => {
   it('renders dynamic step header with {N}.', () => {
     const step: Step = {
+      name: '{N}',
       isDynamic: true,
       description: 'Process batch item'
     };
@@ -137,6 +138,7 @@ describe('renderStep with dynamic steps', () => {
 
   it('renders dynamic step with substeps', () => {
     const step: Step = {
+      name: '{N}',
       isDynamic: true,
       description: 'Execute task',
       substeps: [
@@ -153,7 +155,7 @@ describe('renderStep with dynamic steps', () => {
 
   it('renders static step unchanged', () => {
     const step: Step = {
-      number: createStepNumber(1)!,
+      name: '1',
       isDynamic: false,
       description: 'Setup'
     };
@@ -202,9 +204,9 @@ More description`;
     const parsed2 = parseWorkflow(rendered);
 
     expect(parsed2).toHaveLength(2);
-    expect(parsed2[0].number).toBe(1);
+    expect(parsed2[0].name).toBe('1');
     expect(parsed2[0].description).toBe('First step');
-    expect(parsed2[1].number).toBe(2);
+    expect(parsed2[1].name).toBe('2');
     expect(parsed2[1].description).toBe('Second step');
   });
 
@@ -268,12 +270,12 @@ PASS ALL: CONTINUE
 FAIL ANY: STOP`;
 
     const parsed1 = parseWorkflow(original);
-    expect(parsed1[0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'GOTO', target: { step: 2, substep: '1' } } });
+    expect(parsed1[0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
 
     const rendered = parsed1.map(renderStep).join('\n\n');
     const parsed2 = parseWorkflow(rendered);
 
-    expect(parsed2[0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'GOTO', target: { step: 2, substep: '1' } } });
+    expect(parsed2[0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
   });
 
   it('validates substep workflows parsing', () => {

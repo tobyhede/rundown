@@ -40,7 +40,8 @@ export function registerPopCommand(program: Command): void {
         }
         const content = await fs.readFile(workflowPath, 'utf8');
         const steps = parseWorkflow(content);
-        const currentStep = steps[state.step - 1];
+        const currentStepIndex = steps.findIndex(s => s.name === state.step);
+        const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
         const totalSteps = steps.length;
 
         // Print metadata
@@ -48,9 +49,10 @@ export function registerPopCommand(program: Command): void {
 
         // Print action block if lastAction exists
         if (state.lastAction) {
+          const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
           const actionBlockData: ActionBlockData = {
-            action: state.lastAction === 'GOTO' ? `GOTO ${String(state.step)}` :
-                    state.lastAction === 'RETRY' ? `RETRY (${String(state.retryCount)}/${String(getStepRetryMax(currentStep))})` :
+            action: state.lastAction === 'GOTO' ? `GOTO ${state.step}` :
+                    state.lastAction === 'RETRY' ? `RETRY (${String(state.retryCount)}/${String(retryMaxForAction)})` :
                     state.lastAction,
           };
           if (state.lastResult) {
@@ -61,7 +63,7 @@ export function registerPopCommand(program: Command): void {
 
         // Print step block
         // currentStep is guaranteed to exist from array index
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+         
         if (currentStep) {
           printStepBlock({ current: state.step, total: totalSteps, substep: state.substep }, currentStep);
         }

@@ -5,10 +5,11 @@ export { WorkflowSyntaxError, createStepNumber, incrementStepNumber, decrementSt
 export type { ParsedConditional, AggregationModifier, StepNumber } from './types.js';
 export type * from './ast.js';
 export * from './schemas.js';
-export { stripSeparator, extractStepHeader, parseAction, parseConditional, convertToTransitions, extractSubstepHeader, extractWorkflowList, isPromptedCodeBlock } from './helpers.js';
+export { stripSeparator, extractStepHeader, parseAction, parseConditional, convertToTransitions, extractSubstepHeader, extractWorkflowList, isExecutableCodeBlock, isPromptCodeBlock, escapeForShellSingleQuote, parseQuotedOrIdentifier } from './helpers.js';
 export type { ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
-export { parseStepIdFromString, stepIdToString, stepIdEquals } from './step-id.js';
+export { parseStepIdFromString, stepIdToString, stepIdEquals, RESERVED_WORDS, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 export type { ParseStepIdOptions } from './step-id.js';
 export { extractFrontmatter, nameFromFilename, WorkflowFrontmatterSchema } from './frontmatter.js';
 export type { WorkflowFrontmatter, WorkflowFrontmatterType } from './frontmatter.js';
+export { hasPrompt, hasCommand, hasSubsteps, hasWorkflows } from './guards.js';
 //# sourceMappingURL=index.d.ts.map

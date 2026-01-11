@@ -51,22 +51,24 @@ export function registerGotoCommand(program: Command): void {
         const content = await fs.readFile(workflowPath, 'utf8');
         const steps = parseWorkflow(content);
 
-        // Validate step exists (numeric steps only - dynamic {N} references are validated at runtime)
+        // Validate step exists (numeric steps and named steps - dynamic {N} references are validated at runtime)
         if (target.step !== '{N}') {
-          if (target.step > steps.length) {
-            console.error(`Error: Step ${String(target.step)} does not exist (workflow has ${String(steps.length)} steps)`);
+          // Look up step by name (includes numeric names like "1", "2")
+          const stepIndex = steps.findIndex(s => s.name === target.step);
+          if (stepIndex === -1) {
+            console.error(`Error: Step "${target.step}" does not exist`);
             process.exit(1);
           }
 
           // Validate substep exists (if specified)
           if (target.substep) {
-            const step = steps[target.step - 1];
+            const step = steps[stepIndex];
             if (!step.substeps || step.substeps.length === 0) {
-              console.error(`Error: Step ${String(target.step)} has no substeps`);
+              console.error(`Error: Step ${stepIdToString({ step: target.step })} has no substeps`);
               process.exit(1);
             }
             if (step.substeps.some(s => s.isDynamic)) {
-              console.error(`Error: Cannot goto substep of dynamic step. Use: rd goto ${String(target.step)}`);
+              console.error(`Error: Cannot goto substep of dynamic step. Use: rd goto ${target.step}`);
               process.exit(1);
             }
             const substepExists = step.substeps.some(s => s.id === target.substep);

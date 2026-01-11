@@ -1,5 +1,5 @@
 import { setup, assign } from 'xstate';
-import { type Step, type StepNumber, type Action, type NonRetryAction, type Transitions } from './types.js';
+import { type Step, type Action, type NonRetryAction, type Transitions } from './types.js';
 import type { StepId } from './step-id.js';
 
 export interface WorkflowContext {
@@ -30,15 +30,15 @@ const DEFAULT_TRANSITIONS: Transitions = {
  * Internal helper to format state IDs for the XState machine.
  * Uses _ instead of . to avoid XState path resolution issues.
  */
-function formatStateId(stepNum: number, substepId?: string): string {
-  return substepId ? `step_${String(stepNum)}_${substepId}` : `step_${String(stepNum)}`;
+function formatStateId(stepName: string, substepId?: string): string {
+  return substepId ? `step_${stepName}_${substepId}` : `step_${stepName}`;
 }
 
 // XState requires any for transition builder (snapshot types not fully typed)
 function actionToTransition(
   action: Action,
   currentStateId: string,
-  stepNum: StepNumber,
+  stepName: string,
   substepId: string | undefined,
   steps: Step[]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -52,36 +52,38 @@ function actionToTransition(
         }),
         target: currentStateId
       },
-      nonRetryActionToTransition(action.then, stepNum, substepId, steps)
+      nonRetryActionToTransition(action.then, stepName, substepId, steps)
     ];
   }
 
-  return nonRetryActionToTransition(action, stepNum, substepId, steps);
+  return nonRetryActionToTransition(action, stepName, substepId, steps);
 }
 
 /**
  * Find the next state ID in the flattened sequence
  */
-function findNextStateId(stepNum: StepNumber, substepId: string | undefined, steps: Step[]): string {
-  const currentStep = steps[stepNum - 1];
+function findNextStateId(stepName: string, substepId: string | undefined, steps: Step[]): string {
+  // Find current step by name
+  const currentStepIndex = steps.findIndex(s => s.name === stepName);
+  if (currentStepIndex === -1) return 'COMPLETE';
+  const currentStep = steps[currentStepIndex];
 
   // If we are in a substep, check if there is a next sibling
   if (substepId && currentStep.substeps) {
     const currentIndex = currentStep.substeps.findIndex(s => s.id === substepId);
     if (currentIndex !== -1 && currentIndex < currentStep.substeps.length - 1) {
       const nextSubstep = currentStep.substeps[currentIndex + 1];
-      return formatStateId(stepNum, nextSubstep.id);
+      return formatStateId(stepName, nextSubstep.id);
     }
   }
 
   // Otherwise, move to next H2 step
-  if (stepNum < steps.length) {
-    const nextStep = steps[stepNum]; // index is stepNum
-    const nextNum = (stepNum + 1) as StepNumber;
+  if (currentStepIndex < steps.length - 1) {
+    const nextStep = steps[currentStepIndex + 1];
     if (nextStep.substeps && nextStep.substeps.length > 0) {
-      return formatStateId(nextNum, nextStep.substeps[0].id);
+      return formatStateId(nextStep.name, nextStep.substeps[0].id);
     }
-    return formatStateId(nextNum);
+    return formatStateId(nextStep.name);
   }
 
   // End of rundown
@@ -91,21 +93,21 @@ function findNextStateId(stepNum: StepNumber, substepId: string | undefined, ste
 // XState requires any for transition builder (snapshot types not fully typed)
 function nonRetryActionToTransition(
   action: NonRetryAction,
-  stepNum: StepNumber,
+  stepName: string,
   substepId: string | undefined,
   steps: Step[]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): any {
   switch (action.type) {
     case 'CONTINUE': {
-      const target = findNextStateId(stepNum, substepId, steps);
+      const target = findNextStateId(stepName, substepId, steps);
       return {
         target,
         actions: assign({
           retryCount: 0,
           // Extract substep from ID: step_N_M -> M
-          substep: target.startsWith('step_') && target.includes('_', 5) 
-            ? target.split('_')[2] 
+          substep: target.startsWith('step_') && target.includes('_', 5)
+            ? target.split('_')[2]
             : undefined
         })
       };
@@ -120,25 +122,23 @@ function nonRetryActionToTransition(
       // Handle GOTO NEXT - advance to next dynamic instance
       if (targetStep === 'NEXT') {
         const firstStep = steps[0];
-        const nextSubstepId = firstStep.substeps && firstStep.substeps.length > 0
-          ? firstStep.substeps[0].id
-          : undefined;
-
+        const nextSubstepId = firstStep.substeps?.[0]?.id;
         return {
-          target: formatStateId(1, nextSubstepId),
+          target: formatStateId(firstStep.name, nextSubstepId),
           actions: assign({
             retryCount: 0,
             substep: nextSubstepId,
-            nextInstance: true  // Signal to executor: increment instance number
+            nextInstance: true
           })
         };
       }
 
-      // Handle dynamic {N}.M references (substep navigation within current instance)
+      // Handle dynamic {N}.M references
       if (targetStep === '{N}') {
-        // {N}.M - stay in dynamic context (step 1), target substep M
+        // {N}.M - find dynamic step and target substep M
+        const dynamicStep = steps.find(s => s.isDynamic);
         return {
-          target: formatStateId(1, action.target.substep ?? '1'),
+          target: formatStateId(dynamicStep?.name ?? '{N}', action.target.substep ?? '1'),
           actions: assign({
             retryCount: 0,
             substep: action.target.substep
@@ -146,16 +146,18 @@ function nonRetryActionToTransition(
         };
       }
 
-      // Static numeric target
-      const targetStepNum = targetStep as number;
-      const targetStepObj = steps[targetStepNum - 1];
-      
-      // If target step has substeps but none specified in GOTO, target first substep
-      const resolvedSubstepId = action.target.substep ?? 
-        (targetStepObj.substeps && targetStepObj.substeps.length > 0 ? targetStepObj.substeps[0].id : undefined);
+      // Named/numeric step target (both are strings now)
+      const targetStepObj = steps.find(s => s.name === targetStep);
+      if (!targetStepObj) {
+        // Invalid target - go to COMPLETE
+        return { target: 'COMPLETE' };
+      }
+
+      const resolvedSubstepId = action.target.substep ??
+        (targetStepObj.substeps?.[0]?.id);
 
       return {
-        target: formatStateId(targetStepNum, resolvedSubstepId),
+        target: formatStateId(targetStepObj.name, resolvedSubstepId),
         actions: assign({
           retryCount: 0,
           substep: resolvedSubstepId
@@ -175,27 +177,27 @@ export function compileWorkflowToMachine(steps: Step[]) {
   // Build a flat list of all states to generate GOTO transitions
   interface StateConfig {
     id: string;
-    stepNum: StepNumber;
+    stepName: string;
     substepId?: string;
     transitions: Transitions;
   }
   const allStates: StateConfig[] = [];
 
-  steps.forEach((step, index) => {
-    const stepNum = step.number ?? ((index + 1) as StepNumber);
+  steps.forEach((step) => {
+    const stepName = step.name;
     if (step.substeps && step.substeps.length > 0) {
       step.substeps.forEach(substep => {
         allStates.push({
-          id: formatStateId(stepNum, substep.id),
-          stepNum,
+          id: formatStateId(stepName, substep.id),
+          stepName,
           substepId: substep.id,
           transitions: substep.transitions ?? DEFAULT_TRANSITIONS
         });
       });
     } else {
       allStates.push({
-        id: formatStateId(stepNum),
-        stepNum,
+        id: formatStateId(stepName),
+        stepName,
         transitions: step.transitions ?? DEFAULT_TRANSITIONS
       });
     }
@@ -205,19 +207,18 @@ export function compileWorkflowToMachine(steps: Step[]) {
   const gotoTransitions = allStates.map((target) => ({
     guard: ({ event }: { event: WorkflowEvent }) => {
       if (event.type !== 'GOTO') return false;
-      
-      // Target step identification
-      const targetStep = event.target.step === '{N}' ? 1 : event.target.step as number;
-      
-      // If target is just a step number, it matches the first state of that step
+
+      const targetStep = event.target.step;
+
+      // If target is just a step name, it matches the first state of that step
       if (!event.target.substep) {
         // Find first state for this step
-        const firstStateForStep = allStates.find(s => s.stepNum === targetStep);
+        const firstStateForStep = allStates.find(s => s.stepName === targetStep);
         return target.id === firstStateForStep?.id;
       }
 
       // Exact match for step and substep
-      return targetStep === target.stepNum && event.target.substep === target.substepId;
+      return targetStep === target.stepName && event.target.substep === target.substepId;
     },
     target: target.id,
     actions: assign({
@@ -232,9 +233,9 @@ export function compileWorkflowToMachine(steps: Step[]) {
     states[config.id] = {
       on: {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        PASS: actionToTransition(config.transitions.pass.action, config.id, config.stepNum, config.substepId, steps),
+        PASS: actionToTransition(config.transitions.pass.action, config.id, config.stepName, config.substepId, steps),
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        FAIL: actionToTransition(config.transitions.fail.action, config.id, config.stepNum, config.substepId, steps),
+        FAIL: actionToTransition(config.transitions.fail.action, config.id, config.stepName, config.substepId, steps),
         RETRY: {
           actions: assign({
             retryCount: ({ context }) => (context.retryCount as number) + 1

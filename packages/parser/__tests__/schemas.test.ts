@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { TransitionsSchema, TransitionObjectSchema } from '../src/schemas.js';
+import { TransitionsSchema, TransitionObjectSchema, StepIdSchema } from '../src/schemas.js';
 
 describe('TransitionsSchema with kind', () => {
   it('should validate transitions with kind', () => {
@@ -54,7 +54,7 @@ describe('TransitionObjectSchema', () => {
   it('should validate transition object with no kind', () => {
     const input = {
       kind: 'no',
-      action: { type: 'GOTO', target: { step: 1 } },
+      action: { type: 'GOTO', target: { step: '1' } },
     };
     const result = TransitionObjectSchema.safeParse(input);
     expect(result.success).toBe(true);
@@ -132,5 +132,114 @@ describe('TransitionsSchema validation', () => {
     };
     const result = TransitionsSchema.safeParse(input);
     expect(result.success).toBe(false);
+  });
+});
+
+describe('StepIdSchema with named steps', () => {
+  it('accepts numeric step', () => {
+    expect(StepIdSchema.safeParse({ step: '1' }).success).toBe(true);
+  });
+
+  it('accepts {N} dynamic step', () => {
+    expect(StepIdSchema.safeParse({ step: '{N}' }).success).toBe(true);
+  });
+
+  it('accepts NEXT', () => {
+    expect(StepIdSchema.safeParse({ step: 'NEXT' }).success).toBe(true);
+  });
+
+  it('accepts named step identifier', () => {
+    expect(StepIdSchema.safeParse({ step: 'Cleanup' }).success).toBe(true);
+  });
+
+  it('accepts named step with underscore', () => {
+    expect(StepIdSchema.safeParse({ step: 'error_handler' }).success).toBe(true);
+  });
+
+  it('accepts named step with substep', () => {
+    expect(StepIdSchema.safeParse({ step: 'ErrorHandler', substep: '1' }).success).toBe(true);
+  });
+
+  it('accepts named step with named substep', () => {
+    expect(StepIdSchema.safeParse({ step: 'ErrorHandler', substep: 'Recover' }).success).toBe(true);
+  });
+
+  it('rejects NEXT with substep', () => {
+    expect(StepIdSchema.safeParse({ step: 'NEXT', substep: '1' }).success).toBe(false);
+  });
+
+  it('rejects invalid identifier (starts with digit)', () => {
+    expect(StepIdSchema.safeParse({ step: '123abc' }).success).toBe(false);
+  });
+
+  it('rejects invalid identifier (contains hyphen)', () => {
+    expect(StepIdSchema.safeParse({ step: 'error-handler' }).success).toBe(false);
+  });
+
+  it('rejects reserved word CONTINUE as step name', () => {
+    expect(StepIdSchema.safeParse({ step: 'CONTINUE' }).success).toBe(false);
+  });
+
+  it('rejects reserved word COMPLETE as step name', () => {
+    expect(StepIdSchema.safeParse({ step: 'COMPLETE' }).success).toBe(false);
+  });
+
+  it('rejects reserved word STOP as step name', () => {
+    expect(StepIdSchema.safeParse({ step: 'STOP' }).success).toBe(false);
+  });
+
+  it('rejects reserved word GOTO as step name', () => {
+    expect(StepIdSchema.safeParse({ step: 'GOTO' }).success).toBe(false);
+  });
+
+  it('rejects reserved word PASS as step name', () => {
+    expect(StepIdSchema.safeParse({ step: 'PASS' }).success).toBe(false);
+  });
+
+  it('rejects reserved word FAIL as step name', () => {
+    expect(StepIdSchema.safeParse({ step: 'FAIL' }).success).toBe(false);
+  });
+});
+
+describe('unified naming schemas', () => {
+  it('StepIdSchema accepts string step names', () => {
+    const result = StepIdSchema.safeParse({ step: '1' });
+    expect(result.success).toBe(true);
+    expect(result.data?.step).toBe('1');
+  });
+
+  it('StepIdSchema accepts named step identifiers', () => {
+    const result = StepIdSchema.safeParse({ step: 'ErrorHandler' });
+    expect(result.success).toBe(true);
+  });
+
+  it('StepIdSchema accepts NEXT as special target', () => {
+    const result = StepIdSchema.safeParse({ step: 'NEXT' });
+    expect(result.success).toBe(true);
+  });
+
+  it('StepIdSchema accepts {N} for dynamic step references', () => {
+    const result = StepIdSchema.safeParse({ step: '{N}', substep: '1' });
+    expect(result.success).toBe(true);
+  });
+
+  it('StepNameSchema rejects reserved words as step names', () => {
+    const result = StepIdSchema.safeParse({ step: 'CONTINUE' });
+    expect(result.success).toBe(false);
+  });
+
+  it('StepNameSchema accepts numeric strings', () => {
+    const result = StepIdSchema.safeParse({ step: '1' });
+    expect(result.success).toBe(true);
+  });
+
+  it('StepNameSchema accepts identifiers', () => {
+    const result = StepIdSchema.safeParse({ step: 'ErrorHandler' });
+    expect(result.success).toBe(true);
+  });
+
+  it('StepNameSchema accepts {N} for dynamic steps', () => {
+    const result = StepIdSchema.safeParse({ step: '{N}' });
+    expect(result.success).toBe(true);
   });
 });

@@ -1,15 +1,17 @@
 // packages/cli/src/commands/complete.ts
 
+import * as fs from 'fs/promises';
 import type { Command } from 'commander';
 import {
   WorkflowStateManager,
+  parseWorkflow,
   printMetadata,
   printWorkflowComplete,
   printWorkflowStoppedAtStep,
   printNoActiveWorkflow,
-  createStepNumber,
 } from '@rundown/core';
 import { getCwd, getStepCount } from '../helpers/context.js';
+import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
@@ -40,9 +42,14 @@ export function registerCompleteCommand(program: Command): void {
           });
           printWorkflowStoppedAtStep({ current: state.step, total: totalSteps, substep: state.substep });
         } else {
-          const totalSteps = await getStepCount(cwd, state.workflow);
+          const workflowPath = await resolveWorkflowFile(cwd, state.workflow);
+          if (!workflowPath) {
+            throw new Error(`Workflow file ${state.workflow} not found`);
+          }
+          const content = await fs.readFile(workflowPath, 'utf8');
+          const steps = parseWorkflow(content);
           await manager.update(state.id, {
-            step: createStepNumber(totalSteps) ?? state.step,
+            step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true }
           });
           await manager.popWorkflow(options.agent);

@@ -4,18 +4,8 @@ export {
   validateAction
 } from './validator.js';
 export type { ValidationError } from './validator.js';
-export { 
-  WorkflowSyntaxError,
-  createStepNumber,
-  incrementStepNumber,
-  decrementStepNumber,
-  MAX_STEP_NUMBER
-} from './types.js';
-export type { 
-  ParsedConditional, 
-  AggregationModifier,
-  StepNumber
-} from './types.js';
+export { WorkflowSyntaxError, MAX_STEP_NUMBER } from './types.js';
+export type { ParsedConditional, AggregationModifier } from './types.js';
 export type * from './ast.js';
 export * from './schemas.js';
 export {
@@ -28,13 +18,17 @@ export {
   extractWorkflowList,
   isExecutableCodeBlock,
   isPromptCodeBlock,
-  escapeForShellSingleQuote
+  escapeForShellSingleQuote,
+  parseQuotedOrIdentifier
 } from './helpers.js';
 export type { ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
 export {
   parseStepIdFromString,
   stepIdToString,
-  stepIdEquals
+  stepIdEquals,
+  RESERVED_WORDS,
+  isReservedWord,
+  NAMED_IDENTIFIER_PATTERN
 } from './step-id.js';
 export type { ParseStepIdOptions } from './step-id.js';
 export {

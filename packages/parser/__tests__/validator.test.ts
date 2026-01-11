@@ -1,8 +1,9 @@
 import { describe, it, expect } from '@jest/globals';
-import { validateWorkflow, createStepNumber, type Step } from '../src/index.js';
+import { validateWorkflow, type Step } from '../src/index.js';
 
 describe('validator strict rules', () => {
   const mockStep = (overrides: Partial<Step>): Step => ({
+    name: '1',
     description: 'Test',
     isDynamic: false,
     ...overrides
@@ -21,8 +22,8 @@ describe('validator strict rules', () => {
 
     it('rejects GOTO self (step level)', () => {
       const steps = [mockStep({
-        number: createStepNumber(1)!,
-        transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 1 as any } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
+        name: '1',
+        transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
       })];
       const errors = validateWorkflow(steps);
       expect(errors.length).toBeGreaterThan(0);
@@ -31,10 +32,10 @@ describe('validator strict rules', () => {
 
     it('rejects GOTO self (substep level)', () => {
       const steps = [mockStep({
-        number: createStepNumber(1)!,
+        name: '1',
         substeps: [{
           id: '1', description: 'S1', isDynamic: false,
-          transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 1 as any, substep: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
+          transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1', substep: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         }]
       })];
       const errors = validateWorkflow(steps);
@@ -45,11 +46,11 @@ describe('validator strict rules', () => {
     it('rejects GOTO into dynamic step from outside', () => {
       const steps = [
         mockStep({
-          number: createStepNumber(1)!,
-          transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 2 as any } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
+          name: '1',
+          transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         }),
         mockStep({
-          number: createStepNumber(2)!,
+          name: '2',
           description: 'Dynamic',
           isDynamic: true
         })
@@ -61,7 +62,7 @@ describe('validator strict rules', () => {
 
     it('rejects GOTO NEXT in static context', () => {
       const steps = [mockStep({
-        number: createStepNumber(1)!,
+        number: '1',
         transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
       })];
       const errors = validateWorkflow(steps);
@@ -81,7 +82,7 @@ describe('validator strict rules', () => {
     it('rejects GOTO {N}.M from static context', () => {
       const steps = [
         mockStep({
-          number: createStepNumber(1)!,
+          name: '1',
           transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}', substep: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         })
       ];
@@ -99,13 +100,56 @@ describe('validator strict rules', () => {
       const errors = validateWorkflow(steps);
       expect(errors.filter(e => e.message.includes('GOTO {N}'))).toHaveLength(0);
     });
+
+    it('rejects GOTO to named step with non-existent substep', () => {
+      const steps = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'First',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: 'NonExistent' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } },
+          },
+        },
+        {
+          name: 'ErrorHandler',
+          isDynamic: false,
+          description: 'Handler',
+          substeps: [
+            { id: '1', isDynamic: false, description: 'Sub1' }
+          ]
+        },
+      ];
+      const errors = validateWorkflow(steps as any[]);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].message).toContain('NonExistent');
+    });
+
+    it('rejects GOTO to dynamic substep pattern', () => {
+      const steps = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'First',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'Handler', substep: '{n}' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } },
+          },
+        },
+      ];
+      const errors = validateWorkflow(steps as any[]);
+      expect(errors.length).toBeGreaterThan(0);
+    });
   });
 
 
   describe('Exclusivity rules', () => {
     it('rejects H2 step with both body and substeps', () => {
       const steps = [mockStep({
-        number: createStepNumber(1)!,
+        number: '1',
         prompt: 'P',
         substeps: [{ id: '1', description: 'S', isDynamic: false }]
       })];
@@ -116,7 +160,7 @@ describe('validator strict rules', () => {
 
     it('rejects H3 substep with both body and workflows', () => {
       const steps = [mockStep({
-        number: createStepNumber(1)!,
+        number: '1',
         substeps: [{
           id: '1', description: 'S', isDynamic: false,
           prompt: 'P',
@@ -133,10 +177,10 @@ describe('validator strict rules', () => {
     it('collects multiple errors from single workflow', () => {
       const steps = [
         mockStep({
-          number: createStepNumber(1)!,
+          name: '1',
           prompt: 'P',
           substeps: [{ id: '1', description: 'S', isDynamic: false }],
-          transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 1 as any } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
+          transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         })
       ];
       const errors = validateWorkflow(steps);
@@ -146,7 +190,7 @@ describe('validator strict rules', () => {
     it('includes line numbers in validation errors', () => {
       const steps = [mockStep({
         line: 42,
-        number: createStepNumber(1)!,
+        number: '1',
         prompt: 'P',
         substeps: [{ id: '1', description: 'S', isDynamic: false }]
       })];
@@ -154,6 +198,84 @@ describe('validator strict rules', () => {
       expect(errors.length).toBeGreaterThan(0);
       const errorWithLine = errors.find(e => e.line === 42);
       expect(errorWithLine).toBeDefined();
+    });
+  });
+
+  describe('validateWorkflow with named steps', () => {
+    it('allows named steps after static steps', () => {
+      const steps = [
+        { name: '1', isDynamic: false, description: 'First' },
+        { name: '2', isDynamic: false, description: 'Second' },
+        { name: 'Cleanup', isDynamic: false, description: 'Cleanup' },
+      ];
+      const errors = validateWorkflow(steps as any[]);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('allows named steps with dynamic step', () => {
+      const steps = [
+        { name: '{N}', isDynamic: true, description: 'Dynamic' },
+        { name: 'ErrorHandler', isDynamic: false, description: 'Handler' },
+      ];
+      const errors = validateWorkflow(steps as any[]);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('validates GOTO to named step', () => {
+      const steps = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'First',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'Cleanup' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } },
+          },
+        },
+        { name: 'Cleanup', isDynamic: false, description: 'Cleanup' },
+      ];
+      const errors = validateWorkflow(steps as any[]);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('rejects GOTO to non-existent named step', () => {
+      const steps = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'First',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NonExistent' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } },
+          },
+        },
+      ];
+      const errors = validateWorkflow(steps as any[]);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].message).toContain('NonExistent');
+    });
+
+    it('validates GOTO to named substep', () => {
+      const steps = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'First',
+          substeps: [
+            { id: '1', isDynamic: false, description: 'Sub1' },
+            { id: 'Cleanup', isDynamic: false, description: 'SubCleanup' },
+          ],
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1', substep: 'Cleanup' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } },
+          },
+        },
+      ];
+      const errors = validateWorkflow(steps as any[]);
+      expect(errors).toHaveLength(0);
     });
   });
 });

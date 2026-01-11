@@ -1,7 +1,7 @@
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { visit } from 'unist-util-visit';
 import { WorkflowSyntaxError } from './types.js';
-import { extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, extractWorkflowList, isPromptedCodeBlock, validateNEXTUsage } from './helpers.js';
+import { extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, extractWorkflowList, isExecutableCodeBlock, isPromptCodeBlock, escapeForShellSingleQuote, validateNEXTUsage } from './helpers.js';
 import { validateWorkflow } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
 /**
@@ -49,7 +49,8 @@ export function parseWorkflowDocument(markdown, filename, options) {
             // Validate NEXT usage before converting to transitions
             validateNEXTUsage(ps.pendingConditionals, currentStep.isDynamic);
             const transitions = convertToTransitions(ps.pendingConditionals);
-            const prompts = [...ps.prompts];
+            // Build prompt from promptText and remaining content
+            let promptText = ps.promptText;
             if (ps.content.trim()) {
                 const contentWithoutWorkflows = ps.content
                     .split('\n')
@@ -57,7 +58,7 @@ export function parseWorkflowDocument(markdown, filename, options) {
                     .join('\n')
                     .trim();
                 if (contentWithoutWorkflows) {
-                    prompts.push({ text: contentWithoutWorkflows });
+                    promptText += contentWithoutWorkflows + '\n';
                 }
             }
             const substep = {
@@ -65,8 +66,9 @@ export function parseWorkflowDocument(markdown, filename, options) {
                 description: ps.description,
                 agentType: ps.agentType,
                 isDynamic: ps.isDynamic,
+                isNamed: ps.isNamed,
                 command: ps.command,
-                prompts: prompts,
+                prompt: promptText.trim() || undefined, // Changed from prompts array
                 transitions: transitions ?? undefined,
                 workflows: workflows.length > 0 ? workflows : undefined,
                 line: ps.line
@@ -100,9 +102,12 @@ export function parseWorkflowDocument(markdown, filename, options) {
             if (parsed) {
                 currentStep = {
                     number: parsed.number,
+                    name: parsed.name,
                     isDynamic: parsed.isDynamic,
+                    isNamed: parsed.isNamed,
                     description: parsed.description,
-                    prompts: [],
+                    promptText: '',
+                    hasSeenContent: false,
                     substeps: [],
                     content: '',
                     line: node.position?.start.line
@@ -116,6 +121,8 @@ export function parseWorkflowDocument(markdown, filename, options) {
                 pendingConditionals = [];
             }
             finalizePendingSubstep();
+            // Mark that parent step has seen content (substeps count as content)
+            currentStep.hasSeenContent = true;
             const headingText = extractText(node);
             const parsed = extractSubstepHeader(headingText);
             if (parsed) {
@@ -148,9 +155,12 @@ export function parseWorkflowDocument(markdown, filename, options) {
                     description: parsed.description,
                     agentType: parsed.agentType,
                     isDynamic: parsed.isDynamic,
+                    isNamed: parsed.isNamed,
                     content: '',
                     command: undefined,
-                    prompts: [],
+                    promptText: '',
+                    hasSeenContent: false,
+                    hasSeenTransitions: false,
                     pendingConditionals: [],
                     line: node.position?.start.line
                 };
@@ -158,27 +168,25 @@ export function parseWorkflowDocument(markdown, filename, options) {
         }
         if (node.type === 'code' && currentStep) {
             const codeNode = node;
-            const prompted = isPromptedCodeBlock(codeNode.lang);
-            if (prompted === null) {
-                // Passive - preserve as prose with fences
-                const promptText = '\n```' + (codeNode.lang ?? '') + '\n' + codeNode.value + '\n```\n';
-                if (currentStep.pendingSubstep) {
-                    currentStep.pendingSubstep.content += promptText;
-                }
-                else {
-                    implicitText += promptText;
-                }
+            // Determine command based on code block type
+            let cmd;
+            if (isExecutableCodeBlock(codeNode.lang)) {
+                // bash/sh/shell → direct command
+                cmd = { code: codeNode.value.trim() };
             }
-            else {
-                // Command (executable or prompted)
-                const cmd = prompted
-                    ? { code: codeNode.value.trim(), prompted: true }
-                    : { code: codeNode.value.trim() };
+            else if (isPromptCodeBlock(codeNode.lang)) {
+                // prompt → rd prompt command (outputs with fences)
+                const escaped = escapeForShellSingleQuote(codeNode.value.trim());
+                cmd = { code: `rd prompt '${escaped}'` };
+            }
+            // Other code blocks (json, etc.) are ignored - not valid in runbooks
+            if (cmd) {
                 if (currentStep.pendingSubstep) {
                     if (currentStep.pendingSubstep.command) {
                         throw new WorkflowSyntaxError(`Multiple code blocks per substep not allowed in substep ${currentStep.pendingSubstep.id}`);
                     }
                     currentStep.pendingSubstep.command = cmd;
+                    currentStep.pendingSubstep.hasSeenContent = true;
                 }
                 else {
                     if (currentStep.command) {
@@ -186,6 +194,7 @@ export function parseWorkflowDocument(markdown, filename, options) {
                         throw new WorkflowSyntaxError(`Multiple code blocks per step not allowed in Step ${stepLabel}.`);
                     }
                     currentStep.command = cmd;
+                    currentStep.hasSeenContent = true;
                 }
             }
         }
@@ -204,17 +213,35 @@ export function parseWorkflowDocument(markdown, filename, options) {
                     if (conditional) {
                         if (currentStep.pendingSubstep) {
                             currentStep.pendingSubstep.pendingConditionals.push(conditional);
+                            // Mark that we've seen a transition in the substep
+                            currentStep.pendingSubstep.hasSeenTransitions = true;
                         }
                         else {
                             pendingConditionals.push(conditional);
+                            // Mark that we've seen a transition in the step
+                            currentStep.hasSeenContent = true;
                         }
                         hasConditional = true;
                     }
                     else if (line.trim()) {
+                        // NEW: Check ordering - text must come before content
                         if (currentStep.pendingSubstep) {
-                            currentStep.pendingSubstep.content += line.trim() + '\n';
+                            // In substeps: text cannot appear after transitions, but CAN appear after code blocks
+                            if (currentStep.pendingSubstep.hasSeenTransitions) {
+                                const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+                                // E17-R2: Include line number in error for better DX
+                                const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+                                throw new WorkflowSyntaxError(`Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`);
+                            }
+                            currentStep.pendingSubstep.promptText += line.trim() + '\n';
                         }
                         else {
+                            if (currentStep.hasSeenContent) {
+                                const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+                                // E17-R2: Include line number in error for better DX
+                                const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+                                throw new WorkflowSyntaxError(`Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`);
+                            }
                             implicitText += line.trim() + '\n';
                         }
                     }
@@ -233,19 +260,50 @@ export function parseWorkflowDocument(markdown, filename, options) {
                 if (conditional) {
                     if (currentStep.pendingSubstep) {
                         currentStep.pendingSubstep.pendingConditionals.push(conditional);
+                        // Mark that we've seen a transition in the substep
+                        currentStep.pendingSubstep.hasSeenTransitions = true;
                     }
                     else {
                         pendingConditionals.push(conditional);
+                        // Mark that we've seen a transition in the step
+                        currentStep.hasSeenContent = true;
                     }
                 }
                 else if (currentStep.pendingSubstep) {
+                    // FIXED: Check ordering BEFORE adding content (C2 fix)
+                    const isRunbookRef = /^\S+\.runbook\.md$/.test(text.trim());
+                    // In substeps: text cannot appear after transitions
+                    if (currentStep.pendingSubstep.hasSeenTransitions && !isRunbookRef) {
+                        const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+                        // E17-R2: Include line number in error for better DX
+                        const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+                        throw new WorkflowSyntaxError(`Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`);
+                    }
+                    // Only add content after validation passes
                     currentStep.pendingSubstep.content += ' - ' + text + '\n';
+                    // Mark content seen if workflow list
+                    if (isRunbookRef) {
+                        currentStep.pendingSubstep.hasSeenContent = true;
+                    }
                 }
                 else {
+                    // FIXED: Check ordering BEFORE adding content (C2 fix)
+                    const isRunbookRef = /^\S+\.runbook\.md$/.test(text.trim());
+                    if (currentStep.hasSeenContent && !isRunbookRef) {
+                        const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+                        // E17-R2: Include line number in error for better DX
+                        const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+                        throw new WorkflowSyntaxError(`Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`);
+                    }
+                    // Only add content after validation passes
                     const itemText = ' - ' + text + '\n';
                     currentStep.content += itemText;
-                    if (!/^\S+\.runbook\.md$/.test(text.trim())) {
+                    if (!isRunbookRef) {
                         implicitText += itemText;
+                    }
+                    else {
+                        // Mark content seen if workflow list
+                        currentStep.hasSeenContent = true;
                     }
                 }
             }
@@ -274,9 +332,10 @@ export function parseWorkflowDocument(markdown, filename, options) {
     };
 }
 function finalizeStep(step, pendingConditionals, implicitText) {
-    const prompts = [...step.prompts];
+    // Build single prompt string
+    let promptText = step.promptText;
     if (implicitText.trim()) {
-        prompts.push({ text: implicitText.trim() });
+        promptText += implicitText.trim();
     }
     // Validate NEXT usage before converting to transitions
     validateNEXTUsage(pendingConditionals, step.isDynamic);
@@ -284,10 +343,12 @@ function finalizeStep(step, pendingConditionals, implicitText) {
     const workflows = extractWorkflowList(step.content);
     return {
         number: step.number,
+        name: step.name,
         isDynamic: step.isDynamic,
+        isNamed: step.isNamed,
         description: step.description,
         command: step.command,
-        prompts: prompts,
+        prompt: promptText.trim() || undefined, // Changed from prompts array
         transitions: transitions ?? undefined,
         substeps: step.substeps.length > 0 ? step.substeps : undefined,
         workflows: workflows.length > 0 ? workflows : undefined,

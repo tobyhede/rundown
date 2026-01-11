@@ -3,13 +3,13 @@ import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { WorkflowStateManager } from '../../src/workflow/state.js';
-import { type Step, type StepNumber, type Workflow } from '../../src/workflow/types.js';
+import { type Step, type Workflow } from '../../src/workflow/types.js';
 
 describe('WorkflowStateManager', () => {
   let testDir: string;
   let manager: WorkflowStateManager;
   const mockSteps: Step[] = [{
-    number: 1 as StepNumber,
+    name: '1',
     description: 'Initial step',
     isDynamic: false
   }];
@@ -166,9 +166,9 @@ describe('WorkflowStateManager', () => {
           context: { variables: {}, retryCount: 0, substep: '2' }
         })
       };
-      
+
       const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
-      expect(updated.step).toBe(1);
+      expect(updated.step).toBe('1');
       expect(updated.substep).toBe('2');
     });
 
@@ -180,15 +180,15 @@ describe('WorkflowStateManager', () => {
           context: { variables: {}, retryCount: 0 }
         })
       };
-      
-      const steps = [
+
+      const steps: Step[] = [
         ...mockSteps,
-        { number: 2 as StepNumber, description: 'S2', isDynamic: false, prompts: [] },
-        { number: 3 as StepNumber, description: 'S3', isDynamic: false, prompts: [] }
+        { name: '2', description: 'S2', isDynamic: false },
+        { name: '3', description: 'S3', isDynamic: false }
       ];
 
       const updated = await manager.updateFromActor(state.id, actor as any, steps);
-      expect(updated.step).toBe(3);
+      expect(updated.step).toBe('3');
       expect(updated.substep).toBeUndefined();
     });
   });

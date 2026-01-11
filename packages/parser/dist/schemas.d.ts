@@ -8,13 +8,10 @@ export declare const MAX_STEP_NUMBER = 999999;
  */
 export declare const CommandSchema: z.ZodObject<{
     code: z.ZodString;
-    prompted: z.ZodOptional<z.ZodBoolean>;
 }, "strip", z.ZodTypeAny, {
     code: string;
-    prompted?: boolean | undefined;
 }, {
     code: string;
-    prompted?: boolean | undefined;
 }>;
 /**
  * Zod schema for StepNumber branded type
@@ -25,22 +22,27 @@ export declare const StepNumberSchema: z.ZodBranded<z.ZodNumber, "StepNumber">;
  */
 export type StepNumber = z.output<typeof StepNumberSchema>;
 /**
+ * Schema for named step identifiers
+ * Validates format and rejects reserved words (uses RESERVED_WORDS from step-id.ts)
+ */
+export declare const NamedIdentifierSchema: z.ZodEffects<z.ZodString, string, string>;
+/**
  * Zod schema for StepId
  */
 export declare const StepIdSchema: z.ZodEffects<z.ZodObject<{
-    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
     substep: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
-    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+    step: string | (number & z.BRAND<"StepNumber">);
     substep?: string | undefined;
 }, {
-    step: number | "{N}" | "NEXT";
+    step: string | number;
     substep?: string | undefined;
 }>, {
-    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+    step: string | (number & z.BRAND<"StepNumber">);
     substep?: string | undefined;
 }, {
-    step: number | "{N}" | "NEXT";
+    step: string | number;
     substep?: string | undefined;
 }>;
 /**
@@ -58,10 +60,13 @@ export declare const NonRetryActionSchema: z.ZodUnion<[z.ZodObject<{
     type: "CONTINUE";
 }>, z.ZodObject<{
     type: z.ZodLiteral<"COMPLETE">;
+    message: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     type: "COMPLETE";
+    message?: string | undefined;
 }, {
     type: "COMPLETE";
+    message?: string | undefined;
 }>, z.ZodObject<{
     type: z.ZodLiteral<"STOP">;
     message: z.ZodOptional<z.ZodString>;
@@ -74,31 +79,31 @@ export declare const NonRetryActionSchema: z.ZodUnion<[z.ZodObject<{
 }>, z.ZodObject<{
     type: z.ZodLiteral<"GOTO">;
     target: z.ZodEffects<z.ZodObject<{
-        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
         substep: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
-        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+        step: string | (number & z.BRAND<"StepNumber">);
         substep?: string | undefined;
     }, {
-        step: number | "{N}" | "NEXT";
+        step: string | number;
         substep?: string | undefined;
     }>, {
-        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+        step: string | (number & z.BRAND<"StepNumber">);
         substep?: string | undefined;
     }, {
-        step: number | "{N}" | "NEXT";
+        step: string | number;
         substep?: string | undefined;
     }>;
 }, "strip", z.ZodTypeAny, {
     type: "GOTO";
     target: {
-        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+        step: string | (number & z.BRAND<"StepNumber">);
         substep?: string | undefined;
     };
 }, {
     type: "GOTO";
     target: {
-        step: number | "{N}" | "NEXT";
+        step: string | number;
         substep?: string | undefined;
     };
 }>]>;
@@ -114,10 +119,13 @@ export declare const ActionSchema: z.ZodUnion<[z.ZodUnion<[z.ZodObject<{
     type: "CONTINUE";
 }>, z.ZodObject<{
     type: z.ZodLiteral<"COMPLETE">;
+    message: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     type: "COMPLETE";
+    message?: string | undefined;
 }, {
     type: "COMPLETE";
+    message?: string | undefined;
 }>, z.ZodObject<{
     type: z.ZodLiteral<"STOP">;
     message: z.ZodOptional<z.ZodString>;
@@ -130,31 +138,31 @@ export declare const ActionSchema: z.ZodUnion<[z.ZodUnion<[z.ZodObject<{
 }>, z.ZodObject<{
     type: z.ZodLiteral<"GOTO">;
     target: z.ZodEffects<z.ZodObject<{
-        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
         substep: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
-        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+        step: string | (number & z.BRAND<"StepNumber">);
         substep?: string | undefined;
     }, {
-        step: number | "{N}" | "NEXT";
+        step: string | number;
         substep?: string | undefined;
     }>, {
-        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+        step: string | (number & z.BRAND<"StepNumber">);
         substep?: string | undefined;
     }, {
-        step: number | "{N}" | "NEXT";
+        step: string | number;
         substep?: string | undefined;
     }>;
 }, "strip", z.ZodTypeAny, {
     type: "GOTO";
     target: {
-        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+        step: string | (number & z.BRAND<"StepNumber">);
         substep?: string | undefined;
     };
 }, {
     type: "GOTO";
     target: {
-        step: number | "{N}" | "NEXT";
+        step: string | number;
         substep?: string | undefined;
     };
 }>]>, z.ZodObject<{
@@ -168,10 +176,13 @@ export declare const ActionSchema: z.ZodUnion<[z.ZodUnion<[z.ZodObject<{
         type: "CONTINUE";
     }>, z.ZodObject<{
         type: z.ZodLiteral<"COMPLETE">;
+        message: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
         type: "COMPLETE";
+        message?: string | undefined;
     }, {
         type: "COMPLETE";
+        message?: string | undefined;
     }>, z.ZodObject<{
         type: z.ZodLiteral<"STOP">;
         message: z.ZodOptional<z.ZodString>;
@@ -184,31 +195,31 @@ export declare const ActionSchema: z.ZodUnion<[z.ZodUnion<[z.ZodObject<{
     }>, z.ZodObject<{
         type: z.ZodLiteral<"GOTO">;
         target: z.ZodEffects<z.ZodObject<{
-            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
             substep: z.ZodOptional<z.ZodString>;
         }, "strip", z.ZodTypeAny, {
-            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+            step: string | (number & z.BRAND<"StepNumber">);
             substep?: string | undefined;
         }, {
-            step: number | "{N}" | "NEXT";
+            step: string | number;
             substep?: string | undefined;
         }>, {
-            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+            step: string | (number & z.BRAND<"StepNumber">);
             substep?: string | undefined;
         }, {
-            step: number | "{N}" | "NEXT";
+            step: string | number;
             substep?: string | undefined;
         }>;
     }, "strip", z.ZodTypeAny, {
         type: "GOTO";
         target: {
-            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+            step: string | (number & z.BRAND<"StepNumber">);
             substep?: string | undefined;
         };
     }, {
         type: "GOTO";
         target: {
-            step: number | "{N}" | "NEXT";
+            step: string | number;
             substep?: string | undefined;
         };
     }>]>;
@@ -219,13 +230,14 @@ export declare const ActionSchema: z.ZodUnion<[z.ZodUnion<[z.ZodObject<{
         type: "CONTINUE";
     } | {
         type: "COMPLETE";
+        message?: string | undefined;
     } | {
         type: "STOP";
         message?: string | undefined;
     } | {
         type: "GOTO";
         target: {
-            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+            step: string | (number & z.BRAND<"StepNumber">);
             substep?: string | undefined;
         };
     };
@@ -236,13 +248,14 @@ export declare const ActionSchema: z.ZodUnion<[z.ZodUnion<[z.ZodObject<{
         type: "CONTINUE";
     } | {
         type: "COMPLETE";
+        message?: string | undefined;
     } | {
         type: "STOP";
         message?: string | undefined;
     } | {
         type: "GOTO";
         target: {
-            step: number | "{N}" | "NEXT";
+            step: string | number;
             substep?: string | undefined;
         };
     };
@@ -266,10 +279,13 @@ export declare const TransitionObjectSchema: z.ZodObject<{
         type: "CONTINUE";
     }>, z.ZodObject<{
         type: z.ZodLiteral<"COMPLETE">;
+        message: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
         type: "COMPLETE";
+        message?: string | undefined;
     }, {
         type: "COMPLETE";
+        message?: string | undefined;
     }>, z.ZodObject<{
         type: z.ZodLiteral<"STOP">;
         message: z.ZodOptional<z.ZodString>;
@@ -282,31 +298,31 @@ export declare const TransitionObjectSchema: z.ZodObject<{
     }>, z.ZodObject<{
         type: z.ZodLiteral<"GOTO">;
         target: z.ZodEffects<z.ZodObject<{
-            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
             substep: z.ZodOptional<z.ZodString>;
         }, "strip", z.ZodTypeAny, {
-            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+            step: string | (number & z.BRAND<"StepNumber">);
             substep?: string | undefined;
         }, {
-            step: number | "{N}" | "NEXT";
+            step: string | number;
             substep?: string | undefined;
         }>, {
-            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+            step: string | (number & z.BRAND<"StepNumber">);
             substep?: string | undefined;
         }, {
-            step: number | "{N}" | "NEXT";
+            step: string | number;
             substep?: string | undefined;
         }>;
     }, "strip", z.ZodTypeAny, {
         type: "GOTO";
         target: {
-            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+            step: string | (number & z.BRAND<"StepNumber">);
             substep?: string | undefined;
         };
     }, {
         type: "GOTO";
         target: {
-            step: number | "{N}" | "NEXT";
+            step: string | number;
             substep?: string | undefined;
         };
     }>]>, z.ZodObject<{
@@ -320,10 +336,13 @@ export declare const TransitionObjectSchema: z.ZodObject<{
             type: "CONTINUE";
         }>, z.ZodObject<{
             type: z.ZodLiteral<"COMPLETE">;
+            message: z.ZodOptional<z.ZodString>;
         }, "strip", z.ZodTypeAny, {
             type: "COMPLETE";
+            message?: string | undefined;
         }, {
             type: "COMPLETE";
+            message?: string | undefined;
         }>, z.ZodObject<{
             type: z.ZodLiteral<"STOP">;
             message: z.ZodOptional<z.ZodString>;
@@ -336,31 +355,31 @@ export declare const TransitionObjectSchema: z.ZodObject<{
         }>, z.ZodObject<{
             type: z.ZodLiteral<"GOTO">;
             target: z.ZodEffects<z.ZodObject<{
-                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                 substep: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             }, {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             }>, {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             }, {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             }>;
         }, "strip", z.ZodTypeAny, {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         }, {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         }>]>;
@@ -371,13 +390,14 @@ export declare const TransitionObjectSchema: z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         };
@@ -388,13 +408,14 @@ export declare const TransitionObjectSchema: z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         };
@@ -405,13 +426,14 @@ export declare const TransitionObjectSchema: z.ZodObject<{
         type: "CONTINUE";
     } | {
         type: "COMPLETE";
+        message?: string | undefined;
     } | {
         type: "STOP";
         message?: string | undefined;
     } | {
         type: "GOTO";
         target: {
-            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+            step: string | (number & z.BRAND<"StepNumber">);
             substep?: string | undefined;
         };
     } | {
@@ -421,13 +443,14 @@ export declare const TransitionObjectSchema: z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         };
@@ -438,13 +461,14 @@ export declare const TransitionObjectSchema: z.ZodObject<{
         type: "CONTINUE";
     } | {
         type: "COMPLETE";
+        message?: string | undefined;
     } | {
         type: "STOP";
         message?: string | undefined;
     } | {
         type: "GOTO";
         target: {
-            step: number | "{N}" | "NEXT";
+            step: string | number;
             substep?: string | undefined;
         };
     } | {
@@ -454,13 +478,14 @@ export declare const TransitionObjectSchema: z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         };
@@ -482,10 +507,13 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         }>, z.ZodObject<{
             type: z.ZodLiteral<"COMPLETE">;
+            message: z.ZodOptional<z.ZodString>;
         }, "strip", z.ZodTypeAny, {
             type: "COMPLETE";
+            message?: string | undefined;
         }, {
             type: "COMPLETE";
+            message?: string | undefined;
         }>, z.ZodObject<{
             type: z.ZodLiteral<"STOP">;
             message: z.ZodOptional<z.ZodString>;
@@ -498,31 +526,31 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
         }>, z.ZodObject<{
             type: z.ZodLiteral<"GOTO">;
             target: z.ZodEffects<z.ZodObject<{
-                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                 substep: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             }, {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             }>, {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             }, {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             }>;
         }, "strip", z.ZodTypeAny, {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         }, {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         }>]>, z.ZodObject<{
@@ -536,10 +564,13 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -552,31 +583,31 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>;
@@ -587,13 +618,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -604,13 +636,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -621,13 +654,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         } | {
@@ -637,13 +671,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -654,13 +689,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         } | {
@@ -670,13 +706,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -692,10 +729,13 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         }>, z.ZodObject<{
             type: z.ZodLiteral<"COMPLETE">;
+            message: z.ZodOptional<z.ZodString>;
         }, "strip", z.ZodTypeAny, {
             type: "COMPLETE";
+            message?: string | undefined;
         }, {
             type: "COMPLETE";
+            message?: string | undefined;
         }>, z.ZodObject<{
             type: z.ZodLiteral<"STOP">;
             message: z.ZodOptional<z.ZodString>;
@@ -708,31 +748,31 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
         }>, z.ZodObject<{
             type: z.ZodLiteral<"GOTO">;
             target: z.ZodEffects<z.ZodObject<{
-                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                 substep: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             }, {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             }>, {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             }, {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             }>;
         }, "strip", z.ZodTypeAny, {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         }, {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         }>]>, z.ZodObject<{
@@ -746,10 +786,13 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -762,31 +805,31 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>;
@@ -797,13 +840,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -814,13 +858,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -831,13 +876,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         } | {
@@ -847,13 +893,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -864,13 +911,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         } | {
@@ -880,13 +928,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -899,13 +948,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         } | {
@@ -915,13 +965,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -933,13 +984,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         } | {
@@ -949,13 +1001,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -969,13 +1022,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         } | {
@@ -985,13 +1039,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -1003,13 +1058,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         } | {
@@ -1019,13 +1075,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -1044,10 +1101,13 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         }>, z.ZodObject<{
             type: z.ZodLiteral<"COMPLETE">;
+            message: z.ZodOptional<z.ZodString>;
         }, "strip", z.ZodTypeAny, {
             type: "COMPLETE";
+            message?: string | undefined;
         }, {
             type: "COMPLETE";
+            message?: string | undefined;
         }>, z.ZodObject<{
             type: z.ZodLiteral<"STOP">;
             message: z.ZodOptional<z.ZodString>;
@@ -1060,31 +1120,31 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
         }>, z.ZodObject<{
             type: z.ZodLiteral<"GOTO">;
             target: z.ZodEffects<z.ZodObject<{
-                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                 substep: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             }, {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             }>, {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             }, {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             }>;
         }, "strip", z.ZodTypeAny, {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         }, {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         }>]>, z.ZodObject<{
@@ -1098,10 +1158,13 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -1114,31 +1177,31 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>;
@@ -1149,13 +1212,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -1166,13 +1230,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -1183,13 +1248,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         } | {
@@ -1199,13 +1265,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -1216,13 +1283,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         } | {
@@ -1232,13 +1300,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -1254,10 +1323,13 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         }>, z.ZodObject<{
             type: z.ZodLiteral<"COMPLETE">;
+            message: z.ZodOptional<z.ZodString>;
         }, "strip", z.ZodTypeAny, {
             type: "COMPLETE";
+            message?: string | undefined;
         }, {
             type: "COMPLETE";
+            message?: string | undefined;
         }>, z.ZodObject<{
             type: z.ZodLiteral<"STOP">;
             message: z.ZodOptional<z.ZodString>;
@@ -1270,31 +1342,31 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
         }>, z.ZodObject<{
             type: z.ZodLiteral<"GOTO">;
             target: z.ZodEffects<z.ZodObject<{
-                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                 substep: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             }, {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             }>, {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             }, {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             }>;
         }, "strip", z.ZodTypeAny, {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         }, {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         }>]>, z.ZodObject<{
@@ -1308,10 +1380,13 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -1324,31 +1399,31 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>;
@@ -1359,13 +1434,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -1376,13 +1452,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -1393,13 +1470,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         } | {
@@ -1409,13 +1487,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -1426,13 +1505,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         } | {
@@ -1442,13 +1522,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -1461,13 +1542,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         } | {
@@ -1477,13 +1559,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -1495,13 +1578,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                step: string | (number & z.BRAND<"StepNumber">);
                 substep?: string | undefined;
             };
         } | {
@@ -1511,13 +1595,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             };
@@ -1531,13 +1616,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         } | {
@@ -1547,13 +1633,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -1565,13 +1652,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
             type: "CONTINUE";
         } | {
             type: "COMPLETE";
+            message?: string | undefined;
         } | {
             type: "STOP";
             message?: string | undefined;
         } | {
             type: "GOTO";
             target: {
-                step: number | "{N}" | "NEXT";
+                step: string | number;
                 substep?: string | undefined;
             };
         } | {
@@ -1581,13 +1669,14 @@ export declare const TransitionsSchema: z.ZodUnion<[z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             };
@@ -1604,24 +1693,16 @@ export declare const SubstepSchema: z.ZodObject<{
     description: z.ZodString;
     agentType: z.ZodOptional<z.ZodString>;
     isDynamic: z.ZodBoolean;
-    workflows: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    isNamed: z.ZodBoolean;
+    workflows: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString, "many">>>;
     command: z.ZodOptional<z.ZodObject<{
         code: z.ZodString;
-        prompted: z.ZodOptional<z.ZodBoolean>;
     }, "strip", z.ZodTypeAny, {
         code: string;
-        prompted?: boolean | undefined;
     }, {
         code: string;
-        prompted?: boolean | undefined;
     }>>;
-    prompts: z.ZodArray<z.ZodObject<{
-        text: z.ZodString;
-    }, "strip", z.ZodTypeAny, {
-        text: string;
-    }, {
-        text: string;
-    }>, "many">;
+    prompt: z.ZodOptional<z.ZodString>;
     transitions: z.ZodOptional<z.ZodUnion<[z.ZodObject<{
         all: z.ZodLiteral<true>;
         pass: z.ZodObject<{
@@ -1634,10 +1715,13 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -1650,31 +1734,31 @@ export declare const SubstepSchema: z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>, z.ZodObject<{
@@ -1688,10 +1772,13 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -1704,31 +1791,31 @@ export declare const SubstepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>;
@@ -1739,13 +1826,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -1756,13 +1844,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -1773,13 +1862,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -1789,13 +1879,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -1806,13 +1897,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -1822,13 +1914,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -1844,10 +1937,13 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -1860,31 +1956,31 @@ export declare const SubstepSchema: z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>, z.ZodObject<{
@@ -1898,10 +1994,13 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -1914,31 +2013,31 @@ export declare const SubstepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>;
@@ -1949,13 +2048,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -1966,13 +2066,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -1983,13 +2084,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -1999,13 +2101,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2016,13 +2119,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -2032,13 +2136,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2051,13 +2156,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -2067,13 +2173,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2085,13 +2192,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -2101,13 +2209,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2121,13 +2230,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -2137,13 +2247,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2155,13 +2266,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -2171,13 +2283,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2196,10 +2309,13 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -2212,31 +2328,31 @@ export declare const SubstepSchema: z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>, z.ZodObject<{
@@ -2250,10 +2366,13 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -2266,31 +2385,31 @@ export declare const SubstepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>;
@@ -2301,13 +2420,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2318,13 +2438,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2335,13 +2456,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -2351,13 +2473,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2368,13 +2491,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -2384,13 +2508,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2406,10 +2531,13 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -2422,31 +2550,31 @@ export declare const SubstepSchema: z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>, z.ZodObject<{
@@ -2460,10 +2588,13 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -2476,31 +2607,31 @@ export declare const SubstepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>;
@@ -2511,13 +2642,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2528,13 +2660,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2545,13 +2678,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -2561,13 +2695,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2578,13 +2713,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -2594,13 +2730,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2613,13 +2750,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -2629,13 +2767,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2647,13 +2786,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -2663,13 +2803,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2683,13 +2824,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -2699,13 +2841,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2717,13 +2860,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -2733,13 +2877,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2751,15 +2896,13 @@ export declare const SubstepSchema: z.ZodObject<{
     id: string;
     description: string;
     isDynamic: boolean;
-    prompts: {
-        text: string;
-    }[];
+    isNamed: boolean;
     agentType?: string | undefined;
-    workflows?: string[] | undefined;
+    workflows?: readonly string[] | undefined;
     command?: {
         code: string;
-        prompted?: boolean | undefined;
     } | undefined;
+    prompt?: string | undefined;
     transitions?: {
         pass: {
             kind: "pass" | "fail" | "yes" | "no";
@@ -2767,13 +2910,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -2783,13 +2927,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2801,13 +2946,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -2817,13 +2963,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2837,13 +2984,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -2853,13 +3001,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2871,13 +3020,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -2887,13 +3037,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -2905,15 +3056,13 @@ export declare const SubstepSchema: z.ZodObject<{
     id: string;
     description: string;
     isDynamic: boolean;
-    prompts: {
-        text: string;
-    }[];
+    isNamed: boolean;
     agentType?: string | undefined;
-    workflows?: string[] | undefined;
+    workflows?: readonly string[] | undefined;
     command?: {
         code: string;
-        prompted?: boolean | undefined;
     } | undefined;
+    prompt?: string | undefined;
     transitions?: {
         pass: {
             kind: "pass" | "fail" | "yes" | "no";
@@ -2921,13 +3070,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -2937,13 +3087,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2955,13 +3106,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -2971,13 +3123,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -2991,13 +3144,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -3007,13 +3161,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -3025,13 +3180,14 @@ export declare const SubstepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -3041,13 +3197,14 @@ export declare const SubstepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -3061,25 +3218,18 @@ export declare const SubstepSchema: z.ZodObject<{
  */
 export declare const StepSchema: z.ZodObject<{
     number: z.ZodOptional<z.ZodBranded<z.ZodNumber, "StepNumber">>;
+    name: z.ZodOptional<z.ZodString>;
     isDynamic: z.ZodBoolean;
+    isNamed: z.ZodBoolean;
     description: z.ZodString;
     command: z.ZodOptional<z.ZodObject<{
         code: z.ZodString;
-        prompted: z.ZodOptional<z.ZodBoolean>;
     }, "strip", z.ZodTypeAny, {
         code: string;
-        prompted?: boolean | undefined;
     }, {
         code: string;
-        prompted?: boolean | undefined;
     }>>;
-    prompts: z.ZodArray<z.ZodObject<{
-        text: z.ZodString;
-    }, "strip", z.ZodTypeAny, {
-        text: string;
-    }, {
-        text: string;
-    }>, "many">;
+    prompt: z.ZodOptional<z.ZodString>;
     transitions: z.ZodOptional<z.ZodUnion<[z.ZodObject<{
         all: z.ZodLiteral<true>;
         pass: z.ZodObject<{
@@ -3092,10 +3242,13 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -3108,31 +3261,31 @@ export declare const StepSchema: z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>, z.ZodObject<{
@@ -3146,10 +3299,13 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -3162,31 +3318,31 @@ export declare const StepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>;
@@ -3197,13 +3353,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -3214,13 +3371,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -3231,13 +3389,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -3247,13 +3406,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -3264,13 +3424,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -3280,13 +3441,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -3302,10 +3464,13 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -3318,31 +3483,31 @@ export declare const StepSchema: z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>, z.ZodObject<{
@@ -3356,10 +3521,13 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -3372,31 +3540,31 @@ export declare const StepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>;
@@ -3407,13 +3575,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -3424,13 +3593,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -3441,13 +3611,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -3457,13 +3628,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -3474,13 +3646,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -3490,13 +3663,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -3509,13 +3683,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -3525,13 +3700,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -3543,13 +3719,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -3559,13 +3736,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -3579,13 +3757,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -3595,13 +3774,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -3613,13 +3793,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -3629,13 +3810,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -3654,10 +3836,13 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -3670,31 +3855,31 @@ export declare const StepSchema: z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>, z.ZodObject<{
@@ -3708,10 +3893,13 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -3724,31 +3912,31 @@ export declare const StepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>;
@@ -3759,13 +3947,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -3776,13 +3965,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -3793,13 +3983,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -3809,13 +4000,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -3826,13 +4018,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -3842,13 +4035,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -3864,10 +4058,13 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"COMPLETE">;
+                message: z.ZodOptional<z.ZodString>;
             }, "strip", z.ZodTypeAny, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }, {
                 type: "COMPLETE";
+                message?: string | undefined;
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"STOP">;
                 message: z.ZodOptional<z.ZodString>;
@@ -3880,31 +4077,31 @@ export declare const StepSchema: z.ZodObject<{
             }>, z.ZodObject<{
                 type: z.ZodLiteral<"GOTO">;
                 target: z.ZodEffects<z.ZodObject<{
-                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                    step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                     substep: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>, {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 }, {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 }>;
             }, "strip", z.ZodTypeAny, {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             }, {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             }>]>, z.ZodObject<{
@@ -3918,10 +4115,13 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -3934,31 +4134,31 @@ export declare const StepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>;
@@ -3969,13 +4169,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -3986,13 +4187,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -4003,13 +4205,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -4019,13 +4222,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -4036,13 +4240,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -4052,13 +4257,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -4071,13 +4277,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -4087,13 +4294,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -4105,13 +4313,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -4121,13 +4330,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -4141,13 +4351,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -4157,13 +4368,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -4175,13 +4387,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -4191,13 +4404,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -4205,29 +4419,21 @@ export declare const StepSchema: z.ZodObject<{
         };
         all: false;
     }>]>>;
-    substeps: z.ZodOptional<z.ZodArray<z.ZodObject<{
+    substeps: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodObject<{
         id: z.ZodString;
         description: z.ZodString;
         agentType: z.ZodOptional<z.ZodString>;
         isDynamic: z.ZodBoolean;
-        workflows: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        isNamed: z.ZodBoolean;
+        workflows: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString, "many">>>;
         command: z.ZodOptional<z.ZodObject<{
             code: z.ZodString;
-            prompted: z.ZodOptional<z.ZodBoolean>;
         }, "strip", z.ZodTypeAny, {
             code: string;
-            prompted?: boolean | undefined;
         }, {
             code: string;
-            prompted?: boolean | undefined;
         }>>;
-        prompts: z.ZodArray<z.ZodObject<{
-            text: z.ZodString;
-        }, "strip", z.ZodTypeAny, {
-            text: string;
-        }, {
-            text: string;
-        }>, "many">;
+        prompt: z.ZodOptional<z.ZodString>;
         transitions: z.ZodOptional<z.ZodUnion<[z.ZodObject<{
             all: z.ZodLiteral<true>;
             pass: z.ZodObject<{
@@ -4240,10 +4446,13 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -4256,31 +4465,31 @@ export declare const StepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>, z.ZodObject<{
@@ -4294,10 +4503,13 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -4310,31 +4522,31 @@ export declare const StepSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>;
@@ -4345,13 +4557,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -4362,13 +4575,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -4379,13 +4593,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -4395,13 +4610,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -4412,13 +4628,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -4428,13 +4645,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -4450,10 +4668,13 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -4466,31 +4687,31 @@ export declare const StepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>, z.ZodObject<{
@@ -4504,10 +4725,13 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -4520,31 +4744,31 @@ export declare const StepSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>;
@@ -4555,13 +4779,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -4572,13 +4797,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -4589,13 +4815,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -4605,13 +4832,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -4622,13 +4850,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -4638,13 +4867,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -4657,13 +4887,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -4673,13 +4904,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -4691,13 +4923,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -4707,13 +4940,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -4727,13 +4961,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -4743,13 +4978,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -4761,13 +4997,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -4777,13 +5014,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -4802,10 +5040,13 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -4818,31 +5059,31 @@ export declare const StepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>, z.ZodObject<{
@@ -4856,10 +5097,13 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -4872,31 +5116,31 @@ export declare const StepSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>;
@@ -4907,13 +5151,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -4924,13 +5169,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -4941,13 +5187,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -4957,13 +5204,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -4974,13 +5222,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -4990,13 +5239,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -5012,10 +5262,13 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -5028,31 +5281,31 @@ export declare const StepSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>, z.ZodObject<{
@@ -5066,10 +5319,13 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -5082,31 +5338,31 @@ export declare const StepSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>;
@@ -5117,13 +5373,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5134,13 +5391,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -5151,13 +5409,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5167,13 +5426,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5184,13 +5444,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -5200,13 +5461,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -5219,13 +5481,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5235,13 +5498,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5253,13 +5517,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5269,13 +5534,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5289,13 +5555,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -5305,13 +5572,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -5323,13 +5591,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -5339,13 +5608,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -5357,15 +5627,13 @@ export declare const StepSchema: z.ZodObject<{
         id: string;
         description: string;
         isDynamic: boolean;
-        prompts: {
-            text: string;
-        }[];
+        isNamed: boolean;
         agentType?: string | undefined;
-        workflows?: string[] | undefined;
+        workflows?: readonly string[] | undefined;
         command?: {
             code: string;
-            prompted?: boolean | undefined;
         } | undefined;
+        prompt?: string | undefined;
         transitions?: {
             pass: {
                 kind: "pass" | "fail" | "yes" | "no";
@@ -5373,13 +5641,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5389,13 +5658,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5407,13 +5677,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5423,13 +5694,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5443,13 +5715,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5459,13 +5732,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5477,13 +5751,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5493,13 +5768,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5511,15 +5787,13 @@ export declare const StepSchema: z.ZodObject<{
         id: string;
         description: string;
         isDynamic: boolean;
-        prompts: {
-            text: string;
-        }[];
+        isNamed: boolean;
         agentType?: string | undefined;
-        workflows?: string[] | undefined;
+        workflows?: readonly string[] | undefined;
         command?: {
             code: string;
-            prompted?: boolean | undefined;
         } | undefined;
+        prompt?: string | undefined;
         transitions?: {
             pass: {
                 kind: "pass" | "fail" | "yes" | "no";
@@ -5527,13 +5801,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -5543,13 +5818,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -5561,13 +5837,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -5577,13 +5854,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -5597,13 +5875,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -5613,13 +5892,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -5631,13 +5911,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -5647,13 +5928,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -5661,21 +5943,19 @@ export declare const StepSchema: z.ZodObject<{
             };
             all: false;
         } | undefined;
-    }>, "many">>;
-    workflows: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    }>, "many">>>;
+    workflows: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString, "many">>>;
     nestedWorkflow: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     description: string;
     isDynamic: boolean;
-    prompts: {
-        text: string;
-    }[];
+    isNamed: boolean;
     number?: (number & z.BRAND<"StepNumber">) | undefined;
-    workflows?: string[] | undefined;
+    workflows?: readonly string[] | undefined;
     command?: {
         code: string;
-        prompted?: boolean | undefined;
     } | undefined;
+    prompt?: string | undefined;
     transitions?: {
         pass: {
             kind: "pass" | "fail" | "yes" | "no";
@@ -5683,13 +5963,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -5699,13 +5980,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -5717,13 +5999,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -5733,13 +6016,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -5753,13 +6037,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -5769,13 +6054,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -5787,13 +6073,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                    step: string | (number & z.BRAND<"StepNumber">);
                     substep?: string | undefined;
                 };
             } | {
@@ -5803,13 +6090,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 };
@@ -5817,19 +6105,18 @@ export declare const StepSchema: z.ZodObject<{
         };
         all: false;
     } | undefined;
-    substeps?: {
+    name?: string | undefined;
+    substeps?: readonly {
         id: string;
         description: string;
         isDynamic: boolean;
-        prompts: {
-            text: string;
-        }[];
+        isNamed: boolean;
         agentType?: string | undefined;
-        workflows?: string[] | undefined;
+        workflows?: readonly string[] | undefined;
         command?: {
             code: string;
-            prompted?: boolean | undefined;
         } | undefined;
+        prompt?: string | undefined;
         transitions?: {
             pass: {
                 kind: "pass" | "fail" | "yes" | "no";
@@ -5837,13 +6124,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5853,13 +6141,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5871,13 +6160,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5887,13 +6177,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5907,13 +6198,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5923,13 +6215,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5941,13 +6234,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -5957,13 +6251,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -5976,15 +6271,13 @@ export declare const StepSchema: z.ZodObject<{
 }, {
     description: string;
     isDynamic: boolean;
-    prompts: {
-        text: string;
-    }[];
+    isNamed: boolean;
     number?: number | undefined;
-    workflows?: string[] | undefined;
+    workflows?: readonly string[] | undefined;
     command?: {
         code: string;
-        prompted?: boolean | undefined;
     } | undefined;
+    prompt?: string | undefined;
     transitions?: {
         pass: {
             kind: "pass" | "fail" | "yes" | "no";
@@ -5992,13 +6285,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -6008,13 +6302,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -6026,13 +6321,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -6042,13 +6338,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -6062,13 +6359,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -6078,13 +6376,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -6096,13 +6395,14 @@ export declare const StepSchema: z.ZodObject<{
                 type: "CONTINUE";
             } | {
                 type: "COMPLETE";
+                message?: string | undefined;
             } | {
                 type: "STOP";
                 message?: string | undefined;
             } | {
                 type: "GOTO";
                 target: {
-                    step: number | "{N}" | "NEXT";
+                    step: string | number;
                     substep?: string | undefined;
                 };
             } | {
@@ -6112,13 +6412,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 };
@@ -6126,19 +6427,18 @@ export declare const StepSchema: z.ZodObject<{
         };
         all: false;
     } | undefined;
-    substeps?: {
+    name?: string | undefined;
+    substeps?: readonly {
         id: string;
         description: string;
         isDynamic: boolean;
-        prompts: {
-            text: string;
-        }[];
+        isNamed: boolean;
         agentType?: string | undefined;
-        workflows?: string[] | undefined;
+        workflows?: readonly string[] | undefined;
         command?: {
             code: string;
-            prompted?: boolean | undefined;
         } | undefined;
+        prompt?: string | undefined;
         transitions?: {
             pass: {
                 kind: "pass" | "fail" | "yes" | "no";
@@ -6146,13 +6446,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -6162,13 +6463,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -6180,13 +6482,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -6196,13 +6499,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -6216,13 +6520,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -6232,13 +6537,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -6250,13 +6556,14 @@ export declare const StepSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -6266,13 +6573,14 @@ export declare const StepSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -6291,25 +6599,18 @@ export declare const WorkflowSchema: z.ZodObject<{
     description: z.ZodOptional<z.ZodString>;
     steps: z.ZodArray<z.ZodObject<{
         number: z.ZodOptional<z.ZodBranded<z.ZodNumber, "StepNumber">>;
+        name: z.ZodOptional<z.ZodString>;
         isDynamic: z.ZodBoolean;
+        isNamed: z.ZodBoolean;
         description: z.ZodString;
         command: z.ZodOptional<z.ZodObject<{
             code: z.ZodString;
-            prompted: z.ZodOptional<z.ZodBoolean>;
         }, "strip", z.ZodTypeAny, {
             code: string;
-            prompted?: boolean | undefined;
         }, {
             code: string;
-            prompted?: boolean | undefined;
         }>>;
-        prompts: z.ZodArray<z.ZodObject<{
-            text: z.ZodString;
-        }, "strip", z.ZodTypeAny, {
-            text: string;
-        }, {
-            text: string;
-        }>, "many">;
+        prompt: z.ZodOptional<z.ZodString>;
         transitions: z.ZodOptional<z.ZodUnion<[z.ZodObject<{
             all: z.ZodLiteral<true>;
             pass: z.ZodObject<{
@@ -6322,10 +6623,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -6338,31 +6642,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>, z.ZodObject<{
@@ -6376,10 +6680,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -6392,31 +6699,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>;
@@ -6427,13 +6734,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -6444,13 +6752,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -6461,13 +6770,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -6477,13 +6787,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -6494,13 +6805,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -6510,13 +6822,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -6532,10 +6845,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -6548,31 +6864,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>, z.ZodObject<{
@@ -6586,10 +6902,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -6602,31 +6921,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>;
@@ -6637,13 +6956,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -6654,13 +6974,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -6671,13 +6992,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -6687,13 +7009,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -6704,13 +7027,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -6720,13 +7044,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -6739,13 +7064,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -6755,13 +7081,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -6773,13 +7100,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -6789,13 +7117,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -6809,13 +7138,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -6825,13 +7155,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -6843,13 +7174,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -6859,13 +7191,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -6884,10 +7217,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -6900,31 +7236,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>, z.ZodObject<{
@@ -6938,10 +7274,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -6954,31 +7293,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>;
@@ -6989,13 +7328,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -7006,13 +7346,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -7023,13 +7364,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -7039,13 +7381,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -7056,13 +7399,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -7072,13 +7416,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -7094,10 +7439,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"COMPLETE">;
+                    message: z.ZodOptional<z.ZodString>;
                 }, "strip", z.ZodTypeAny, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }, {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"STOP">;
                     message: z.ZodOptional<z.ZodString>;
@@ -7110,31 +7458,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                 }>, z.ZodObject<{
                     type: z.ZodLiteral<"GOTO">;
                     target: z.ZodEffects<z.ZodObject<{
-                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                        step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                         substep: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>, {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     }, {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     }>;
                 }, "strip", z.ZodTypeAny, {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 }, {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 }>]>, z.ZodObject<{
@@ -7148,10 +7496,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -7164,31 +7515,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>;
@@ -7199,13 +7550,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -7216,13 +7568,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -7233,13 +7586,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -7249,13 +7603,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -7266,13 +7621,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -7282,13 +7638,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -7301,13 +7658,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -7317,13 +7675,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -7335,13 +7694,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -7351,13 +7711,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -7371,13 +7732,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -7387,13 +7749,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -7405,13 +7768,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -7421,13 +7785,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -7435,29 +7800,21 @@ export declare const WorkflowSchema: z.ZodObject<{
             };
             all: false;
         }>]>>;
-        substeps: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        substeps: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodObject<{
             id: z.ZodString;
             description: z.ZodString;
             agentType: z.ZodOptional<z.ZodString>;
             isDynamic: z.ZodBoolean;
-            workflows: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+            isNamed: z.ZodBoolean;
+            workflows: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString, "many">>>;
             command: z.ZodOptional<z.ZodObject<{
                 code: z.ZodString;
-                prompted: z.ZodOptional<z.ZodBoolean>;
             }, "strip", z.ZodTypeAny, {
                 code: string;
-                prompted?: boolean | undefined;
             }, {
                 code: string;
-                prompted?: boolean | undefined;
             }>>;
-            prompts: z.ZodArray<z.ZodObject<{
-                text: z.ZodString;
-            }, "strip", z.ZodTypeAny, {
-                text: string;
-            }, {
-                text: string;
-            }>, "many">;
+            prompt: z.ZodOptional<z.ZodString>;
             transitions: z.ZodOptional<z.ZodUnion<[z.ZodObject<{
                 all: z.ZodLiteral<true>;
                 pass: z.ZodObject<{
@@ -7470,10 +7827,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -7486,31 +7846,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>, z.ZodObject<{
@@ -7524,10 +7884,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"COMPLETE">;
+                            message: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         }, {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"STOP">;
                             message: z.ZodOptional<z.ZodString>;
@@ -7540,31 +7903,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"GOTO">;
                             target: z.ZodEffects<z.ZodObject<{
-                                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                                 substep: z.ZodOptional<z.ZodString>;
                             }, "strip", z.ZodTypeAny, {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             }, {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             }>, {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             }, {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             }>;
                         }, "strip", z.ZodTypeAny, {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         }, {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         }>]>;
@@ -7575,13 +7938,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -7592,13 +7956,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -7609,13 +7974,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -7625,13 +7991,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -7642,13 +8009,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -7658,13 +8026,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -7680,10 +8049,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -7696,31 +8068,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>, z.ZodObject<{
@@ -7734,10 +8106,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"COMPLETE">;
+                            message: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         }, {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"STOP">;
                             message: z.ZodOptional<z.ZodString>;
@@ -7750,31 +8125,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"GOTO">;
                             target: z.ZodEffects<z.ZodObject<{
-                                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                                 substep: z.ZodOptional<z.ZodString>;
                             }, "strip", z.ZodTypeAny, {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             }, {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             }>, {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             }, {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             }>;
                         }, "strip", z.ZodTypeAny, {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         }, {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         }>]>;
@@ -7785,13 +8160,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -7802,13 +8178,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -7819,13 +8196,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -7835,13 +8213,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -7852,13 +8231,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -7868,13 +8248,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -7887,13 +8268,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -7903,13 +8285,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -7921,13 +8304,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -7937,13 +8321,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -7957,13 +8342,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -7973,13 +8359,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -7991,13 +8378,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -8007,13 +8395,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8032,10 +8421,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -8048,31 +8440,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>, z.ZodObject<{
@@ -8086,10 +8478,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"COMPLETE">;
+                            message: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         }, {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"STOP">;
                             message: z.ZodOptional<z.ZodString>;
@@ -8102,31 +8497,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"GOTO">;
                             target: z.ZodEffects<z.ZodObject<{
-                                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                                 substep: z.ZodOptional<z.ZodString>;
                             }, "strip", z.ZodTypeAny, {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             }, {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             }>, {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             }, {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             }>;
                         }, "strip", z.ZodTypeAny, {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         }, {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         }>]>;
@@ -8137,13 +8532,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -8154,13 +8550,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8171,13 +8568,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -8187,13 +8585,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -8204,13 +8603,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -8220,13 +8620,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8242,10 +8643,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"COMPLETE">;
+                        message: z.ZodOptional<z.ZodString>;
                     }, "strip", z.ZodTypeAny, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }, {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"STOP">;
                         message: z.ZodOptional<z.ZodString>;
@@ -8258,31 +8662,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                     }>, z.ZodObject<{
                         type: z.ZodLiteral<"GOTO">;
                         target: z.ZodEffects<z.ZodObject<{
-                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                            step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                             substep: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>, {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         }, {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         }>;
                     }, "strip", z.ZodTypeAny, {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     }, {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     }>]>, z.ZodObject<{
@@ -8296,10 +8700,13 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"COMPLETE">;
+                            message: z.ZodOptional<z.ZodString>;
                         }, "strip", z.ZodTypeAny, {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         }, {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"STOP">;
                             message: z.ZodOptional<z.ZodString>;
@@ -8312,31 +8719,31 @@ export declare const WorkflowSchema: z.ZodObject<{
                         }>, z.ZodObject<{
                             type: z.ZodLiteral<"GOTO">;
                             target: z.ZodEffects<z.ZodObject<{
-                                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">]>;
+                                step: z.ZodUnion<[z.ZodBranded<z.ZodNumber, "StepNumber">, z.ZodLiteral<"{N}">, z.ZodLiteral<"NEXT">, z.ZodEffects<z.ZodString, string, string>]>;
                                 substep: z.ZodOptional<z.ZodString>;
                             }, "strip", z.ZodTypeAny, {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             }, {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             }>, {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             }, {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             }>;
                         }, "strip", z.ZodTypeAny, {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         }, {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         }>]>;
@@ -8347,13 +8754,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -8364,13 +8772,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8381,13 +8790,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -8397,13 +8807,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -8414,13 +8825,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -8430,13 +8842,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8449,13 +8862,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -8465,13 +8879,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -8483,13 +8898,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -8499,13 +8915,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -8519,13 +8936,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -8535,13 +8953,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8553,13 +8972,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -8569,13 +8989,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8587,15 +9008,13 @@ export declare const WorkflowSchema: z.ZodObject<{
             id: string;
             description: string;
             isDynamic: boolean;
-            prompts: {
-                text: string;
-            }[];
+            isNamed: boolean;
             agentType?: string | undefined;
-            workflows?: string[] | undefined;
+            workflows?: readonly string[] | undefined;
             command?: {
                 code: string;
-                prompted?: boolean | undefined;
             } | undefined;
+            prompt?: string | undefined;
             transitions?: {
                 pass: {
                     kind: "pass" | "fail" | "yes" | "no";
@@ -8603,13 +9022,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -8619,13 +9039,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -8637,13 +9058,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -8653,13 +9075,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -8673,13 +9096,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -8689,13 +9113,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -8707,13 +9132,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -8723,13 +9149,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -8741,15 +9168,13 @@ export declare const WorkflowSchema: z.ZodObject<{
             id: string;
             description: string;
             isDynamic: boolean;
-            prompts: {
-                text: string;
-            }[];
+            isNamed: boolean;
             agentType?: string | undefined;
-            workflows?: string[] | undefined;
+            workflows?: readonly string[] | undefined;
             command?: {
                 code: string;
-                prompted?: boolean | undefined;
             } | undefined;
+            prompt?: string | undefined;
             transitions?: {
                 pass: {
                     kind: "pass" | "fail" | "yes" | "no";
@@ -8757,13 +9182,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -8773,13 +9199,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8791,13 +9218,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -8807,13 +9235,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8827,13 +9256,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -8843,13 +9273,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8861,13 +9292,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -8877,13 +9309,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -8891,21 +9324,19 @@ export declare const WorkflowSchema: z.ZodObject<{
                 };
                 all: false;
             } | undefined;
-        }>, "many">>;
-        workflows: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        }>, "many">>>;
+        workflows: z.ZodOptional<z.ZodReadonly<z.ZodArray<z.ZodString, "many">>>;
         nestedWorkflow: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
         description: string;
         isDynamic: boolean;
-        prompts: {
-            text: string;
-        }[];
+        isNamed: boolean;
         number?: (number & z.BRAND<"StepNumber">) | undefined;
-        workflows?: string[] | undefined;
+        workflows?: readonly string[] | undefined;
         command?: {
             code: string;
-            prompted?: boolean | undefined;
         } | undefined;
+        prompt?: string | undefined;
         transitions?: {
             pass: {
                 kind: "pass" | "fail" | "yes" | "no";
@@ -8913,13 +9344,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -8929,13 +9361,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -8947,13 +9380,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -8963,13 +9397,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -8983,13 +9418,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -8999,13 +9435,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -9017,13 +9454,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -9033,13 +9471,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -9047,19 +9486,18 @@ export declare const WorkflowSchema: z.ZodObject<{
             };
             all: false;
         } | undefined;
-        substeps?: {
+        name?: string | undefined;
+        substeps?: readonly {
             id: string;
             description: string;
             isDynamic: boolean;
-            prompts: {
-                text: string;
-            }[];
+            isNamed: boolean;
             agentType?: string | undefined;
-            workflows?: string[] | undefined;
+            workflows?: readonly string[] | undefined;
             command?: {
                 code: string;
-                prompted?: boolean | undefined;
             } | undefined;
+            prompt?: string | undefined;
             transitions?: {
                 pass: {
                     kind: "pass" | "fail" | "yes" | "no";
@@ -9067,13 +9505,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -9083,13 +9522,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -9101,13 +9541,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -9117,13 +9558,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -9137,13 +9579,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -9153,13 +9596,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -9171,13 +9615,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -9187,13 +9632,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -9206,15 +9652,13 @@ export declare const WorkflowSchema: z.ZodObject<{
     }, {
         description: string;
         isDynamic: boolean;
-        prompts: {
-            text: string;
-        }[];
+        isNamed: boolean;
         number?: number | undefined;
-        workflows?: string[] | undefined;
+        workflows?: readonly string[] | undefined;
         command?: {
             code: string;
-            prompted?: boolean | undefined;
         } | undefined;
+        prompt?: string | undefined;
         transitions?: {
             pass: {
                 kind: "pass" | "fail" | "yes" | "no";
@@ -9222,13 +9666,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -9238,13 +9683,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -9256,13 +9702,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -9272,13 +9719,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -9292,13 +9740,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -9308,13 +9757,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -9326,13 +9776,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -9342,13 +9793,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -9356,19 +9808,18 @@ export declare const WorkflowSchema: z.ZodObject<{
             };
             all: false;
         } | undefined;
-        substeps?: {
+        name?: string | undefined;
+        substeps?: readonly {
             id: string;
             description: string;
             isDynamic: boolean;
-            prompts: {
-                text: string;
-            }[];
+            isNamed: boolean;
             agentType?: string | undefined;
-            workflows?: string[] | undefined;
+            workflows?: readonly string[] | undefined;
             command?: {
                 code: string;
-                prompted?: boolean | undefined;
             } | undefined;
+            prompt?: string | undefined;
             transitions?: {
                 pass: {
                     kind: "pass" | "fail" | "yes" | "no";
@@ -9376,13 +9827,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -9392,13 +9844,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -9410,13 +9863,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -9426,13 +9880,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -9446,13 +9901,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -9462,13 +9918,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -9480,13 +9937,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -9496,13 +9954,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -9517,15 +9976,13 @@ export declare const WorkflowSchema: z.ZodObject<{
     steps: {
         description: string;
         isDynamic: boolean;
-        prompts: {
-            text: string;
-        }[];
+        isNamed: boolean;
         number?: (number & z.BRAND<"StepNumber">) | undefined;
-        workflows?: string[] | undefined;
+        workflows?: readonly string[] | undefined;
         command?: {
             code: string;
-            prompted?: boolean | undefined;
         } | undefined;
+        prompt?: string | undefined;
         transitions?: {
             pass: {
                 kind: "pass" | "fail" | "yes" | "no";
@@ -9533,13 +9990,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -9549,13 +10007,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -9567,13 +10026,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -9583,13 +10043,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -9603,13 +10064,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -9619,13 +10081,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -9637,13 +10100,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                        step: string | (number & z.BRAND<"StepNumber">);
                         substep?: string | undefined;
                     };
                 } | {
@@ -9653,13 +10117,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     };
@@ -9667,19 +10132,18 @@ export declare const WorkflowSchema: z.ZodObject<{
             };
             all: false;
         } | undefined;
-        substeps?: {
+        name?: string | undefined;
+        substeps?: readonly {
             id: string;
             description: string;
             isDynamic: boolean;
-            prompts: {
-                text: string;
-            }[];
+            isNamed: boolean;
             agentType?: string | undefined;
-            workflows?: string[] | undefined;
+            workflows?: readonly string[] | undefined;
             command?: {
                 code: string;
-                prompted?: boolean | undefined;
             } | undefined;
+            prompt?: string | undefined;
             transitions?: {
                 pass: {
                     kind: "pass" | "fail" | "yes" | "no";
@@ -9687,13 +10151,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -9703,13 +10168,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -9721,13 +10187,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -9737,13 +10204,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -9757,13 +10225,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -9773,13 +10242,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -9791,13 +10261,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                            step: string | (number & z.BRAND<"StepNumber">);
                             substep?: string | undefined;
                         };
                     } | {
@@ -9807,13 +10278,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: (number & z.BRAND<"StepNumber">) | "{N}" | "NEXT";
+                                step: string | (number & z.BRAND<"StepNumber">);
                                 substep?: string | undefined;
                             };
                         };
@@ -9830,15 +10302,13 @@ export declare const WorkflowSchema: z.ZodObject<{
     steps: {
         description: string;
         isDynamic: boolean;
-        prompts: {
-            text: string;
-        }[];
+        isNamed: boolean;
         number?: number | undefined;
-        workflows?: string[] | undefined;
+        workflows?: readonly string[] | undefined;
         command?: {
             code: string;
-            prompted?: boolean | undefined;
         } | undefined;
+        prompt?: string | undefined;
         transitions?: {
             pass: {
                 kind: "pass" | "fail" | "yes" | "no";
@@ -9846,13 +10316,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -9862,13 +10333,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -9880,13 +10352,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -9896,13 +10369,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -9916,13 +10390,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -9932,13 +10407,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -9950,13 +10426,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                     type: "CONTINUE";
                 } | {
                     type: "COMPLETE";
+                    message?: string | undefined;
                 } | {
                     type: "STOP";
                     message?: string | undefined;
                 } | {
                     type: "GOTO";
                     target: {
-                        step: number | "{N}" | "NEXT";
+                        step: string | number;
                         substep?: string | undefined;
                     };
                 } | {
@@ -9966,13 +10443,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     };
@@ -9980,19 +10458,18 @@ export declare const WorkflowSchema: z.ZodObject<{
             };
             all: false;
         } | undefined;
-        substeps?: {
+        name?: string | undefined;
+        substeps?: readonly {
             id: string;
             description: string;
             isDynamic: boolean;
-            prompts: {
-                text: string;
-            }[];
+            isNamed: boolean;
             agentType?: string | undefined;
-            workflows?: string[] | undefined;
+            workflows?: readonly string[] | undefined;
             command?: {
                 code: string;
-                prompted?: boolean | undefined;
             } | undefined;
+            prompt?: string | undefined;
             transitions?: {
                 pass: {
                     kind: "pass" | "fail" | "yes" | "no";
@@ -10000,13 +10477,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -10016,13 +10494,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -10034,13 +10513,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -10050,13 +10530,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -10070,13 +10551,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -10086,13 +10568,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };
@@ -10104,13 +10587,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                         type: "CONTINUE";
                     } | {
                         type: "COMPLETE";
+                        message?: string | undefined;
                     } | {
                         type: "STOP";
                         message?: string | undefined;
                     } | {
                         type: "GOTO";
                         target: {
-                            step: number | "{N}" | "NEXT";
+                            step: string | number;
                             substep?: string | undefined;
                         };
                     } | {
@@ -10120,13 +10604,14 @@ export declare const WorkflowSchema: z.ZodObject<{
                             type: "CONTINUE";
                         } | {
                             type: "COMPLETE";
+                            message?: string | undefined;
                         } | {
                             type: "STOP";
                             message?: string | undefined;
                         } | {
                             type: "GOTO";
                             target: {
-                                step: number | "{N}" | "NEXT";
+                                step: string | number;
                                 substep?: string | undefined;
                             };
                         };

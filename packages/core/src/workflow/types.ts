@@ -1,7 +1,7 @@
 // src/workflow/types.ts
 
 export * from '@rundown/parser';
-import { type StepId, type StepNumber } from '@rundown/parser';
+import { type StepId } from '@rundown/parser';
 
 /**
  * A step queued for agent binding, optionally with a child workflow.
@@ -61,9 +61,10 @@ export interface WorkflowState {
   readonly workflow: string; // file path
   readonly title?: string;
   readonly description?: string;
-  readonly step: StepNumber;
-  readonly substep?: string;  // Current substep ID (derived from XState context)
-  readonly stepName: string;
+  readonly step: string;           // UNIFIED: "1", "ErrorHandler", "{N}"
+  readonly instance?: number;      // NEW: Dynamic workflow instance counter (1, 2, 3, ...)
+  readonly substep?: string;
+  readonly stepName: string;       // Human-readable description
   readonly retryCount: number;
   readonly variables: Record<string, boolean | number | string>;
   readonly steps: readonly StepState[];
@@ -72,10 +73,10 @@ export interface WorkflowState {
   readonly pendingSteps: readonly PendingStep[];
   readonly agentBindings: Readonly<Record<string, AgentBinding>>;
 
-  // Substep tracking (only populated when current step has substeps)
+  // Substep tracking
   readonly substepStates?: readonly SubstepState[];
 
-  // Child workflow fields (optional)
+  // Child workflow fields
   readonly agentId?: string;
   readonly parentWorkflowId?: string;
   readonly parentStepId?: StepId;
@@ -88,7 +89,6 @@ export interface WorkflowState {
   readonly startedAt: string;
   readonly updatedAt: string;
 
-  // Prompted(true = prompted/manual, false/undefined = execute)
   readonly prompted?: boolean;
   readonly lastResult?: 'pass' | 'fail';
   readonly lastAction?: 'START' | 'CONTINUE' | 'GOTO' | 'COMPLETE' | 'STOP' | 'RETRY';

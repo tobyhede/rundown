@@ -53,8 +53,8 @@ export function renderSubstep(substep: Substep, parentStepNumber: number | undef
 export function renderStep(step: Step): string {
   const lines: string[] = [];
 
-  // Header - use {N} for dynamic, number for static
-  const stepId = step.isDynamic ? '{N}' : String(step.number);
+  // Header - use step.name directly (already "{N}" for dynamic, "1" for numeric)
+  const stepId = step.name;
   lines.push(`## ${stepId}. ${step.description}`);
   lines.push('');
 
@@ -86,9 +86,9 @@ export function renderStep(step: Step): string {
     lines.push('');
   }
 
-  // Substeps - pass undefined for dynamic parent
+  // Substeps - for parent number, parse from name if numeric
   if (step.substeps) {
-    const parentNum = step.isDynamic ? undefined : step.number;
+    const parentNum = step.isDynamic ? undefined : parseInt(step.name, 10);
     for (const substep of step.substeps) {
       lines.push(renderSubstep(substep, parentNum));
       lines.push('');

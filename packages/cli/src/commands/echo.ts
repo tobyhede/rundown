@@ -52,9 +52,10 @@ export function registerEchoCommand(program: Command): void {
         if (workflowPath) {
           const workflowContent = await fs.readFile(workflowPath, 'utf8');
           const steps = parseWorkflow(workflowContent);
-          const currentStep = steps[state.step - 1];
+          const currentStepIndex = steps.findIndex(s => s.name === state.step);
+          const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
           // currentStep is guaranteed to exist from array index
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+           
           if (currentStep) {
             retryMax = getStepRetryMax(currentStep);
           }

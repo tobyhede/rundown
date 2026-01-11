@@ -11,8 +11,8 @@ export interface WorkflowMetadata {
  * Step position (n/N format)
  */
 export interface StepPosition {
-  current: number;
-  total: number;
+  current: string;  // UNIFIED: "1", "ErrorHandler", etc.
+  total: number;    // Total step count (for display)
   substep?: string;
 }
 

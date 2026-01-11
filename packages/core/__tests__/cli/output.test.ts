@@ -13,7 +13,6 @@ import {
   printNoActiveWorkflow,
 } from '../../src/cli/output.js';
 import type { Step } from '../../src/workflow/types.js';
-import { createStepNumber } from '../../src/workflow/types.js';
 
 describe('output formatter', () => {
   let consoleOutput: string[];
@@ -32,11 +31,11 @@ describe('output formatter', () => {
 
   describe('formatPosition', () => {
     it('formats position without substep', () => {
-      expect(formatPosition({ current: 2, total: 5 })).toBe('2/5');
+      expect(formatPosition({ current: '2', total: 5 })).toBe('2/5');
     });
 
     it('formats position with substep', () => {
-      expect(formatPosition({ current: 2, total: 5, substep: '1' })).toBe('2.1/5');
+      expect(formatPosition({ current: '2', total: 5, substep: '1' })).toBe('2.1/5');
     });
   });
 
@@ -88,7 +87,7 @@ describe('output formatter', () => {
     it('prints action with from and result (pass command)', () => {
       printActionBlock({
         action: 'CONTINUE',
-        from: { current: 1, total: 5 },
+        from: { current: '1', total: 5 },
         result: 'PASS',
       });
       expect(consoleOutput).toEqual([
@@ -101,7 +100,7 @@ describe('output formatter', () => {
     it('prints action with from but no result (goto command)', () => {
       printActionBlock({
         action: 'GOTO 3',
-        from: { current: 1, total: 5 },
+        from: { current: '1', total: 5 },
       });
       expect(consoleOutput).toEqual([
         'Action:   GOTO 3',
@@ -112,7 +111,7 @@ describe('output formatter', () => {
     it('prints retry with count', () => {
       printActionBlock({
         action: 'RETRY (1/3)',
-        from: { current: 2, total: 5 },
+        from: { current: '2', total: 5 },
         result: 'FAIL',
       });
       expect(consoleOutput).toContain('Action:   RETRY (1/3)');
@@ -122,12 +121,13 @@ describe('output formatter', () => {
   describe('printStepBlock', () => {
     it('prints step position and content', () => {
       const step: Step = {
-        number: createStepNumber(1)!,
+        name: '1',
         description: 'First step',
+        isDynamic: false,
         prompt: 'Do something.',
         command: { code: 'npm test' },
       };
-      printStepBlock({ current: 1, total: 3 }, step);
+      printStepBlock({ current: '1', total: 3 }, step);
 
       const output = consoleOutput.join('\n');
       expect(output).toContain('Step:     1/3');
@@ -160,19 +160,19 @@ describe('output formatter', () => {
 
   describe('printWorkflowStopped', () => {
     it('prints stopped message with step number', () => {
-      printWorkflowStoppedAtStep({ current: 2, total: 5 });
+      printWorkflowStoppedAtStep({ current: '2', total: 5 });
       expect(consoleOutput).toContain('Workflow stopped at step 2.');
     });
 
     it('prints stopped message with substep', () => {
-      printWorkflowStoppedAtStep({ current: 2, total: 5, substep: '1' });
+      printWorkflowStoppedAtStep({ current: '2', total: 5, substep: '1' });
       expect(consoleOutput).toContain('Workflow stopped at step 2.1.');
     });
   });
 
   describe('printWorkflowStashed', () => {
     it('prints step position and stashed message', () => {
-      printWorkflowStashed({ current: 2, total: 5 });
+      printWorkflowStashed({ current: '2', total: 5 });
       expect(consoleOutput).toContain('Step:     2/5');
       expect(consoleOutput).toContain('Workflow stashed.');
     });

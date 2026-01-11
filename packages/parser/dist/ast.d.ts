@@ -1,19 +1,10 @@
 import { type StepNumber, type StepId, type Action, type Transitions } from './schemas.js';
 export { type StepNumber, type StepId, type Action, type Transitions };
 /**
- * Code block command
- * - prompted: undefined (default) - executable, runs automatically (bash/sh/shell blocks)
- * - prompted: true - show to agent, don't run (prompt blocks)
+ * Code block command - always executable (bash/sh/shell only)
  */
 export interface Command {
     readonly code: string;
-    readonly prompted?: boolean;
-}
-/**
- * Prompt for agent (implicit or explicit)
- */
-export interface Prompt {
-    readonly text: string;
 }
 /**
  * A substep within a step (H3 header)
@@ -23,8 +14,9 @@ export interface Substep {
     readonly description: string;
     readonly agentType?: string;
     readonly isDynamic: boolean;
+    readonly isNamed: boolean;
     readonly command?: Command;
-    readonly prompts: readonly Prompt[];
+    readonly prompt?: string;
     readonly transitions?: Transitions;
     readonly workflows?: readonly string[];
     readonly line?: number;
@@ -34,10 +26,12 @@ export interface Substep {
  */
 export interface Step {
     readonly number?: StepNumber;
+    readonly name?: string;
     readonly isDynamic: boolean;
+    readonly isNamed: boolean;
     readonly description: string;
     readonly command?: Command;
-    readonly prompts: readonly Prompt[];
+    readonly prompt?: string;
     readonly transitions?: Transitions;
     readonly substeps?: readonly Substep[];
     readonly workflows?: readonly string[];

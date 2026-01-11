@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Skill(turboshovel:verifying-by-consensus)"
+      "Skill(turboshovel:verifying-by-consensus)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
