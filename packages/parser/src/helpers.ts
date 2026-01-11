@@ -1,23 +1,60 @@
 import {
-  createStepNumber,
   WorkflowSyntaxError,
   type ParsedConditional,
   type AggregationModifier,
-  type StepNumber
 } from './types.js';
 import {
   type Action,
   type NonRetryAction,
   type Transitions
 } from './schemas.js';
-import { parseStepIdFromString } from './step-id.js';
+import { MAX_STEP_NUMBER } from './schemas.js';
+import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
+
+/**
+ * Parse a quoted string or single-word identifier.
+ * Used for STOP and COMPLETE messages ONLY.
+ * NOT used for GOTO targets (GOTO uses parseStepIdFromString which accepts identifiers directly).
+ *
+ * Valid formats:
+ * - Single word identifier: /^[A-Za-z_][A-Za-z0-9_]*$/
+ * - Quoted string: "any text here"
+ *
+ * @throws Error if format is invalid
+ */
+export function parseQuotedOrIdentifier(text: string): string {
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    throw new Error('Empty string is not a valid identifier or quoted string');
+  }
+
+  // Check for quoted string
+  if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+    return trimmed.slice(1, -1);
+  }
+
+  // Check for unclosed quote
+  if (trimmed.startsWith('"') || trimmed.endsWith('"')) {
+    throw new Error(`Unclosed quote in: "${trimmed}"`);
+  }
+
+  // Check for valid identifier
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  throw new Error(
+    `Invalid format: "${trimmed}". Use a single-word identifier (letters, numbers, underscore) or a quoted string.`
+  );
+}
 
 export interface ParsedSubstepHeader {
-  stepRef: number | '{N}';
-  id: string; // "1", "2", or "{n}" for dynamic
+  stepRef: string;        // UNIFIED: "1", "{N}", "ErrorHandler"
+  id: string;
+  isDynamic: boolean;
   description: string;
   agentType?: string;
-  isDynamic: boolean;
 }
 
 /**
@@ -28,77 +65,97 @@ export function stripSeparator(text: string): string {
 }
 
 export interface ParsedStepHeader {
-  number?: StepNumber;
+  name: string;           // UNIFIED: "1", "ErrorHandler", "{N}"
   isDynamic: boolean;
   description: string;
 }
 
 /**
- * Extract step number and description from header text
+ * Extract step number/name and description from header text
  */
 export function extractStepHeader(text: string): ParsedStepHeader | null {
   const trimmed = text.trim();
 
+  // Check for dynamic step: {N} Description
   if (trimmed.startsWith('{N}')) {
     const rest = trimmed.slice(3);
     const description = stripSeparator(rest);
-    if (!description) {
-      return null;
-    }
-    return { isDynamic: true, description };
+    if (!description) return null;
+    return { name: '{N}', isDynamic: true, description };
   }
 
+  // Check for numeric step: 1 Description
   let numEnd = 0;
   while (numEnd < trimmed.length && /\d/.test(trimmed[numEnd])) {
     numEnd++;
   }
 
-  if (numEnd === 0) {
-    return null;
+  if (numEnd > 0) {
+    const numberStr = trimmed.slice(0, numEnd);
+    const number = parseInt(numberStr, 10);
+    if (number <= 0 || number > MAX_STEP_NUMBER) return null;
+
+    const description = stripSeparator(trimmed.slice(numEnd));
+    if (!description) return null;
+
+    return { name: numberStr, isDynamic: false, description };
   }
 
-  const number = parseInt(trimmed.slice(0, numEnd), 10);
-  const stepNumber = createStepNumber(number);
-  if (!stepNumber) {
-    return null;
-  }
+  // Check for named step: Name or Name Description
+  const words = trimmed.split(/\s+/);
+  const firstName = words[0];
 
-  const description = stripSeparator(trimmed.slice(numEnd));
-  if (!description) {
-    return null;
-  }
+  if (!firstName || !NAMED_IDENTIFIER_PATTERN.test(firstName)) return null;
+  if (isReservedWord(firstName)) return null;
 
-  return { number: stepNumber, isDynamic: false, description };
+  const restWords = words.slice(1);
+  const description = restWords.length > 0 ? restWords.join(' ') : firstName;
+
+  return { name: firstName, isDynamic: false, description };
 }
 
 /**
  * Extract substep header from H3 text
+ *
+ * Supports:
+ * - Numeric: "1.2 Description"
+ * - Dynamic: "{N}.1 Description", "1.{n} Description", "{N}.{n} Description"
+ * - Named: "1.Cleanup Description", "ErrorHandler.Recover Description", "{N}.Recovery Description"
  */
 export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
   const trimmed = text.trim();
 
-  const match = /^(\{N\}|\d+)\.(\{n\}|\d+)\s+(.+?)(?:\s+\(([^)]+)\))?$/.exec(trimmed);
+  // Pattern: StepRef.SubstepId Description [(agent)]
+  const match = /^(\{N\}|\d+|[A-Za-z_][A-Za-z0-9_]*)\.(\{n\}|\d+|[A-Za-z_][A-Za-z0-9_]*)\s+(.+?)(?:\s+\(([^)]+)\))?$/.exec(trimmed);
   if (!match) return null;
 
   const [, stepPart, substepId, desc, agent] = match;
 
-  let stepRef: number | '{N}';
-  if (stepPart === '{N}') {
-    stepRef = '{N}';
-  } else {
+  // Validate step reference
+  if (stepPart !== '{N}' && /^\d+$/.test(stepPart)) {
     const stepNumber = parseInt(stepPart, 10);
     if (stepNumber <= 0) return null;
-    stepRef = stepNumber;
+  } else if (stepPart !== '{N}' && isReservedWord(stepPart)) {
+    return null;
   }
 
+  // stepRef is always string now
+  const stepRef = stepPart;
+
+  // Determine substep type
   const isDynamic = substepId === '{n}';
+
+  // Reject reserved words as substep names
+  if (!isDynamic && /^[A-Za-z_][A-Za-z0-9_]*$/.test(substepId) && isReservedWord(substepId)) {
+    return null;
+  }
 
   return {
     stepRef,
     id: substepId,
     description: desc.trim(),
     agentType: agent ? agent.trim() : undefined,
-    isDynamic
+    isDynamic,
   };
 }
 
@@ -116,16 +173,26 @@ export function parseAction(text: string): Action | null {
     return { type: 'COMPLETE' };
   }
 
+  if (trimmed.startsWith('COMPLETE ')) {
+    try {
+      const message = parseQuotedOrIdentifier(trimmed.slice(9));
+      return { type: 'COMPLETE', message };
+    } catch {
+      return null;
+    }
+  }
+
   if (trimmed === 'STOP') {
     return { type: 'STOP' };
   }
 
   if (trimmed.startsWith('STOP ')) {
-    let message = trimmed.slice(5).trim();
-    if (message.startsWith('"') && message.endsWith('"')) {
-      message = message.slice(1, -1);
+    try {
+      const message = parseQuotedOrIdentifier(trimmed.slice(5));
+      return { type: 'STOP', message };
+    } catch {
+      return null;
     }
-    return { type: 'STOP', message };
   }
 
   if (trimmed.startsWith('GOTO ')) {
@@ -195,16 +262,26 @@ function parseNonRetryAction(input: string): NonRetryAction | null {
     return { type: 'COMPLETE' };
   }
 
+  if (trimmed.startsWith('COMPLETE ')) {
+    try {
+      const message = parseQuotedOrIdentifier(trimmed.slice(9));
+      return { type: 'COMPLETE', message };
+    } catch {
+      return null;
+    }
+  }
+
   if (trimmed === 'STOP') {
     return { type: 'STOP' };
   }
 
   if (trimmed.startsWith('STOP ')) {
-    let rest = trimmed.slice(5).trim();
-    if (rest.startsWith('"') && rest.endsWith('"')) {
-      rest = rest.slice(1, -1);
+    try {
+      const message = parseQuotedOrIdentifier(trimmed.slice(5));
+      return { type: 'STOP', message };
+    } catch {
+      return null;
     }
-    return { type: 'STOP', message: rest };
   }
 
   if (trimmed.startsWith('GOTO ')) {
@@ -405,11 +482,16 @@ export function isExecutableCodeBlock(lang: string | null | undefined): boolean 
 
 /**
  * Check if code block is a prompt block
+ * Returns true if tag is 'prompt', false if tag is executable (bash/sh/shell), null otherwise
  */
-export function isPromptCodeBlock(lang: string | null | undefined): boolean {
-  if (!lang) return false;
-  const tag = lang.split(/\s+/)[0]?.toLowerCase();
-  return tag === 'prompt';
+export function isPromptCodeBlock(lang: string | null | undefined): boolean | null {
+  if (!lang) return null;
+  const trimmed = lang.trim();
+  if (!trimmed) return null;
+  const tag = trimmed.split(/\s+/)[0]?.toLowerCase();
+  if (tag === 'prompt') return true;
+  if (EXECUTABLE_TAGS.includes(tag)) return false;
+  return null;
 }
 
 /**
@@ -425,11 +507,11 @@ export function formatAction(action: Action): string {
     case 'CONTINUE':
       return 'CONTINUE';
     case 'COMPLETE':
-      return 'COMPLETE';
+      return action.message ? `COMPLETE "${action.message}"` : 'COMPLETE';
     case 'STOP':
       return action.message ? `STOP "${action.message}"` : 'STOP';
     case 'GOTO':
-      return `GOTO ${String(action.target.step)}`;
+      return `GOTO ${action.target.step}`;
     case 'RETRY':
       return action.max ? `RETRY ${String(action.max)}` : 'RETRY';
     default:

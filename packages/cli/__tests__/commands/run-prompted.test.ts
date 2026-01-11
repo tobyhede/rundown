@@ -53,13 +53,13 @@ describe('start --prompted', () => {
 
       // After starting in prompted mode, should be at step 1
       let state = await getActiveState(workspace);
-      expect(state?.step).toBe(1);
+      expect(state?.step).toBe('1');
 
       // Manual pass should advance to next step
       runCli('pass', workspace);
 
       state = await getActiveState(workspace);
-      expect(state?.step).toBe(2);
+      expect(state?.step).toBe('2');
     });
 
     it('shows command in output without executing', async () => {
@@ -219,13 +219,13 @@ npm run dangerous-command
 
       // In prompted mode, no auto-execution should happen
       const state1 = await getActiveState(workspace);
-      expect(state1?.step).toBe(1);
+      expect(state1?.step).toBe('1');
 
       // Manually pass
       runCli('pass', workspace);
 
       const state2 = await getActiveState(workspace);
-      expect(state2?.step).toBe(2);
+      expect(state2?.step).toBe('2');
     });
 
     it('allows mixed auto and prompted workflows', async () => {

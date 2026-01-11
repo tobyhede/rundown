@@ -8,8 +8,8 @@ import type { Step } from '../workflow/types.js';
 export function renderStepForCLI(step: Step): string {
   const lines: string[] = [];
 
-  // Header
-  lines.push(`## ${String(step.number)}. ${step.description}`);
+  // Header - use step.name directly
+  lines.push(`## ${step.name}. ${step.description}`);
 
   // Prompt (before command per spec)
   if (step.prompt) {

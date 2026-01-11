@@ -15,7 +15,6 @@ import {
   type Command
 } from './ast.js';
 import {
-  type StepNumber,
   type ParsedConditional,
   WorkflowSyntaxError
 } from './types.js';
@@ -60,20 +59,20 @@ interface SubstepBuilder {
   isDynamic: boolean;
   content: string;
   command?: Command;
-  promptText: string;  // Changed from prompts: Prompt[]
-  hasSeenContent: boolean;  // New: track if we've seen code/runbooks
-  hasSeenTransitions: boolean;  // New: track if we've seen PASS/FAIL/etc transitions
+  promptText: string;
+  hasSeenContent: boolean;
+  hasSeenTransitions: boolean;
   pendingConditionals: ParsedConditional[];
   line?: number;
 }
 
 interface StepBuilder {
-  number?: StepNumber;
+  name: string;
   isDynamic: boolean;
   description: string;
   command?: Command;
-  promptText: string;  // Changed from prompts: Prompt[]
-  hasSeenContent: boolean;  // New: track if we've seen code/substeps/runbooks
+  promptText: string;
+  hasSeenContent: boolean;
   substeps: Substep[];
   pendingSubstep?: SubstepBuilder;
   content: string;
@@ -138,7 +137,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         agentType: ps.agentType,
         isDynamic: ps.isDynamic,
         command: ps.command,
-        prompt: promptText.trim() || undefined,  // Changed from prompts array
+        prompt: promptText.trim() || undefined,
         transitions: transitions ?? undefined,
         workflows: workflows.length > 0 ? workflows : undefined,
         line: ps.line
@@ -180,7 +179,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
       const parsed = extractStepHeader(headingText);
       if (parsed) {
         currentStep = {
-          number: parsed.number,
+          name: parsed.name,
           isDynamic: parsed.isDynamic,
           description: parsed.description,
           promptText: '',
@@ -216,19 +215,19 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         } else {
           if (parsed.stepRef === '{N}') {
             throw new WorkflowSyntaxError(
-              `Substep ${headingText} uses {N} prefix but parent step ${String(currentStep.number)} is static`
+              `Substep ${headingText} uses {N} prefix but parent step ${currentStep.name} is static`
             );
           }
-          if (parsed.stepRef !== currentStep.number) {
+          if (parsed.stepRef !== currentStep.name) {
             throw new WorkflowSyntaxError(
-              `Substep ${headingText} does not belong to step ${String(currentStep.number)}`
+              `Substep ${headingText} does not belong to step ${currentStep.name}`
             );
           }
         }
 
         const duplicateId = currentStep.substeps.find((s) => s.id === parsed.id);
         if (duplicateId) {
-          const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+          const stepLabel = currentStep.name;
           throw new WorkflowSyntaxError(
             `Duplicate substep ID '${parsed.id}' in step ${stepLabel}`
           );
@@ -237,7 +236,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         const hasStatic = currentStep.substeps.some((s) => !s.isDynamic);
         const hasDynamic = currentStep.substeps.some((s) => s.isDynamic);
         if ((hasStatic && parsed.isDynamic) || (hasDynamic && !parsed.isDynamic)) {
-          const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+          const stepLabel = currentStep.name;
           throw new WorkflowSyntaxError(
             `Cannot mix static and dynamic substeps in step ${stepLabel}`
           );
@@ -286,7 +285,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           currentStep.pendingSubstep.hasSeenContent = true;
         } else {
           if (currentStep.command) {
-            const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+            const stepLabel = currentStep.name;
             throw new WorkflowSyntaxError(
               `Multiple code blocks per step not allowed in Step ${stepLabel}.`
             );
@@ -328,7 +327,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             if (currentStep.pendingSubstep) {
               // In substeps: text cannot appear after transitions, but CAN appear after code blocks
               if (currentStep.pendingSubstep.hasSeenTransitions) {
-                const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+                const stepLabel = currentStep.name;
                 // E17-R2: Include line number in error for better DX
                 const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
                 throw new WorkflowSyntaxError(
@@ -338,7 +337,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
               currentStep.pendingSubstep.promptText += line.trim() + '\n';
             } else {
               if (currentStep.hasSeenContent) {
-                const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+                const stepLabel = currentStep.name;
                 // E17-R2: Include line number in error for better DX
                 const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
                 throw new WorkflowSyntaxError(
@@ -377,7 +376,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           const isRunbookRef = /^\S+\.runbook\.md$/.test(text.trim());
           // In substeps: text cannot appear after transitions
           if (currentStep.pendingSubstep.hasSeenTransitions && !isRunbookRef) {
-            const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+            const stepLabel = currentStep.name;
             // E17-R2: Include line number in error for better DX
             const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
             throw new WorkflowSyntaxError(
@@ -394,7 +393,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           // FIXED: Check ordering BEFORE adding content (C2 fix)
           const isRunbookRef = /^\S+\.runbook\.md$/.test(text.trim());
           if (currentStep.hasSeenContent && !isRunbookRef) {
-            const stepLabel = currentStep.isDynamic ? '{N}' : String(currentStep.number);
+            const stepLabel = currentStep.name;
             // E17-R2: Include line number in error for better DX
             const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
             throw new WorkflowSyntaxError(
@@ -459,11 +458,11 @@ function finalizeStep(
   const workflows = extractWorkflowList(step.content);
 
   return {
-    number: step.number,
+    name: step.name,
     isDynamic: step.isDynamic,
     description: step.description,
     command: step.command,
-    prompt: promptText.trim() || undefined,  // Changed from prompts array
+    prompt: promptText.trim() || undefined,
     transitions: transitions ?? undefined,
     substeps: step.substeps.length > 0 ? step.substeps : undefined,
     workflows: workflows.length > 0 ? workflows : undefined,

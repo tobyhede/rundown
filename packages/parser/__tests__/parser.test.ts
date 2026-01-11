@@ -207,7 +207,7 @@ Do something.
     const steps = parseWorkflow(markdown);
     expect(steps[0].transitions?.pass).toEqual({
       kind: 'pass',
-      action: { type: 'GOTO', target: { step: 2, substep: '1' } }
+      action: { type: 'GOTO', target: { step: '2', substep: '1' } }
     });
   });
 
@@ -286,7 +286,7 @@ More work.
     expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'CONTINUE' } });
     expect(steps[0].substeps![0].transitions?.fail).toEqual({ kind: 'fail', action: { type: 'STOP', message: 'BLOCKED' } });
     expect(steps[0].substeps![1].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'COMPLETE' } });
-    expect(steps[0].substeps![1].transitions?.fail).toEqual({ kind: 'fail', action: { type: 'GOTO', target: { step: 1, substep: '1' } } });
+    expect(steps[0].substeps![1].transitions?.fail).toEqual({ kind: 'fail', action: { type: 'GOTO', target: { step: '1', substep: '1' } } });
   });
 
   it('single substep gets transitions not step', () => {
@@ -325,7 +325,7 @@ describe('substep GOTO validation', () => {
     const steps = parseWorkflow(markdown);
     expect(steps[0].substeps![0].transitions?.fail).toEqual({
       kind: 'fail',
-      action: { type: 'GOTO', target: { step: 1, substep: '2' } }
+      action: { type: 'GOTO', target: { step: '1', substep: '2' } }
     });
   });
 
@@ -497,5 +497,74 @@ npm test
     // Should not throw - whitespace-only is ignored
     const steps = parseWorkflow(markdown);
     expect(steps[0].prompt).toBe('Prompt text.');
+  });
+});
+
+describe('parseWorkflow with named steps', () => {
+  it('parses named step', () => {
+    const md = `## 1 Main step
+- PASS: COMPLETE
+
+## Cleanup
+Handle cleanup
+- PASS: STOP`;
+
+    const steps = parseWorkflow(md);
+    expect(steps).toHaveLength(2);
+    expect(steps[0]).toMatchObject({
+      name: '1',
+      isDynamic: false,
+    });
+    expect(steps[1]).toMatchObject({
+      name: 'Cleanup',
+      isDynamic: false,
+    });
+  });
+
+  it('parses named substep of numeric step', () => {
+    const md = `## 1 Main step
+### 1.1 First substep
+### 1.Cleanup Handle cleanup`;
+
+    const steps = parseWorkflow(md);
+    expect(steps[0].substeps).toHaveLength(2);
+    expect(steps[0].substeps![0]).toMatchObject({
+      id: '1',
+      isDynamic: false,
+    });
+    expect(steps[0].substeps![1]).toMatchObject({
+      id: 'Cleanup',
+      isDynamic: false,
+    });
+  });
+
+  it('allows named step to coexist with static steps', () => {
+    const md = `## 1 First
+## 2 Second
+## ErrorHandler
+Handle errors`;
+
+    const steps = parseWorkflow(md);
+    expect(steps).toHaveLength(3);
+    expect(steps[2].name).toBe('ErrorHandler');
+  });
+
+  it('allows named step to coexist with dynamic step', () => {
+    const md = `## {N} Process each
+### {N}.1 Do work
+
+## ErrorHandler
+Handle errors`;
+
+    const steps = parseWorkflow(md);
+    expect(steps).toHaveLength(2);
+    expect(steps[0].isDynamic).toBe(true);
+    expect(steps[1].name).toBe('ErrorHandler');
+  });
+
+  it('rejects reserved word as step name', () => {
+    const md = `## NEXT Do something`;
+
+    expect(() => parseWorkflow(md)).toThrow();
   });
 });

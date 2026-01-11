@@ -99,7 +99,7 @@ export function registerLsCommand(program: Command): void {
           }
 
           const totalSteps = await getStepCount(cwd, state.workflow);
-          const stepStr = `${String(state.step)}/${String(totalSteps)}`;
+          const stepStr = `${state.step}/${String(totalSteps)}`;
 
           printWorkflowListEntry(state.id, status, stepStr, state.workflow, state.title);
         }

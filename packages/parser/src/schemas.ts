@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 
 /**
  * Maximum valid step number (prevent overflow, keep IDs reasonable)
@@ -13,25 +14,32 @@ export const CommandSchema = z.object({
 });
 
 /**
- * Zod schema for StepNumber branded type
+ * Schema for step names in Step.name field.
+ * Accepts: "1", "2", "ErrorHandler", "{N}" for dynamic steps.
+ * Rejects: reserved words (CONTINUE, STOP, etc.)
  */
-export const StepNumberSchema = z
-  .number()
-  .int('Step number must be an integer')
-  .positive('Step number must be positive')
-  .max(MAX_STEP_NUMBER, 'Step number exceeds maximum')
-  .brand<'StepNumber'>();
-
-/**
- * StepNumber type derived from schema
- */
-export type StepNumber = z.output<typeof StepNumberSchema>;
+export const StepNameSchema = z.string().refine(
+  (s) => {
+    if (s === '{N}') return true;
+    if (/^\d+$/.test(s)) {
+      const num = parseInt(s, 10);
+      return num > 0 && num <= MAX_STEP_NUMBER;
+    }
+    return NAMED_IDENTIFIER_PATTERN.test(s) && !isReservedWord(s);
+  },
+  { message: 'Invalid step name: must be positive number, valid identifier, or {N}' }
+);
 
 /**
  * Zod schema for StepId
+ * step is always a string: "1", "NEXT", "ErrorHandler", "{N}"
  */
 export const StepIdSchema = z.object({
-  step: z.union([StepNumberSchema, z.literal('{N}'), z.literal('NEXT')]),
+  step: z.union([
+    z.literal('{N}'),
+    z.literal('NEXT'),
+    StepNameSchema,
+  ]),
   substep: z.string().optional(),
 }).refine(
   (data) => data.step !== 'NEXT' || data.substep === undefined,
@@ -48,7 +56,7 @@ export type StepId = Readonly<z.output<typeof StepIdSchema>>;
  */
 export const NonRetryActionSchema = z.union([
   z.object({ type: z.literal('CONTINUE') }),
-  z.object({ type: z.literal('COMPLETE') }),
+  z.object({ type: z.literal('COMPLETE'), message: z.string().optional() }),
   z.object({ type: z.literal('STOP'), message: z.string().optional() }),
   z.object({ type: z.literal('GOTO'), target: StepIdSchema }),
 ]);
@@ -115,13 +123,14 @@ export const SubstepSchema = z.object({
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(),  // .min(1) prevents empty strings
   transitions: TransitionsSchema.optional(),
+  line: z.number().optional(),
 });
 
 /**
  * Zod schema for Step
  */
 export const StepSchema = z.object({
-  number: StepNumberSchema.optional(),
+  name: StepNameSchema,                  // REQUIRED: "1", "ErrorHandler", "{N}"
   isDynamic: z.boolean(),
   description: z.string(),
   command: CommandSchema.optional(),
@@ -130,6 +139,7 @@ export const StepSchema = z.object({
   substeps: z.array(SubstepSchema).readonly().optional(),
   workflows: z.array(z.string()).readonly().optional(),
   nestedWorkflow: z.string().optional(), // @deprecated
+  line: z.number().optional(),
 });
 
 /**

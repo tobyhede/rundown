@@ -66,6 +66,10 @@ Steps can be `dynamic`. Dynamic steps enable steps to be defined at runtime.
 | `{N}` | Dynamic | Template step instantiated at runtime |
 | `{N}.1` | Nested Static | Static child of dynamic parent |
 | `{N}.{n}`| Nested Dynamic | Dynamic child of dynamic parent |
+| `Name` | Named | Jump target step (GOTO only) |
+| `1.Name` | Named Substep | Named child of static parent |
+| `{N}.Name` | Named Substep | Named child of dynamic parent |
+| `Name.Name` | Named Substep | Named child of named parent |
 
 **Rules:**
 1. Static steps MUST be numbered sequentially starting from 1.
@@ -83,6 +87,30 @@ Example:
 ## {N} For each assigned task
 ### {N}.1 Implement the code
 ### {N}.2 Run the tests
+```
+
+---
+
+### Named Steps
+
+Named steps are identified by a name instead of a number. They follow all the same rules as regular steps but are only reachable via explicit GOTO.
+
+**Rules:**
+- Named steps can coexist with static OR dynamic steps
+- Named steps are NOT part of sequential flow - CONTINUE skips them
+- Names must match: `/^[A-Za-z_][A-Za-z0-9_]*$/`
+- Reserved words cannot be used as names: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY
+- **Reserved word matching is case-sensitive.** `NEXT` is reserved, but `Next`, `next`, or `NextStep` are valid identifiers.
+
+**Example:**
+```markdown
+## 1 Main workflow
+- FAIL: GOTO ErrorHandler
+- PASS: COMPLETE
+
+## ErrorHandler
+Handle errors
+- PASS: STOP RECOVERED
 ```
 
 ---
@@ -212,8 +240,8 @@ Actions determine what happens next.
 | Action | Description |
 |--------|-------------|
 | `CONTINUE` | Proceed to the next unit in sequence. |
-| `COMPLETE` | Runbook has completed successfully. |
-| `STOP ["msg"]` | Halt execution immediately. Optional failure message. |
+| `COMPLETE [msg]` | Runbook has completed successfully. Optional message. |
+| `STOP [msg]` | Halt execution immediately. Optional message. |
 | `GOTO {id \| NEXT}` | Jump to Step `id` or create new dynamic step instance. |
 | `RETRY [n] [action]` | Retry the current unit `n` times (default 1). If exhausted, perform `action`. |
 

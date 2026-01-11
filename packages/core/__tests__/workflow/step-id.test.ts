@@ -3,11 +3,11 @@ import { parseStepIdFromString, stepIdToString, stepIdEquals } from '../../src/w
 
 describe('parseStepIdFromString', () => {
   it('parses step only', () => {
-    expect(parseStepIdFromString('3')).toEqual({ step: 3, substep: undefined });
+    expect(parseStepIdFromString('3')).toEqual({ step: '3', substep: undefined });
   });
 
   it('parses step with substep', () => {
-    expect(parseStepIdFromString('2.1')).toEqual({ step: 2, substep: '1' });
+    expect(parseStepIdFromString('2.1')).toEqual({ step: '2', substep: '1' });
   });
 
   it('rejects substep 0 (1-indexed)', () => {
@@ -26,11 +26,11 @@ describe('parseStepIdFromString', () => {
 
 describe('stepIdToString', () => {
   it('formats step only', () => {
-    expect(stepIdToString({ step: 3 as any })).toBe('3');
+    expect(stepIdToString({ step: '3' })).toBe('3');
   });
 
   it('formats step with substep', () => {
-    expect(stepIdToString({ step: 2 as any, substep: '1' })).toBe('2.1');
+    expect(stepIdToString({ step: '2', substep: '1' })).toBe('2.1');
   });
 
   it('formats dynamic step with substep', () => {
@@ -45,29 +45,29 @@ describe('stepIdToString', () => {
 describe('stepIdEquals', () => {
   it('returns true for equal positions', () => {
     expect(stepIdEquals(
-      { step: 2 as any, substep: '1' },
-      { step: 2 as any, substep: '1' }
+      { step: '2', substep: '1' },
+      { step: '2', substep: '1' }
     )).toBe(true);
   });
 
   it('returns false for different steps', () => {
     expect(stepIdEquals(
-      { step: 2 as any, substep: '1' },
-      { step: 3 as any, substep: '1' }
+      { step: '2', substep: '1' },
+      { step: '3', substep: '1' }
     )).toBe(false);
   });
 
   it('returns false for different substeps', () => {
     expect(stepIdEquals(
-      { step: 2 as any, substep: '1' },
-      { step: 2 as any, substep: '2' }
+      { step: '2', substep: '1' },
+      { step: '2', substep: '2' }
     )).toBe(false);
   });
 
   it('returns false when one has substep and other does not', () => {
     expect(stepIdEquals(
-      { step: 2 as any, substep: '1' },
-      { step: 2 as any }
+      { step: '2', substep: '1' },
+      { step: '2' }
     )).toBe(false);
   });
 
@@ -88,7 +88,7 @@ describe('stepIdEquals', () => {
   it('returns false for dynamic vs numeric step', () => {
     expect(stepIdEquals(
       { step: '{N}', substep: '1' },
-      { step: 1 as any, substep: '1' }
+      { step: '1', substep: '1' }
     )).toBe(false);
   });
 });

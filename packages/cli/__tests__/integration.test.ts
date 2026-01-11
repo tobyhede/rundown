@@ -67,7 +67,7 @@ describe('integration: full workflow scenarios', () => {
 
     // Verify we're at step 3
     const state = await getActiveState(workspace);
-    expect(state?.step).toBe(3);
+    expect(state?.step).toBe('3');
 
     // Complete from step 3
     result = runCli('pass', workspace);

@@ -9,8 +9,8 @@ const SEPARATOR = '-----';
  */
 export function formatPosition(pos: StepPosition): string {
   const stepPart = pos.substep
-    ? `${String(pos.current)}.${pos.substep}`
-    : String(pos.current);
+    ? `${pos.current}.${pos.substep}`
+    : pos.current;
   return `${stepPart}/${String(pos.total)}`;
 }
 
@@ -86,8 +86,8 @@ export function printWorkflowStopped(): void {
 export function printWorkflowStoppedAtStep(pos: StepPosition): void {
   console.log('');
   const stepStr = pos.substep
-    ? `${String(pos.current)}.${pos.substep}`
-    : String(pos.current);
+    ? `${pos.current}.${pos.substep}`
+    : pos.current;
   console.log(`Workflow stopped at step ${stepStr}.`);
 }
 

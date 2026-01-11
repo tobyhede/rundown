@@ -1,13 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
 import { renderStepForCLI } from '../../src/cli/render.js';
 import type { Step } from '../../src/workflow/types.js';
-import { createStepNumber } from '../../src/workflow/types.js';
 
 describe('renderStepForCLI', () => {
   it('renders step with prompts before command', () => {
     const step: Step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'Install dependencies',
+      isDynamic: false,
       prompt: 'Run npm install to set up project.',
       command: { code: 'npm install' },
     };
@@ -25,8 +25,9 @@ describe('renderStepForCLI', () => {
 
   it('renders step without command', () => {
     const step: Step = {
-      number: createStepNumber(2)!,
+      name: '2',
       description: 'Review changes',
+      isDynamic: false,
       prompt: 'Review the diff and approve.',
     };
 
@@ -39,8 +40,9 @@ describe('renderStepForCLI', () => {
 
   it('renders step without prompts', () => {
     const step: Step = {
-      number: createStepNumber(3)!,
+      name: '3',
       description: 'Run build',
+      isDynamic: false,
       command: { code: 'npm run build' },
     };
 
@@ -52,8 +54,9 @@ describe('renderStepForCLI', () => {
 
   it('omits transitions and substeps', () => {
     const step: Step = {
-      number: createStepNumber(1)!,
+      name: '1',
       description: 'With extras',
+      isDynamic: false,
       command: { code: 'npm test' },
       transitions: {
         all: true,

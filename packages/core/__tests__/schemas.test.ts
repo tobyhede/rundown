@@ -1,14 +1,14 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseHookInput, WorkflowStateSchema, StepNumberSchema, StepIdSchema, ActionSchema, TransitionsSchema } from '../src/schemas.js';
-import { MAX_STEP_NUMBER } from '../src/workflow/types.js';
+import { parseHookInput, WorkflowStateSchema, StepIdSchema, ActionSchema, TransitionsSchema } from '../src/schemas.js';
 
 /**
  * Creates a valid workflow state object for testing.
+ * Note: step is now a string ("1", "ErrorHandler", etc.)
  */
 const createValidState = (overrides: Record<string, unknown> = {}) => ({
   id: 'test-id',
   workflow: 'test.md',
-  step: 1,
+  step: '1',
   stepName: 'Test Step',
   retryCount: 0,
   variables: {},
@@ -54,31 +54,24 @@ describe('parseHookInput', () => {
   });
 });
 
-describe('WorkflowStateSchema - StepNumber validation', () => {
-  it('accepts valid positive integer step number', () => {
+describe('WorkflowStateSchema - step name validation', () => {
+  it('accepts valid numeric step name', () => {
     const result = WorkflowStateSchema.safeParse(createValidState());
     expect(result.success).toBe(true);
   });
 
-  it('rejects zero step number', () => {
-    const result = WorkflowStateSchema.safeParse(createValidState({ step: 0 }));
+  it('accepts named step', () => {
+    const result = WorkflowStateSchema.safeParse(createValidState({ step: 'ErrorHandler' }));
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects empty step name', () => {
+    const result = WorkflowStateSchema.safeParse(createValidState({ step: '' }));
     expect(result.success).toBe(false);
   });
 
-  it('rejects negative step number', () => {
-    const result = WorkflowStateSchema.safeParse(createValidState({ step: -1 }));
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects non-integer step number', () => {
-    const result = WorkflowStateSchema.safeParse(createValidState({ step: 1.5 }));
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects step number exceeding maximum', () => {
-    const result = WorkflowStateSchema.safeParse(
-      createValidState({ step: MAX_STEP_NUMBER + 1 })
-    );
+  it('rejects non-string step', () => {
+    const result = WorkflowStateSchema.safeParse(createValidState({ step: 123 }));
     expect(result.success).toBe(false);
   });
 });
@@ -86,14 +79,14 @@ describe('WorkflowStateSchema - StepNumber validation', () => {
 describe('WorkflowStateSchema - StepId validation', () => {
   it('accepts valid StepId object', () => {
     const result = WorkflowStateSchema.safeParse(
-      createValidState({ pendingSteps: [{ stepId: { step: 1 } }] })
+      createValidState({ pendingSteps: [{ stepId: { step: '1' } }] })
     );
     expect(result.success).toBe(true);
   });
 
   it('accepts StepId with substep', () => {
     const result = WorkflowStateSchema.safeParse(
-      createValidState({ pendingSteps: [{ stepId: { step: 1, substep: '1' } }] })
+      createValidState({ pendingSteps: [{ stepId: { step: '1', substep: '1' } }] })
     );
     expect(result.success).toBe(true);
   });
@@ -106,27 +99,10 @@ describe('WorkflowStateSchema - StepId validation', () => {
   });
 });
 
-describe('StepNumber schema-derived type', () => {
-  it('parses valid step number and returns branded type', () => {
-    const parsed = StepNumberSchema.parse(5);
-    expect(parsed).toBe(5);
-    // Runtime check that branded value equals underlying number
-    expect(parsed === 5).toBe(true);
-  });
-
-  it('safeParse returns branded type on success', () => {
-    const result = StepNumberSchema.safeParse(3);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data).toBe(3);
-    }
-  });
-});
-
 describe('StepId schema-derived type', () => {
-  it('parses numeric step', () => {
-    const parsed = StepIdSchema.parse({ step: 3 });
-    expect(parsed.step).toBe(3);
+  it('parses numeric step as string', () => {
+    const parsed = StepIdSchema.parse({ step: '3' });
+    expect(parsed.step).toBe('3');
     expect(parsed.substep).toBeUndefined();
   });
 
@@ -137,8 +113,8 @@ describe('StepId schema-derived type', () => {
   });
 
   it('parsed StepId is readonly', () => {
-    const parsed = StepIdSchema.parse({ step: 5, substep: '2' });
-    // TypeScript should prevent: parsed.step = 6;
+    const parsed = StepIdSchema.parse({ step: '5', substep: '2' });
+    // TypeScript should prevent: parsed.step = '6';
     // Runtime check that object has expected shape
     expect(Object.keys(parsed).sort()).toEqual(['step', 'substep']);
   });
@@ -152,6 +128,11 @@ describe('StepId schema-derived type', () => {
   it('rejects NEXT with substep', () => {
     expect(() => StepIdSchema.parse({ step: 'NEXT', substep: '1' })).toThrow();
   });
+
+  it('parses named step', () => {
+    const parsed = StepIdSchema.parse({ step: 'ErrorHandler' });
+    expect(parsed.step).toBe('ErrorHandler');
+  });
 });
 
 describe('Action schema-derived type', () => {
@@ -161,10 +142,10 @@ describe('Action schema-derived type', () => {
   });
 
   it('parses GOTO with StepId', () => {
-    const parsed = ActionSchema.parse({ type: 'GOTO', target: { step: 5 } });
+    const parsed = ActionSchema.parse({ type: 'GOTO', target: { step: '5' } });
     expect(parsed.type).toBe('GOTO');
     if (parsed.type === 'GOTO') {
-      expect(parsed.target.step).toBe(5);
+      expect(parsed.target.step).toBe('5');
     }
   });
 
@@ -215,7 +196,7 @@ describe('Transitions schema-derived type', () => {
   it('parses transitions with GOTO action', () => {
     const parsed = TransitionsSchema.parse({
       all: true,
-      pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 3 } } },
+      pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '3' } } },
       fail: { kind: 'fail', action: { type: 'STOP', message: 'Failed' } }
     });
     expect(parsed.pass.action.type).toBe('GOTO');

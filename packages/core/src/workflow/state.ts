@@ -3,14 +3,12 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createActor, type AnyActorRef } from 'xstate';
 import {
-  createStepNumber,
   type WorkflowState,
   type AgentBinding,
   type PendingStep,
   type Substep,
   type SubstepState,
   type Step,
-  type StepNumber,
   type Workflow
 } from './types.js';
 import type { StepId } from './step-id.js';
@@ -66,14 +64,14 @@ export class WorkflowStateManager {
     const now = new Date().toISOString();
 
     const initialStep = workflow.steps[0];
-    const stepNum = initialStep.number ?? (1 as StepNumber);
+    const stepName = initialStep.name;  // Already a string: "1", "ErrorHandler", "{N}"
 
     const state: WorkflowState = {
       id,
       workflow: workflowFile,
       title: workflow.title,
       description: workflow.description,
-      step: stepNum,
+      step: stepName,           // string, not StepNumber
       stepName: initialStep.description,
       retryCount: 0,
       variables: {},
@@ -175,16 +173,19 @@ export class WorkflowStateManager {
         return await this.update(id, { variables, snapshot });
     }
 
-    const match = /^step_(\d+)(?:_(\S+))?$/.exec(stateValue);
-    const stepNum = match ? parseInt(match[1], 10) : 1;
-    
+    // Parse step name from XState state value
+    // Uses [^_]+ to match step name and substep ID (separated by underscore)
+    const match = /^step_([^_]+)(?:_([^_]+))?$/.exec(stateValue);
+    const stepName = match ? match[1] : steps[0].name;
+
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     let substep = snapshot.context.substep as string | undefined;
     if (!substep && match?.[2]) {
       substep = match[2];
     }
 
-    const step = steps.find(s => s.number === stepNum) ?? steps[0];
+    // Find step by name (unified lookup)
+    const step = steps.find(s => s.name === stepName) ?? steps[0];
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const retryCount = snapshot.context.retryCount as number;
@@ -192,7 +193,7 @@ export class WorkflowStateManager {
     const variables = snapshot.context.variables as Record<string, boolean | number | string>;
 
     return await this.update(id, {
-      step: createStepNumber(stepNum) ?? steps[0].number,
+      step: stepName,           // string
       substep,
       stepName: step.description,
       retryCount,

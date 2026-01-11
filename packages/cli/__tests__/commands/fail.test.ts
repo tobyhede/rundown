@@ -30,7 +30,7 @@ describe('fail command', () => {
 
       const state = await getActiveState(workspace);
       expect(state?.retryCount).toBe(1);
-      expect(state?.step).toBe(1); // Same step
+      expect(state?.step).toBe('1'); // Same step
     });
 
     it('outputs retry info', async () => {
@@ -79,7 +79,7 @@ describe('fail command', () => {
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
-      expect(state?.step).toBe(3); // GOTO 3 on FAIL
+      expect(state?.step).toBe('3'); // GOTO 3 on FAIL
     });
   });
 

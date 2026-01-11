@@ -1,12 +1,10 @@
 import {
-  type StepNumber,
   type StepId,
   type Action,
   type Transitions
 } from './schemas.js';
 
 export {
-  type StepNumber,
   type StepId,
   type Action,
   type Transitions
@@ -23,12 +21,12 @@ export interface Command {
  * A substep within a step (H3 header)
  */
 export interface Substep {
-  readonly id: string; // "1", "2", "3" or "{n}" for dynamic
+  readonly id: string;           // "1", "2", "{n}" for dynamic, or "Name" for named
   readonly description: string;
-  readonly agentType?: string; // e.g., "code-review-agent" from "(code-review-agent)"
-  readonly isDynamic: boolean; // true for ### N.{n}, false for ### N.1
+  readonly agentType?: string;   // e.g., "code-review-agent" from "(code-review-agent)"
+  readonly isDynamic: boolean;   // true for ### N.{n}
   readonly command?: Command;
-  readonly prompt?: string;  // Single consolidated prompt text
+  readonly prompt?: string;      // Single consolidated prompt text
   readonly transitions?: Transitions;
   readonly workflows?: readonly string[];
   readonly line?: number;
@@ -36,13 +34,18 @@ export interface Substep {
 
 /**
  * A single step in a workflow
+ *
+ * UNIFIED NAMING: All steps have a name.
+ * - Numeric steps: name = "1", "2", etc.
+ * - Named steps: name = "ErrorHandler", "Cleanup", etc.
+ * - Dynamic steps: name = "{N}" (template, expands at runtime)
  */
 export interface Step {
-  readonly number?: StepNumber;           // undefined for {N} dynamic steps
-  readonly isDynamic: boolean;            // true for {N} steps, false for static
+  readonly name: string;                  // REQUIRED: "1", "ErrorHandler", "{N}"
+  readonly isDynamic: boolean;            // true for {N} steps
   readonly description: string;
   readonly command?: Command;
-  readonly prompt?: string;  // Single consolidated prompt text
+  readonly prompt?: string;               // Single consolidated prompt text
   readonly transitions?: Transitions;
   readonly substeps?: readonly Substep[];
   readonly workflows?: readonly string[];

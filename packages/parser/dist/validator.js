@@ -13,7 +13,7 @@ export function validateWorkflow(steps) {
     for (const step of steps) {
         const result = StepSchema.safeParse(step);
         if (!result.success) {
-            const stepLabel = step.isDynamic ? '{N}' : String(step.number);
+            const stepLabel = step.isDynamic ? '{N}' : (step.isNamed ? (step.name ?? 'UnknownName') : String(step.number));
             errors.push({
                 line: step.line,
                 message: `Step ${stepLabel} failed schema validation: ${result.error.issues.map(i => i.message).join(', ')}`
@@ -22,10 +22,13 @@ export function validateWorkflow(steps) {
     }
     // Conformance Rule 2: Step Pattern
     const staticSteps = steps.filter(s => !s.isDynamic);
+    const numericSteps = staticSteps.filter(s => !s.isNamed);
     const dynamicSteps = steps.filter(s => s.isDynamic);
-    if (staticSteps.length > 0 && dynamicSteps.length > 0) {
+    // Named steps can coexist with numeric steps OR dynamic steps
+    // But numeric steps cannot coexist with dynamic steps (unless separated by named steps)
+    if (numericSteps.length > 0 && dynamicSteps.length > 0) {
         errors.push({
-            message: 'Invalid step pattern: runbook must contain static steps OR exactly one dynamic step template, not both.'
+            message: 'Invalid step pattern: runbook must contain numeric steps OR exactly one dynamic step template, not both (named steps can appear with either).'
         });
     }
     if (dynamicSteps.length > 1) {
@@ -34,22 +37,31 @@ export function validateWorkflow(steps) {
         });
     }
     // Conformance Rule 3: Sequencing
+    // Only numeric steps must be sequential; named steps can appear anywhere
     if (staticSteps.length > 0) {
-        for (let i = 0; i < steps.length; i++) {
-            const expected = i + 1;
-            if (steps[i].number !== expected) {
-                errors.push({
-                    line: steps[i].line,
-                    message: `Steps must be numbered sequentially. Expected step ${String(expected)}, found step ${String(steps[i].number)}.`
-                });
+        // Filter out named steps for sequencing check
+        const sequencedSteps = staticSteps.filter(s => !s.isNamed);
+        if (sequencedSteps.length > 0) {
+            // Check that numeric steps are sequential (ignoring named steps)
+            let expectedNum = 1;
+            for (const step of steps) {
+                if (!step.isDynamic && !step.isNamed) {
+                    if (step.number !== expectedNum) {
+                        errors.push({
+                            line: step.line,
+                            message: `Numeric steps must be sequential. Expected step ${String(expectedNum)}, found step ${String(step.number)}.`
+                        });
+                    }
+                    expectedNum++;
+                }
             }
         }
     }
     for (const step of steps) {
         const stepNum = step.isDynamic ? 0 : (step.number ?? 0);
-        const stepLabel = step.isDynamic ? '{N}' : String(stepNum);
+        const stepLabel = step.isDynamic ? '{N}' : (step.isNamed ? (step.name ?? 'UnknownName') : String(stepNum));
         // Conformance Rule 4: Exclusivity (Step level)
-        const hasBody = (step.command !== undefined) || step.prompts.length > 0;
+        const hasBody = (step.command !== undefined) || (step.prompt !== undefined && step.prompt.length > 0);
         const hasSubsteps = (step.substeps !== undefined && step.substeps.length > 0);
         const hasWorkflows = (step.workflows !== undefined && step.workflows.length > 0);
         const contentCount = [hasBody, hasSubsteps, hasWorkflows].filter(Boolean).length;
@@ -65,7 +77,7 @@ export function validateWorkflow(steps) {
         }
         if (step.substeps) {
             for (const substep of step.substeps) {
-                const sHasBody = (substep.command !== undefined) || (substep.prompts.length > 0);
+                const sHasBody = (substep.command !== undefined) || (substep.prompt !== undefined && substep.prompt.length > 0);
                 const sHasWorkflows = (substep.workflows !== undefined && substep.workflows.length > 0);
                 if (sHasBody && sHasWorkflows) {
                     errors.push({
@@ -125,6 +137,38 @@ export function validateAction(action, currentStepNum, currentSubstepId, steps, 
                     line: currentStepObj.line,
                     message: `Step ${context}: GOTO {N}.M is only valid within dynamic step context (## {N}.).`
                 });
+            }
+            return;
+        }
+        // Handle named step target
+        if (typeof targetStep === 'string' && targetStep !== 'NEXT' && targetStep !== '{N}') {
+            const namedStep = steps.find(s => s.name === targetStep);
+            if (!namedStep) {
+                const context = currentSubstepId ? `${String(currentStepNum)}.${currentSubstepId}` : String(currentStepNum);
+                errors.push({
+                    line: currentStepObj.line,
+                    message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`
+                });
+                return;
+            }
+            if (targetSubstep) {
+                if (!namedStep.substeps || namedStep.substeps.length === 0) {
+                    const context = currentSubstepId ? `${String(currentStepNum)}.${currentSubstepId}` : String(currentStepNum);
+                    errors.push({
+                        line: currentStepObj.line,
+                        message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`
+                    });
+                    return;
+                }
+                const substepExists = namedStep.substeps.some(s => s.id === targetSubstep);
+                if (!substepExists) {
+                    const context = currentSubstepId ? `${String(currentStepNum)}.${currentSubstepId}` : String(currentStepNum);
+                    errors.push({
+                        line: currentStepObj.line,
+                        message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`
+                    });
+                    return;
+                }
             }
             return;
         }

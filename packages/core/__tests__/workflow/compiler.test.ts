@@ -1,6 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
 import { createActor } from 'xstate';
-import { createStepNumber } from '../../src/workflow/types.js';
 import { compileWorkflowToMachine } from '../../src/workflow/compiler.js';
 import type { Step } from '../../src/workflow/types.js';
 
@@ -9,6 +8,7 @@ describe('workflow compiler', () => {
     it('compiles GOTO {N}.1 to target step_1 with substep', () => {
       const steps: Step[] = [
         {
+          name: '{N}',
           isDynamic: true,
           description: 'Execute task',
           substeps: [
@@ -34,6 +34,7 @@ describe('workflow compiler', () => {
     it('compiles GOTO NEXT action', () => {
       const steps: Step[] = [
         {
+          name: '{N}',
           isDynamic: true,
           description: 'Dynamic step',
           transitions: {
@@ -52,7 +53,7 @@ describe('workflow compiler', () => {
     it('generates discrete states for substeps', () => {
       const steps: Step[] = [
         {
-          number: createStepNumber(1)!,
+          name: '1',
           description: 'Parent',
           isDynamic: false,
           substeps: [
@@ -72,7 +73,7 @@ describe('workflow compiler', () => {
     it('generates single state for step without substeps', () => {
       const steps: Step[] = [
         {
-          number: createStepNumber(1)!,
+          name: '1',
           description: 'Simple',
           isDynamic: false
         }
@@ -88,6 +89,7 @@ describe('workflow compiler', () => {
     it('sets nextInstance flag when PASS triggers GOTO NEXT', () => {
       const steps: Step[] = [
         {
+          name: '{N}',
           isDynamic: true,
           description: 'Dynamic step',
           transitions: {

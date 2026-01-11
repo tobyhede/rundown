@@ -12,7 +12,6 @@ import {
   type WorkflowMetadata,
   type WorkflowState,
   executeCommand,
-  createStepNumber,
 } from '@rundown/core';
 
 /**
@@ -59,11 +58,15 @@ export async function runExecutionLoop(
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     // For dynamic workflows, always use the template step (index 0)
-    // For static workflows, use the step number as index
-    const currentStep = isDynamicWorkflow ? steps[0] : steps[state.step - 1];
-    const totalSteps = isDynamicWorkflow ? state.step : steps.length;
+    // For static workflows, use the step name to find index
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const currentStepIndex = isDynamicWorkflow ? 0 : steps.findIndex(s => s.name === state!.step);
+    const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
+     
+    const totalSteps = isDynamicWorkflow ? parseInt(state.step.split('_')[1] || '0', 10) : steps.length;
 
     // Print step block
+     
     printStepBlock({ current: state.step, total: totalSteps, substep: state.substep }, currentStep);
 
     // If CLI prompted mode, OR no command
@@ -79,8 +82,11 @@ export async function runExecutionLoop(
     await manager.setLastResult(workflowId, execResult.success ? 'pass' : 'fail');
 
     // Capture prev state BEFORE mutation
+     
     const prevStep = state.step;
+     
     const prevSubstep = state.substep;
+     
     const prevRetryCount = state.retryCount;
 
     // Send event to actor
@@ -102,13 +108,14 @@ export async function runExecutionLoop(
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const nextInstance = snapshot.context.nextInstance as boolean | undefined;
     if (nextInstance && !isComplete && !isStopped) {
-      // Increment instance number (stay in step_1 for dynamic workflows)
-      const currentInstanceNum = updatedState.step;
-      const nextStepNumberValue = currentInstanceNum + 1;
-      const nextStepNumber = createStepNumber(nextStepNumberValue);
-      if (nextStepNumber) {
+      // Increment instance number for dynamic workflows (step_1 -> step_2, etc.)
+      const match = /^step_(\d+)$/.exec(updatedState.step);
+      if (match) {
+        const currentInstanceNum = parseInt(match[1], 10);
+        const nextStepNumberValue = currentInstanceNum + 1;
+        const nextStepName = `step_${String(nextStepNumberValue)}`;
         updatedState = await manager.update(workflowId, {
-          step: nextStepNumber,
+          step: nextStepName,
           substep: '1'
         });
         console.log(`Instance ${String(currentInstanceNum)} complete. Starting instance ${String(nextStepNumberValue)}...`);
@@ -150,7 +157,9 @@ export async function runExecutionLoop(
       printWorkflowComplete();
 
       // If this was a child workflow with agent, update parent's agent binding
+       
       if (agentId && state.parentWorkflowId) {
+         
         await manager.updateAgentBinding(state.parentWorkflowId, agentId, {
           status: 'done',
           result: 'pass'
@@ -167,7 +176,9 @@ export async function runExecutionLoop(
       printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep });
 
       // If this was a child workflow with agent, update parent's agent binding
+       
       if (agentId && state.parentWorkflowId) {
+         
         await manager.updateAgentBinding(state.parentWorkflowId, agentId, {
           status: 'done',
           result: 'fail'
@@ -222,8 +233,8 @@ export function buildMetadata(state: WorkflowState): WorkflowMetadata {
  * Derive action string from state transition
  */
 export function deriveAction(
-  prevStep: number,
-  newStep: number,
+  prevStep: string,
+  newStep: string,
   prevSubstep: string | undefined,
   newSubstep: string | undefined,
   prevRetryCount: number,
@@ -239,18 +250,23 @@ export function deriveAction(
   }
 
   // CRITICAL FIX: Any transition with a substep target is a GOTO
-  // Even "sequential" step changes (1 → 2) are GOTO if substep is specified
-  // Because GOTO 2.1 is meaningfully different from CONTINUE to step 2
+  // Even "sequential" step changes are GOTO if substep is specified
+  // Because GOTO step_2.1 is meaningfully different from CONTINUE to step_2
   if (newSubstep) {
-    return `GOTO ${String(newStep)}.${newSubstep}`;
+    return `GOTO ${newStep}.${newSubstep}`;
   }
 
-  // Non-sequential step change without substep
-  if (newStep !== prevStep + 1 && newStep !== prevStep) {
-    return `GOTO ${String(newStep)}`;
+  // Check if step change is sequential (e.g., "1" → "2")
+  // Sequential means: both are numeric strings and newStep = prevStep + 1
+  if (newStep !== prevStep) {
+    const prevNum = parseInt(prevStep, 10);
+    const newNum = parseInt(newStep, 10);
+    const isSequential = !isNaN(prevNum) && !isNaN(newNum) && newNum === prevNum + 1;
+    if (!isSequential) {
+      return `GOTO ${newStep}`;
+    }
   }
 
-  // Substep cleared (had substep, now doesn't) on same step = unusual, treat as CONTINUE
-  // Sequential step change without substep = CONTINUE
+  // Sequential step change or same step = CONTINUE
   return 'CONTINUE';
 }

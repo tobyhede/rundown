@@ -31,7 +31,7 @@ describe('pass command', () => {
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
-      expect(state?.step).toBe(2);
+      expect(state?.step).toBe('2');
     });
   });
 
@@ -73,7 +73,7 @@ describe('pass command', () => {
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
-      expect(state?.step).toBe(3); // GOTO 3
+      expect(state?.step).toBe('3'); // GOTO 3
     });
 
     it('skips intermediate steps', async () => {

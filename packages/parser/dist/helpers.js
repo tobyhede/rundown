@@ -1,5 +1,35 @@
 import { createStepNumber, WorkflowSyntaxError } from './types.js';
-import { parseStepIdFromString } from './step-id.js';
+import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
+/**
+ * Parse a quoted string or single-word identifier.
+ * Used for STOP and COMPLETE messages ONLY.
+ * NOT used for GOTO targets (GOTO uses parseStepIdFromString which accepts identifiers directly).
+ *
+ * Valid formats:
+ * - Single word identifier: /^[A-Za-z_][A-Za-z0-9_]*$/
+ * - Quoted string: "any text here"
+ *
+ * @throws Error if format is invalid
+ */
+export function parseQuotedOrIdentifier(text) {
+    const trimmed = text.trim();
+    if (!trimmed) {
+        throw new Error('Empty string is not a valid identifier or quoted string');
+    }
+    // Check for quoted string
+    if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+        return trimmed.slice(1, -1);
+    }
+    // Check for unclosed quote
+    if (trimmed.startsWith('"') || trimmed.endsWith('"')) {
+        throw new Error(`Unclosed quote in: "${trimmed}"`);
+    }
+    // Check for valid identifier
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+        return trimmed;
+    }
+    throw new Error(`Invalid format: "${trimmed}". Use a single-word identifier (letters, numbers, underscore) or a quoted string.`);
+}
 /**
  * Strip common separators and whitespace
  */
@@ -7,62 +37,103 @@ export function stripSeparator(text) {
     return text.replace(/^[.:—→\-)\s]+/, '').trim();
 }
 /**
- * Extract step number and description from header text
+ * Extract step number/name and description from header text
  */
 export function extractStepHeader(text) {
     const trimmed = text.trim();
+    // Check for dynamic step: {N} Description
     if (trimmed.startsWith('{N}')) {
         const rest = trimmed.slice(3);
         const description = stripSeparator(rest);
         if (!description) {
             return null;
         }
-        return { isDynamic: true, description };
+        return { isDynamic: true, isNamed: false, description };
     }
+    // Check for numeric step: 1 Description
     let numEnd = 0;
     while (numEnd < trimmed.length && /\d/.test(trimmed[numEnd])) {
         numEnd++;
     }
-    if (numEnd === 0) {
+    if (numEnd > 0) {
+        const number = parseInt(trimmed.slice(0, numEnd), 10);
+        const stepNumber = createStepNumber(number);
+        if (!stepNumber) {
+            return null;
+        }
+        const description = stripSeparator(trimmed.slice(numEnd));
+        if (!description) {
+            return null;
+        }
+        return { number: stepNumber, isDynamic: false, isNamed: false, description };
+    }
+    // Check for named step: Name or Name Description
+    const words = trimmed.split(/\s+/);
+    const firstName = words[0];
+    if (!firstName || !NAMED_IDENTIFIER_PATTERN.test(firstName)) {
         return null;
     }
-    const number = parseInt(trimmed.slice(0, numEnd), 10);
-    const stepNumber = createStepNumber(number);
-    if (!stepNumber) {
+    // Reject reserved words
+    if (isReservedWord(firstName)) {
         return null;
     }
-    const description = stripSeparator(trimmed.slice(numEnd));
-    if (!description) {
-        return null;
-    }
-    return { number: stepNumber, isDynamic: false, description };
+    const restWords = words.slice(1);
+    const description = restWords.length > 0 ? restWords.join(' ') : firstName;
+    return {
+        name: firstName,
+        isDynamic: false,
+        isNamed: true,
+        description,
+    };
 }
 /**
  * Extract substep header from H3 text
+ *
+ * Supports:
+ * - Numeric: "1.2 Description"
+ * - Dynamic: "{N}.1 Description", "1.{n} Description", "{N}.{n} Description"
+ * - Named: "1.Cleanup Description", "ErrorHandler.Recover Description", "{N}.Recovery Description"
  */
 export function extractSubstepHeader(text) {
     const trimmed = text.trim();
-    const match = /^(\{N\}|\d+)\.(\{n\}|\d+)\s+(.+?)(?:\s+\(([^)]+)\))?$/.exec(trimmed);
+    // Pattern: StepRef.SubstepId Description [(agent)]
+    // StepRef: number | {N} | Name
+    // SubstepId: number | {n} | Name
+    const match = /^(\{N\}|\d+|[A-Za-z_][A-Za-z0-9_]*)\.(\{n\}|\d+|[A-Za-z_][A-Za-z0-9_]*)\s+(.+?)(?:\s+\(([^)]+)\))?$/.exec(trimmed);
     if (!match)
         return null;
     const [, stepPart, substepId, desc, agent] = match;
+    // Parse step reference
     let stepRef;
     if (stepPart === '{N}') {
         stepRef = '{N}';
     }
-    else {
+    else if (/^\d+$/.test(stepPart)) {
         const stepNumber = parseInt(stepPart, 10);
         if (stepNumber <= 0)
             return null;
         stepRef = stepNumber;
     }
+    else {
+        // Named parent step
+        if (isReservedWord(stepPart))
+            return null;
+        stepRef = stepPart;
+    }
+    // Determine substep type
     const isDynamic = substepId === '{n}';
+    const isNamed = !isDynamic && /^[A-Za-z_][A-Za-z0-9_]*$/.test(substepId);
+    // Reject reserved words as substep names
+    if (isNamed && isReservedWord(substepId)) {
+        return null;
+    }
     return {
         stepRef,
         id: substepId,
         description: desc.trim(),
         agentType: agent ? agent.trim() : undefined,
-        isDynamic
+        isDynamic,
+        isNamed,
     };
 }
 /**
@@ -76,15 +147,26 @@ export function parseAction(text) {
     if (trimmed === 'COMPLETE') {
         return { type: 'COMPLETE' };
     }
+    if (trimmed.startsWith('COMPLETE ')) {
+        try {
+            const message = parseQuotedOrIdentifier(trimmed.slice(9));
+            return { type: 'COMPLETE', message };
+        }
+        catch {
+            return null;
+        }
+    }
     if (trimmed === 'STOP') {
         return { type: 'STOP' };
     }
     if (trimmed.startsWith('STOP ')) {
-        let message = trimmed.slice(5).trim();
-        if (message.startsWith('"') && message.endsWith('"')) {
-            message = message.slice(1, -1);
+        try {
+            const message = parseQuotedOrIdentifier(trimmed.slice(5));
+            return { type: 'STOP', message };
         }
-        return { type: 'STOP', message };
+        catch {
+            return null;
+        }
     }
     if (trimmed.startsWith('GOTO ')) {
         const targetStr = trimmed.slice(5).trim();
@@ -138,15 +220,26 @@ function parseNonRetryAction(input) {
     if (trimmed === 'COMPLETE') {
         return { type: 'COMPLETE' };
     }
+    if (trimmed.startsWith('COMPLETE ')) {
+        try {
+            const message = parseQuotedOrIdentifier(trimmed.slice(9));
+            return { type: 'COMPLETE', message };
+        }
+        catch {
+            return null;
+        }
+    }
     if (trimmed === 'STOP') {
         return { type: 'STOP' };
     }
     if (trimmed.startsWith('STOP ')) {
-        let rest = trimmed.slice(5).trim();
-        if (rest.startsWith('"') && rest.endsWith('"')) {
-            rest = rest.slice(1, -1);
+        try {
+            const message = parseQuotedOrIdentifier(trimmed.slice(5));
+            return { type: 'STOP', message };
         }
-        return { type: 'STOP', message: rest };
+        catch {
+            return null;
+        }
     }
     if (trimmed.startsWith('GOTO ')) {
         const targetStr = trimmed.slice(5).trim();
@@ -304,25 +397,48 @@ export function extractWorkflowList(content) {
     return workflows;
 }
 const EXECUTABLE_TAGS = ['bash', 'sh', 'shell'];
-const PROMPTED_TAGS = ['prompt'];
 /**
- * Classify code block by language tag
- * @returns false for executable, true for prompted, null for passive
+ * Check if code block is executable (bash/sh/shell)
  */
-export function isPromptedCodeBlock(lang) {
-    const tag = lang?.split(/\s+/)[0].toLowerCase();
-    if (tag && EXECUTABLE_TAGS.includes(tag))
-        return false; // executable
-    if (tag && PROMPTED_TAGS.includes(tag))
-        return true; // show, don't run
-    return null; // passive (not a command)
+export function isExecutableCodeBlock(lang) {
+    if (!lang)
+        return false;
+    const parts = lang.split(/\s+/);
+    const tag = parts[0]?.toLowerCase();
+    if (!tag)
+        return false;
+    return EXECUTABLE_TAGS.includes(tag);
+}
+/**
+ * Check if code block is a prompt block
+ * Returns true if tag is 'prompt', false if tag is executable (bash/sh/shell), null otherwise
+ */
+export function isPromptCodeBlock(lang) {
+    if (!lang)
+        return null;
+    const trimmed = lang.trim();
+    if (!trimmed)
+        return null;
+    const tag = trimmed.split(/\s+/)[0]?.toLowerCase();
+    if (tag === 'prompt')
+        return true;
+    if (EXECUTABLE_TAGS.includes(tag))
+        return false;
+    return null;
+}
+/**
+ * Escape content for shell single-quoted string
+ */
+export function escapeForShellSingleQuote(content) {
+    // In single quotes, escape single quotes as: '\''
+    return content.replace(/'/g, "'\\''");
 }
 export function formatAction(action) {
     switch (action.type) {
         case 'CONTINUE':
             return 'CONTINUE';
         case 'COMPLETE':
-            return 'COMPLETE';
+            return action.message ? `COMPLETE "${action.message}"` : 'COMPLETE';
         case 'STOP':
             return action.message ? `STOP "${action.message}"` : 'STOP';
         case 'GOTO':
