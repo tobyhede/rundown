@@ -115,9 +115,14 @@ The exit code of an executed command maps to the Step PASS/FAIL transition and a
 | Tag                   | Type          | Behavior                                 |
 |-----------------------|---------------|------------------------------------------|
 | `bash`, `sh`, `shell` | Executable    | Auto-run, exit code determines PASS/FAIL |
+| `bash prompt`         | Instructional | Output only, never executed              |
+| `json`, `lang`        | Instructional | Output only, never executed              |
 | `prompt`              | Instructional | Output only, never executed              |
 
-**Note:** A `prompt` code block counts as the step's command (it becomes `rd prompt '...'`). Since only one code block is allowed per step, you cannot have both a `bash` command AND a `prompt` block in the same step. Use prompt TEXT (paragraphs before the code block) to provide instructions alongside a command.
+
+**Note:** A `prompt` code block counts as the step's command (it becomes `rd prompt '...'`). Since only one code block is allowed per step, you cannot have both a `bash` command AND a `prompt` block in the same step. Use prompt TEXT (paragraph
+
+**Info string syntax:** Use space-separated tokens only. The optional `prompt` flag can follow a language tag (for example: `json prompt`, `bash prompt`). Semicolons or other separators are not allowed.
 
 #### Execution Semantics
 
@@ -244,7 +249,7 @@ Parsers and executors must adhere to strict validation:
 3. **Sequencing**: Static steps must be strictly sequential (1, 2, 3...).
 4. **Ordering**: Within a step or substep, content MUST appear in order: prompt (if any), body (if any), transitions (if any).
 5. **Exclusivity**: Units MUST contain exactly one of their permitted body types (code_block, substeps, or runbooks).
-6. **Single Command**: Each step/substep may have at most one code block (bash, sh, shell, OR prompt).
+6. **Single Command**: Each step/substep may have at most one code block (bash, sh, shell, prompt).
 7. **Recursion**: `RETRY` actions cannot contain another `RETRY`.
 
 ---
