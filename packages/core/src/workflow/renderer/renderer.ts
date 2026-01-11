@@ -38,13 +38,12 @@ export function renderTransitions(transitions: Transitions): string {
 /**
  * Render a Substep to Markdown
  * @param substep - The substep to render
- * @param parentStepNumber - The parent step number (undefined for dynamic parent)
+ * @param parentStepName - The parent step name (e.g., "1", "ErrorHandler", "{N}")
  */
-export function renderSubstep(substep: Substep, parentStepNumber: number | undefined): string {
-  const prefix = parentStepNumber !== undefined ? String(parentStepNumber) : '{N}';
+export function renderSubstep(substep: Substep, parentStepName: string): string {
   const agentSuffix = substep.agentType ? ` (${substep.agentType})` : '';
   const workflowSuffix = substep.workflows?.length ? ` [@${substep.workflows.join(', ')}]` : '';
-  return `### ${prefix}.${substep.id} ${substep.description}${agentSuffix}${workflowSuffix}`;
+  return `### ${parentStepName}.${substep.id} ${substep.description}${agentSuffix}${workflowSuffix}`;
 }
 
 /**
@@ -86,11 +85,10 @@ export function renderStep(step: Step): string {
     lines.push('');
   }
 
-  // Substeps - for parent number, parse from name if numeric
+  // Substeps - use step.name directly as the parent prefix
   if (step.substeps) {
-    const parentNum = step.isDynamic ? undefined : parseInt(step.name, 10);
     for (const substep of step.substeps) {
-      lines.push(renderSubstep(substep, parentNum));
+      lines.push(renderSubstep(substep, step.name));
       lines.push('');
     }
   }

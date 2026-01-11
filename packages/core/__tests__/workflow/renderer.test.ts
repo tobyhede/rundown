@@ -173,7 +173,7 @@ describe('renderSubstep with dynamic parent', () => {
       isDynamic: false
     };
 
-    const rendered = renderSubstep(substep, undefined);
+    const rendered = renderSubstep(substep, '{N}');
     expect(rendered).toBe('### {N}.1 First task');
   });
 
@@ -184,8 +184,19 @@ describe('renderSubstep with dynamic parent', () => {
       isDynamic: false
     };
 
-    const rendered = renderSubstep(substep, 2);
+    const rendered = renderSubstep(substep, '2');
     expect(rendered).toBe('### 2.1 First task');
+  });
+
+  it('uses named step prefix for named parent', () => {
+    const substep: Substep = {
+      id: 'Recover',
+      description: 'Recovery task',
+      isDynamic: false
+    };
+
+    const rendered = renderSubstep(substep, 'ErrorHandler');
+    expect(rendered).toBe('### ErrorHandler.Recover Recovery task');
   });
 });
 
