@@ -12,7 +12,8 @@
     "test": "npm run test -w packages/parser && npm run test -w packages/core && npm run test -w packages/cli",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "cli": "node packages/cli/dist/cli.js"
+    "cli": "node packages/cli/dist/cli.js",
+    "docs:patterns": "node scripts/build-patterns.js"
   },
   "devDependencies": {
     "eslint": "^9.17.0",
