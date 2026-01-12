@@ -2,8 +2,13 @@ import type { Step } from '../workflow/types.js';
 
 /**
  * Render step for CLI output.
- * Order: heading → prompts → command block
- * Excludes: transitions, substeps (not needed for CLI display)
+ *
+ * Generates a simplified Markdown representation of a step optimized
+ * for CLI display. Includes heading, prompt, and command block.
+ * Excludes transitions and substeps which are not needed for CLI display.
+ *
+ * @param step - The Step to render
+ * @returns Markdown string suitable for CLI output
  */
 export function renderStepForCLI(step: Step): string {
   const lines: string[] = [];

@@ -13,6 +13,7 @@ import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from 
 
 /**
  * Parse a quoted string or single-word identifier.
+ *
  * Used for STOP and COMPLETE messages ONLY.
  * NOT used for GOTO targets (GOTO uses parseStepIdFromString which accepts identifiers directly).
  *
@@ -20,7 +21,9 @@ import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from 
  * - Single word identifier: /^[A-Za-z_][A-Za-z0-9_]*$/
  * - Quoted string: "any text here"
  *
- * @throws Error if format is invalid
+ * @param text - The text to parse, either a quoted string or identifier
+ * @returns The extracted string content (quotes removed if present)
+ * @throws {Error} If the format is invalid (unclosed quote or invalid identifier)
  */
 export function parseQuotedOrIdentifier(text: string): string {
   const trimmed = text.trim();
@@ -49,29 +52,67 @@ export function parseQuotedOrIdentifier(text: string): string {
   );
 }
 
+/**
+ * Parsed result from an H3 substep header.
+ *
+ * Represents the structured data extracted from substep headers like:
+ * - "1.2 Description" (numeric)
+ * - "{N}.1 Description" (dynamic step, static substep)
+ * - "ErrorHandler.Recover Description (agent)" (named with agent type)
+ */
 export interface ParsedSubstepHeader {
-  stepRef: string;        // UNIFIED: "1", "{N}", "ErrorHandler"
+  /** Reference to parent step: "1", "{N}", or named identifier like "ErrorHandler" */
+  stepRef: string;
+  /** Substep identifier: numeric string, "{n}" for dynamic, or named identifier */
   id: string;
+  /** True if substep uses dynamic placeholder {n} */
   isDynamic: boolean;
+  /** Human-readable description from the header */
   description: string;
+  /** Optional agent type specified in parentheses at end of header */
   agentType?: string;
 }
 
 /**
- * Strip common separators and whitespace
+ * Strip common separators and whitespace from the beginning of text.
+ *
+ * Removes leading punctuation (periods, colons, dashes, arrows, parentheses)
+ * and whitespace that commonly separate step numbers from descriptions.
+ *
+ * @param text - The text to strip separators from
+ * @returns The text with leading separators and whitespace removed
  */
 export function stripSeparator(text: string): string {
   return text.replace(/^[.:—→\-)\s]+/, '').trim();
 }
 
+/**
+ * Parsed result from an H2 step header.
+ *
+ * Represents the structured data extracted from step headers like:
+ * - "1. Description" (numeric)
+ * - "{N}. Description" (dynamic)
+ * - "ErrorHandler Description" (named)
+ */
 export interface ParsedStepHeader {
-  name: string;           // UNIFIED: "1", "ErrorHandler", "{N}"
+  /** Step identifier: numeric string like "1", dynamic "{N}", or named identifier */
+  name: string;
+  /** True if step uses dynamic placeholder {N} */
   isDynamic: boolean;
+  /** Human-readable description from the header */
   description: string;
 }
 
 /**
- * Extract step number/name and description from header text
+ * Extract step number/name and description from H2 header text.
+ *
+ * Parses step headers in these formats:
+ * - Numeric: "1. Description" or "1 Description"
+ * - Dynamic: "{N}. Description" or "{N} Description"
+ * - Named: "ErrorHandler Description" or just "ErrorHandler"
+ *
+ * @param text - The raw H2 header text (without the ## prefix)
+ * @returns Parsed header data, or null if text is not a valid step header
  */
 export function extractStepHeader(text: string): ParsedStepHeader | null {
   const trimmed = text.trim();
@@ -115,12 +156,16 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
 }
 
 /**
- * Extract substep header from H3 text
+ * Extract substep header from H3 text.
  *
- * Supports:
+ * Parses substep headers in these formats:
  * - Numeric: "1.2 Description"
  * - Dynamic: "{N}.1 Description", "1.{n} Description", "{N}.{n} Description"
- * - Named: "1.Cleanup Description", "ErrorHandler.Recover Description", "{N}.Recovery Description"
+ * - Named: "1.Cleanup Description", "ErrorHandler.Recover Description"
+ * - With agent: "1.2 Description (agent-type)"
+ *
+ * @param text - The raw H3 header text (without the ### prefix)
+ * @returns Parsed substep header data, or null if text is not a valid substep header
  */
 export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
   const trimmed = text.trim();
@@ -160,7 +205,18 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
 }
 
 /**
- * Parse an action string into an Action object
+ * Parse an action string into an Action object.
+ *
+ * Recognizes these action formats:
+ * - CONTINUE - Proceed to next step
+ * - COMPLETE / COMPLETE "message" - Mark workflow complete
+ * - STOP / STOP "message" - Abort workflow
+ * - GOTO target - Jump to specified step/substep
+ * - NEXT - Shorthand for GOTO NEXT (dynamic steps only)
+ * - RETRY / RETRY n / RETRY n action - Retry with optional max count and fallback
+ *
+ * @param text - The action string to parse (e.g., "GOTO 2.1", "RETRY 3 STOP")
+ * @returns Parsed Action object, or null if text is not a recognized action
  */
 export function parseAction(text: string): Action | null {
   const trimmed = text.trim();
@@ -314,6 +370,18 @@ function parseConditionalPrefix(rest: string, type: 'pass' | 'fail'): ParsedCond
   return { type, action, modifier, raw: actionStr };
 }
 
+/**
+ * Parse a conditional transition line into a ParsedConditional object.
+ *
+ * Recognizes these formats:
+ * - PASS/YES: triggers on step success (e.g., "PASS: CONTINUE", "YES → GOTO 2")
+ * - FAIL/NO: triggers on step failure (e.g., "FAIL: STOP", "NO → RETRY 3")
+ * - With aggregation: "PASS ALL: CONTINUE", "FAIL ANY: STOP"
+ *
+ * @param text - The conditional line to parse
+ * @returns Parsed conditional with type, action, and optional modifier, or null if not a conditional
+ * @throws {WorkflowSyntaxError} If the line starts with PASS/FAIL/YES/NO but has invalid action
+ */
 export function parseConditional(text: string): ParsedConditional | null {
   const trimmed = text.trim();
 
@@ -387,7 +455,14 @@ function containsNEXT(action: Action | NonRetryAction): boolean {
 }
 
 /**
- * Validate that NEXT is only used in dynamic step contexts
+ * Validate that NEXT is only used in dynamic step contexts.
+ *
+ * The NEXT action is a shorthand for advancing to the next dynamic step instance.
+ * It is only valid within dynamic step templates (steps with {N} prefix).
+ *
+ * @param conditionals - Array of parsed conditionals to check for NEXT usage
+ * @param isDynamicStep - Whether the current step uses dynamic {N} prefix
+ * @throws {WorkflowSyntaxError} When NEXT is used outside a dynamic step context
  */
 export function validateNEXTUsage(conditionals: ParsedConditional[], isDynamicStep: boolean): void {
   if (isDynamicStep) {
@@ -404,6 +479,16 @@ export function validateNEXTUsage(conditionals: ParsedConditional[], isDynamicSt
   }
 }
 
+/**
+ * Convert an array of parsed conditionals into a Transitions object.
+ *
+ * Combines PASS and FAIL conditionals into a unified Transitions structure,
+ * resolving aggregation mode (ALL vs ANY) and providing defaults for
+ * missing conditions (PASS defaults to CONTINUE, FAIL defaults to STOP).
+ *
+ * @param conditionals - Array of parsed conditional objects from parseConditional
+ * @returns Transitions object with pass/fail handlers, or null if no conditionals provided
+ */
 export function convertToTransitions(conditionals: ParsedConditional[]): Transitions | null {
   if (conditionals.length === 0) {
     return null;
@@ -453,6 +538,15 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   return null;
 }
 
+/**
+ * Extract workflow references from step/substep content.
+ *
+ * Scans content for list items referencing runbook files (*.runbook.md)
+ * and returns an array of the referenced filenames.
+ *
+ * @param content - The raw content text to scan for workflow references
+ * @returns Array of runbook filenames (e.g., ["setup.runbook.md", "cleanup.runbook.md"])
+ */
 export function extractWorkflowList(content: string): string[] {
   const workflows: string[] = [];
   const lines = content.split('\n');
@@ -470,7 +564,12 @@ export function extractWorkflowList(content: string): string[] {
 const EXECUTABLE_TAGS = ['bash', 'sh', 'shell'];
 
 /**
- * Check if code block is executable (bash/sh/shell)
+ * Check if a code block language tag indicates an executable block.
+ *
+ * Executable blocks (bash, sh, shell) are run as shell commands.
+ *
+ * @param lang - The code block language tag (e.g., "bash", "sh runme")
+ * @returns True if the block should be executed as a shell command
  */
 export function isExecutableCodeBlock(lang: string | null | undefined): boolean {
   if (!lang) return false;
@@ -481,8 +580,12 @@ export function isExecutableCodeBlock(lang: string | null | undefined): boolean 
 }
 
 /**
- * Check if code block is a prompt block
- * Returns true if tag is 'prompt', false if tag is executable (bash/sh/shell), null otherwise
+ * Check if a code block language tag indicates a prompt block.
+ *
+ * Prompt blocks contain text to be displayed or sent to an agent.
+ *
+ * @param lang - The code block language tag
+ * @returns True if "prompt", false if executable (bash/sh/shell), null for other/unknown types
  */
 export function isPromptCodeBlock(lang: string | null | undefined): boolean | null {
   if (!lang) return null;
@@ -495,13 +598,28 @@ export function isPromptCodeBlock(lang: string | null | undefined): boolean | nu
 }
 
 /**
- * Escape content for shell single-quoted string
+ * Escape content for use inside a shell single-quoted string.
+ *
+ * Single quotes in the content are escaped using the '\'' technique
+ * (end quote, escaped quote, start quote).
+ *
+ * @param content - The raw string content to escape
+ * @returns Escaped string safe for embedding in single quotes
  */
 export function escapeForShellSingleQuote(content: string): string {
   // In single quotes, escape single quotes as: '\''
   return content.replace(/'/g, "'\\''");
 }
 
+/**
+ * Format an Action object back into its string representation.
+ *
+ * Converts parsed Action objects into human-readable action strings
+ * suitable for display or logging.
+ *
+ * @param action - The Action object to format
+ * @returns String representation of the action (e.g., "GOTO 2", "RETRY 3", "COMPLETE", "STOP \"message\"")
+ */
 export function formatAction(action: Action): string {
   switch (action.type) {
     case 'CONTINUE':

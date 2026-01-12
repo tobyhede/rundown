@@ -2,6 +2,12 @@
 
 import { isNodeError, getErrorMessage, WorkflowSyntaxError } from '@rundown/core';
 
+/**
+ * Wraps an async function with standardized error handling for CLI commands.
+ * Catches errors and logs appropriate messages before exiting with code 1.
+ * @param fn - Async function to execute with error handling
+ * @returns Promise that resolves when fn completes or rejects after logging error
+ */
 export async function withErrorHandling(fn: () => Promise<void>): Promise<void> {
   try {
     await fn();

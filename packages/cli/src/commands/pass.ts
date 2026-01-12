@@ -21,6 +21,10 @@ import {
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
+/**
+ * Registers the 'pass' command for marking steps as passed.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerPassCommand(program: Command): void {
   program
     .command('pass')

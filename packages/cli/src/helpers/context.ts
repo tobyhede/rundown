@@ -6,7 +6,8 @@ import { parseWorkflow } from '@rundown/core';
 import { resolveWorkflowFile } from './resolve-workflow.js';
 
 /**
- * Get current working directory
+ * Get current working directory.
+ * @returns The current working directory path
  */
 export function getCwd(): string {
   return process.cwd();
@@ -14,6 +15,9 @@ export function getCwd(): string {
 
 /**
  * Get total step count for a workflow file.
+ * @param cwd - Current working directory
+ * @param workflowPath - Path to the workflow file
+ * @returns The number of steps in the workflow, or 0 if file cannot be read
  */
 export async function getStepCount(cwd: string, workflowPath: string): Promise<number> {
   try {
@@ -28,7 +32,10 @@ export async function getStepCount(cwd: string, workflowPath: string): Promise<n
 }
 
 /**
- * Find workflow file in current working directory
+ * Find workflow file in current working directory.
+ * @param cwd - Current working directory
+ * @param filename - Workflow filename to find
+ * @returns Absolute path to the workflow file, or null if not found
  */
 export async function findWorkflowFile(cwd: string, filename: string): Promise<string | null> {
   const directPath = path.join(cwd, filename);

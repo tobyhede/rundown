@@ -2,7 +2,11 @@ import { z } from 'zod';
 import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 
 /**
- * Maximum valid step number (prevent overflow, keep IDs reasonable)
+ * Maximum valid step number.
+ *
+ * Set to 999999 to prevent integer overflow issues while allowing
+ * workflows with a very large number of steps. This limit ensures
+ * step IDs remain reasonable for display and storage purposes.
  */
 export const MAX_STEP_NUMBER = 999999;
 

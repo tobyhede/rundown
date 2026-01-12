@@ -22,6 +22,10 @@ import {
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
+/**
+ * Registers the 'fail' command for marking steps as failed.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerFailCommand(program: Command): void {
   program
     .command('fail')

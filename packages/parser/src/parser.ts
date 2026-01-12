@@ -80,20 +80,47 @@ interface StepBuilder {
 }
 
 /**
- * Parse workflow markdown into Step array (compatibility wrapper)
+ * Parse workflow markdown into Step array (compatibility wrapper).
+ *
+ * This is a simplified entry point that returns only the steps array,
+ * discarding workflow metadata. For full document parsing including
+ * title, description, and frontmatter, use {@link parseWorkflowDocument}.
+ *
+ * @param markdown - The raw markdown content to parse
+ * @returns Array of parsed Step objects representing the workflow
+ * @see parseWorkflowDocument for full workflow parsing with metadata
  */
 export function parseWorkflow(markdown: string): Step[] {
   const doc = parseWorkflowDocument(markdown);
   return [...doc.steps];
 }
 
+/**
+ * Options for controlling workflow parsing behavior.
+ */
 export interface ParseOptions {
   /** If true, skip validation and don't throw on errors */
   skipValidation?: boolean;
 }
 
 /**
- * Parse entire workflow document including metadata
+ * Parse entire workflow document including metadata.
+ *
+ * Parses a complete Rundown workflow markdown document, extracting:
+ * - YAML frontmatter (name, version, author, tags)
+ * - H1 title and preamble description
+ * - H2 step definitions with commands, prompts, and transitions
+ * - H3 substep definitions
+ * - Workflow references (nested runbook lists)
+ *
+ * @param markdown - The raw markdown content to parse
+ * @param filename - Optional filename used to derive workflow name if not in frontmatter
+ * @param options - Optional parsing options (e.g., skipValidation)
+ * @returns Complete Workflow object with metadata and steps
+ * @throws {WorkflowSyntaxError} When the markdown contains invalid syntax,
+ *   such as H4+ headings, duplicate substep IDs, multiple code blocks per step,
+ *   or other specification violations
+ * @see parseWorkflow for simplified parsing returning only steps
  */
 export function parseWorkflowDocument(markdown: string, filename?: string, options?: ParseOptions): Workflow {
   const { frontmatter, content } = extractFrontmatter(markdown);

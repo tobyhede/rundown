@@ -17,6 +17,10 @@ import {
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
+/**
+ * Registers the 'pop' command for resuming stashed workflows.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerPopCommand(program: Command): void {
   program
     .command('pop')

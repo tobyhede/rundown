@@ -1,14 +1,35 @@
 import type { Step, SubstepState, Action, NonRetryAction, StepId, Transitions } from './types.js';
 
+/**
+ * Result of evaluating a step condition (PASS or FAIL).
+ *
+ * Indicates what action should be taken based on the condition evaluation:
+ * - retry: Increment retry count and re-attempt the step
+ * - stopped: Halt the workflow (with optional message)
+ * - goto: Jump to a specific step
+ * - continue: Proceed to the next step
+ * - complete: Mark the workflow as complete
+ */
 export interface ConditionResult {
+  /** The action to take based on the condition evaluation */
   action: 'retry' | 'stopped' | 'goto' | 'continue' | 'complete';
+  /** New retry count (only set when action is 'retry') */
   newRetryCount?: number;
+  /** Target step for GOTO action */
   gotoTarget?: StepId;
+  /** Message to display (typically for STOP action) */
   message?: string;
 }
 
 /**
  * Evaluate the FAIL condition for a step.
+ *
+ * Determines the appropriate action when a step fails based on its
+ * defined FAIL transition (RETRY, STOP, GOTO, CONTINUE, or COMPLETE).
+ *
+ * @param step - The step whose FAIL condition to evaluate
+ * @param currentRetryCount - The current retry count for this step
+ * @returns A ConditionResult indicating the action to take
  */
 export function evaluateFailCondition(
   step: Step,
@@ -63,6 +84,12 @@ export function evaluateFailCondition(
 
 /**
  * Evaluate the PASS condition for a step.
+ *
+ * Determines the appropriate action when a step passes based on its
+ * defined PASS transition (COMPLETE, GOTO, STOP, CONTINUE, or RETRY).
+ *
+ * @param step - The step whose PASS condition to evaluate
+ * @returns A ConditionResult indicating the action to take
  */
 export function evaluatePassCondition(step: Step): ConditionResult {
   if (!step.transitions) {
@@ -98,6 +125,15 @@ export function evaluatePassCondition(step: Step): ConditionResult {
 
 /**
  * Evaluate aggregation conditions across substep results.
+ *
+ * When all substeps are complete, determines the parent step's outcome
+ * based on the aggregation mode (ALL or ANY) defined in transitions:
+ * - ALL mode: Pass if all substeps passed, fail if any failed
+ * - ANY mode: Pass if any substep passed, fail only if all failed
+ *
+ * @param substepStates - The current state of all substeps
+ * @param transitions - The transitions defining aggregation behavior (all/any)
+ * @returns A ConditionResult if all substeps are done, null otherwise
  */
 export function evaluateSubstepAggregation(
   substepStates: readonly SubstepState[],

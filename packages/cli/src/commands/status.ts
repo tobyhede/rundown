@@ -20,6 +20,10 @@ import {
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
+/**
+ * Registers the 'status' command for displaying workflow state.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerStatusCommand(program: Command): void {
   program
     .command('status')

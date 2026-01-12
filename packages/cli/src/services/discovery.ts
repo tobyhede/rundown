@@ -5,13 +5,19 @@ import * as path from 'path';
 import { extractFrontmatter, nameFromFilename } from '@rundown/parser';
 
 /**
- * Discovered runbook metadata
+ * Metadata for a discovered runbook file.
+ * Contains information about the runbook's location, source, and frontmatter metadata.
  */
 export interface DiscoveredRunbook {
+  /** Runbook name from frontmatter or derived from filename */
   name: string;
+  /** Absolute path to the runbook file */
   path: string;
+  /** Source directory where the runbook was found */
   source: 'project' | 'plugin';
+  /** Optional description from frontmatter */
   description?: string;
+  /** Optional tags from frontmatter for filtering */
   tags?: string[];
 }
 
@@ -24,8 +30,10 @@ interface SearchPath {
 }
 
 /**
- * Get search paths for runbooks
- * Returns project directory first (takes precedence), then plugin directory
+ * Get search paths for runbooks.
+ * Returns project directory first (takes precedence), then plugin directory.
+ * @param cwd - Current working directory
+ * @returns Array of search paths with source information
  */
 export function getSearchPaths(cwd: string): SearchPath[] {
   const paths: SearchPath[] = [];
@@ -51,7 +59,12 @@ export function getSearchPaths(cwd: string): SearchPath[] {
 }
 
 /**
- * Scan a directory for *.runbook.md files and extract metadata
+ * Scan a directory for *.runbook.md files and extract metadata.
+ * Files that cannot be read or parsed are silently skipped.
+ * Returns empty array if directory doesn't exist or cannot be read.
+ * @param dirPath - Directory path to scan
+ * @param source - Source type for discovered runbooks
+ * @returns Array of discovered runbooks with extracted metadata
  */
 export async function scanDirectory(dirPath: string, source: 'project' | 'plugin'): Promise<DiscoveredRunbook[]> {
   const runbooks: DiscoveredRunbook[] = [];
@@ -92,8 +105,10 @@ export async function scanDirectory(dirPath: string, source: 'project' | 'plugin
 }
 
 /**
- * Discover all runbooks from project and plugin directories
- * Project runbooks take precedence over plugin runbooks with same name
+ * Discover all runbooks from project and plugin directories.
+ * Project runbooks take precedence over plugin runbooks with same name.
+ * @param cwd - Current working directory
+ * @returns Array of all discovered runbooks, deduplicated by name
  */
 export async function discoverRunbooks(cwd: string): Promise<DiscoveredRunbook[]> {
   const searchPaths = getSearchPaths(cwd);
@@ -116,8 +131,11 @@ export async function discoverRunbooks(cwd: string): Promise<DiscoveredRunbook[]
 }
 
 /**
- * Find a runbook by name
- * Project runbooks take precedence over plugin runbooks
+ * Find a runbook by name.
+ * Project runbooks take precedence over plugin runbooks.
+ * @param cwd - Current working directory
+ * @param name - Runbook name to search for
+ * @returns The discovered runbook if found, or null if not found
  */
 export async function findRunbookByName(cwd: string, name: string): Promise<DiscoveredRunbook | null> {
   const searchPaths = getSearchPaths(cwd);

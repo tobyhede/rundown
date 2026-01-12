@@ -1,13 +1,28 @@
 import { StepSchema, ActionSchema } from './schemas.js';
 import type { Step, Action } from './ast.js';
 
+/**
+ * Represents a validation error found during workflow analysis.
+ */
 export interface ValidationError {
+  /** Source line number where the error was detected, if available */
   readonly line?: number;
+  /** Human-readable error description */
   readonly message: string;
 }
 
 /**
  * Validates a parsed workflow against Rundown specification rules.
+ *
+ * Checks for conformance with:
+ * - Step pattern rules (numeric vs dynamic vs named steps)
+ * - Sequential numbering for numeric steps
+ * - Exclusivity rule (step must have exactly one of: body, substeps, or runbook list)
+ * - GOTO target validity and self-loop detection
+ * - Schema validation for each step structure
+ *
+ * @param steps - Readonly array of parsed Step objects to validate
+ * @returns Array of ValidationError objects, empty if workflow is valid
  */
 export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
   const errors: ValidationError[] = [];
@@ -114,7 +129,20 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
 }
 
 /**
- * Validates a single action
+ * Validates a single action within a step or substep context.
+ *
+ * Performs validation including:
+ * - Schema validation of action structure
+ * - GOTO target existence and accessibility
+ * - Dynamic step context rules (NEXT only valid in dynamic contexts)
+ * - Self-loop detection (GOTO to same location)
+ * - Recursive validation of RETRY then-actions
+ *
+ * @param action - The Action object to validate
+ * @param currentSubstepId - ID of the current substep, or undefined if at step level
+ * @param steps - All steps in the workflow, used for GOTO target resolution
+ * @param currentStepObj - The Step containing this action, used for context and error reporting
+ * @param errors - Array to which validation errors are appended (mutated)
  */
 export function validateAction(
   action: Action,

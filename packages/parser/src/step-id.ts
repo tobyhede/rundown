@@ -1,7 +1,14 @@
 import type { StepId } from './schemas.js';
 
 /**
- * Reserved words that cannot be used as named step identifiers
+ * Reserved words that cannot be used as named step or substep identifiers.
+ *
+ * These keywords have special meaning in the Rundown workflow syntax:
+ * - Flow control: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY
+ * - Conditionals: PASS, FAIL, YES, NO
+ * - Aggregation: ALL, ANY
+ *
+ * Using these as step names would create parsing ambiguity.
  */
 export const RESERVED_WORDS = new Set([
   'NEXT',
@@ -19,33 +26,47 @@ export const RESERVED_WORDS = new Set([
 ]);
 
 /**
- * Check if a string is a reserved word
+ * Check if a string is a reserved word.
+ *
+ * @param word - The string to check against reserved words
+ * @returns True if the word is reserved and cannot be used as an identifier
  */
 export function isReservedWord(word: string): boolean {
   return RESERVED_WORDS.has(word);
 }
 
 /**
- * Valid identifier pattern for named steps/substeps
+ * Valid identifier pattern for named steps and substeps.
+ *
+ * Matches identifiers that start with a letter or underscore,
+ * followed by zero or more letters, digits, or underscores.
+ * Examples: "ErrorHandler", "cleanup_task", "_internal", "Step1"
  */
 export const NAMED_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/**
+ * Options for controlling step ID parsing behavior.
+ */
 export interface ParseStepIdOptions {
   /** Require a separator after the step ID (space, dash, colon) */
   readonly requireSeparator?: boolean;
 }
 
 /**
- * Parse StepId from string
+ * Parse a StepId from a string representation.
  *
- * Supports:
+ * Supports these formats:
  * - Numeric: "1", "1.2"
  * - Dynamic: "{N}.1", "{N}.{n}", "{N}.Name"
  * - Named: "Cleanup", "ErrorHandler.1", "ErrorHandler.Recover"
- * - Special: "NEXT"
+ * - Special: "NEXT" (for GOTO NEXT in dynamic contexts)
  *
  * Named steps/substeps must be valid identifiers (no spaces, no quotes).
- * Quoted strings are rejected - use identifiers only.
+ * Reserved words (CONTINUE, STOP, etc.) are rejected as identifiers.
+ *
+ * @param input - The string to parse (e.g., "1.2", "ErrorHandler", "NEXT")
+ * @param options - Optional parsing configuration
+ * @returns Parsed StepId object, or null if input is not a valid step reference
  */
 export function parseStepIdFromString(input: string, options?: ParseStepIdOptions): StepId | null {
   if (!input) return null;
@@ -166,7 +187,13 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
 }
 
 /**
- * Serialize StepId to string
+ * Serialize a StepId to its canonical string representation.
+ *
+ * Formats the step ID as "step" or "step.substep" depending on
+ * whether a substep is specified.
+ *
+ * @param stepId - The StepId object to serialize
+ * @returns String representation (e.g., "1", "1.2", "ErrorHandler.Recover")
  */
 export function stepIdToString(stepId: StepId): string {
   // step is always string now
@@ -177,7 +204,13 @@ export function stepIdToString(stepId: StepId): string {
 }
 
 /**
- * Compare two StepIds for equality
+ * Compare two StepIds for equality.
+ *
+ * Two StepIds are equal if both their step and substep components match.
+ *
+ * @param a - First StepId to compare
+ * @param b - Second StepId to compare
+ * @returns True if both StepIds reference the same location
  */
 export function stepIdEquals(a: StepId, b: StepId): boolean {
   return a.step === b.step && a.substep === b.substep;

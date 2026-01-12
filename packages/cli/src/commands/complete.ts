@@ -15,6 +15,10 @@ import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
+/**
+ * Registers the 'complete' command for marking workflows as complete.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerCompleteCommand(program: Command): void {
   program
     .command('complete')
