@@ -11,7 +11,7 @@ rd echo --result fail --result fail --result fail
 - PASS: CONTINUE
 - FAIL: RETRY 2 GOTO 3
 
-## 2. Skipped step
+## 2. Skip
 
 ```bash
 rd echo --result pass

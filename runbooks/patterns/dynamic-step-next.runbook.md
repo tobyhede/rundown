@@ -1,3 +1,6 @@
+# Dynamic Step With GOTO NEXT
+
 ## {N}. Process Item
-Do something.
+Execute.
 - PASS: GOTO NEXT
+
