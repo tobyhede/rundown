@@ -21,8 +21,8 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const INDEX_PATH = path.join(PROJECT_ROOT, 'runbooks/patterns/INDEX.md');
 const OUTPUT_PATH = path.join(PROJECT_ROOT, 'docs/PATTERNS.md');
 
-// Match list items with .runbook.md links: "- [name](path.runbook.md)"
-const RUNBOOK_LINK_REGEX = /^(\s*)-\s*\[([^\]]+)\]\(([^)]+\.runbook\.md)\)\s*$/;
+// Match list items with .runbook.md links: "- [name](path.runbook.md)" (with optional trailing content)
+const RUNBOOK_LINK_REGEX = /^(\s*)-\s*\[([^\]]+)\]\(([^)]+\.runbook\.md)\)/;
 
 function buildPatterns() {
   const indexContent = fs.readFileSync(INDEX_PATH, 'utf8');
