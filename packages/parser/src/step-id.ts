@@ -123,8 +123,13 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
     return null;
   }
 
-  // Reject bare {N} or malformed {N}xxx (already handled {N}. above)
-  if (input === '{N}' || input.startsWith('{N}')) {
+  // Accept bare {N} as "restart current dynamic instance"
+  if (input === '{N}') {
+    return { step: '{N}' };
+  }
+
+  // Reject malformed {N}xxx (already handled {N}. above)
+  if (input.startsWith('{N}')) {
     return null;
   }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseAction, extractWorkflowList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader } from '../src/index.js';
+import { parseAction, extractWorkflowList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, type ParsedConditional } from '../src/index.js';
 
 describe('parseAction GOTO NEXT', () => {
   it('parses GOTO NEXT as action', () => {
@@ -287,9 +287,8 @@ describe('isPromptCodeBlock', () => {
   });
 });
 
-// TODO: Implement YES/NO conditional support
 describe('parseConditional with YES/NO', () => {
-  it.skip('should preserve YES as type', () => {
+  it('should preserve YES as type', () => {
     const result = parseConditional('YES: CONTINUE');
     expect(result).toEqual({
       type: 'yes',
@@ -299,7 +298,7 @@ describe('parseConditional with YES/NO', () => {
     });
   });
 
-  it.skip('should preserve NO as type', () => {
+  it('should preserve NO as type', () => {
     const result = parseConditional('NO: STOP');
     expect(result).toEqual({
       type: 'no',
@@ -311,24 +310,24 @@ describe('parseConditional with YES/NO', () => {
 });
 
 describe('convertToTransitions with YES/NO', () => {
-  it.skip('should preserve yes kind in transitions', () => {
-    const conditionals = [
+  it('should preserve yes kind in transitions', () => {
+    const conditionals: ParsedConditional[] = [
       { type: 'yes', action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
       { type: 'no', action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result.pass.kind).toBe('yes');
-    expect(result.fail.kind).toBe('no');
+    expect(result!.pass.kind).toBe('yes');
+    expect(result!.fail.kind).toBe('no');
   });
 
-  it.skip('should preserve pass kind in transitions', () => {
-    const conditionals = [
+  it('should preserve pass kind in transitions', () => {
+    const conditionals: ParsedConditional[] = [
       { type: 'pass', action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
       { type: 'fail', action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result.pass.kind).toBe('pass');
-    expect(result.fail.kind).toBe('fail');
+    expect(result!.pass.kind).toBe('pass');
+    expect(result!.fail.kind).toBe('fail');
   });
 });
 
@@ -633,6 +632,18 @@ describe('parseStepIdFromString with named steps', () => {
     it('returns null for reserved word as substep of {N}', () => {
       expect(parseStepIdFromString('{N}.STOP')).toBeNull();
     });
+  });
+});
+
+describe('parseStepIdFromString dynamic patterns', () => {
+  it('parses {N} as step target (restart current dynamic instance)', () => {
+    const result = parseStepIdFromString('{N}');
+    expect(result).toEqual({ step: '{N}' });
+  });
+
+  it('parses {N}.{n} as current step with current substep', () => {
+    const result = parseStepIdFromString('{N}.{n}');
+    expect(result).toEqual({ step: '{N}', substep: '{n}' });
   });
 });
 
