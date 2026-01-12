@@ -513,25 +513,31 @@ function containsNEXT(action: Action | NonRetryAction): boolean {
 }
 
 /**
- * Validate that NEXT is only used in dynamic step contexts.
+ * Validate that NEXT is only used in dynamic contexts.
  *
- * The NEXT action is a shorthand for advancing to the next dynamic step instance.
- * It is only valid within dynamic step templates (steps with {N} prefix).
+ * The NEXT action is a shorthand for advancing to the next dynamic instance.
+ * It is valid within dynamic step templates (steps with {N} prefix) OR
+ * within dynamic substeps (substeps with {n} suffix).
  *
  * @param conditionals - Array of parsed conditionals to check for NEXT usage
  * @param isDynamicStep - Whether the current step uses dynamic {N} prefix
- * @throws {WorkflowSyntaxError} When NEXT is used outside a dynamic step context
+ * @param isDynamicSubstep - Whether the current substep uses dynamic {n} suffix
+ * @throws {WorkflowSyntaxError} When NEXT is used outside a dynamic context
  */
-export function validateNEXTUsage(conditionals: ParsedConditional[], isDynamicStep: boolean): void {
-  if (isDynamicStep) {
-    // NEXT is allowed in dynamic steps
+export function validateNEXTUsage(
+  conditionals: ParsedConditional[],
+  isDynamicStep: boolean,
+  isDynamicSubstep: boolean = false
+): void {
+  if (isDynamicStep || isDynamicSubstep) {
+    // NEXT is allowed in dynamic steps or dynamic substeps
     return;
   }
 
   for (const conditional of conditionals) {
     if (containsNEXT(conditional.action)) {
       throw new WorkflowSyntaxError(
-        `NEXT action is only allowed in dynamic step contexts (steps with {N} prefix)`
+        `NEXT action is only allowed in dynamic contexts (steps with {N} prefix or substeps with {n} suffix)`
       );
     }
   }
