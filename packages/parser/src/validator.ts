@@ -242,7 +242,7 @@ export function validateAction(
         const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO NEXT is only valid within dynamic context (steps with ## {N}. or substeps with .{n}).`
+          message: `Step ${context}: GOTO NEXT invalid - requires dynamic context (## {N}. step or .{n} substep).`
         });
       }
       return;
@@ -289,7 +289,7 @@ export function validateAction(
         const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO {N}.${targetSubstep ?? ''} is only valid within dynamic step context.`
+          message: `Step ${context}: GOTO {N}.${targetSubstep ?? ''} invalid - requires dynamic step context.`
         });
       }
       return;
