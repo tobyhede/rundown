@@ -647,6 +647,23 @@ describe('parseStepIdFromString dynamic patterns', () => {
   });
 });
 
+describe('parseStepIdFromString substep {n}', () => {
+  it('parses 1.{n} as step 1 with dynamic substep', () => {
+    const result = parseStepIdFromString('1.{n}');
+    expect(result).toEqual({ step: '1', substep: '{n}' });
+  });
+
+  it('parses ErrorHandler.{n} as named step with dynamic substep', () => {
+    const result = parseStepIdFromString('ErrorHandler.{n}');
+    expect(result).toEqual({ step: 'ErrorHandler', substep: '{n}' });
+  });
+
+  it('rejects bare {n} as step', () => {
+    const result = parseStepIdFromString('{n}');
+    expect(result).toBeNull();
+  });
+});
+
 describe('extractSubstepHeader with named substeps', () => {
   describe('static substeps', () => {
     it('extracts numeric substep', () => {

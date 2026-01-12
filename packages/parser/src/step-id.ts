@@ -133,10 +133,10 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
     return null;
   }
 
-  // === NUMERIC STEP HANDLING: 1, 1.2, 1.Name ===
+  // === NUMERIC STEP HANDLING: 1, 1.2, 1.{n}, 1.Name ===
   const numericPattern = requireSeparator
-    ? /^(\d+)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?[\s\-:]/
-    : /^(\d+)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?$/;
+    ? /^(\d+)(?:\.(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*))?[\s\-:]/
+    : /^(\d+)(?:\.(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*))?$/;
 
   const numericMatch = input.match(numericPattern);
   if (numericMatch) {
@@ -162,8 +162,8 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
     return { step: stepStr, substep };
   }
 
-  // === NAMED STEP HANDLING: Cleanup, ErrorHandler.1, ErrorHandler.Recover ===
-  const namedPattern = /^([A-Za-z_][A-Za-z0-9_]*)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?$/;
+  // === NAMED STEP HANDLING: Cleanup, ErrorHandler.1, ErrorHandler.{n}, ErrorHandler.Recover ===
+  const namedPattern = /^([A-Za-z_][A-Za-z0-9_]*)(?:\.(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*))?$/;
   const namedMatch = namedPattern.exec(input);
   if (namedMatch) {
     const stepName = namedMatch[1];
