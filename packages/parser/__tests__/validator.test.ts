@@ -376,4 +376,92 @@ describe('validator strict rules', () => {
       expect(errors.some(e => e.message.includes('no dynamic substep'))).toBe(true);
     });
   });
+
+  describe('GOTO NEXT qualified validation', () => {
+    it('accepts GOTO NEXT {N} when dynamic step exists', () => {
+      const steps = [
+        mockStep({ name: '1', isDynamic: false }),
+        mockStep({
+          name: '{N}',
+          isDynamic: true,
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        })
+      ];
+      // Add GOTO NEXT {N} to static step
+      steps[0] = mockStep({
+        name: '1',
+        isDynamic: false,
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT', qualifier: { step: '{N}' } } } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      });
+      const errors = validateWorkflow(steps);
+      expect(errors.filter(e => e.message.includes('GOTO NEXT'))).toHaveLength(0);
+    });
+
+    it('rejects GOTO NEXT {N} when no dynamic step exists', () => {
+      const steps = [mockStep({
+        name: '1',
+        isDynamic: false,
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT', qualifier: { step: '{N}' } } } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      })];
+      const errors = validateWorkflow(steps);
+      expect(errors.some(e => e.message.includes('no dynamic step'))).toBe(true);
+    });
+
+    it('accepts GOTO NEXT {N}.{n} when dynamic step has dynamic substep', () => {
+      const steps = [mockStep({
+        name: '{N}',
+        isDynamic: true,
+        substeps: [{ id: '{n}', description: 'Dynamic substep', isDynamic: true }],
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT', qualifier: { step: '{N}', substep: '{n}' } } } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      })];
+      const errors = validateWorkflow(steps);
+      expect(errors.filter(e => e.message.includes('GOTO NEXT'))).toHaveLength(0);
+    });
+
+    it('rejects GOTO NEXT {N}.{n} when dynamic step has no dynamic substep', () => {
+      const steps = [mockStep({
+        name: '{N}',
+        isDynamic: true,
+        substeps: [{ id: '1', description: 'Static substep', isDynamic: false }],
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT', qualifier: { step: '{N}', substep: '{n}' } } } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      })];
+      const errors = validateWorkflow(steps);
+      expect(errors.some(e => e.message.includes('no dynamic substep'))).toBe(true);
+    });
+
+    it('rejects GOTO NEXT 1.{n} when step 1 has no dynamic substep', () => {
+      const steps = [mockStep({
+        name: '1',
+        isDynamic: false,
+        substeps: [{ id: '1', description: 'Static', isDynamic: false }],
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT', qualifier: { step: '1', substep: '{n}' } } } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      })];
+      const errors = validateWorkflow(steps);
+      expect(errors.some(e => e.message.includes('no dynamic substep'))).toBe(true);
+    });
+  });
 });
