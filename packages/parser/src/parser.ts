@@ -141,7 +141,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
       const workflows = extractWorkflowList(ps.content);
 
       // Validate NEXT usage before converting to transitions
-      validateNEXTUsage(ps.pendingConditionals, currentStep.isDynamic);
+      validateNEXTUsage(ps.pendingConditionals, currentStep.isDynamic, ps.isDynamic);
 
       const transitions = convertToTransitions(ps.pendingConditionals);
 

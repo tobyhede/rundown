@@ -67,7 +67,7 @@ describe('validator strict rules', () => {
       })];
       const errors = validateWorkflow(steps);
       expect(errors.length).toBeGreaterThan(0);
-      expect(errors.some(e => e.message.includes('GOTO NEXT is only valid within dynamic step context'))).toBe(true);
+      expect(errors.some(e => e.message.includes('GOTO NEXT is only valid within dynamic context'))).toBe(true);
     });
 
     it('accepts GOTO NEXT in dynamic context', () => {

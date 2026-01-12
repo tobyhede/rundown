@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseAction, extractWorkflowList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, type ParsedConditional } from '../src/index.js';
+import { parseAction, extractWorkflowList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, validateNEXTUsage, type ParsedConditional } from '../src/index.js';
 
 describe('parseAction GOTO NEXT', () => {
   it('parses GOTO NEXT as action', () => {
@@ -773,5 +773,34 @@ describe('parseAction GOTO NEXT with target', () => {
       type: 'GOTO',
       target: { step: 'NEXT', qualifier: { step: 'ErrorHandler', substep: '{n}' } }
     });
+  });
+});
+
+describe('validateNEXTUsage with dynamic substeps', () => {
+  const makeConditional = (action: { type: string; target?: { step: string } }): ParsedConditional => ({
+    type: 'pass',
+    action: action as any,
+    modifier: null,
+    raw: 'test'
+  });
+
+  it('allows NEXT in dynamic substep of static step', () => {
+    expect(() => {
+      validateNEXTUsage(
+        [makeConditional({ type: 'GOTO', target: { step: 'NEXT' } })],
+        false,  // step is NOT dynamic
+        true    // substep IS dynamic
+      );
+    }).not.toThrow();
+  });
+
+  it('rejects NEXT in static substep of static step', () => {
+    expect(() => {
+      validateNEXTUsage(
+        [makeConditional({ type: 'GOTO', target: { step: 'NEXT' } })],
+        false,  // step is NOT dynamic
+        false   // substep is NOT dynamic
+      );
+    }).toThrow('NEXT action is only allowed in dynamic contexts');
   });
 });

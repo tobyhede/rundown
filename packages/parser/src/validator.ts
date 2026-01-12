@@ -118,8 +118,8 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
         }
 
         if (substep.transitions) {
-          validateAction(substep.transitions.pass.action, substep.id, steps, step, errors);
-          validateAction(substep.transitions.fail.action, substep.id, steps, step, errors);
+          validateAction(substep.transitions.pass.action, substep.id, steps, step, errors, substep.isDynamic);
+          validateAction(substep.transitions.fail.action, substep.id, steps, step, errors, substep.isDynamic);
         }
       }
     }
@@ -149,7 +149,8 @@ export function validateAction(
   currentSubstepId: string | undefined,
   steps: readonly Step[],
   currentStepObj: Step,
-  errors: ValidationError[]
+  errors: ValidationError[],
+  isCurrentSubstepDynamic: boolean = false
 ): void {
   const result = ActionSchema.safeParse(action);
   if (!result.success) {
@@ -161,19 +162,19 @@ export function validateAction(
     return;
   }
 
-  const isDynamicContext = currentStepObj.isDynamic;
+  const isDynamicContext = currentStepObj.isDynamic || isCurrentSubstepDynamic;
 
   if (action.type === 'GOTO') {
     const targetStep = action.target.step;
     const targetSubstep = action.target.substep;
 
-    // Handle GOTO NEXT - only valid in dynamic context
+    // Handle GOTO NEXT - only valid in dynamic context (steps or substeps)
     if (targetStep === 'NEXT') {
       if (!isDynamicContext) {
         const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO NEXT is only valid within dynamic step context (## {N}.).`
+          message: `Step ${context}: GOTO NEXT is only valid within dynamic context (steps with ## {N}. or substeps with .{n}).`
         });
       }
       return;
@@ -312,6 +313,6 @@ export function validateAction(
   }
 
   if (action.type === 'RETRY') {
-    validateAction(action.then, currentSubstepId, steps, currentStepObj, errors);
+    validateAction(action.then, currentSubstepId, steps, currentStepObj, errors, isCurrentSubstepDynamic);
   }
 }
