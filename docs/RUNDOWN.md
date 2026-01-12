@@ -1,6 +1,6 @@
 # Rundown CLI Guide and Reference
 
-This document provides a comprehensive guide and reference for the Rundown CLI (`tsv`), explaining how it executes workflows defined in the Rundown format, tracks workflow state, manages execution, and dispatches subagents.
+This document provides a comprehensive guide and reference for the Rundown CLI (`rundown`), explaining how it executes workflows defined in the Rundown format, tracks workflow state, manages execution, and dispatches subagents.
 
 **For syntax and format details, see:**
 - [SPEC.md](./SPEC.md) - Rundown specification
@@ -40,9 +40,8 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
 - [Troubleshooting and Error Handling](#troubleshooting-and-error-handling)
   - [Common Errors and Resolutions](#common-errors-and-resolutions)
   - [State Recovery](#state-recovery)
-- [Integration with Turboshovel](#integration-with-turboshovel)
+- [Integration with Claude Code](#integration-with-claude-code)
   - [Context Injection](#context-injection)
-  - [Quality Gates](#quality-gates)
   - [Session Persistence](#session-persistence)
 - [Quick Reference](#quick-reference)
 
@@ -72,15 +71,15 @@ The CLI is a control interface. Claude executes the actual work.
 ## Installation
 
 ```bash
-npm install -g @turboshovel/cli
+npm install -g @rundown/cli
 ```
 
 Verify installation:
 ```bash
-tsv --help
+rundown --help
 ```
 
-The `turboshovel` command is an alias for `tsv`.
+The `rd` command is an alias for `rundown`.
 
 ---
 
@@ -88,23 +87,23 @@ The `turboshovel` command is an alias for `tsv`.
 
 **Run a workflow:**
 ```bash
-tsv run examples/runbooks/simple.runbook.md
+rundown run examples/runbooks/simple.runbook.md
 ```
 
 **Check status:**
 ```bash
-tsv status
+rundown status
 ```
 
 **Progress through steps:**
 ```bash
-tsv pass    # Step succeeded, apply PASS transition
-tsv fail    # Step failed, apply FAIL transition
+rundown pass    # Step succeeded, apply PASS transition
+rundown fail    # Step failed, apply FAIL transition
 ```
 
 **Stop a workflow:**
 ```bash
-tsv stop
+rundown stop
 ```
 
 ---
@@ -118,7 +117,7 @@ Rundown separates **workflow definition** from **state tracking**:
 | Component | Role |
 |-----------|------|
 | **Runbook file** | Markdown document defining steps, transitions, and conditions |
-| **CLI (`tsv`)** | Tracks state: current step, retry count, variables |
+| **CLI (`rundown`)** | Tracks state: current step, retry count, variables |
 | **Agent (Claude)** | Executes work, uses CLI to report outcomes |
 
 **Key concept:** The CLI does not execute your code. It tracks which step you are on and what happens when you report PASS or FAIL. The agent (or user) does the actual work.
@@ -144,9 +143,9 @@ The state machine responds to these events:
 
 | Event | Trigger | Effect |
 |-------|---------|--------|
-| `PASS` | `tsv pass` or command exit 0 | Evaluate PASS transition |
-| `FAIL` | `tsv fail` or command exit non-0 | Evaluate FAIL transition |
-| `GOTO` | `tsv goto N` or GOTO action | Jump to step N |
+| `PASS` | `rundown pass` or command exit 0 | Evaluate PASS transition |
+| `FAIL` | `rundown fail` or command exit non-0 | Evaluate FAIL transition |
+| `GOTO` | `rundown goto N` or GOTO action | Jump to step N |
 | `RETRY` | FAIL + RETRY action | Increment retryCount, stay in state |
 
 #### Transitions
@@ -184,7 +183,7 @@ Example of a prompted step:
 ````markdown
 ## 4. Code review
 Review the implementation for issues.
-`tsv pass` if acceptable, `tsv fail` if blocked.
+`rundown pass` if acceptable, `rundown fail` if blocked.
 - PASS: CONTINUE
 - FAIL: STOP
 ````
@@ -197,8 +196,9 @@ Review the implementation for issues.
 
 | Path | Purpose |
 |------|---------|
-| `.claude/turboshovel/runbooks/` | Workflow state files (`wf-YYYY-MM-DD-xxxxx.json` or `wf-2024-01-07-abc123.json`) |
-| `.claude/turboshovel/session.json` | Active workflow tracking, stash, agent stacks |
+| `.claude/rundown/runs/` | Workflow state files (`wf-YYYY-MM-DD-xxxxx.json`) |
+| `.claude/rundown/session.json` | Active workflow tracking, stash, agent stacks |
+| `.claude/rundown/runbooks/` | Workflow source files (discovered for `rundown ls --all`) |
 
 ### Session Structure
 
@@ -216,7 +216,7 @@ The session tracks which workflows are active using a **stack-based model**:
 
 - **defaultStack**: Main workflow stack (no agent ID)
 - **stacks**: Per-agent workflow stacks
-- **stashedWorkflowId**: Temporarily paused workflow (for `tsv stash`/`tsv pop`)
+- **stashedWorkflowId**: Temporarily paused workflow (for `rundown stash`/`rundown pop`)
 
 ### Workflow State Structure
 
@@ -227,28 +227,34 @@ Each workflow state file contains:
   "id": "wf-2024-01-07-abc123",
   "workflow": "my-workflow.runbook.md",
   "title": "My Workflow",
-  "step": 2,
+  "description": "Workflow description",
+  "step": "2",
+  "instance": 1,
   "substep": "1",
   "stepName": "Execute batch",
   "retryCount": 0,
   "variables": {},
+  "steps": [],
   "pendingSteps": [],
   "agentBindings": {},
+  "substepStates": [],
   "startedAt": "2024-01-07T10:00:00.000Z",
   "updatedAt": "2024-01-07T10:05:00.000Z",
   "prompted": false,
   "lastResult": "pass",
   "lastAction": "CONTINUE",
-  "snapshot": { /* XState snapshot */ }
+  "snapshot": {}
 }
 ```
 
 Key fields:
-- `step`: Current step number (1-indexed)
+- `step`: Current step identifier (string: "1", "ErrorHandler", "{N}")
+- `instance`: Dynamic workflow instance counter (1, 2, 3, ...)
 - `substep`: Current substep ID (e.g., "1", "2")
 - `retryCount`: Current retry attempt
+- `steps`: Array of step states for all workflow steps
 - `lastAction`: Most recent transition (`START`, `CONTINUE`, `GOTO`, `RETRY`, `COMPLETE`, `STOP`)
-- `lastResult`: Last PASS/FAIL signal
+- `lastResult`: Last PASS/FAIL signal (`pass` or `fail`)
 - `snapshot`: XState persisted snapshot for state restoration
 
 ---
@@ -257,13 +263,13 @@ Key fields:
 
 ### Workflow Lifecycle
 
-#### `tsv run <file>` - Start Workflow
+#### `rundown run <file>` - Start Workflow
 
 Start a new workflow from a runbook file.
 
 ```bash
-tsv run my-workflow.runbook.md
-tsv run my-workflow.runbook.md --prompted  # Disable automatic execution
+rundown run my-workflow.runbook.md
+rundown run my-workflow.runbook.md --prompted  # Disable automatic execution
 ```
 
 **Behavior:**
@@ -281,40 +287,40 @@ tsv run my-workflow.runbook.md --prompted  # Disable automatic execution
 **With `--prompted`:**
 - Commands displayed but not executed
 - Agent must run command manually
-- Use `tsv pass` or `tsv fail` after command
+- Use `rundown pass` or `rundown fail` after command
 
-#### `tsv stop` - Abort Workflow
+#### `rundown stop` - Abort Workflow
 
 Immediately terminate the active workflow.
 
 ```bash
-tsv stop
-tsv stop --agent <agentId>
+rundown stop
+rundown stop --agent <agentId>
 ```
 
 Deletes workflow state and clears from session.
 
-#### `tsv complete` - Mark Complete
+#### `rundown complete` - Mark Complete
 
 Force workflow completion (success or stopped).
 
 ```bash
-tsv complete                    # Mark as success
-tsv complete --status stopped   # Mark as stopped
+rundown complete                    # Mark as success
+rundown complete --status stopped   # Mark as stopped
 ```
 
 ### State Transitions
 
-#### `tsv pass` - Mark Step Passed
+#### `rundown pass` - Mark Step Passed
 
 Signal successful step completion.
 
 ```bash
-tsv pass
-tsv pass --agent <agentId>
+rundown pass
+rundown pass --agent <agentId>
 ```
 
-**Aliases:** `tsv yes`, `tsv ok`
+**Aliases:** `rundown yes`, `rundown ok`
 
 **Behavior:**
 1. Send PASS event to XState
@@ -322,16 +328,16 @@ tsv pass --agent <agentId>
 3. Execute resulting action
 4. Print action taken and new step
 
-#### `tsv fail` - Mark Step Failed
+#### `rundown fail` - Mark Step Failed
 
 Signal step failure.
 
 ```bash
-tsv fail
-tsv fail --agent <agentId>
+rundown fail
+rundown fail --agent <agentId>
 ```
 
-**Alias:** `tsv no`
+**Alias:** `rundown no`
 
 **Behavior:**
 1. Send FAIL event to XState
@@ -343,13 +349,13 @@ For RETRY transitions:
 - If `retryCount < max`: increment count, stay in step
 - If exhausted: execute fallback action (default: STOP)
 
-#### `tsv goto <step>` - Jump to Step
+#### `rundown goto <step>` - Jump to Step
 
 Navigate directly to a step.
 
 ```bash
-tsv goto 3       # Jump to step 3
-tsv goto 3.1     # Jump to substep 3.1
+rundown goto 3       # Jump to step 3
+rundown goto 3.1     # Jump to substep 3.1
 ```
 
 **Restrictions:**
@@ -360,19 +366,19 @@ tsv goto 3.1     # Jump to substep 3.1
 
 ### Status Commands
 
-#### `tsv status` - Show Current State
+#### `rundown status` - Show Current State
 
 Display active workflow information.
 
 ```bash
-tsv status
-tsv status --agent <agentId>
+rundown status
+rundown status --agent <agentId>
 ```
 
 **Output:**
 ```
 File:     my-workflow.runbook.md
-State:    .claude/turboshovel/runbooks/wf-2024-01-07-abc123.json
+State:    .claude/rundown/runs/wf-2024-01-07-abc123.json
 Action:   CONTINUE
 Result:   PASS
 
@@ -385,54 +391,54 @@ Agents:
   agent-123: 3.1 [running]
 ```
 
-#### `tsv ls` - List Workflows
+#### `rundown ls` - List Workflows
 
 List active or available workflows.
 
 ```bash
-tsv ls           # List active workflows
-tsv ls --all     # List available runbook files
-tsv ls --json    # JSON output
-tsv ls --all --tags review  # Filter by tag
+rundown ls           # List active workflows
+rundown ls --all     # List available runbook files
+rundown ls --json    # JSON output
+rundown ls --all --tags review  # Filter by tag
 ```
 
 **Active workflow status values:**
 - `active` - Currently executing
-- `stashed` - Paused via `tsv stash`
+- `stashed` - Paused via `rundown stash`
 - `complete` - Successfully finished
 - `stopped` - Terminated with failure
 - `inactive` - In session but not active
 
 ### Enforcement Control
 
-#### `tsv stash` - Pause Enforcement
+#### `rundown stash` - Pause Enforcement
 
 Temporarily pause workflow tracking.
 
 ```bash
-tsv stash
+rundown stash
 ```
 
 Removes active workflow from stack, preserves state.
 
-#### `tsv pop` - Resume Enforcement
+#### `rundown pop` - Resume Enforcement
 
 Resume from stashed workflow.
 
 ```bash
-tsv pop
+rundown pop
 ```
 
 Restores stashed workflow to active stack.
 
 ### Validation
 
-#### `tsv check <file>` - Validate Runbook
+#### `rundown check <file>` - Validate Runbook
 
 Check a runbook file for syntax errors.
 
 ```bash
-tsv check my-workflow.runbook.md
+rundown check my-workflow.runbook.md
 ```
 
 **Output:**
@@ -449,38 +455,27 @@ Line 22: Invalid transition: GOTO 10 (step does not exist)
 
 ### Maintenance
 
-#### `tsv prune` - Remove Workflow State
+#### `rundown prune` - Remove Workflow State
 
 Clean up workflow state files (not runbook files).
 
 ```bash
-tsv prune               # Remove completed workflows (default)
-tsv prune --all         # Remove all workflow state
-tsv prune --dry-run     # Preview what would be removed
-tsv prune --completed   # Only completed
-tsv prune --inactive    # Only inactive
-tsv prune --active      # Only active (careful!)
+rundown prune               # Remove completed workflows (default)
+rundown prune --all         # Remove all workflow state
+rundown prune --dry-run     # Preview what would be removed
+rundown prune --completed   # Only completed
+rundown prune --inactive    # Only inactive
+rundown prune --active      # Only active (careful!)
 ```
-
-#### `tsv gate <name>` - Run Gate
-
-Execute a named gate from turboshovel.json.
-
-```bash
-tsv gate lint
-tsv gate test
-```
-
-Loads gate configuration and executes command.
 
 ### Subagent Commands
 
 | Command | Description |
 |---------|-------------|
-| `tsv run --step <id>` | Queue step for agent binding |
-| `tsv run --agent <id>` | Bind agent to pending step |
-| `tsv pass --agent <id>` | Mark agent's work as passed |
-| `tsv fail --agent <id>` | Mark agent's work as failed |
+| `rundown run --step <id>` | Queue step for agent binding |
+| `rundown run --agent <id>` | Bind agent to pending step |
+| `rundown pass --agent <id>` | Mark agent's work as passed |
+| `rundown fail --agent <id>` | Mark agent's work as failed |
 
 ---
 
@@ -490,17 +485,17 @@ Loads gate configuration and executes command.
 
 ```bash
 # Start the workflow
-tsv run myworkflow.runbook.md
+rundown run myworkflow.runbook.md
 
 # After completing each step, signal the outcome
-tsv pass    # or tsv yes, tsv ok
-tsv fail    # Step failed, apply FAIL transition
+rundown pass    # or rundown yes, rundown ok
+rundown fail    # Step failed, apply FAIL transition
 ```
 
 ### Task: Check Workflow Status
 
 ```bash
-tsv status
+rundown status
 ```
 
 Output shows:
@@ -512,8 +507,8 @@ Output shows:
 ### Task: Jump to a Specific Step
 
 ```bash
-tsv goto 3       # Jump to step 3
-tsv goto 2.1     # Jump to substep 1 of step 2
+rundown goto 3       # Jump to step 3
+rundown goto 2.1     # Jump to substep 1 of step 2
 ```
 
 **Note:** `GOTO NEXT` is only valid in runbook transitions, not via CLI.
@@ -522,31 +517,31 @@ tsv goto 2.1     # Jump to substep 1 of step 2
 
 ```bash
 # Pause (state preserved, enforcement paused)
-tsv stash
+rundown stash
 
 # Do untracked work...
 
 # Resume
-tsv pop
+rundown pop
 ```
 
 ### Task: List Workflows
 
 ```bash
 # List active/running workflows
-tsv ls
+rundown ls
 
 # List all available runbook files
-tsv ls --all
+rundown ls --all
 
 # Filter by tags
-tsv ls --all --tags tdd,review
+rundown ls --all --tags tdd,review
 ```
 
 ### Task: Validate a Runbook Before Running
 
 ```bash
-tsv check myworkflow.runbook.md
+rundown check myworkflow.runbook.md
 ```
 
 Output: `PASS: N steps` or `FAIL: error details`
@@ -555,22 +550,14 @@ Output: `PASS: N steps` or `FAIL: error details`
 
 ```bash
 # Preview what would be removed
-tsv prune --dry-run
+rundown prune --dry-run
 
 # Remove completed workflow state
-tsv prune --completed
+rundown prune --completed
 
 # Remove all state
-tsv prune --all
+rundown prune --all
 ```
-
-### Task: Run a Quality Gate
-
-```bash
-tsv gate lint
-```
-
-Gates are defined in `.claude/turboshovel.json`. See [SETUP.md](../SETUP.md).
 
 ---
 
@@ -590,12 +577,12 @@ Main agent runs workflow, dispatches subagents for substeps.
 ```
 
 **Orchestrator workflow:**
-1. `tsv run workflow.runbook.md` - Start main workflow
+1. `rundown run workflow.runbook.md` - Start main workflow
 2. At substep with nested workflow: dispatch subagent
-3. `tsv run --step 2.1` - Queue step for binding
-4. `tsv run --agent <id>` - Bind agent to step (starts child workflow)
+3. `rundown run --step 2.1` - Queue step for binding
+4. `rundown run --agent <id>` - Bind agent to step (starts child workflow)
 5. Subagent works through child workflow
-6. `tsv pass --agent <id>` or `tsv fail --agent <id>` - Report result
+6. `rundown pass --agent <id>` or `rundown fail --agent <id>` - Report result
 
 ### Pattern 2: Agent-Controlled Branching
 
@@ -606,8 +593,8 @@ Agent decides next action based on context.
 
 Check TodoWrite for remaining items.
 
-If more remain: `tsv goto 3`
-If complete: `tsv pass`
+If more remain: `rundown goto 3`
+If complete: `rundown pass`
 
 - PASS: CONTINUE
 - FAIL: STOP
@@ -638,7 +625,7 @@ Repeat step template until work complete.
 
 ```
 File:     workflow.runbook.md
-State:    .claude/turboshovel/runbooks/wf-xxx.json
+State:    .claude/rundown/runs/wf-xxx.json
 Action:   START
 
 Step:     1/5
@@ -678,7 +665,7 @@ Next step description...
 
 | Error | Cause | Resolution |
 |-------|-------|------------|
-| "No active workflow" | No workflow in stack | Run `tsv run <file>` |
+| "No active workflow" | No workflow in stack | Run `rundown run <file>` |
 | "Workflow file not found" | Missing runbook | Check file path |
 | "Step N does not exist" | Invalid GOTO target | Check step numbers |
 | "Invalid step target" | Bad goto format | Use "N" or "N.M" |
@@ -687,25 +674,18 @@ Next step description...
 ### State Recovery
 
 If state becomes corrupted:
-1. `tsv ls` - Check active workflows
-2. `tsv stop` - Clear active workflow
-3. `tsv prune --all` - Remove all state
-4. `tsv run <file>` - Restart fresh
+1. `rundown ls` - Check active workflows
+2. `rundown stop` - Clear active workflow
+3. `rundown prune --all` - Remove all state
+4. `rundown run <file>` - Restart fresh
 
 ---
 
-## Integration with Turboshovel
+## Integration with Claude Code
 
 ### Context Injection
 
-Active runbook prompt auto-injects into Claude conversations via Turboshovel hooks.
-
-### Quality Gates
-
-Gates can be triggered:
-- By runbook commands (`tsv gate lint`)
-- By PostToolUse hooks
-- By file patterns
+Active runbook prompt auto-injects into Claude conversations via hooks.
 
 ### Session Persistence
 
@@ -720,27 +700,26 @@ Both runbook state and session tracking survive:
 
 ```bash
 # Lifecycle
-tsv run <file>           # Start workflow
-tsv stop                 # Abort workflow
-tsv complete             # Mark complete
+rundown run <file>           # Start workflow
+rundown stop                 # Abort workflow
+rundown complete             # Mark complete
 
 # Transitions
-tsv pass                 # Step succeeded (aliases: yes, ok)
-tsv fail                 # Step failed (alias: no)
-tsv goto <N>             # Jump to step N
-tsv goto <N.M>           # Jump to substep N.M
+rundown pass                 # Step succeeded (aliases: yes, ok)
+rundown fail                 # Step failed (alias: no)
+rundown goto <N>             # Jump to step N
+rundown goto <N.M>           # Jump to substep N.M
 
 # Status
-tsv status               # Show current state
-tsv ls                   # List active workflows
-tsv ls --all             # List available runbooks
+rundown status               # Show current state
+rundown ls                   # List active workflows
+rundown ls --all             # List available runbooks
 
 # Enforcement
-tsv stash                # Pause enforcement
-tsv pop                  # Resume enforcement
+rundown stash                # Pause enforcement
+rundown pop                  # Resume enforcement
 
 # Maintenance
-tsv check <file>         # Validate runbook
-tsv prune                # Clean up state
-tsv gate <name>          # Run named gate
+rundown check <file>         # Validate runbook
+rundown prune                # Clean up state
 ```
