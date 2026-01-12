@@ -1,12 +1,12 @@
 # Mixed Named and Static Steps
 
-## 1 First step
+## 1. Setup
 - PASS: CONTINUE
 
-## 2 Second step
+## 2. Execute
 - PASS: CONTINUE
 
-## 3 Third step
+## 3. Validate
 - FAIL: GOTO ErrorHandler
 - PASS: COMPLETE
 
