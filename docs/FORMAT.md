@@ -78,7 +78,7 @@ where message is:
   name | "\"" text "\""
 
 where target is:
-  step-identifier | substep-identifier | "NEXT"
+  step-identifier | substep-identifier | "NEXT" | "NEXT" step-identifier | "NEXT" substep-identifier
 
 ---
 
