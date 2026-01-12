@@ -156,51 +156,95 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
 }
 
 /**
+ * Check if a string is a valid step reference.
+ *
+ * Valid step references:
+ * - Positive integer: "1", "2", "99"
+ * - Dynamic placeholder: "{N}"
+ * - Named identifier: "Setup", "my_step" (not a reserved word)
+ */
+function isValidStepRef(s: string): boolean {
+  if (s === '{N}') return true;
+  if (/^\d+$/.test(s)) return parseInt(s, 10) > 0;
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) return !isReservedWord(s);
+  return false;
+}
+
+/**
+ * Check if a string is a valid substep identifier.
+ *
+ * Valid substep identifiers:
+ * - Positive integer: "1", "2", "99"
+ * - Dynamic placeholder: "{n}"
+ * - Named identifier: "Setup", "my_substep" (not a reserved word)
+ */
+function isValidSubstepId(s: string): boolean {
+  if (s === '{n}') return true;
+  if (/^\d+$/.test(s)) return parseInt(s, 10) > 0;
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) return !isReservedWord(s);
+  return false;
+}
+
+/**
  * Extract substep header from H3 text.
  *
  * Parses substep headers in these formats:
- * - Numeric: "1.2 Description"
- * - Dynamic: "{N}.1 Description", "1.{n} Description", "{N}.{n} Description"
- * - Named: "1.Cleanup Description", "ErrorHandler.Recover Description"
- * - With agent: "1.2 Description (agent-type)"
+ * - Numeric: "1.2" or "1.2 Description"
+ * - Dynamic: "{N}.1", "1.{n}", "{N}.{n}" (with optional description)
+ * - Named: "1.Cleanup", "ErrorHandler.Recover" (with optional description)
+ * - With agent: "1.2 Description (agent-type)" or "1.2 (agent-type)"
+ *
+ * Description is optional per spec.
  *
  * @param text - The raw H3 header text (without the ### prefix)
  * @returns Parsed substep header data, or null if text is not a valid substep header
  */
 export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
   const trimmed = text.trim();
+  if (!trimmed) return null;
 
-  // Pattern: StepRef.SubstepId Description [(agent)]
-  const match = /^(\{N\}|\d+|[A-Za-z_][A-Za-z0-9_]*)\.(\{n\}|\d+|[A-Za-z_][A-Za-z0-9_]*)\s+(.+?)(?:\s+\(([^)]+)\))?$/.exec(trimmed);
-  if (!match) return null;
+  // Find the dot separating step reference from substep ID
+  const dotIndex = trimmed.indexOf('.');
+  if (dotIndex === -1 || dotIndex === 0) return null;
 
-  const [, stepPart, substepId, desc, agent] = match;
+  const stepPart = trimmed.slice(0, dotIndex);
+  if (!isValidStepRef(stepPart)) return null;
 
-  // Validate step reference
-  if (stepPart !== '{N}' && /^\d+$/.test(stepPart)) {
-    const stepNumber = parseInt(stepPart, 10);
-    if (stepNumber <= 0) return null;
-  } else if (stepPart !== '{N}' && isReservedWord(stepPart)) {
-    return null;
-  }
+  const afterDot = trimmed.slice(dotIndex + 1);
+  if (!afterDot) return null;
 
-  // stepRef is always string now
-  const stepRef = stepPart;
+  // Find where substep ID ends (first space or end of string)
+  const spaceIndex = afterDot.indexOf(' ');
+  const substepId = spaceIndex === -1 ? afterDot : afterDot.slice(0, spaceIndex);
+  if (!isValidSubstepId(substepId)) return null;
 
-  // Determine substep type
-  const isDynamic = substepId === '{n}';
+  // Parse optional description and agent from remainder
+  let description: string | undefined;
+  let agentType: string | undefined;
 
-  // Reject reserved words as substep names
-  if (!isDynamic && /^[A-Za-z_][A-Za-z0-9_]*$/.test(substepId) && isReservedWord(substepId)) {
-    return null;
+  if (spaceIndex !== -1) {
+    const remainder = afterDot.slice(spaceIndex + 1).trim();
+    if (remainder) {
+      // Check for agent suffix: "description (agent-type)"
+      const agentMatch = /^(.+?)\s+\(([^)]+)\)$/.exec(remainder);
+      if (agentMatch) {
+        description = agentMatch[1].trim() || undefined;
+        agentType = agentMatch[2].trim();
+      } else if (remainder.startsWith('(') && remainder.endsWith(')')) {
+        // Just agent, no description: "(agent-type)"
+        agentType = remainder.slice(1, -1).trim();
+      } else {
+        description = remainder;
+      }
+    }
   }
 
   return {
-    stepRef,
+    stepRef: stepPart,
     id: substepId,
-    description: desc.trim(),
-    agentType: agent ? agent.trim() : undefined,
-    isDynamic,
+    description: description ?? '',
+    agentType,
+    isDynamic: substepId === '{n}',
   };
 }
 
@@ -249,6 +293,18 @@ export function parseAction(text: string): Action | null {
     } catch {
       return null;
     }
+  }
+
+  // Handle GOTO NEXT <target> (qualified NEXT)
+  if (trimmed.startsWith('GOTO NEXT ')) {
+    const targetStr = trimmed.slice(10).trim();
+    if (targetStr) {
+      const qualifier = parseStepIdFromString(targetStr);
+      if (qualifier) {
+        return { type: 'GOTO', target: { step: 'NEXT' as const, qualifier } };
+      }
+    }
+    // Fall through to bare GOTO NEXT handling
   }
 
   if (trimmed.startsWith('GOTO ')) {
@@ -352,7 +408,7 @@ function parseNonRetryAction(input: string): NonRetryAction | null {
   return null;
 }
 
-function parseConditionalPrefix(rest: string, type: 'pass' | 'fail'): ParsedConditional | null {
+function parseConditionalPrefix(rest: string, type: 'pass' | 'fail' | 'yes' | 'no'): ParsedConditional | null {
   let modifier: AggregationModifier = null;
   let remaining = rest;
 
@@ -394,7 +450,7 @@ export function parseConditional(text: string): ParsedConditional | null {
   }
 
   if (trimmed.startsWith('YES')) {
-    const result = parseConditionalPrefix(trimmed.slice(3), 'pass');
+    const result = parseConditionalPrefix(trimmed.slice(3), 'yes');
     if (!result) {
       throw new WorkflowSyntaxError(`Invalid YES transition: ${trimmed}`);
     }
@@ -410,7 +466,7 @@ export function parseConditional(text: string): ParsedConditional | null {
   }
 
   if (trimmed.startsWith('NO')) {
-    const result = parseConditionalPrefix(trimmed.slice(2), 'fail');
+    const result = parseConditionalPrefix(trimmed.slice(2), 'no');
     if (!result) {
       throw new WorkflowSyntaxError(`Invalid NO transition: ${trimmed}`);
     }
@@ -446,7 +502,9 @@ function resolveAggregationMode(
  */
 function containsNEXT(action: Action | NonRetryAction): boolean {
   if (action.type === 'GOTO' && 'target' in action) {
-    return action.target.step === 'NEXT';
+    // GOTO NEXT without a qualifier is a bare NEXT action
+    // GOTO NEXT <target> (with qualifier) is allowed everywhere
+    return action.target.step === 'NEXT' && !action.target.qualifier;
   }
   if (action.type === 'RETRY' && 'then' in action) {
     return containsNEXT(action.then);
@@ -498,14 +556,20 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   let failAction: Action | null = null;
   let passModifier: AggregationModifier = null;
   let failModifier: AggregationModifier = null;
+  let passKind: 'pass' | 'yes' = 'pass';
+  let failKind: 'fail' | 'no' = 'fail';
 
   for (const conditional of conditionals) {
-    if (conditional.type === 'pass') {
+    // 'pass' and 'yes' are equivalent (success conditions)
+    // 'fail' and 'no' are equivalent (failure conditions)
+    if (conditional.type === 'pass' || conditional.type === 'yes') {
       passAction = conditional.action;
       passModifier = conditional.modifier;
+      passKind = conditional.type;
     } else {
       failAction = conditional.action;
       failModifier = conditional.modifier;
+      failKind = conditional.type;
     }
   }
 
@@ -514,15 +578,15 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   if (passAction && failAction) {
     return {
       all,
-      pass: { kind: 'pass', action: passAction },
-      fail: { kind: 'fail', action: failAction },
+      pass: { kind: passKind, action: passAction },
+      fail: { kind: failKind, action: failAction },
     };
   }
 
   if (passAction && !failAction) {
     return {
       all,
-      pass: { kind: 'pass', action: passAction },
+      pass: { kind: passKind, action: passAction },
       fail: { kind: 'fail', action: { type: 'STOP' } },
     };
   }
@@ -531,7 +595,7 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
     return {
       all,
       pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-      fail: { kind: 'fail', action: failAction },
+      fail: { kind: failKind, action: failAction },
     };
   }
 

@@ -741,3 +741,37 @@ describe('extractSubstepHeader with named substeps', () => {
     });
   });
 });
+
+describe('parseAction GOTO NEXT with target', () => {
+  it('parses GOTO NEXT {N} as qualified NEXT (advance step)', () => {
+    const result = parseAction('GOTO NEXT {N}');
+    expect(result).toEqual({
+      type: 'GOTO',
+      target: { step: 'NEXT', qualifier: { step: '{N}' } }
+    });
+  });
+
+  it('parses GOTO NEXT {N}.{n} as qualified NEXT (advance substep, same step)', () => {
+    const result = parseAction('GOTO NEXT {N}.{n}');
+    expect(result).toEqual({
+      type: 'GOTO',
+      target: { step: 'NEXT', qualifier: { step: '{N}', substep: '{n}' } }
+    });
+  });
+
+  it('parses GOTO NEXT 1.{n} as qualified NEXT to substep', () => {
+    const result = parseAction('GOTO NEXT 1.{n}');
+    expect(result).toEqual({
+      type: 'GOTO',
+      target: { step: 'NEXT', qualifier: { step: '1', substep: '{n}' } }
+    });
+  });
+
+  it('parses GOTO NEXT ErrorHandler.{n}', () => {
+    const result = parseAction('GOTO NEXT ErrorHandler.{n}');
+    expect(result).toEqual({
+      type: 'GOTO',
+      target: { step: 'NEXT', qualifier: { step: 'ErrorHandler', substep: '{n}' } }
+    });
+  });
+});
