@@ -1,6 +1,15 @@
 # Rundown Patterns
 
-Common patterns for Rundown workflows. See [SPEC.md](../../docs/SPEC.md) for syntax reference.
+Common patterns for Rundown workflows. See [SPEC.md](/docs/SPEC.md) for syntax reference.
+
+## Contents
+
+- [Pattern 1: Static Sequential](#pattern-1-static-sequential) - Linear workflow with GOTO branching
+- [Pattern 2: Dynamic Iteration](#pattern-2-dynamic-iteration) - Runtime-determined iterations
+- [Pattern 3: Subagent Dispatch](#pattern-3-subagent-dispatch) - Delegate to child workflows
+- [Pattern 4: Workflow Composition](#pattern-4-workflow-composition) - Pipeline orchestration
+- [Pattern 5: Named Steps](#pattern-5-named-steps) - Semantic step names
+- [Additional Examples](#additional-examples) - Transitions, retry, prompts
 
 ---
 
