@@ -10,6 +10,10 @@ import { discoverRunbooks } from '../services/discovery.js';
 import { getCwd, getStepCount } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
+/**
+ * Registers the 'ls' command for listing workflows.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerLsCommand(program: Command): void {
   program
     .command('ls')

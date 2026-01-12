@@ -1,18 +1,28 @@
 import { spawn } from 'child_process';
 
 /**
- * Result of executing a command
+ * Result of executing a shell command.
+ *
+ * Contains the success status and exit code from the spawned process.
  */
 export interface ExecutionResult {
+  /** True if the command exited with code 0, false otherwise */
   success: boolean;
+  /** The numeric exit code from the process (0 = success, non-zero = failure) */
   exitCode: number;
 }
 
 /**
- * Execute a shell command with inherited stdio
- * @param command - The command to execute
+ * Execute a shell command with inherited stdio.
+ *
+ * Spawns a shell process to run the command, inheriting stdin/stdout/stderr
+ * from the parent process. Supports cross-platform execution (Windows cmd, Unix sh).
+ *
+ * Note: Errors during spawn are caught and returned as failed results rather than thrown.
+ *
+ * @param command - The shell command to execute
  * @param cwd - Working directory for execution
- * @returns Promise resolving to execution result
+ * @returns Promise resolving to ExecutionResult with success status and exit code
  */
 export function executeCommand(command: string, cwd: string): Promise<ExecutionResult> {
   return new Promise((resolve) => {

@@ -18,6 +18,10 @@ export function collect(value: string, previous: string[]): string[] {
   return previous.concat([value]);
 }
 
+/**
+ * Registers the 'echo' command for workflow testing.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerEchoCommand(program: Command): void {
   program
     .command('echo [command...]')

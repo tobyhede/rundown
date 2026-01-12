@@ -2,13 +2,31 @@ import { setup, assign } from 'xstate';
 import { type Step, type Action, type NonRetryAction, type Transitions } from './types.js';
 import type { StepId } from './step-id.js';
 
+/**
+ * Context passed through the XState workflow state machine.
+ *
+ * Maintains runtime state that persists across transitions including
+ * retry counts, current substep, and workflow variables.
+ */
 export interface WorkflowContext {
+  /** Current retry count for the active step */
   retryCount: number;
+  /** Current substep ID within the active step */
   substep?: string;
+  /** Flag indicating transition to next dynamic instance */
   nextInstance?: boolean;
+  /** User-defined workflow variables */
   variables: Record<string, boolean | number | string>;
 }
 
+/**
+ * Events that can be sent to the XState workflow state machine.
+ *
+ * - PASS: Mark the current step as passed, triggering the PASS transition
+ * - FAIL: Mark the current step as failed, triggering the FAIL transition
+ * - RETRY: Increment retry count and re-enter the current step
+ * - GOTO: Jump directly to a specific step by ID
+ */
 export type WorkflowEvent =
   | { type: 'PASS' }
   | { type: 'FAIL' }
@@ -168,6 +186,17 @@ function nonRetryActionToTransition(
   }
 }
 
+/**
+ * Compile workflow steps into an XState state machine.
+ *
+ * Generates a finite state machine from the workflow definition with:
+ * - One state per step (or substep if the step has substeps)
+ * - PASS/FAIL/RETRY/GOTO transitions based on step transitions
+ * - COMPLETE and STOPPED final states
+ *
+ * @param steps - The parsed workflow steps to compile
+ * @returns An XState state machine definition
+ */
 // XState snapshot type is not fully typed
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function compileWorkflowToMachine(steps: Step[]) {

@@ -14,6 +14,10 @@ import { runExecutionLoop } from '../services/execution.js';
 import { printSeparator, printActionBlock } from '@rundown/core';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
+/**
+ * Registers the 'goto' command for jumping to specific steps.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerGotoCommand(program: Command): void {
   program
     .command('goto <step>')

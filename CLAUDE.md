@@ -51,6 +51,41 @@ npm run lint       # Lint all packages
 npm run lint:fix   # Auto-fix lint issues
 ```
 
+## TSDoc Standards
+
+All exported symbols must have TSDoc documentation following these requirements:
+
+| Element | Required |
+|---------|----------|
+| Exported functions | Description, `@param` for all parameters, `@returns` if non-void, `@throws` if exceptions possible |
+| Exported interfaces/types | Description, property comments for non-obvious fields |
+| Exported classes | Class description, constructor and public method documentation |
+| Type guards | Description, `@param`, `@returns` with type predicate explanation |
+| Deprecated items | `@deprecated` with migration guidance |
+
+**Example:**
+```typescript
+/**
+ * Parse a workflow document from markdown content.
+ *
+ * @param markdown - The markdown content to parse
+ * @param filename - Source filename for error messages
+ * @param options - Parser options
+ * @returns Parsed workflow with steps and metadata
+ * @throws WorkflowSyntaxError if markdown contains invalid syntax
+ *
+ * @example
+ * ```ts
+ * const workflow = parseWorkflowDocument(content, 'my-workflow.md');
+ * ```
+ */
+export function parseWorkflowDocument(
+  markdown: string,
+  filename?: string,
+  options?: ParseOptions
+): Workflow { ... }
+```
+
 ## Documentation
 
 - [docs/SPEC.md](docs/SPEC.md) - Rundown specification

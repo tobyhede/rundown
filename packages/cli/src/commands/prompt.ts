@@ -2,6 +2,10 @@
 
 import type { Command } from 'commander';
 
+/**
+ * Registers the 'prompt' command for outputting content in markdown fences.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerPromptCommand(program: Command): void {
   program
     .command('prompt <content>')

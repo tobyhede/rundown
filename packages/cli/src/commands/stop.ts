@@ -11,6 +11,10 @@ import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
+/**
+ * Registers the 'stop' command for aborting workflows.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerStopCommand(program: Command): void {
   program
     .command('stop')

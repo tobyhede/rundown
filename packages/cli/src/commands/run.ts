@@ -22,6 +22,10 @@ import {
   buildMetadata,
 } from '../services/execution.js';
 
+/**
+ * Registers the 'run' command for starting workflows.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerRunCommand(program: Command): void {
   program
     .command('run [file]')

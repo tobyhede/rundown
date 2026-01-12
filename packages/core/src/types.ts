@@ -6,21 +6,45 @@ import type { HookInput as SchemaHookInput } from './schemas.js';
 // Re-export for consumers
 export type HookInput = SchemaHookInput;
 
+/**
+ * Result returned from a gate execution.
+ *
+ * Gates can produce three types of outcomes:
+ * - Success: Optionally add context and allow the agent to continue
+ * - Block: Prevent the agent from proceeding with a reason
+ * - Stop: Halt Claude entirely with a message
+ */
 export interface GateResult {
-  // Success - add context and continue
+  /** Additional context to inject into the conversation on success */
   additionalContext?: string;
 
-  // Block agent from proceeding
+  /** Set to 'block' to prevent the agent from proceeding */
   decision?: 'block';
+  /** Reason for blocking (displayed to the agent) */
   reason?: string;
 
-  // Stop Claude entirely
+  /** Set to false to stop Claude entirely */
   continue?: false;
+  /** Message to display when stopping Claude */
   message?: string;
 }
 
+/**
+ * Function signature for gate execution.
+ *
+ * Gates receive hook input and return a result indicating whether
+ * to allow, block, or stop the agent's action.
+ */
 export type GateExecute = (input: HookInput) => Promise<GateResult>;
 
+/**
+ * Configuration for a gate definition.
+ *
+ * Gates can be defined either by referencing another plugin's gate
+ * (using plugin/gate fields) or by specifying a local shell command.
+ * Additional filtering options (keywords, file_patterns) control when
+ * the gate is triggered.
+ */
 export interface GateConfig {
   /** Reference gate from another plugin (requires gate field) */
   plugin?: string;
@@ -56,18 +80,41 @@ export interface GateConfig {
   on_fail?: string;
 }
 
+/**
+ * Configuration for a hook event handler.
+ *
+ * Defines which tools and agents trigger the hook, and which gates
+ * to execute when the hook is triggered.
+ */
 export interface HookConfig {
+  /** Tool names that trigger this hook (e.g., 'Edit', 'Write') */
   enabled_tools?: string[];
+  /** Agent types that trigger this hook */
   enabled_agents?: string[];
+  /** Gate names to execute when this hook is triggered */
   gates?: string[];
 }
 
+/**
+ * Top-level configuration for Rundown hooks and gates.
+ *
+ * Defines the mapping of hook event names to their configurations
+ * and the available gate definitions.
+ */
 export interface RundownConfig {
+  /** Map of hook event names to their configurations */
   hooks: Record<string, HookConfig>;
+  /** Map of gate names to their configurations */
   gates: Record<string, GateConfig>;
 }
 
-// Session state interface
+/**
+ * Session state persisted across hook invocations.
+ *
+ * Tracks the current session's metadata including active commands,
+ * skills, edited files, and custom metadata. This state is persisted
+ * to disk and survives context clears.
+ */
 export interface SessionState {
   /** Unique session identifier (timestamp-based) */
   session_id: string;

@@ -13,6 +13,10 @@ interface PruneOptions {
   all?: boolean;
 }
 
+/**
+ * Registers the 'prune' command for removing workflow state.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerPruneCommand(program: Command): void {
   program
     .command('prune')

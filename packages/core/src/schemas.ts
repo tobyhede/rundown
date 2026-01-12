@@ -55,7 +55,13 @@ export type HookInput = z.infer<typeof HookInputSchema>;
 export type ParseResult<T> = { success: true; data: T } | { success: false; error: string };
 
 /**
- * Parse and validate HookInput from JSON string
+ * Parse and validate HookInput from JSON string.
+ *
+ * Attempts to parse the input as JSON and validate it against the HookInputSchema.
+ * Returns a discriminated union indicating success with parsed data or failure with error message.
+ *
+ * @param json - The JSON string to parse and validate
+ * @returns A ParseResult containing either the validated HookInput data or an error message
  */
 export function parseHookInput(json: string): ParseResult<HookInput> {
   let parsed: unknown;

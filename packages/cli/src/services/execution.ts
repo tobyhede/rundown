@@ -15,14 +15,18 @@ import {
 } from '@rundown/core';
 
 /**
- * Check if workflow snapshot indicates completion
+ * Check if workflow snapshot indicates completion.
+ * @param snapshot - XState snapshot with status and value
+ * @returns True if the workflow has completed successfully
  */
 export function isWorkflowComplete(snapshot: { status: string; value: unknown }): boolean {
   return snapshot.status === 'done' && snapshot.value === 'COMPLETE';
 }
 
 /**
- * Check if workflow snapshot indicates stopped state
+ * Check if workflow snapshot indicates stopped state.
+ * @param snapshot - XState snapshot with status and value
+ * @returns True if the workflow has been stopped
  */
 export function isWorkflowStopped(snapshot: { status: string; value: unknown }): boolean {
   return snapshot.status === 'done' && snapshot.value === 'STOPPED';
@@ -34,7 +38,13 @@ export function isWorkflowStopped(snapshot: { status: string; value: unknown }):
  * - A prompt-only step is reached (no command)
  * - In prompted mode (no auto-execution)
  *
- * @returns 'done' | 'stopped' | 'waiting' (waiting = prompt-only step reached)
+ * @param manager - Workflow state manager instance
+ * @param workflowId - ID of the workflow to execute
+ * @param steps - Array of workflow steps
+ * @param cwd - Current working directory for command execution
+ * @param prompted - Whether to run in prompted mode (no auto-execution)
+ * @param agentId - Optional agent ID for agent-specific workflow stacks
+ * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only step reached
  */
 export async function runExecutionLoop(
   manager: WorkflowStateManager,
@@ -197,18 +207,22 @@ export async function runExecutionLoop(
 }
 
 /**
- * Check if value is a valid result ('pass' | 'fail')
+ * Check if value is a valid result ('pass' | 'fail').
  *
  * When no explicit result sequence is provided to test commands,
  * the default sequence ['pass'] is used. This means steps pass on the first attempt.
  * Users can override this with --result flags to customize the sequence.
+ * @param r - String value to check
+ * @returns True if the value is 'pass' or 'fail'
  */
 export function isValidResult(r: string): r is 'pass' | 'fail' {
   return r === 'pass' || r === 'fail';
 }
 
 /**
- * Get retry max for a step
+ * Get retry max for a step.
+ * @param step - Workflow step to get retry max from
+ * @returns Maximum number of retries, or 0 if no retry configured
  */
 export function getStepRetryMax(step: Step): number {
   // eslint-disable-next-line @typescript-eslint/prefer-optional-chain, @typescript-eslint/no-unnecessary-condition
@@ -219,7 +233,9 @@ export function getStepRetryMax(step: Step): number {
 }
 
 /**
- * Build metadata object for output
+ * Build metadata object for output.
+ * @param state - Current workflow state
+ * @returns Metadata object for CLI output
  */
 export function buildMetadata(state: WorkflowState): WorkflowMetadata {
   return {
@@ -230,7 +246,17 @@ export function buildMetadata(state: WorkflowState): WorkflowMetadata {
 }
 
 /**
- * Derive action string from state transition
+ * Derive action string from state transition.
+ * @param prevStep - Previous step name
+ * @param newStep - New step name after transition
+ * @param prevSubstep - Previous substep ID
+ * @param newSubstep - New substep ID after transition
+ * @param prevRetryCount - Previous retry count
+ * @param newRetryCount - New retry count after transition
+ * @param retryMax - Maximum retries allowed for the step
+ * @param isComplete - Whether the workflow is complete
+ * @param isStopped - Whether the workflow is stopped
+ * @returns Action string describing the transition (e.g., 'CONTINUE', 'GOTO 3', 'RETRY (1/3)')
  */
 export function deriveAction(
   prevStep: string,

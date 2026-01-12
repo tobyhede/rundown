@@ -5,7 +5,12 @@ import { renderStepForCLI } from './render.js';
 const SEPARATOR = '-----';
 
 /**
- * Format step position as n/N
+ * Format step position as n/N.
+ *
+ * Formats a StepPosition into a human-readable string like "1/5" or "2.1/5".
+ *
+ * @param pos - The StepPosition to format
+ * @returns Formatted position string (e.g., "1/5", "2.1/5")
  */
 export function formatPosition(pos: StepPosition): string {
   const stepPart = pos.substep
@@ -15,14 +20,20 @@ export function formatPosition(pos: StepPosition): string {
 }
 
 /**
- * Print separator line
+ * Print separator line to stdout.
+ *
+ * Outputs a visual separator ("-----") for CLI output formatting.
  */
 export function printSeparator(): void {
   console.log(SEPARATOR);
 }
 
 /**
- * Print metadata block
+ * Print metadata block to stdout.
+ *
+ * Outputs workflow metadata including file path, state, and optional prompt status.
+ *
+ * @param meta - The WorkflowMetadata to display
  */
 export function printMetadata(meta: WorkflowMetadata): void {
   console.log(`File:     ${meta.file}`);
@@ -33,7 +44,11 @@ export function printMetadata(meta: WorkflowMetadata): void {
 }
 
 /**
- * Print action block (Action, optional From, optional Result)
+ * Print action block to stdout.
+ *
+ * Outputs the action taken, optional source step position, and optional result.
+ *
+ * @param data - The ActionBlockData containing action details
  */
 export function printActionBlock(data: ActionBlockData): void {
   console.log(`Action:   ${data.action}`);
@@ -46,7 +61,12 @@ export function printActionBlock(data: ActionBlockData): void {
 }
 
 /**
- * Print step block (position + content)
+ * Print step block to stdout.
+ *
+ * Outputs the step position and rendered step content.
+ *
+ * @param pos - The current step position
+ * @param step - The Step to render and display
  */
 export function printStepBlock(pos: StepPosition, step: Step): void {
   console.log('');
@@ -56,7 +76,11 @@ export function printStepBlock(pos: StepPosition, step: Step): void {
 }
 
 /**
- * Print command execution prefix (default mode only)
+ * Print command execution prefix to stdout.
+ *
+ * Outputs the command that is about to be executed with a shell prompt prefix.
+ *
+ * @param command - The shell command to display
  */
 export function printCommandExec(command: string): void {
   console.log('');
@@ -65,7 +89,9 @@ export function printCommandExec(command: string): void {
 }
 
 /**
- * Print workflow complete message
+ * Print workflow complete message to stdout.
+ *
+ * Outputs a message indicating the workflow has completed successfully.
  */
 export function printWorkflowComplete(): void {
   console.log('');
@@ -73,7 +99,9 @@ export function printWorkflowComplete(): void {
 }
 
 /**
- * Print workflow stopped message
+ * Print workflow stopped message to stdout.
+ *
+ * Outputs a message indicating the workflow has been stopped.
  */
 export function printWorkflowStopped(): void {
   console.log('');
@@ -81,7 +109,11 @@ export function printWorkflowStopped(): void {
 }
 
 /**
- * Print workflow stopped message with step position
+ * Print workflow stopped message with step position to stdout.
+ *
+ * Outputs a message indicating the workflow was stopped at a specific step.
+ *
+ * @param pos - The step position where the workflow was stopped
  */
 export function printWorkflowStoppedAtStep(pos: StepPosition): void {
   console.log('');
@@ -92,7 +124,11 @@ export function printWorkflowStoppedAtStep(pos: StepPosition): void {
 }
 
 /**
- * Print workflow stashed message (includes step position)
+ * Print workflow stashed message to stdout.
+ *
+ * Outputs a message indicating the workflow has been stashed at the given position.
+ *
+ * @param pos - The step position where the workflow was stashed
  */
 export function printWorkflowStashed(pos: StepPosition): void {
   console.log('');
@@ -102,21 +138,33 @@ export function printWorkflowStashed(pos: StepPosition): void {
 }
 
 /**
- * Print no active workflow message
+ * Print no active workflow message to stdout.
+ *
+ * Outputs a message indicating there is no currently active workflow.
  */
 export function printNoActiveWorkflow(): void {
   console.log('No active workflow.');
 }
 
 /**
- * Print no workflows message
+ * Print no workflows message to stdout.
+ *
+ * Outputs a message indicating there are no workflows available.
  */
 export function printNoWorkflows(): void {
   console.log('No workflows.');
 }
 
 /**
- * Print workflow list entry
+ * Print workflow list entry to stdout.
+ *
+ * Outputs a single line for a workflow in the list format.
+ *
+ * @param id - The workflow state ID
+ * @param status - The current status (e.g., 'running', 'stopped')
+ * @param step - The current step position
+ * @param file - The workflow source file path
+ * @param title - Optional workflow title
  */
 export function printWorkflowListEntry(
   id: string,

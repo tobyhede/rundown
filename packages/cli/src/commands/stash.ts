@@ -11,6 +11,10 @@ import { getCwd, getStepCount } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
+/**
+ * Registers the 'stash' command for pausing workflow enforcement.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerStashCommand(program: Command): void {
   program
     .command('stash')

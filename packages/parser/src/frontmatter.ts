@@ -32,15 +32,20 @@ export const WorkflowFrontmatterSchema = z.object({
 export type WorkflowFrontmatterType = z.infer<typeof WorkflowFrontmatterSchema>;
 
 /**
- * Extract frontmatter from markdown content
- * Returns frontmatter object and remaining content (with frontmatter stripped)
+ * Extract YAML frontmatter from markdown content.
  *
- * Frontmatter must be:
- * - At the start of the file
- * - Enclosed in --- delimiters
- * - Valid YAML
+ * Parses YAML frontmatter enclosed in --- delimiters at the start of
+ * a markdown file. Returns both the parsed frontmatter and the remaining
+ * content with frontmatter stripped.
  *
- * If frontmatter is missing or invalid, returns null for frontmatter and original content
+ * Frontmatter requirements:
+ * - Must be at the start of the file
+ * - Must be enclosed in --- delimiters
+ * - Must be valid YAML conforming to WorkflowFrontmatterSchema
+ *
+ * @param markdown - The raw markdown content to parse
+ * @returns Object containing parsed frontmatter (or null if missing/invalid)
+ *          and the remaining content with frontmatter removed
  */
 export function extractFrontmatter(markdown: string): {
   frontmatter: WorkflowFrontmatter | null;
@@ -100,10 +105,16 @@ export function extractFrontmatter(markdown: string): {
 }
 
 /**
- * Extract workflow name from filename
- * Removes the .runbook.md extension
+ * Extract workflow name from a runbook filename.
  *
- * Example: "my-runbook.runbook.md" -> "my-runbook"
+ * Removes the .runbook.md extension to derive the workflow name.
+ * Used as a fallback when frontmatter does not specify a name.
+ *
+ * @param filename - The runbook filename (e.g., "my-workflow.runbook.md")
+ * @returns The workflow name without extension (e.g., "my-workflow")
+ *
+ * @example
+ * nameFromFilename("setup.runbook.md") // returns "setup"
  */
 export function nameFromFilename(filename: string): string {
   return filename.replace(/\.runbook\.md$/i, '');

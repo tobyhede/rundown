@@ -2,7 +2,13 @@ import { type Step, type Action, type Transitions, type Substep, type Workflow, 
 import { stepIdToString } from '../step-id.js';
 
 /**
- * Render an Action to its DSL string representation
+ * Render an Action to its DSL string representation.
+ *
+ * Converts an Action object back to its Rundown DSL format
+ * (e.g., "CONTINUE", "GOTO 2", "RETRY 3 STOP").
+ *
+ * @param action - The Action to render
+ * @returns The DSL string representation of the action
  */
 export function renderAction(action: Action): string {
   if (action.type === 'RETRY') {
@@ -26,7 +32,13 @@ function renderNonRetryAction(action: NonRetryAction): string {
 }
 
 /**
- * Render Transitions to Markdown list items
+ * Render Transitions to Markdown list items.
+ *
+ * Converts a Transitions object to Markdown format with
+ * PASS and FAIL conditions as list items.
+ *
+ * @param transitions - The Transitions object to render
+ * @returns Markdown string with PASS/FAIL list items
  */
 export function renderTransitions(transitions: Transitions): string {
   const lines: string[] = [];
@@ -36,9 +48,14 @@ export function renderTransitions(transitions: Transitions): string {
 }
 
 /**
- * Render a Substep to Markdown
- * @param substep - The substep to render
+ * Render a Substep to Markdown.
+ *
+ * Generates an H3 header with the substep ID, description, optional
+ * agent type suffix, and workflow references.
+ *
+ * @param substep - The Substep to render
  * @param parentStepName - The parent step name (e.g., "1", "ErrorHandler", "{N}")
+ * @returns Markdown H3 header string for the substep
  */
 export function renderSubstep(substep: Substep, parentStepName: string): string {
   const agentSuffix = substep.agentType ? ` (${substep.agentType})` : '';
@@ -47,7 +64,13 @@ export function renderSubstep(substep: Substep, parentStepName: string): string 
 }
 
 /**
- * Render a Step to its Markdown representation
+ * Render a Step to its Markdown representation.
+ *
+ * Generates complete Markdown for a step including header, workflows,
+ * command block, prompt, transitions, substeps, and nested workflows.
+ *
+ * @param step - The Step to render
+ * @returns Complete Markdown string for the step
  */
 export function renderStep(step: Step): string {
   const lines: string[] = [];
@@ -105,7 +128,13 @@ export function renderStep(step: Step): string {
 }
 
 /**
- * Render a full Workflow object to Markdown
+ * Render a full Workflow object to Markdown.
+ *
+ * Generates complete Markdown for a workflow including title,
+ * description, and all steps.
+ *
+ * @param workflow - The Workflow to render
+ * @returns Complete Markdown string for the entire workflow
  */
 export function renderWorkflow(workflow: Workflow): string {
   const lines: string[] = [];

@@ -21,14 +21,23 @@ export interface Command {
  * A substep within a step (H3 header)
  */
 export interface Substep {
-  readonly id: string;           // "1", "2", "{n}" for dynamic, or "Name" for named
+  /** Substep identifier: "1", "2", "{n}" for dynamic, or "Name" for named */
+  readonly id: string;
+  /** Human-readable description from the substep header */
   readonly description: string;
-  readonly agentType?: string;   // e.g., "code-review-agent" from "(code-review-agent)"
-  readonly isDynamic: boolean;   // true for ### N.{n}
+  /** Agent type, e.g., "code-review-agent" from "(code-review-agent)" */
+  readonly agentType?: string;
+  /** True for dynamic substeps (### N.{n}) */
+  readonly isDynamic: boolean;
+  /** Executable command from code block */
   readonly command?: Command;
-  readonly prompt?: string;      // Single consolidated prompt text
+  /** Single consolidated prompt text */
+  readonly prompt?: string;
+  /** Pass/fail transition handlers */
   readonly transitions?: Transitions;
+  /** Referenced workflow files (.runbook.md) */
   readonly workflows?: readonly string[];
+  /** Source line number for error reporting */
   readonly line?: number;
 }
 
@@ -41,14 +50,23 @@ export interface Substep {
  * - Dynamic steps: name = "{N}" (template, expands at runtime)
  */
 export interface Step {
-  readonly name: string;                  // REQUIRED: "1", "ErrorHandler", "{N}"
-  readonly isDynamic: boolean;            // true for {N} steps
+  /** Step identifier: "1", "ErrorHandler", or "{N}" for dynamic (REQUIRED) */
+  readonly name: string;
+  /** True for dynamic steps using {N} template */
+  readonly isDynamic: boolean;
+  /** Human-readable description from the step header */
   readonly description: string;
+  /** Executable command from code block */
   readonly command?: Command;
-  readonly prompt?: string;               // Single consolidated prompt text
+  /** Single consolidated prompt text */
+  readonly prompt?: string;
+  /** Pass/fail transition handlers */
   readonly transitions?: Transitions;
+  /** Child substeps (H3 headers) */
   readonly substeps?: readonly Substep[];
+  /** Referenced workflow files (.runbook.md) */
   readonly workflows?: readonly string[];
+  /** Source line number for error reporting */
   readonly line?: number;
   /** @deprecated Use workflows instead */
   readonly nestedWorkflow?: string;
@@ -58,11 +76,18 @@ export interface Step {
  * Parsed workflow definition
  */
 export interface Workflow {
-  readonly title?: string;       // From H1 (# Title)
-  readonly description?: string; // From preamble prose
-  readonly name?: string;        // From frontmatter or derived from filename
-  readonly version?: string;     // From frontmatter
-  readonly author?: string;      // From frontmatter
-  readonly tags?: readonly string[]; // From frontmatter (readonly for immutability)
+  /** Workflow title from H1 header (# Title) */
+  readonly title?: string;
+  /** Description from preamble prose before first step */
+  readonly description?: string;
+  /** Workflow name from frontmatter or derived from filename */
+  readonly name?: string;
+  /** Semantic version from frontmatter */
+  readonly version?: string;
+  /** Author attribution from frontmatter */
+  readonly author?: string;
+  /** Categorization tags from frontmatter (readonly for immutability) */
+  readonly tags?: readonly string[];
+  /** Ordered list of workflow steps */
   readonly steps: readonly Step[];
 }

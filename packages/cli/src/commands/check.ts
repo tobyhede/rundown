@@ -15,6 +15,10 @@ function countSubsteps(steps: readonly Step[]): number {
   }, 0);
 }
 
+/**
+ * Registers the 'check' command for validating workflow files.
+ * @param program - Commander program instance to register the command on
+ */
 export function registerCheckCommand(program: Command): void {
   program
     .command('check <file>')
