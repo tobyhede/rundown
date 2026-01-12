@@ -252,17 +252,27 @@ Actions determine what happens next.
 
 ### GOTO
 
-- The target Identifier must exist.
-- `GOTO {N}.M` navigates within the current dynamic instance to substep M.
-- `GOTO NEXT` advances to the next dynamic instance (N+1).
-- `GOTO {N}` is invalid. Use `GOTO NEXT`.
+| Target              | Valid From        | Description                                       |
+|---------------------|-------------------|---------------------------------------------------|
+| GOTO N              | Any step          | Jump to step N (must exist)                       |
+| GOTO N.M            | Any step          | Jump to substep M of step N                       |
+| GOTO Name           | Any step          | Jump to named step                                |
+| GOTO Name.M         | Any step          | Jump to substep M of named step                   |
+| GOTO {N}            | Dynamic step {N}  | Restart current dynamic step instance             |
+| GOTO {N}.M          | Dynamic step {N}  | Jump to substep M within current dynamic instance |
+| GOTO {N}.{n}        | Dynamic step {N}  | Resume at current substep of current step         |
+| GOTO X.{n}          | Step X            | Jump to current dynamic substep instance          |
+| GOTO NEXT           | Any dynamic       | Advance innermost dynamic context                 |
+| GOTO NEXT {N}       | Any step          | Advance to next dynamic step instance             |
+| GOTO NEXT {N}.{n}   | Dynamic step {N}  | Advance substep, stay in current step instance    |
+| GOTO NEXT X.{n}     | Any step          | Advance to next substep instance in step X        |
 
-| Target       | Valid From        | Description                                       |
-|--------------|-------------------|---------------------------------------------------|
-| GOTO N       | Any step          | Jump to step N (must exist, N ≤ total steps)      |
-| GOTO N.M     | Any step          | Jump to substep M of step N                       |
-| GOTO {N}.M   | Dynamic step {N}. | Jump to substep M within current dynamic instance |
-| GOTO NEXT    | Dynamic step {N}. | Jump to {N} and create the next dynamic step instance (N+1). |
+**Semantics:**
+- `GOTO {N}` restarts the current dynamic step instance from the beginning.
+- `GOTO {N}.{n}` resumes at exactly where we were (current step, current substep).
+- `GOTO NEXT` without qualifier advances the innermost dynamic context.
+- `GOTO NEXT {N}` advances to the next step instance.
+- `GOTO NEXT {N}.{n}` advances to the next substep, staying in the current step instance.
 
 
 
