@@ -37,6 +37,7 @@ export const StepNameSchema = z.string().refine(
 /**
  * Zod schema for StepId
  * step is always a string: "1", "NEXT", "ErrorHandler", "{N}"
+ * qualifier is optional: only present for GOTO NEXT <target>
  */
 export const StepIdSchema = z.object({
   step: z.union([
@@ -45,9 +46,23 @@ export const StepIdSchema = z.object({
     StepNameSchema,
   ]),
   substep: z.string().optional(),
+  qualifier: z.object({
+    step: z.string(),
+    substep: z.string().optional(),
+  }).optional(),
 }).refine(
-  (data) => data.step !== 'NEXT' || data.substep === undefined,
-  { message: 'NEXT target cannot have substep' }
+  (data) => {
+    // NEXT without qualifier cannot have substep
+    if (data.step === 'NEXT' && !data.qualifier && data.substep) {
+      return false;
+    }
+    // NEXT with qualifier cannot have its own substep
+    if (data.step === 'NEXT' && data.qualifier && data.substep) {
+      return false;
+    }
+    return true;
+  },
+  { message: 'Invalid NEXT target structure' }
 );
 
 /**
