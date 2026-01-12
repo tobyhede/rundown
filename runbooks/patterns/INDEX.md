@@ -13,7 +13,8 @@ Common patterns for Rundown workflows. See [SPEC.md](../../docs/SPEC.md) for syn
 - [Retry Behavior](#retry-behavior)
 - [Prompts](#prompts)
 - [Metadata & Instructions](#metadata--instructions)
-- [Workflow Composition](#workflow-composition)
+- [Mixed Patterns](#mixed-patterns)
+- [Other](#other)
 
 ---
 
@@ -51,6 +52,24 @@ Batch processing with dynamic substeps.
 
 - [dynamic-batch.runbook.md](./dynamic-batch.runbook.md)
 
+### dynamic-step-named-substep.runbook.md
+
+Dynamic step containing a named substep.
+
+- [dynamic-step-named-substep.runbook.md](./dynamic-step-named-substep.runbook.md)
+
+### dynamic-step-dynamic-substeps.runbook.md
+
+Doubly-dynamic iteration with {N}.{n} pattern.
+
+- [dynamic-step-dynamic-substeps.runbook.md](./dynamic-step-dynamic-substeps.runbook.md)
+
+### dynamic-step-mixed-substeps.runbook.md
+
+Dynamic steps with both static and named substeps.
+
+- [dynamic-step-mixed-substeps.runbook.md](./dynamic-step-mixed-substeps.runbook.md)
+
 ---
 
 ## Named Steps
@@ -81,6 +100,30 @@ Named steps mixed with dynamic steps.
 
 - [mixed-named-dynamic.runbook.md](./mixed-named-dynamic.runbook.md)
 
+### named-step-dynamic-substep.runbook.md
+
+Named step containing dynamic substeps.
+
+- [named-step-dynamic-substep.runbook.md](./named-step-dynamic-substep.runbook.md)
+
+### named-step-static-substeps.runbook.md
+
+Named step containing numbered substeps.
+
+- [named-step-static-substeps.runbook.md](./named-step-static-substeps.runbook.md)
+
+### named-step-named-substeps.runbook.md
+
+Named step containing named substeps.
+
+- [named-step-named-substeps.runbook.md](./named-step-named-substeps.runbook.md)
+
+### named-step-mixed-substeps.runbook.md
+
+Named step with both static and named substeps.
+
+- [named-step-mixed-substeps.runbook.md](./named-step-mixed-substeps.runbook.md)
+
 ---
 
 ## Substeps
@@ -104,6 +147,12 @@ Transition logic for substeps.
 Transitions with dynamic substeps.
 
 - [dynamic-substep-transitions.runbook.md](./dynamic-substep-transitions.runbook.md)
+
+### static-step-mixed-substeps.runbook.md
+
+Static steps containing both numbered and named substeps.
+
+- [static-step-mixed-substeps.runbook.md](./static-step-mixed-substeps.runbook.md)
 
 ---
 
@@ -129,6 +178,12 @@ GOTO within dynamic substeps.
 
 - [goto-dynamic-substep.runbook.md](./goto-dynamic-substep.runbook.md)
 
+### goto-dynamic-substep-from-named.runbook.md
+
+GOTO dynamic substep from a named step.
+
+- [goto-dynamic-substep-from-named.runbook.md](./goto-dynamic-substep-from-named.runbook.md)
+
 ### goto-named.runbook.md
 
 GOTO a named step.
@@ -140,6 +195,24 @@ GOTO a named step.
 GOTO NEXT for advancing dynamic steps.
 
 - [goto-next.runbook.md](./goto-next.runbook.md)
+
+### goto-static-named-substep.runbook.md
+
+GOTO N.Name - jumping to a named substep within a static step.
+
+- [goto-static-named-substep.runbook.md](./goto-static-named-substep.runbook.md)
+
+### goto-from-named-step.runbook.md
+
+Navigation from a named step to a numbered step.
+
+- [goto-from-named-step.runbook.md](./goto-from-named-step.runbook.md)
+
+### goto-named-to-named.runbook.md
+
+Navigation between named steps.
+
+- [goto-named-to-named.runbook.md](./goto-named-to-named.runbook.md)
 
 ---
 
@@ -158,6 +231,24 @@ Default PASS/FAIL behavior.
 Complex conditional transitions.
 
 - [complex-transitions.runbook.md](./complex-transitions.runbook.md)
+
+### pass-stop-transition.runbook.md
+
+PASS leading to STOP - workflow halts on success.
+
+- [pass-stop-transition.runbook.md](./pass-stop-transition.runbook.md)
+
+### fail-continue-transition.runbook.md
+
+FAIL leading to CONTINUE - proceed despite failure.
+
+- [fail-continue-transition.runbook.md](./fail-continue-transition.runbook.md)
+
+### fail-complete-transition.runbook.md
+
+FAIL leading to COMPLETE - workflow completes on failure.
+
+- [fail-complete-transition.runbook.md](./fail-complete-transition.runbook.md)
 
 ---
 
@@ -194,6 +285,12 @@ Mark done on retry exhaustion.
 GOTO on retry exhaustion.
 
 - [retry-exhaustion-goto.runbook.md](./retry-exhaustion-goto.runbook.md)
+
+### retry-exhaustion-complete.runbook.md
+
+COMPLETE on retry exhaustion.
+
+- [retry-exhaustion-complete.runbook.md](./retry-exhaustion-complete.runbook.md)
 
 ---
 
@@ -239,15 +336,39 @@ List-based step instructions.
 
 ---
 
-## Workflow Composition
+## Mixed Patterns
 
-Orchestrating multiple workflows.
+Complex patterns combining multiple features.
+
+### mixed-static-named-error.runbook.md
+
+Static steps with a named error handler step.
+
+- [mixed-static-named-error.runbook.md](./mixed-static-named-error.runbook.md)
+
+### mixed-dynamic-named-recovery.runbook.md
+
+Dynamic iteration with a named recovery step.
+
+- [mixed-dynamic-named-recovery.runbook.md](./mixed-dynamic-named-recovery.runbook.md)
+
+---
+
+## Other
+
+Additional workflow patterns.
 
 ### workflow-composition.runbook.md
 
 Parent workflow delegating to child workflows.
 
 - [workflow-composition.runbook.md](./workflow-composition.runbook.md)
+
+### code-blocks.runbook.md
+
+Various code block patterns in workflows.
+
+- [code-blocks.runbook.md](./code-blocks.runbook.md)
 
 ---
 
