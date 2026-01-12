@@ -12,6 +12,47 @@ export interface ValidationError {
 }
 
 /**
+ * Build error context string for step/substep location.
+ *
+ * @param step - The step containing the error
+ * @param substepId - Optional substep identifier
+ * @returns Context string like "1" or "1.2" for error messages
+ */
+function getErrorContext(step: Step, substepId?: string): string {
+  return substepId ? `${step.name}.${substepId}` : step.name;
+}
+
+/**
+ * Find the dynamic step template in a workflow.
+ *
+ * @param steps - Array of workflow steps
+ * @returns The dynamic step if one exists, undefined otherwise
+ */
+function findDynamicStep(steps: readonly Step[]): Step | undefined {
+  return steps.find(s => s.isDynamic);
+}
+
+/**
+ * Check if a workflow has a dynamic step template ({N}).
+ *
+ * @param steps - Array of workflow steps
+ * @returns True if the workflow has a dynamic step
+ */
+function hasDynamicStep(steps: readonly Step[]): boolean {
+  return findDynamicStep(steps) !== undefined;
+}
+
+/**
+ * Check if a step has a dynamic substep ({n}).
+ *
+ * @param step - The step to check
+ * @returns True if the step has at least one dynamic substep
+ */
+function hasDynamicSubstep(step: Step): boolean {
+  return step.substeps?.some(s => s.isDynamic) ?? false;
+}
+
+/**
  * Validates a parsed workflow against Rundown specification rules.
  *
  * Checks for conformance with:
@@ -154,7 +195,7 @@ export function validateAction(
 ): void {
   const result = ActionSchema.safeParse(action);
   if (!result.success) {
-    const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+    const context = getErrorContext(currentStepObj, currentSubstepId);
     errors.push({
       line: currentStepObj.line,
       message: `Step ${context}: Action validation failed: ${result.error.issues.map(i => i.message).join(', ')}`
@@ -176,9 +217,9 @@ export function validateAction(
 
         // GOTO NEXT {N} - must have a dynamic step in workflow
         if (qualifier.step === '{N}' && !qualifier.substep) {
-          const hasDynamicStep = steps.some(s => s.isDynamic);
-          if (!hasDynamicStep) {
-            const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+          const dynamicStepExists = hasDynamicStep(steps);
+          if (!dynamicStepExists) {
+            const context = getErrorContext(currentStepObj, currentSubstepId);
             errors.push({
               line: currentStepObj.line,
               message: `Step ${context}: GOTO NEXT {N} invalid - no dynamic step exists in workflow.`
@@ -189,9 +230,9 @@ export function validateAction(
 
         // GOTO NEXT {N}.{n} - dynamic step must have dynamic substep
         if (qualifier.step === '{N}' && qualifier.substep === '{n}') {
-          const dynamicStep = steps.find(s => s.isDynamic);
+          const dynamicStep = findDynamicStep(steps);
           if (!dynamicStep) {
-            const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+            const context = getErrorContext(currentStepObj, currentSubstepId);
             errors.push({
               line: currentStepObj.line,
               message: `Step ${context}: GOTO NEXT {N}.{n} invalid - no dynamic step exists in workflow.`
@@ -199,9 +240,8 @@ export function validateAction(
             return;
           }
 
-          const hasDynamicSubstep = dynamicStep.substeps?.some(s => s.isDynamic);
-          if (!hasDynamicSubstep) {
-            const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+          if (!hasDynamicSubstep(dynamicStep)) {
+            const context = getErrorContext(currentStepObj, currentSubstepId);
             errors.push({
               line: currentStepObj.line,
               message: `Step ${context}: GOTO NEXT {N}.{n} invalid - dynamic step has no dynamic substep.`
@@ -214,7 +254,7 @@ export function validateAction(
         if (qualifier.substep === '{n}') {
           const targetStepObj = steps.find(s => s.name === qualifier.step);
           if (!targetStepObj) {
-            const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+            const context = getErrorContext(currentStepObj, currentSubstepId);
             errors.push({
               line: currentStepObj.line,
               message: `Step ${context}: GOTO NEXT ${qualifier.step}.{n} invalid - step "${qualifier.step}" does not exist.`
@@ -222,9 +262,8 @@ export function validateAction(
             return;
           }
 
-          const hasDynamicSubstep = targetStepObj.substeps?.some(s => s.isDynamic);
-          if (!hasDynamicSubstep) {
-            const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+          if (!hasDynamicSubstep(targetStepObj)) {
+            const context = getErrorContext(currentStepObj, currentSubstepId);
             errors.push({
               line: currentStepObj.line,
               message: `Step ${context}: GOTO NEXT ${qualifier.step}.{n} invalid - step "${qualifier.step}" has no dynamic substep.`
@@ -239,7 +278,7 @@ export function validateAction(
 
       // Bare GOTO NEXT - only valid in dynamic context
       if (!isDynamicContext) {
-        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+        const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
           message: `Step ${context}: GOTO NEXT invalid - requires dynamic context (## {N}. step or .{n} substep).`
@@ -250,9 +289,9 @@ export function validateAction(
 
     // Handle GOTO {N} - valid if workflow has a dynamic step
     if (targetStep === '{N}' && !targetSubstep) {
-      const hasDynamicStep = steps.some(s => s.isDynamic);
-      if (!hasDynamicStep) {
-        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+      const dynamicStepExists = hasDynamicStep(steps);
+      if (!dynamicStepExists) {
+        const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
           message: `Step ${context}: GOTO {N} invalid - no dynamic step exists in workflow.`
@@ -263,18 +302,17 @@ export function validateAction(
 
     // Handle GOTO {N}.{n} - valid if workflow has dynamic step with dynamic substep
     if (targetStep === '{N}' && targetSubstep === '{n}') {
-      const dynamicStep = steps.find(s => s.isDynamic);
+      const dynamicStep = findDynamicStep(steps);
       if (!dynamicStep) {
-        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+        const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
           message: `Step ${context}: GOTO {N}.{n} invalid - no dynamic step exists in workflow.`
         });
         return;
       }
-      const hasDynamicSubstep = dynamicStep.substeps?.some(s => s.isDynamic);
-      if (!hasDynamicSubstep) {
-        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+      if (!hasDynamicSubstep(dynamicStep)) {
+        const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
           message: `Step ${context}: GOTO {N}.{n} invalid - dynamic step has no dynamic substep.`
@@ -286,7 +324,7 @@ export function validateAction(
     // Handle GOTO {N}.M (static substep of dynamic step) - must be in dynamic context
     if (targetStep === '{N}') {
       if (!isDynamicContext) {
-        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+        const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
           message: `Step ${context}: GOTO {N}.${targetSubstep ?? ''} invalid - requires dynamic step context.`
@@ -299,7 +337,7 @@ export function validateAction(
     if (typeof targetStep === 'string' && targetStep !== 'NEXT' && targetStep !== '{N}' && !/^\d+$/.test(targetStep)) {
       const namedStep = steps.find(s => s.name === targetStep);
       if (!namedStep) {
-        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+        const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
           message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`
@@ -309,7 +347,7 @@ export function validateAction(
 
       if (targetSubstep) {
         if (!namedStep.substeps || namedStep.substeps.length === 0) {
-          const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+          const context = getErrorContext(currentStepObj, currentSubstepId);
           errors.push({
             line: currentStepObj.line,
             message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`
@@ -319,7 +357,7 @@ export function validateAction(
 
         const substepExists = namedStep.substeps.some(s => s.id === targetSubstep);
         if (!substepExists) {
-          const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+          const context = getErrorContext(currentStepObj, currentSubstepId);
           errors.push({
             line: currentStepObj.line,
             message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`
@@ -336,7 +374,7 @@ export function validateAction(
     const targetStepObj = steps.find(s => s.name === targetStep);
 
     if (!targetStepObj) {
-      const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+      const context = getErrorContext(currentStepObj, currentSubstepId);
       errors.push({
         line: currentStepObj.line,
         message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`
@@ -349,7 +387,7 @@ export function validateAction(
     const isInsideDynamicStep = isDynamicContext && targetStep === currentStepObj.name;
 
     if (isTargetDynamic && !isInsideDynamicStep) {
-      const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+      const context = getErrorContext(currentStepObj, currentSubstepId);
       errors.push({
         line: currentStepObj.line,
         message: `Step ${context}: Cannot GOTO into dynamic step "${targetStep}" from outside. Use GOTO NEXT if it is the current template.`
@@ -359,7 +397,7 @@ export function validateAction(
 
     if (targetSubstep) {
       if (!targetStepObj.substeps || targetStepObj.substeps.length === 0) {
-        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+        const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
           message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`
@@ -369,9 +407,8 @@ export function validateAction(
 
       if (targetSubstep === '{n}') {
         // GOTO X.{n} - target step must have a dynamic substep
-        const hasDynamicSubstep = targetStepObj.substeps.some(s => s.isDynamic);
-        if (!hasDynamicSubstep) {
-          const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+        if (!hasDynamicSubstep(targetStepObj)) {
+          const context = getErrorContext(currentStepObj, currentSubstepId);
           errors.push({
             line: currentStepObj.line,
             message: `Step ${context}: GOTO ${targetStep}.{n} invalid - step "${targetStep}" has no dynamic substep.`
@@ -383,7 +420,7 @@ export function validateAction(
       const substepExists = targetStepObj.substeps.some(s => s.id === targetSubstep);
       if (!substepExists) {
         if (targetStepObj.isDynamic) {
-          const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+          const context = getErrorContext(currentStepObj, currentSubstepId);
           errors.push({
             line: currentStepObj.line,
             message: `Step ${context}: cannot GOTO substep of dynamic step. Use GOTO ${targetStep} instead.`
@@ -391,7 +428,7 @@ export function validateAction(
           return;
         }
 
-        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+        const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
           message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`
@@ -402,7 +439,7 @@ export function validateAction(
 
     // Self-loop detection: compare step names, not numeric values
     if (targetStep === currentStepObj.name && targetSubstep === currentSubstepId) {
-      const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+      const context = getErrorContext(currentStepObj, currentSubstepId);
       errors.push({
         line: currentStepObj.line,
         message: `Step ${context}: GOTO self creates infinite loop (use RETRY instead)`
