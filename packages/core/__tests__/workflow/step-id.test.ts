@@ -104,9 +104,9 @@ describe('dynamic substep references', () => {
     expect(result).toEqual({ step: '{N}', substep: '{n}' });
   });
 
-  it('rejects {N} alone (use NEXT action instead)', () => {
+  it('parses {N} alone as valid dynamic step reference', () => {
     const result = parseStepIdFromString('{N}');
-    expect(result).toBeNull();
+    expect(result).toEqual({ step: '{N}' });
   });
 
   it('rejects {N}.0 (substeps are 1-indexed)', () => {

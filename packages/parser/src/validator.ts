@@ -150,7 +150,7 @@ export function validateAction(
   steps: readonly Step[],
   currentStepObj: Step,
   errors: ValidationError[],
-  isCurrentSubstepDynamic: boolean = false
+  isCurrentSubstepDynamic = false
 ): void {
   const result = ActionSchema.safeParse(action);
   if (!result.success) {
@@ -289,7 +289,7 @@ export function validateAction(
         const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO {N}.${targetSubstep} is only valid within dynamic step context.`
+          message: `Step ${context}: GOTO {N}.${targetSubstep ?? ''} is only valid within dynamic step context.`
         });
       }
       return;
@@ -369,7 +369,7 @@ export function validateAction(
 
       if (targetSubstep === '{n}') {
         // GOTO X.{n} - target step must have a dynamic substep
-        const hasDynamicSubstep = targetStepObj.substeps?.some(s => s.isDynamic);
+        const hasDynamicSubstep = targetStepObj.substeps.some(s => s.isDynamic);
         if (!hasDynamicSubstep) {
           const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
           errors.push({
