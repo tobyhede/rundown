@@ -1,6 +1,10 @@
+<!-- GENERATED FILE - DO NOT EDIT DIRECTLY -->
+<!-- Source: runbooks/patterns/INDEX.md -->
+<!-- Regenerate: npm run docs:patterns -->
+
 # Rundown Patterns
 
-Common patterns for Rundown workflows. See [SPEC.md](./SPEC.md) for syntax reference.
+Common patterns for Rundown workflows. See [SPEC.md](/docs/SPEC.md) for syntax reference.
 
 ---
 
@@ -10,21 +14,29 @@ Simple linear workflow with optional branching via GOTO.
 
 **Use when:** Fixed number of steps, simple flow control.
 
-```markdown
-## 1. First step
 
-Do something.
+**standard-sequential.runbook.md:**
+
+```rundown
+## 1. Setup
+
+```bash
+rd echo --result pass
+```
 
 - PASS: CONTINUE
 - FAIL: STOP
 
-## 2. Second step
+## 2. Test
 
-Do something else.
+```bash
+rd echo --result fail --result fail --result pass
+```
 
 - PASS: COMPLETE
-- FAIL: GOTO 1
+- FAIL: RETRY 2
 ```
+
 
 **Characteristics:**
 - Steps numbered sequentially: 1, 2, 3...
@@ -39,17 +51,30 @@ Use `## {N}` dynamic step with `GOTO NEXT` action for batch processing.
 
 **Use when:** Unknown number of iterations determined at runtime.
 
-```markdown
-## {N} Process item
 
-Process item {N} from the queue.
+**dynamic-step-next.runbook.md:**
 
-**tsv yes:** More items remaining
-**tsv no:** Queue empty
-
+```rundown
+## {N}. Process Item
+Do something.
 - PASS: GOTO NEXT
-- FAIL: COMPLETE
 ```
+
+
+**dynamic-navigation.runbook.md:**
+
+```rundown
+## {N}. Process Item
+
+### {N}.1 First substep
+Do work.
+- PASS: GOTO {N}.2
+
+### {N}.2 Second substep
+Do more work.
+- PASS: GOTO NEXT
+```
+
 
 **Characteristics:**
 - `{N}` is placeholder, runtime creates instances: 1, 2, 3...
@@ -65,22 +90,36 @@ Use dynamic substeps `### {N}.{n}` with workflow list for parallel/sequential su
 
 **Use when:** Delegating tasks to child workflows (subagents).
 
-```markdown
-## 1. Execute tasks
 
-### 1.{n}
- - implement-task.runbook.md
+**dynamic-batch.runbook.md:**
 
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP "Task failed"
+```rundown
+## 1. Process Files
 
-## 2. Complete
+### 1.{n} Process Item
 
-All tasks passed.
+**Prompt:** Process file number {n}.
 
-- PASS: COMPLETE
-- FAIL: STOP
+```bash
+./process.sh item_{n}.dat
 ```
+```
+
+
+**dynamic-substep-transitions.runbook.md:**
+
+```rundown
+# Dynamic Substep Transitions
+Tests navigation in dynamic context.
+
+## {N}. Dynamic Template
+
+### {N}.1 Task
+Process item.
+- PASS: GOTO NEXT
+- FAIL: STOP "Dynamic failure"
+```
+
 
 **Characteristics:**
 - `### 1.{n}` is dynamic substep template
@@ -93,90 +132,25 @@ All tasks passed.
 
 ---
 
-## Pattern 4: Batch with Validation
-
-Static steps with GOTO loop for batches, dynamic substeps for task dispatch.
-
-**Use when:** Each batch needs validation after task execution.
-
-**Constraint:** Cannot mix static (`## 1`) and dynamic (`## {N}`) top-level steps.
-
-```markdown
-## 1. Load plan
-
-Review the plan.
-
-- PASS: CONTINUE
-- FAIL: STOP "STOPPED"
-
-## 2. Execute batch
-
-### 2.{n}
- - implement-task.runbook.md
-
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP "STOPPED"
-
-## 3. Check
-
-```bash
-npm run lint && npm run build && npm test
-```
-
-- PASS: CONTINUE
-- FAIL: GOTO 4
-
-## 4. Troubleshoot
-
-Can you fix without changing approach?
-
-**tsv yes:** Fix is trivial
-**tsv no:** Needs plan revision
-
-- PASS: GOTO 3
-- FAIL: STOP "STOPPED"
-
-## 5. Batch complete
-
-**tsv yes:** More batches
-**tsv no:** All done
-
-- PASS: GOTO 2
-- FAIL: COMPLETE
-```
-
-**Characteristics:**
-- Static top-level steps: `## 1`, `## 2`, `## 3`...
-- Dynamic substep `### 2.{n}` for task iteration with workflow list
-- GOTO loop (`GOTO 2`) for batch iteration
-- Validation as separate static steps
-- Cannot use `GOTO NEXT` (requires dynamic top-level step)
-
----
-
-## Pattern 5: Workflow Composition
+## Pattern 4: Workflow Composition
 
 Static step delegates to multiple child workflows in sequence.
 
 **Use when:** Orchestrating a pipeline of workflows.
 
-```markdown
-## 1. Build pipeline
 
- - lint.runbook.md
- - build.runbook.md
- - test.runbook.md
+**workflow-composition.runbook.md:**
 
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+```rundown
+## 1. Verify
 
-## 2. Deploy
+- lint.runbook.md
+- types.runbook.md
+- tests.runbook.md
 
- - deploy.runbook.md
-
-- PASS: COMPLETE
-- FAIL: STOP
+- FAIL ANY: STOP "Verification failed"
 ```
+
 
 **Characteristics:**
 - Workflow list executes in order
@@ -185,68 +159,123 @@ Static step delegates to multiple child workflows in sequence.
 
 ---
 
-## Anti-Patterns
+## Pattern 5: Named Steps
 
-### ❌ Using GOTO for iteration
+Use named steps for readability and GOTO by name.
 
-```markdown
-## 5. Task complete
+**Use when:** Steps have semantic meaning, or GOTO by number is fragile.
 
-**tsv yes:** More tasks
-**tsv no:** Done
 
-- PASS: GOTO 1
-- FAIL: COMPLETE
+**named-steps.runbook.md:**
+
+```rundown
+# Named Steps Example
+
+## 1 Main workflow
+Do the main work
+- FAIL: GOTO ErrorHandler
+- PASS: COMPLETE SUCCESS
+
+## ErrorHandler
+Handle any errors that occur
+- PASS: STOP RECOVERED
+- FAIL: STOP "Unrecoverable error"
 ```
 
-**Problem:** Requires manual state tracking. Use dynamic steps instead.
 
-**Fix:** Use `## {N}` with `GOTO NEXT` action.
+**named-substeps.runbook.md:**
 
-### ❌ Mixing prose with workflow list
+```rundown
+# Named Substeps Example
 
-```markdown
-## 1. Execute
+## 1 Main step
+### 1.1 First substep
+Do first thing
+### 1.2 Second substep
+Do second thing
+### 1.Cleanup Handle cleanup
+Clean up resources
+- PASS: COMPLETE
+- FAIL: STOP "Cleanup failed"
+```
 
-Dispatch subagents to run tasks.
 
- - task.runbook.md
+**mixed-named-static.runbook.md:**
 
+```rundown
+# Mixed Named and Static Steps
+
+## 1 First step
 - PASS: CONTINUE
+
+## 2 Second step
+- PASS: CONTINUE
+
+## 3 Third step
+- FAIL: GOTO ErrorHandler
+- PASS: COMPLETE
+
+## ErrorHandler
+Log the error and stop
+- PASS: STOP ERROR
 ```
 
-**Problem:** Violates exclusivity rule. Step must have EITHER body OR workflow list.
 
-**Fix:** Put prose in description or use substeps.
+**mixed-named-dynamic.runbook.md:**
 
-### ❌ Static substeps for variable iteration
+```rundown
+# Mixed Named and Dynamic Steps
 
-```markdown
-### 1.1 Task 1
-### 1.2 Task 2
-### 1.3 Task 3
+## {N} Process each item
+### {N}.1 Do work
+- FAIL: GOTO {N}.Recovery
+- PASS: GOTO NEXT
+
+### {N}.Recovery Handle recovery
+- PASS: GOTO NEXT
+- FAIL: GOTO GlobalError
+
+## GlobalError
+Handle global errors
+- PASS: STOP "All items failed"
 ```
 
-**Problem:** Requires knowing task count at authoring time.
 
-**Fix:** Use `### 1.{n}` dynamic substep.
+**Characteristics:**
+- Steps use `## name:` format
+- GOTO uses step name: `GOTO setup`
+- Can mix with numbered/dynamic steps
 
 ---
 
-## Quick Reference
+## Additional Examples
 
-| Pattern | Top-level | Substeps | Use Case |
-|---------|-----------|----------|----------|
-| Static Sequential | `## 1`, `## 2` | None | Simple linear flow |
-| Dynamic Iteration | `## {N}` | None | Unknown iterations |
-| Subagent Dispatch | `## 1` | `### 1.{n}` + workflow | Delegate to children |
-| Batch + Validation | `## {N}` | `### {N}.{n}` + `{N}.V` | Iterate with validation |
-| Composition | `## 1` | workflow list | Pipeline orchestration |
+### Transitions and Control Flow
+
+- [default-transitions.runbook.md](./default-transitions.runbook.md) - Default PASS/FAIL behavior
+- [complex-transitions.runbook.md](./complex-transitions.runbook.md) - Complex transition logic
+- [substep-transitions.runbook.md](./substep-transitions.runbook.md) - Substep aggregation
+- [nested-static-substeps.runbook.md](./nested-static-substeps.runbook.md) - Nested substeps
+
+### Retry Behavior
+
+- [retry-success.runbook.md](./retry-success.runbook.md) - Basic retry
+- [retry-counter-reset.runbook.md](./retry-counter-reset.runbook.md) - Counter reset behavior
+- [retry-exhaustion-continue.runbook.md](./retry-exhaustion-continue.runbook.md) - Continue on exhaustion
+- [retry-exhaustion-goto.runbook.md](./retry-exhaustion-goto.runbook.md) - GOTO on exhaustion
+- [retry-exhaustion-done.runbook.md](./retry-exhaustion-done.runbook.md) - Done on exhaustion
+
+### Prompts and Metadata
+
+- [prompted-steps.runbook.md](./prompted-steps.runbook.md) - User prompts
+- [mixed-prompts.runbook.md](./mixed-prompts.runbook.md) - Mixed prompt types
+- [yes-no-aliases.runbook.md](./yes-no-aliases.runbook.md) - Prompt aliases
+- [metadata-header.runbook.md](./metadata-header.runbook.md) - YAML frontmatter
+- [list-instructions.runbook.md](./list-instructions.runbook.md) - List-based instructions
 
 ---
 
 ## See Also
 
-- [SPEC.md](./SPEC.md) - Full specification
-- [FORMAT.md](./FORMAT.md) - BNF grammar
-- [examples/runbooks/](../examples/runbooks/) - Working examples
+- [SPEC.md](../../docs/SPEC.md) - Full specification
+- [FORMAT.md](../../docs/FORMAT.md) - BNF grammar
