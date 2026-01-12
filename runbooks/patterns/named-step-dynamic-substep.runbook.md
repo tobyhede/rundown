@@ -12,7 +12,7 @@ rd echo --result fail
 
 ## ErrorHandler
 
-### ErrorHandler.{N}
+### ErrorHandler.{n}
 
 ```bash
 rd echo --result fail --result pass
@@ -20,3 +20,4 @@ rd echo --result fail --result pass
 
 - PASS: COMPLETE
 - FAIL: GOTO NEXT
+

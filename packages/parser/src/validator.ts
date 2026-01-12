@@ -180,21 +180,48 @@ export function validateAction(
       return;
     }
 
+    // Handle GOTO {N} - valid if workflow has a dynamic step
     if (targetStep === '{N}' && !targetSubstep) {
-      const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
-      errors.push({
-        line: currentStepObj.line,
-        message: `Step ${context}: GOTO {N} alone is invalid. Use GOTO NEXT to advance to the next dynamic instance.`
-      });
+      const hasDynamicStep = steps.some(s => s.isDynamic);
+      if (!hasDynamicStep) {
+        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+        errors.push({
+          line: currentStepObj.line,
+          message: `Step ${context}: GOTO {N} invalid - no dynamic step exists in workflow.`
+        });
+      }
       return;
     }
 
+    // Handle GOTO {N}.{n} - valid if workflow has dynamic step with dynamic substep
+    if (targetStep === '{N}' && targetSubstep === '{n}') {
+      const dynamicStep = steps.find(s => s.isDynamic);
+      if (!dynamicStep) {
+        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+        errors.push({
+          line: currentStepObj.line,
+          message: `Step ${context}: GOTO {N}.{n} invalid - no dynamic step exists in workflow.`
+        });
+        return;
+      }
+      const hasDynamicSubstep = dynamicStep.substeps?.some(s => s.isDynamic);
+      if (!hasDynamicSubstep) {
+        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+        errors.push({
+          line: currentStepObj.line,
+          message: `Step ${context}: GOTO {N}.{n} invalid - dynamic step has no dynamic substep.`
+        });
+      }
+      return;
+    }
+
+    // Handle GOTO {N}.M (static substep of dynamic step) - must be in dynamic context
     if (targetStep === '{N}') {
       if (!isDynamicContext) {
         const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO {N}.M is only valid within dynamic step context (## {N}.).`
+          message: `Step ${context}: GOTO {N}.${targetSubstep} is only valid within dynamic step context.`
         });
       }
       return;
@@ -273,11 +300,15 @@ export function validateAction(
       }
 
       if (targetSubstep === '{n}') {
-        const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
-        errors.push({
-          line: currentStepObj.line,
-          message: `Step ${context}: GOTO ${targetStep}.{n} is invalid. Dynamic substeps cannot be targeted directly via GOTO.`
-        });
+        // GOTO X.{n} - target step must have a dynamic substep
+        const hasDynamicSubstep = targetStepObj.substeps?.some(s => s.isDynamic);
+        if (!hasDynamicSubstep) {
+          const context = currentSubstepId ? `${currentStepObj.name}.${currentSubstepId}` : currentStepObj.name;
+          errors.push({
+            line: currentStepObj.line,
+            message: `Step ${context}: GOTO ${targetStep}.{n} invalid - step "${targetStep}" has no dynamic substep.`
+          });
+        }
         return;
       }
 

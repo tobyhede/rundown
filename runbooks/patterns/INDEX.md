@@ -1,6 +1,6 @@
 # Rundown Patterns
 
-Common patterns for Rundown workflows. See [SPEC.md](../../docs/SPEC.md) for syntax reference.
+Common patterns for Rundown workflows. See [MATRIX.md](./MATRIX.md) for complete coverage matrix and [SPEC.md](../../docs/SPEC.md) for syntax reference.
 
 ## Contents
 
@@ -374,5 +374,6 @@ Various code block patterns in workflows.
 
 ## See Also
 
+- [MATRIX.md](./MATRIX.md) - Complete coverage matrix (48 patterns)
 - [SPEC.md](../../docs/SPEC.md) - Full specification
 - [FORMAT.md](../../docs/FORMAT.md) - BNF grammar
