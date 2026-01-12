@@ -162,6 +162,9 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
  * - Positive integer: "1", "2", "99"
  * - Dynamic placeholder: "{N}"
  * - Named identifier: "Setup", "my_step" (not a reserved word)
+ *
+ * @param s - The string to validate as a step reference
+ * @returns True if the string is a valid step reference, false otherwise
  */
 function isValidStepRef(s: string): boolean {
   if (s === '{N}') return true;
@@ -177,6 +180,9 @@ function isValidStepRef(s: string): boolean {
  * - Positive integer: "1", "2", "99"
  * - Dynamic placeholder: "{n}"
  * - Named identifier: "Setup", "my_substep" (not a reserved word)
+ *
+ * @param s - The string to validate as a substep identifier
+ * @returns True if the string is a valid substep identifier, false otherwise
  */
 function isValidSubstepId(s: string): boolean {
   if (s === '{n}') return true;
@@ -527,7 +533,7 @@ function containsNEXT(action: Action | NonRetryAction): boolean {
 export function validateNEXTUsage(
   conditionals: ParsedConditional[],
   isDynamicStep: boolean,
-  isDynamicSubstep: boolean = false
+  isDynamicSubstep = false
 ): void {
   if (isDynamicStep || isDynamicSubstep) {
     // NEXT is allowed in dynamic steps or dynamic substeps
