@@ -109,8 +109,8 @@ Named steps are identified by a name instead of a number. They follow all the sa
 - PASS: COMPLETE
 
 ## ErrorHandler
-Handle errors
 - PASS: STOP RECOVERED
+Handle errors
 ```
 
 ---
@@ -285,7 +285,7 @@ Parsers and executors must adhere to strict validation:
 1. **Hierarchy**: H1 is Metadata. H2 is Step. H3 is Substep. H4+ is invalid.
 2. **Step Pattern**: A runbook contains EITHER static steps OR exactly one dynamic step template at each level.
 3. **Sequencing**: Static steps must be strictly sequential (1, 2, 3...).
-4. **Ordering**: Within a step or substep, content MUST appear in order: prompt (if any), body (if any), transitions (if any).
+4. **Ordering**: Within a step or substep, content MUST appear in order: transitions (if any), prompt (if any), body (if any).
 5. **Exclusivity**: Units MUST contain exactly one of their permitted body types (code_block, substeps, or runbooks).
 6. **Single Command**: Each step/substep may have at most one code block (bash, sh, shell, prompt).
 7. **Recursion**: `RETRY` actions cannot contain another `RETRY`.
