@@ -3,7 +3,8 @@
     "allow": [
       "Skill(turboshovel:verifying-by-consensus)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Skill(cipherpowers:verify)"
     ]
   }
 }

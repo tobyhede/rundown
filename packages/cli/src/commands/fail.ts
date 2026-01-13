@@ -167,9 +167,11 @@ export function registerFailCommand(program: Command): void {
           result: 'FAIL',
         });
 
+        // Evaluate fail condition once to get message
+        const failResult = evaluateFailCondition(currentStep, prevRetryCount);
+
         // Handle stopped
         if (isStopped) {
-          const failResult = evaluateFailCondition(currentStep, prevRetryCount);
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
           printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep }, failResult.message);
 
@@ -187,7 +189,6 @@ export function registerFailCommand(program: Command): void {
 
         // Handle completion (rare for fail, but possible with GOTO to end)
         if (isComplete) {
-          const failResult = evaluateFailCondition(currentStep, prevRetryCount);
           await manager.update(state.id, {
             step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true }
