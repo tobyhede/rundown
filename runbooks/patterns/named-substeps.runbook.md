@@ -6,7 +6,7 @@ Execute first action.
 ### 1.2 Run
 Execute second action.
 ### 1.Cleanup Cleanup
-Clean up resources
-
 - PASS: COMPLETE
 - FAIL: STOP "Cleanup failed"
+
+Clean up resources

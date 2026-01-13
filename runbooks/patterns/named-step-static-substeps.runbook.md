@@ -3,10 +3,10 @@
 Demonstrates named steps containing numbered substeps.
 
 ## 1. Setup
-Initial setup step.
-
 - PASS: CONTINUE
 - FAIL: GOTO ErrorHandler
+
+Initial setup step.
 
 ```bash
 rd echo "initial setup"
@@ -16,10 +16,10 @@ rd echo "initial setup"
 ## ErrorHandler
 
 ### ErrorHandler.1 Prepare
-Prepare for error handling.
-
 - PASS: CONTINUE
 - FAIL: STOP
+
+Prepare for error handling.
 
 ```bash
 rd echo "prepare error handling"
@@ -27,10 +27,10 @@ rd echo "prepare error handling"
 
 
 ### ErrorHandler.2 Execute
-Execute error recovery.
-
 - PASS: CONTINUE
 - FAIL: STOP
+
+Execute error recovery.
 
 ```bash
 rd echo "execute recovery"
@@ -38,10 +38,10 @@ rd echo "execute recovery"
 
 
 ### ErrorHandler.3 Verify
-Verify recovery succeeded.
-
 - PASS: GOTO 1
 - FAIL: STOP
+
+Verify recovery succeeded.
 
 ```bash
 rd echo "verify recovery"
