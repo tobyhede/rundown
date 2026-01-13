@@ -16,6 +16,7 @@ import { registerEchoCommand } from './commands/echo.js';
 import { registerCheckCommand } from './commands/check.js';
 import { registerPruneCommand } from './commands/prune.js';
 import { registerPromptCommand } from './commands/prompt.js';
+import { registerScenariosCommand } from './commands/scenarios.js';
 
 const program = new CommandClass();
 
@@ -48,5 +49,7 @@ registerCheckCommand(program);
 registerPruneCommand(program);
 
 registerPromptCommand(program);
+
+registerScenariosCommand(program);
 
 program.parse();
