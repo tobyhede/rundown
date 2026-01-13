@@ -12,6 +12,8 @@ import {
   type WorkflowMetadata,
   type WorkflowState,
   executeCommand,
+  evaluatePassCondition,
+  evaluateFailCondition,
 } from '@rundown/core';
 
 /**
@@ -90,6 +92,7 @@ export async function runExecutionLoop(
 
     // Store result
     await manager.setLastResult(workflowId, execResult.success ? 'pass' : 'fail');
+    const lastResult = execResult.success ? 'pass' : 'fail';
 
     // Capture prev state BEFORE mutation
      
@@ -163,8 +166,12 @@ export async function runExecutionLoop(
 
     // Handle workflow end states
     if (isComplete) {
+      // Extract message from the transition that led to completion
+      const completionMessage = lastResult === 'pass'
+        ? evaluatePassCondition(currentStep).message
+        : evaluateFailCondition(currentStep, prevRetryCount).message;
       await manager.update(workflowId, { variables: { ...updatedState.variables, completed: true } });
-      printWorkflowComplete();
+      printWorkflowComplete(completionMessage);
 
       // If this was a child workflow with agent, update parent's agent binding
        
@@ -182,8 +189,12 @@ export async function runExecutionLoop(
     }
 
     if (isStopped) {
+      // Extract message from the transition that led to stop
+      const stopMessage = lastResult === 'pass'
+        ? evaluatePassCondition(currentStep).message
+        : evaluateFailCondition(currentStep, prevRetryCount).message;
       await manager.update(workflowId, { variables: { ...updatedState.variables, stopped: true } });
-      printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep });
+      printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep }, stopMessage);
 
       // If this was a child workflow with agent, update parent's agent binding
        
