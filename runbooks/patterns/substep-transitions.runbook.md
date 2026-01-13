@@ -4,6 +4,7 @@ Tests discrete transitions and navigation at the substep level.
 ## 1. Complex Parent
 
 ### 1.1 Initial
+Do first thing.
 - PASS: CONTINUE
 - FAIL: RETRY 2 STOP
 
@@ -11,32 +12,27 @@ Tests discrete transitions and navigation at the substep level.
 rd echo --result pass
 ```
 
-Do first thing.
-
 ### 1.2 Branch point
-
-```bash
-rd echo --result pass
-```
-
 Ask a question.
 - YES: GOTO 1.4
 - NO: CONTINUE
 
+```bash
+rd echo --result pass
+```
+
 ### 1.3 Alternative path
+Should be skipped if YES.
 - PASS: CONTINUE
 
 ```bash
 rd echo --result pass
 ```
-
-Should be skipped if YES.
 
 ### 1.4 Target
+Reached via GOTO or CONTINUE.
 - PASS: CONTINUE
 
 ```bash
 rd echo --result pass
 ```
-
-Reached via GOTO or CONTINUE.
