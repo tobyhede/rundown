@@ -10,6 +10,8 @@ ErrorHandler. After recovery, we either:
 ## {N}. Process Batch
 
 ### {N}.{n} Handle Item
+- PASS: GOTO NEXT {N}.{n}
+- FAIL: GOTO ErrorHandler
 
 Process the current item in the current batch.
 
@@ -17,10 +19,10 @@ Process the current item in the current batch.
 rd echo --result pass --result fail
 ```
 
-- PASS: GOTO NEXT {N}.{n}
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
+- PASS: GOTO {N}.{n}
+- FAIL: GOTO NEXT {N}.{n}
 
 Attempt to recover from the failure.
 Runtime tracks which {N} and {n} we came from.
@@ -29,8 +31,6 @@ Runtime tracks which {N} and {n} we came from.
 rd echo --result pass --result fail
 ```
 
-- PASS: GOTO {N}.{n}
-- FAIL: GOTO NEXT {N}.{n}
 ```
 
 **Runtime state example:**

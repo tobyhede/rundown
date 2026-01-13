@@ -3,6 +3,8 @@
 Demonstrates named steps containing numbered substeps.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 Initial setup step.
 
@@ -10,12 +12,12 @@ Initial setup step.
 rd echo "initial setup"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
 
 ### ErrorHandler.1 Prepare
+- PASS: CONTINUE
+- FAIL: STOP
 
 Prepare for error handling.
 
@@ -23,10 +25,10 @@ Prepare for error handling.
 rd echo "prepare error handling"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ### ErrorHandler.2 Execute
+- PASS: CONTINUE
+- FAIL: STOP
 
 Execute error recovery.
 
@@ -34,10 +36,10 @@ Execute error recovery.
 rd echo "execute recovery"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ### ErrorHandler.3 Verify
+- PASS: GOTO 1
+- FAIL: STOP
 
 Verify recovery succeeded.
 
@@ -45,5 +47,3 @@ Verify recovery succeeded.
 rd echo "verify recovery"
 ```
 
-- PASS: GOTO 1
-- FAIL: STOP

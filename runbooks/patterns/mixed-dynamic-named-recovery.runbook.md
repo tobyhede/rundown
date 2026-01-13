@@ -3,6 +3,8 @@
 Demonstrates dynamic iteration with a named recovery step.
 
 ## {N}. Process Item
+- PASS: GOTO NEXT
+- FAIL: GOTO Recovery
 
 Process each item.
 
@@ -10,11 +12,11 @@ Process each item.
 rd echo "process item"
 ```
 
-- PASS: GOTO NEXT
-- FAIL: GOTO Recovery
 
 
 ## Recovery
+- PASS: GOTO {N}
+- FAIL: STOP "Recovery failed"
 
 Handle processing failures and resume iteration.
 
@@ -22,6 +24,4 @@ Handle processing failures and resume iteration.
 rd echo "recovery action"
 ```
 
-- PASS: GOTO {N}
-- FAIL: STOP "Recovery failed"
 

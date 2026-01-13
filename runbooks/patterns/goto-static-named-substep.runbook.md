@@ -5,6 +5,8 @@ Demonstrates GOTO N.Name - jumping to a named substep within a static step.
 ## 1. Setup
 
 ### 1.1 Prepare
+- PASS: GOTO 1.Cleanup
+- FAIL: STOP
 
 Initial preparation.
 
@@ -12,10 +14,10 @@ Initial preparation.
 rd echo "prepare environment"
 ```
 
-- PASS: GOTO 1.Cleanup
-- FAIL: STOP
 
 ### 1.Cleanup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Named cleanup substep.
 
@@ -23,10 +25,10 @@ Named cleanup substep.
 rd echo "cleanup resources"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
+- PASS: COMPLETE
+- FAIL: GOTO 1.Cleanup
 
 Main execution.
 
@@ -34,5 +36,3 @@ Main execution.
 rd echo "execute main task"
 ```
 
-- PASS: COMPLETE
-- FAIL: GOTO 1.Cleanup

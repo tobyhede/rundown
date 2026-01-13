@@ -4,15 +4,17 @@ Demonstrates GOTO {N}.M - jumping within a dynamic step instance.
 ## {N}. Process batch
 
 ### {N}.1 First task
+- PASS: GOTO {N}.3
+- FAIL: STOP
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS: GOTO {N}.3
-- FAIL: STOP
 
 ### {N}.2 Skipped task
+- PASS: CONTINUE
+- FAIL: STOP
 
 This task is skipped via GOTO.
 
@@ -20,10 +22,10 @@ This task is skipped via GOTO.
 rd echo --result fail
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ### {N}.3 Final task
+- PASS: GOTO NEXT
+- FAIL: STOP
 
 Reached via GOTO from {N}.1.
 
@@ -31,5 +33,3 @@ Reached via GOTO from {N}.1.
 rd echo --result pass
 ```
 
-- PASS: GOTO NEXT
-- FAIL: STOP

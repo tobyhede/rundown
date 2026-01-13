@@ -11,19 +11,25 @@ Demonstrates `GOTO {N}.Name` - jumping to a named substep within a dynamic step.
 ## {N}. Process Item
 
 ### {N}.Validate
-Validate the current item.
 
 - PASS: CONTINUE
 - FAIL: GOTO {N}.Cleanup
 
+Validate the current item.
+
+
 ### {N}.Execute
-Execute processing for validated item.
 
 - PASS: GOTO NEXT
 - FAIL: GOTO {N}.Cleanup
 
+Execute processing for validated item.
+
+
 ### {N}.Cleanup
-Clean up after validation or execution failure.
 
 - PASS: GOTO NEXT
 - FAIL: STOP
+
+Clean up after validation or execution failure.
+

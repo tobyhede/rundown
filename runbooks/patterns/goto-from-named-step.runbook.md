@@ -3,6 +3,8 @@
 Demonstrates navigation from a named step to a numbered step.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 Initial setup.
 
@@ -10,10 +12,10 @@ Initial setup.
 rd echo "initial setup"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
 
 ## 2. Execute
+- PASS: COMPLETE
+- FAIL: GOTO ErrorHandler
 
 Main execution.
 
@@ -21,10 +23,10 @@ Main execution.
 rd echo "main execution"
 ```
 
-- PASS: COMPLETE
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
+- PASS: GOTO 1
+- FAIL: STOP
 
 Handle errors and retry.
 
@@ -32,5 +34,3 @@ Handle errors and retry.
 rd echo "handle error"
 ```
 
-- PASS: GOTO 1
-- FAIL: STOP

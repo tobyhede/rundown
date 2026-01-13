@@ -5,6 +5,8 @@ Demonstrates static steps containing both numbered and named substeps.
 ## 1. Setup
 
 ### 1.1 Prepare
+- PASS: CONTINUE
+- FAIL: STOP
 
 Prepare the environment.
 
@@ -12,10 +14,10 @@ Prepare the environment.
 rd echo "prepare environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ### 1.Cleanup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Named cleanup substep.
 
@@ -23,10 +25,10 @@ Named cleanup substep.
 rd echo "cleanup resources"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
+- PASS: COMPLETE
+- FAIL: GOTO 1.Cleanup
 
 Run the main task.
 
@@ -34,5 +36,3 @@ Run the main task.
 rd echo "execute main task"
 ```
 
-- PASS: COMPLETE
-- FAIL: GOTO 1.Cleanup

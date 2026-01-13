@@ -3,6 +3,8 @@
 Demonstrates PASS leading to STOP - workflow halts on success.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Prepare the environment.
 
@@ -10,10 +12,10 @@ Prepare the environment.
 rd echo "setup environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
+- PASS: STOP "Check passed, halting workflow"
+- FAIL: CONTINUE
 
 Execute the critical check.
 
@@ -21,10 +23,10 @@ Execute the critical check.
 rd echo "critical check"
 ```
 
-- PASS: STOP "Check passed, halting workflow"
-- FAIL: CONTINUE
 
 ## 3. Cleanup
+- PASS: COMPLETE
+- FAIL: STOP
 
 This step only runs if Execute failed.
 
@@ -32,5 +34,3 @@ This step only runs if Execute failed.
 rd echo "cleanup resources"
 ```
 
-- PASS: COMPLETE
-- FAIL: STOP

@@ -5,6 +5,8 @@ Demonstrates doubly-dynamic iteration with {N}.{n} pattern.
 ## {N}. Process Batch
 
 ### {N}.{n} Process Item
+- PASS: CONTINUE
+- FAIL: STOP
 
 Process each item in batch N.
 
@@ -12,10 +14,10 @@ Process each item in batch N.
 rd echo "process item"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## Cleanup
+- PASS: COMPLETE
+- FAIL: STOP
 
 Handle any failures.
 
@@ -23,5 +25,3 @@ Handle any failures.
 rd echo "cleanup resources"
 ```
 
-- PASS: COMPLETE
-- FAIL: STOP

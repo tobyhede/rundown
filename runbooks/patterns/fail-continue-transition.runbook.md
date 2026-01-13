@@ -3,6 +3,8 @@
 Demonstrates FAIL leading to CONTINUE - proceed despite failure.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Prepare the environment.
 
@@ -10,10 +12,10 @@ Prepare the environment.
 rd echo "setup environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
+- PASS: CONTINUE
+- FAIL: CONTINUE
 
 Non-critical step that may fail.
 
@@ -21,10 +23,10 @@ Non-critical step that may fail.
 rd echo "execute non-critical task" --result fail
 ```
 
-- PASS: CONTINUE
-- FAIL: CONTINUE
 
 ## 3. Cleanup
+- PASS: COMPLETE
+- FAIL: STOP
 
 Always runs regardless of Execute result.
 
@@ -32,5 +34,3 @@ Always runs regardless of Execute result.
 rd echo "cleanup resources"
 ```
 
-- PASS: COMPLETE
-- FAIL: STOP
