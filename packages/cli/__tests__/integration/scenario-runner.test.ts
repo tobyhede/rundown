@@ -61,7 +61,7 @@ describe('scenario runner', () => {
   /**
    * Execute a scenario's commands and verify the result.
    */
-  async function executeScenario(filename: string, name: string, scenario: Scenario): Promise<void> {
+  async function executeScenario(filename: string, scenario: Scenario): Promise<void> {
     copyPatternToWorkspace(filename);
 
     // Execute each command in sequence, checking exit codes
@@ -90,10 +90,12 @@ describe('scenario runner', () => {
       throw new Error(`No state found for workflow ${filename}`);
     }
 
+    const variables = state.variables as Record<string, unknown> | undefined;
+
     if (scenario.result === 'COMPLETE') {
-      expect((state.variables as Record<string, unknown>)?.completed).toBe(true);
+      expect(variables?.completed).toBe(true);
     } else if (scenario.result === 'STOP') {
-      expect((state.variables as Record<string, unknown>)?.stopped).toBe(true);
+      expect(variables?.stopped).toBe(true);
     }
   }
 
@@ -101,7 +103,7 @@ describe('scenario runner', () => {
     const patterns = await loadPatternsWithScenarios();
 
     if (patterns.length === 0) {
-      console.log('No patterns with scenarios found - skipping');
+      console.warn('No patterns with scenarios found in runbooks/patterns/ - verify pattern files have scenarios in frontmatter');
       return;
     }
 
@@ -112,7 +114,7 @@ describe('scenario runner', () => {
         workspace = await createTestWorkspace();
 
         try {
-          await executeScenario(file, name, scenario);
+          await executeScenario(file, scenario);
         } catch (error) {
           throw new Error(`Failed: ${file} / ${name}: ${error}`);
         }
