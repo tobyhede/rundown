@@ -582,6 +582,7 @@ rundown prune --all
 
 Main agent runs workflow, dispatches subagents for substeps.
 
+**Runbook structure:**
 ```markdown
 ## 2. Execute batch
 ### 2.{n} Process item
@@ -591,13 +592,27 @@ Main agent runs workflow, dispatches subagents for substeps.
 - FAIL ANY: GOTO 4
 ```
 
-**Orchestrator workflow:**
-1. `rundown run workflow.runbook.md` - Start main workflow
-2. At substep with nested workflow: dispatch subagent
-3. `rundown run --step 2.1` - Queue step for binding
-4. `rundown run --agent <id>` - Bind agent to step (starts child workflow)
-5. Subagent works through child workflow
-6. `rundown pass --agent <id>` or `rundown fail --agent <id>` - Report result
+**Command sequence:**
+```bash
+# 1. Main agent starts parent workflow
+rd run workflow.runbook.md
+
+# 2. At substep, main agent queues step with child workflow
+rd run --step 2.1 task.runbook.md
+
+# 3. Subagent binds to queued step (picks up workflow automatically)
+rd run --agent subagent-1
+
+# 4. Subagent works through child workflow...
+
+# 5. Subagent reports result
+rd pass --agent subagent-1    # or: rd fail --agent subagent-1
+```
+
+**Key points:**
+- Child workflow is specified with `--step`, not with `--agent`
+- Subagent uses `--agent` flag on all commands (`run`, `pass`, `fail`)
+- Parent waits for agent result before evaluating transition
 
 ### Pattern 2: Agent-Controlled Branching
 
@@ -736,4 +751,10 @@ rundown pop                  # Resume enforcement
 # Maintenance
 rundown check <file>         # Validate runbook
 rundown prune                # Clean up state
+
+# Subagent Dispatch
+rd run --step <id> <runbook>   # Queue step with child workflow
+rd run --agent <agentId>       # Subagent binds to queued step
+rd pass --agent <agentId>      # Subagent marks work passed
+rd fail --agent <agentId>      # Subagent marks work failed
 ```
