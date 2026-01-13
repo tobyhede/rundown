@@ -26,8 +26,8 @@ export class WorkflowSyntaxError extends Error {
  * from workflow content, with optional aggregation modifiers.
  */
 export interface ParsedConditional {
-  /** Transition type: 'pass' for PASS/YES, 'fail' for FAIL/NO */
-  type: 'pass' | 'fail';
+  /** Transition type: preserves original keyword (pass, fail, yes, no) */
+  type: 'pass' | 'fail' | 'yes' | 'no';
   /** The action to take when this condition is met */
   action: Action;
   /** Optional aggregation modifier for substep evaluation (ALL or ANY) */
