@@ -176,14 +176,13 @@ describe('start --prompted', () => {
       await writeFile(join(workflowsDir, 'with-prompt-block.runbook.md'), `# Prompt Block Test
 
 ## 1. Step with prompt block
+- PASS: COMPLETE
 
 Show this command to the agent.
 
 \`\`\`prompt
 npm run dangerous-command
 \`\`\`
-
-- PASS: COMPLETE
 `);
 
       const result = runCli('run runbooks/with-prompt-block.runbook.md', workspace);
