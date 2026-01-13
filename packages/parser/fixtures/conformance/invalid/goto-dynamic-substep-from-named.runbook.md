@@ -3,6 +3,8 @@
 Demonstrates GOTO {N}.M from a named step to a dynamic substep instance.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Initial setup.
 
@@ -10,12 +12,11 @@ Initial setup.
 rd echo "initial setup"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
-
 ## 2. Process Batch
 
 ### 2.{n} Process Item
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 Process each item in the batch.
 
@@ -23,10 +24,9 @@ Process each item in the batch.
 rd echo "process item"
 ```
 
+### 2.Review
 - PASS: CONTINUE
 - FAIL: GOTO ErrorHandler
-
-### 2.Review
 
 Review the batch results.
 
@@ -34,25 +34,20 @@ Review the batch results.
 rd echo "review results"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
-
 ## 3. Complete
+- PASS: COMPLETE
+- FAIL: STOP
 
 ```bash
 rd echo "finalize completion"
 ```
 
-- PASS: COMPLETE
-- FAIL: STOP
-
 ## ErrorHandler
+- PASS: GOTO 2.{n}
+- FAIL: STOP
 
 Handle errors and retry from batch processing.
 
 ```bash
 rd echo "handle error"
 ```
-
-- PASS: GOTO 2.{n}
-- FAIL: STOP
