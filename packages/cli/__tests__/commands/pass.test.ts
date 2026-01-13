@@ -88,12 +88,14 @@ describe('pass command', () => {
     it('should restore parent workflow as active when nested child completes', async () => {
       // Create parent/child workflows for nesting test
       const parentWorkflow = `## 1. Parent step
-Do parent work.
 - PASS: COMPLETE
+
+Do parent work.
 `;
       const childWorkflow = `## 1. Child step
-Do child work.
 - PASS: COMPLETE
+
+Do child work.
 `;
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'parent-nest.md'), parentWorkflow);
@@ -154,16 +156,14 @@ Do child work.
     it('pops to parent workflow on completion', async () => {
       // Create parent/child workflows
       const parentWorkflow = `## 1. Step one
+- PASS: COMPLETE
 
 Do something.
-
-- PASS: COMPLETE
 `;
       const childWorkflow = `## 1. Step one
+- PASS: COMPLETE
 
 Do work.
-
-- PASS: COMPLETE
 `;
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'parent.md'), parentWorkflow);

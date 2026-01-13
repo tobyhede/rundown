@@ -62,6 +62,7 @@ interface SubstepBuilder {
   promptText: string;
   hasSeenContent: boolean;
   hasSeenTransitions: boolean;
+  hasSeenPromptText: boolean;
   pendingConditionals: ParsedConditional[];
   line?: number;
 }
@@ -74,6 +75,7 @@ interface StepBuilder {
   promptText: string;
   hasSeenContent: boolean;
   hasSeenTransitions: boolean;
+  hasSeenPromptText: boolean;
   substeps: Substep[];
   pendingSubstep?: SubstepBuilder;
   content: string;
@@ -213,6 +215,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           promptText: '',
           hasSeenContent: false,
           hasSeenTransitions: false,
+          hasSeenPromptText: false,
           substeps: [],
           content: '',
           line: node.position?.start.line
@@ -281,6 +284,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           promptText: '',
           hasSeenContent: false,
           hasSeenTransitions: false,
+          hasSeenPromptText: false,
           pendingConditionals: [],
           line: node.position?.start.line
         };
@@ -342,12 +346,19 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           const conditional = parseConditional(line);
           if (conditional) {
             if (currentStep.pendingSubstep) {
+              // Reject transitions after prompt text or content (header-adjacent requirement)
+              if (currentStep.pendingSubstep.hasSeenPromptText || currentStep.pendingSubstep.hasSeenContent) {
+                const stepLabel = currentStep.name;
+                const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+                throw new WorkflowSyntaxError(
+                  `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`
+                );
+              }
               currentStep.pendingSubstep.pendingConditionals.push(conditional);
-              // Mark that we've seen a transition in the substep
               currentStep.pendingSubstep.hasSeenTransitions = true;
             } else {
-              // Reject transitions after content (code blocks, substeps, runbooks)
-              if (currentStep.hasSeenContent) {
+              // Reject transitions after prompt text or content (header-adjacent requirement)
+              if (currentStep.hasSeenPromptText || currentStep.hasSeenContent) {
                 const stepLabel = currentStep.name;
                 const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
                 throw new WorkflowSyntaxError(
@@ -360,7 +371,6 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             hasConditional = true;
           } else if (line.trim()) {
             // Check ordering - text must come before content (code blocks, runbooks)
-            // Transitions don't count as content - text CAN appear after transitions
             if (currentStep.pendingSubstep) {
               // In substeps: text cannot appear after code blocks/runbooks
               if (currentStep.pendingSubstep.hasSeenContent) {
@@ -372,6 +382,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
                 );
               }
               currentStep.pendingSubstep.promptText += line.trim() + '\n';
+              currentStep.pendingSubstep.hasSeenPromptText = true;
             } else {
               if (currentStep.hasSeenContent) {
                 const stepLabel = currentStep.name;
@@ -382,6 +393,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
                 );
               }
               implicitText += line.trim() + '\n';
+              currentStep.hasSeenPromptText = true;
             }
           }
         }
@@ -400,8 +412,8 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         const conditional = parseConditional(text);
         if (conditional) {
           if (currentStep.pendingSubstep) {
-            // Reject transitions after content
-            if (currentStep.pendingSubstep.hasSeenContent) {
+            // Reject transitions after prompt text or content (header-adjacent requirement)
+            if (currentStep.pendingSubstep.hasSeenPromptText || currentStep.pendingSubstep.hasSeenContent) {
               const stepLabel = currentStep.name;
               const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
               throw new WorkflowSyntaxError(
@@ -411,8 +423,8 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             currentStep.pendingSubstep.pendingConditionals.push(conditional);
             currentStep.pendingSubstep.hasSeenTransitions = true;
           } else {
-            // Reject transitions after content
-            if (currentStep.hasSeenContent) {
+            // Reject transitions after prompt text or content (header-adjacent requirement)
+            if (currentStep.hasSeenPromptText || currentStep.hasSeenContent) {
               const stepLabel = currentStep.name;
               const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
               throw new WorkflowSyntaxError(

@@ -21,16 +21,14 @@ describe('rd check', () => {
   it('outputs PASS with step count for valid workflow', () => {
     const workflowPath = path.join(workspace.cwd, 'valid.runbook.md');
     fs.writeFileSync(workflowPath, `## 1. First step
+- PASS: CONTINUE
 
 Do something.
 
-- PASS: CONTINUE
-
 ## 2. Second step
+- PASS: COMPLETE
 
 Do another thing.
-
-- PASS: COMPLETE
 `);
 
     const result = runCli(`check ${workflowPath}`, workspace);
@@ -43,16 +41,14 @@ Do another thing.
   it('outputs FAIL with all errors for invalid workflow', () => {
     const workflowPath = path.join(workspace.cwd, 'invalid.runbook.md');
     fs.writeFileSync(workflowPath, `## 1. First step
+- PASS: CONTINUE
 
 Do something.
 
-- PASS: CONTINUE
-
 ## 3. Third step (skipped 2)
+- PASS: GOTO 99
 
 Do another thing.
-
-- PASS: GOTO 99
 `);
 
     const result = runCli(`check ${workflowPath}`, workspace);
@@ -68,16 +64,14 @@ Do another thing.
   it('includes line numbers in error output', () => {
     const workflowPath = path.join(workspace.cwd, 'invalid.runbook.md');
     fs.writeFileSync(workflowPath, `## 1. First step
+- PASS: CONTINUE
 
 Do something.
 
-- PASS: CONTINUE
-
 ## 3. Third step
+- PASS: COMPLETE
 
 Missing step 2.
-
-- PASS: COMPLETE
 `);
 
     const result = runCli(`check ${workflowPath}`, workspace);

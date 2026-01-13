@@ -22,16 +22,19 @@ describe('Parallel Workflows Integration', () => {
   it('parallel agents do not interfere with each other', async () => {
     // Create workflows
     const parentWorkflow = `## 1. Dispatch agents
-Dispatch work.
 - PASS: CONTINUE
 
+Dispatch work.
+
 ## 2. Verify
-Check results.
 - PASS: COMPLETE
+
+Check results.
 `;
     const childWorkflow = `## 1. Do work
-Complete task.
 - PASS: COMPLETE
+
+Complete task.
 `;
 
     const workflowsDir = join(workspace.cwd, 'runbooks');
