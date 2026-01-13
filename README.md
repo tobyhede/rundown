@@ -74,7 +74,7 @@ The `rd` command is an alias for `rundown`.
 | `rundown goto <n>` | Jump to step number |
 | `rundown status` | Show current state |
 | `rundown stop [message]` | Abort workflow with optional message |
-| `rundown complete` | Mark workflow as complete |
+| `rundown complete [message]` | Mark workflow as complete with optional message |
 | `rundown stash` | Pause enforcement (stash active workflow) |
 | `rundown pop` | Resume enforcement (restore stashed workflow) |
 | `rundown ls` | List active workflows |
