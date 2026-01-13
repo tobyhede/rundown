@@ -9,6 +9,7 @@ import {
   printActionBlock,
   printWorkflowComplete,
   printWorkflowStoppedAtStep,
+  evaluatePassCondition,
 } from '@rundown/core';
 import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
 import { getCwd } from '../helpers/context.js';
@@ -152,11 +153,12 @@ export function registerPassCommand(program: Command): void {
 
         // Handle completion
         if (isComplete) {
+          const passResult = evaluatePassCondition(currentStep);
           await manager.update(state.id, {
             step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true }
           });
-          printWorkflowComplete();
+          printWorkflowComplete(passResult.message);
 
           // If this was a child workflow with agent, update parent's agent binding
           if (options.agent && state.parentWorkflowId) {
@@ -172,8 +174,9 @@ export function registerPassCommand(program: Command): void {
         }
 
         if (isStopped) {
+          const passResult = evaluatePassCondition(currentStep);
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
-          printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep });
+          printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep }, passResult.message);
           process.exit(1);
         }
 
