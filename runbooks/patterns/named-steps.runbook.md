@@ -1,6 +1,6 @@
 # Named Steps Example
 
-## 1 Main workflow
+## 1. Main workflow
 - FAIL: GOTO ErrorHandler
 - PASS: COMPLETE SUCCESS
 
