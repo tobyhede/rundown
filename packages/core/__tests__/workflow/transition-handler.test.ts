@@ -202,7 +202,7 @@ describe('evaluateFailCondition with RETRY exhaustion', () => {
     expect(result).toEqual({ action: 'stopped', message: 'Build failed' });
   });
 
-  it('returns done when retries exhausted with DONE action', () => {
+  it('returns complete when RETRY exhausts to COMPLETE action', () => {
     const step = {
       name: '1',
       description: 'Test',
@@ -232,5 +232,21 @@ describe('evaluateFailCondition with RETRY exhaustion', () => {
 
     const result = evaluateFailCondition(step, 1);
     expect(result).toEqual({ action: 'retry', newRetryCount: 2 });
+  });
+
+  it('returns message when RETRY exhausts to COMPLETE with message', () => {
+    const step = {
+      name: '1',
+      description: 'Test',
+      isDynamic: false,
+      transitions: {
+        all: true as const,
+        pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, action: { type: 'RETRY' as const, max: 2, then: { type: 'COMPLETE' as const, message: 'Gave up after retries' } } }
+      }
+    };
+    const result = evaluateFailCondition(step, 2);
+    expect(result.action).toBe('complete');
+    expect(result.message).toBe('Gave up after retries');
   });
 });
