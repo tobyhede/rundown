@@ -22,7 +22,7 @@ rundown pass             # Mark current step as passed (evaluates PASS condition
 rundown fail             # Mark current step as failed (evaluates FAIL condition)
 rundown goto <n>         # Jump to specific step number
 rundown status           # Show current state
-rundown stop             # Abort workflow
+rundown stop [message]   # Abort workflow with optional message
 rundown complete         # Mark complete
 rundown stash            # Pause enforcement
 rundown pop              # Resume enforcement

@@ -156,6 +156,11 @@ describe('output formatter', () => {
       printWorkflowStopped();
       expect(consoleOutput).toContain('Workflow stopped.');
     });
+
+    it('prints stopped message with details', () => {
+      printWorkflowStopped('User cancelled');
+      expect(consoleOutput).toContain('Workflow stopped: User cancelled');
+    });
   });
 
   describe('printWorkflowStopped', () => {

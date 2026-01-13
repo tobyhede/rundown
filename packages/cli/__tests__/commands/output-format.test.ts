@@ -205,6 +205,12 @@ describe('output format integration tests', () => {
       // Should confirm the stop action
       expect(result.stdout.toLowerCase()).toContain('stopped');
     });
+
+    it('prints stop message details when provided', async () => {
+      const result = runCli(['stop', 'User cancelled'], workspace);
+
+      expect(result.stdout).toContain('Workflow stopped: User cancelled');
+    });
   });
 
   describe('complete command output', () => {

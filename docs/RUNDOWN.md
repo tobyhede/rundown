@@ -103,7 +103,7 @@ rundown fail    # Step failed, apply FAIL transition
 
 **Stop a workflow:**
 ```bash
-rundown stop
+rundown stop [message]
 ```
 
 ---
@@ -296,7 +296,7 @@ rundown run my-workflow.runbook.md --prompted  # Disable automatic execution
 Immediately terminate the active workflow.
 
 ```bash
-rundown stop
+rundown stop [message]
 rundown stop --agent <agentId>
 ```
 
@@ -304,11 +304,10 @@ Deletes workflow state and clears from session.
 
 #### `rundown complete` - Mark Complete
 
-Force workflow completion (success or stopped).
+Force workflow completion (success).
 
 ```bash
-rundown complete                    # Mark as success
-rundown complete --status stopped   # Mark as stopped
+rundown complete
 ```
 
 ### State Transitions
@@ -704,7 +703,7 @@ Next step description...
 
 If state becomes corrupted:
 1. `rundown ls` - Check active workflows
-2. `rundown stop` - Clear active workflow
+2. `rundown stop [message]` - Clear active workflow
 3. `rundown prune --all` - Remove all state
 4. `rundown run <file>` - Restart fresh
 
@@ -730,7 +729,7 @@ Both runbook state and session tracking survive:
 ```bash
 # Lifecycle
 rundown run <file>           # Start workflow
-rundown stop                 # Abort workflow
+rundown stop [message]       # Abort workflow with optional message
 rundown complete             # Mark complete
 
 # Transitions
