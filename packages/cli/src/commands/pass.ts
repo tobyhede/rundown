@@ -151,9 +151,11 @@ export function registerPassCommand(program: Command): void {
           result: 'PASS',
         });
 
+        // Evaluate pass condition once for use in completion/stopped blocks
+        const passResult = evaluatePassCondition(currentStep);
+
         // Handle completion
         if (isComplete) {
-          const passResult = evaluatePassCondition(currentStep);
           await manager.update(state.id, {
             step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true }
@@ -174,7 +176,6 @@ export function registerPassCommand(program: Command): void {
         }
 
         if (isStopped) {
-          const passResult = evaluatePassCondition(currentStep);
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
           printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep }, passResult.message);
           process.exit(1);

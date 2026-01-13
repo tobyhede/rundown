@@ -91,8 +91,8 @@ export async function runExecutionLoop(
     const execResult = await executeCommand(currentStep.command.code, cwd);
 
     // Store result
-    await manager.setLastResult(workflowId, execResult.success ? 'pass' : 'fail');
     const lastResult = execResult.success ? 'pass' : 'fail';
+    await manager.setLastResult(workflowId, lastResult);
 
     // Capture prev state BEFORE mutation
      
