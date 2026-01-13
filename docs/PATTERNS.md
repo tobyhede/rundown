@@ -4,7 +4,7 @@
 
 # Rundown Patterns
 
-Common patterns for Rundown workflows. See [SPEC.md](../../docs/SPEC.md) for syntax reference.
+Common patterns for Rundown workflows. See [MATRIX.md](./MATRIX.md) for complete coverage matrix and [SPEC.md](../../docs/SPEC.md) for syntax reference.
 
 ## Contents
 
@@ -35,22 +35,21 @@ Basic numbered steps executing in order.
 
 ```rundown
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: STOP
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Test
+- PASS: COMPLETE
+- FAIL: RETRY 2
 
 ```bash
 rd echo --result fail --result fail --result pass
 ```
-
-- PASS: COMPLETE
-- FAIL: RETRY 2
 ```
 
 
@@ -71,8 +70,10 @@ Dynamic step with GOTO NEXT for iteration.
 # Dynamic Step With GOTO NEXT
 
 ## {N}. Process Item
-Execute.
 - PASS: GOTO NEXT
+
+
+Execute.
 ```
 
 
@@ -90,10 +91,12 @@ Navigation between dynamic step instances.
 
 ### {N}.1 Prepare
 Execute.
+
 - PASS: GOTO {N}.2
 
 ### {N}.2 Run
 Execute.
+
 - PASS: GOTO NEXT
 ```
 
@@ -133,10 +136,12 @@ Dynamic step containing a named substep.
 ## {N}. Dynamic
 
 ### {N}.1 Substep 1
+- PASS: GOTO {N}.Named
+
+
 ```bash
 rd echo --result pass
 ```
-- PASS: GOTO {N}.Named
 
 ### {N}.2 Substep 2
 Substep 2 should be skipped
@@ -145,10 +150,12 @@ rd echo --result fail
 ```
 
 ### {N}.Named Substep with Name
+- PASS: COMPLETE
+
+
 ```bash
 rd echo --result pass
 ```
-- PASS: COMPLETE
 ```
 
 
@@ -167,26 +174,25 @@ Demonstrates doubly-dynamic iteration with {N}.{n} pattern.
 ## {N}. Process Batch
 
 ### {N}.{n} Process Item
-
 Process each item in batch N.
+
+- PASS: CONTINUE
+- FAIL: STOP
 
 ```bash
 rd echo "process item"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## Cleanup
-
 Handle any failures.
+
+- PASS: COMPLETE
+- FAIL: STOP
 
 ```bash
 rd echo "cleanup resources"
 ```
-
-- PASS: COMPLETE
-- FAIL: STOP
 ```
 
 
@@ -205,37 +211,36 @@ Demonstrates dynamic steps with both static and named substeps.
 ## {N}. Process Batch
 
 ### {N}.1 Prepare
-
 Prepare batch N for processing.
+
+- PASS: CONTINUE
+- FAIL: GOTO {N}.Recovery
 
 ```bash
 rd echo "prepare batch"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO {N}.Recovery
 
 ### {N}.2 Execute
-
 Process the batch.
+
+- PASS: GOTO NEXT
+- FAIL: GOTO {N}.Recovery
 
 ```bash
 rd echo "process batch"
 ```
 
-- PASS: GOTO NEXT
-- FAIL: GOTO {N}.Recovery
 
 ### {N}.Recovery
-
 Handle batch processing failure.
+
+- PASS: GOTO NEXT
+- FAIL: STOP
 
 ```bash
 rd echo "recover from failure"
 ```
-
-- PASS: GOTO NEXT
-- FAIL: STOP
 ```
 
 
@@ -256,14 +261,18 @@ Basic named steps with GOTO by name.
 # Named Steps Example
 
 ## 1 Main workflow
-Do the main work
 - FAIL: GOTO ErrorHandler
 - PASS: COMPLETE SUCCESS
 
+
+Do the main work
+
 ## ErrorHandler
-Handle any errors that occur
 - PASS: STOP RECOVERED
 - FAIL: STOP "Unrecoverable error"
+
+
+Handle any errors that occur
 ```
 
 
@@ -284,6 +293,7 @@ Execute first action.
 Execute second action.
 ### 1.Cleanup Cleanup
 Clean up resources
+
 - PASS: COMPLETE
 - FAIL: STOP "Cleanup failed"
 ```
@@ -310,8 +320,10 @@ Named steps mixed with numbered steps.
 - PASS: COMPLETE
 
 ## ErrorHandler
-Log the error and stop
 - PASS: STOP ERROR
+
+
+Log the error and stop
 ```
 
 
@@ -335,8 +347,10 @@ Named steps mixed with dynamic steps.
 - FAIL: GOTO GlobalError
 
 ## GlobalError
-Handle global errors
 - PASS: STOP "All items failed"
+
+
+Handle global errors
 ```
 
 
@@ -353,23 +367,22 @@ Named step containing dynamic substeps.
 Demonstrates a named step containing dynamic substeps.
 
 ## 1. Run
+- FAIL: GOTO ErrorHandler
 
 ```bash
 rd echo --result fail
 ```
 
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
 
-### ErrorHandler.{N}
+### ErrorHandler.{n}
+- PASS: COMPLETE
+- FAIL: GOTO NEXT
 
 ```bash
 rd echo --result fail --result pass
 ```
-
-- PASS: COMPLETE
-- FAIL: GOTO NEXT
 ```
 
 
@@ -386,50 +399,49 @@ Named step containing numbered substeps.
 Demonstrates named steps containing numbered substeps.
 
 ## 1. Setup
-
 Initial setup step.
+
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 ```bash
 rd echo "initial setup"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
 
 ### ErrorHandler.1 Prepare
-
 Prepare for error handling.
+
+- PASS: CONTINUE
+- FAIL: STOP
 
 ```bash
 rd echo "prepare error handling"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ### ErrorHandler.2 Execute
-
 Execute error recovery.
+
+- PASS: CONTINUE
+- FAIL: STOP
 
 ```bash
 rd echo "execute recovery"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ### ErrorHandler.3 Verify
-
 Verify recovery succeeded.
+
+- PASS: GOTO 1
+- FAIL: STOP
 
 ```bash
 rd echo "verify recovery"
 ```
-
-- PASS: GOTO 1
-- FAIL: STOP
 ```
 
 
@@ -446,50 +458,49 @@ Named step containing named substeps.
 Demonstrates named steps containing named substeps.
 
 ## 1. Setup
-
 Initial setup.
+
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 ```bash
 rd echo "initial setup"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
 
 ### ErrorHandler.Prepare
-
 Prepare for error handling.
+
+- PASS: GOTO ErrorHandler.Execute
+- FAIL: STOP
 
 ```bash
 rd echo "prepare error handling"
 ```
 
-- PASS: GOTO ErrorHandler.Execute
-- FAIL: STOP
 
 ### ErrorHandler.Execute
-
 Execute error recovery.
+
+- PASS: GOTO ErrorHandler.Verify
+- FAIL: STOP
 
 ```bash
 rd echo "execute recovery"
 ```
 
-- PASS: GOTO ErrorHandler.Verify
-- FAIL: STOP
 
 ### ErrorHandler.Verify
-
 Verify recovery succeeded.
+
+- PASS: GOTO 1
+- FAIL: STOP
 
 ```bash
 rd echo "verify recovery"
 ```
-
-- PASS: GOTO 1
-- FAIL: STOP
 ```
 
 
@@ -506,39 +517,38 @@ Named step with both static and named substeps.
 Demonstrates named steps with both static and named substeps.
 
 ## 1. Setup
-
 Initial setup.
+
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 ```bash
 rd echo "initial setup"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
 
 ### ErrorHandler.1 Prepare
-
 Prepare for error handling.
+
+- PASS: CONTINUE
+- FAIL: STOP
 
 ```bash
 rd echo "prepare error handling"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ### ErrorHandler.Cleanup
-
 Named cleanup substep.
+
+- PASS: GOTO 1
+- FAIL: STOP
 
 ```bash
 rd echo "cleanup after error"
 ```
-
-- PASS: GOTO 1
-- FAIL: STOP
 ```
 
 
@@ -580,42 +590,38 @@ Tests discrete transitions and navigation at the substep level.
 ## 1. Complex Parent
 
 ### 1.1 Initial
-
-```bash
-rd echo --result pass
-```
-
 Do first thing.
 - PASS: CONTINUE
 - FAIL: RETRY 2 STOP
 
-### 1.2 Branch point
-
 ```bash
 rd echo --result pass
 ```
 
+### 1.2 Branch point
 Ask a question.
 - YES: GOTO 1.4
 - NO: CONTINUE
 
-### 1.3 Alternative path
-
 ```bash
 rd echo --result pass
 ```
 
+### 1.3 Alternative path
 Should be skipped if YES.
 - PASS: CONTINUE
 
-### 1.4 Target
-
 ```bash
 rd echo --result pass
 ```
 
+### 1.4 Target
 Reached via GOTO or CONTINUE.
 - PASS: CONTINUE
+
+```bash
+rd echo --result pass
+```
 ```
 
 
@@ -634,6 +640,7 @@ Tests navigation in dynamic context.
 
 ### {N}.1 Task
 Process item.
+
 - PASS: GOTO NEXT
 - FAIL: STOP "Dynamic failure"
 ```
@@ -654,37 +661,36 @@ Demonstrates static steps containing both numbered and named substeps.
 ## 1. Setup
 
 ### 1.1 Prepare
-
 Prepare the environment.
+
+- PASS: CONTINUE
+- FAIL: STOP
 
 ```bash
 rd echo "prepare environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ### 1.Cleanup
-
 Named cleanup substep.
+
+- PASS: CONTINUE
+- FAIL: STOP
 
 ```bash
 rd echo "cleanup resources"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
-
 Run the main task.
+
+- PASS: COMPLETE
+- FAIL: GOTO 1.Cleanup
 
 ```bash
 rd echo "execute main task"
 ```
-
-- PASS: COMPLETE
-- FAIL: GOTO 1.Cleanup
 ```
 
 
@@ -706,15 +712,17 @@ GOTO a numbered step.
 Demonstrates GOTO N - jumping to a specific step number.
 
 ## 1. Setup
+- PASS: GOTO 3
+- FAIL: STOP
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS: GOTO 3
-- FAIL: STOP
 
 ## 2. Skip
+- PASS: CONTINUE
+- FAIL: STOP
 
 This step is skipped via GOTO.
 
@@ -722,19 +730,16 @@ This step is skipped via GOTO.
 rd echo --result fail
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 3. Jump target
+- PASS: COMPLETE
+- FAIL: STOP
 
 Reached via GOTO from step 1.
 
 ```bash
 rd echo --result pass
 ```
-
-- PASS: COMPLETE
-- FAIL: STOP
 ```
 
 
@@ -752,13 +757,13 @@ Demonstrates GOTO N.M - jumping to a specific substep.
 ## 1. Parent step
 
 ### 1.1 Setup
+- PASS: GOTO 1.3
+- FAIL: STOP
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS: GOTO 1.3
-- FAIL: STOP
 
 ### 1.2 Skipped
 
@@ -787,35 +792,34 @@ Demonstrates GOTO {N}.M - jumping within a dynamic step instance.
 ## {N}. Process batch
 
 ### {N}.1 First task
+- PASS: GOTO {N}.3
+- FAIL: STOP
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS: GOTO {N}.3
-- FAIL: STOP
 
 ### {N}.2 Skipped task
-
 This task is skipped via GOTO.
+
+- PASS: CONTINUE
+- FAIL: STOP
 
 ```bash
 rd echo --result fail
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ### {N}.3 Final task
-
 Reached via GOTO from {N}.1.
+
+- PASS: GOTO NEXT
+- FAIL: STOP
 
 ```bash
 rd echo --result pass
 ```
-
-- PASS: GOTO NEXT
-- FAIL: STOP
 ```
 
 
@@ -827,63 +831,34 @@ GOTO dynamic substep from a named step.
 **goto-dynamic-substep-from-named.runbook.md:**
 
 ```rundown
-# GOTO Dynamic Substep From Named Step
+---
+title: GOTO Dynamic Named Substep
+description: Demonstrates GOTO {N}.Name - jumping to a named substep within a dynamic step
+tags: [goto, dynamic, substep, named]
+---
 
-Demonstrates GOTO {N}.M from a named step to a dynamic substep instance.
+# GOTO Dynamic Named Substep
 
-## 1. Setup
+Demonstrates `GOTO {N}.Name` - jumping to a named substep within a dynamic step.
 
-Initial setup.
+## {N}. Process Item
 
-```bash
-rd echo "initial setup"
-```
-
-- PASS: CONTINUE
-- FAIL: STOP
-
-## 2. Process Batch
-
-### 2.{n} Process Item
-
-Process each item in the batch.
-
-```bash
-rd echo "process item"
-```
+### {N}.Validate
+Validate the current item.
 
 - PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
+- FAIL: GOTO {N}.Cleanup
 
-### 2.Review
+### {N}.Execute
+Execute processing for validated item.
 
-Review the batch results.
+- PASS: GOTO NEXT
+- FAIL: GOTO {N}.Cleanup
 
-```bash
-rd echo "review results"
-```
+### {N}.Cleanup
+Clean up after validation or execution failure.
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
-
-## 3. Complete
-
-```bash
-rd echo "finalize completion"
-```
-
-- PASS: COMPLETE
-- FAIL: STOP
-
-## ErrorHandler
-
-Handle errors and retry from batch processing.
-
-```bash
-rd echo "handle error"
-```
-
-- PASS: GOTO 2.{n}
+- PASS: GOTO NEXT
 - FAIL: STOP
 ```
 
@@ -900,6 +875,8 @@ GOTO a named step.
 Demonstrates GOTO <name> - jumping to a named step.
 
 ## Initialize
+- PASS: CONTINUE
+- FAIL: GOTO Cleanup
 
 Set up the workflow.
 
@@ -907,10 +884,10 @@ Set up the workflow.
 rd echo --result pass
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO Cleanup
 
 ## Process
+- PASS: GOTO Cleanup
+- FAIL: GOTO ErrorHandler
 
 Do the main work.
 
@@ -918,10 +895,10 @@ Do the main work.
 rd echo --result pass
 ```
 
-- PASS: GOTO Cleanup
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
+- PASS: GOTO Cleanup
+- FAIL: STOP
 
 Handle errors.
 
@@ -929,19 +906,16 @@ Handle errors.
 rd echo --result pass
 ```
 
-- PASS: GOTO Cleanup
-- FAIL: STOP
 
 ## Cleanup
+- PASS: COMPLETE
+- FAIL: STOP
 
 Clean up resources.
 
 ```bash
 rd echo --result pass
 ```
-
-- PASS: COMPLETE
-- FAIL: STOP
 ```
 
 
@@ -957,15 +931,14 @@ GOTO NEXT for advancing dynamic steps.
 Demonstrates GOTO NEXT - advancing to the next dynamic step instance.
 
 ## {N}. Iteration
+- PASS: GOTO NEXT
+- FAIL: COMPLETE
 
 Process item N. Use COMPLETE to exit loop.
 
 ```bash
 rd echo --result pass
 ```
-
-- PASS: GOTO NEXT
-- FAIL: COMPLETE
 ```
 
 
@@ -984,37 +957,36 @@ Demonstrates GOTO N.Name - jumping to a named substep within a static step.
 ## 1. Setup
 
 ### 1.1 Prepare
-
 Initial preparation.
+
+- PASS: GOTO 1.Cleanup
+- FAIL: STOP
 
 ```bash
 rd echo "prepare environment"
 ```
 
-- PASS: GOTO 1.Cleanup
-- FAIL: STOP
 
 ### 1.Cleanup
-
 Named cleanup substep.
+
+- PASS: CONTINUE
+- FAIL: STOP
 
 ```bash
 rd echo "cleanup resources"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
-
 Main execution.
+
+- PASS: COMPLETE
+- FAIL: GOTO 1.Cleanup
 
 ```bash
 rd echo "execute main task"
 ```
-
-- PASS: COMPLETE
-- FAIL: GOTO 1.Cleanup
 ```
 
 
@@ -1031,6 +1003,8 @@ Navigation from a named step to a numbered step.
 Demonstrates navigation from a named step to a numbered step.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 Initial setup.
 
@@ -1038,10 +1012,10 @@ Initial setup.
 rd echo "initial setup"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
 
 ## 2. Execute
+- PASS: COMPLETE
+- FAIL: GOTO ErrorHandler
 
 Main execution.
 
@@ -1049,19 +1023,16 @@ Main execution.
 rd echo "main execution"
 ```
 
-- PASS: COMPLETE
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
+- PASS: GOTO 1
+- FAIL: STOP
 
 Handle errors and retry.
 
 ```bash
 rd echo "handle error"
 ```
-
-- PASS: GOTO 1
-- FAIL: STOP
 ```
 
 
@@ -1078,6 +1049,8 @@ Navigation between named steps.
 Demonstrates navigation between named steps.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 Initial setup.
 
@@ -1085,10 +1058,10 @@ Initial setup.
 rd echo "initial setup"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
 
 ## 2. Execute
+- PASS: COMPLETE
+- FAIL: GOTO ErrorHandler
 
 Main execution.
 
@@ -1096,10 +1069,10 @@ Main execution.
 rd echo "main execution"
 ```
 
-- PASS: COMPLETE
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
+- PASS: GOTO 1
+- FAIL: GOTO Fallback
 
 Primary error handler.
 
@@ -1107,19 +1080,16 @@ Primary error handler.
 rd echo "handle error"
 ```
 
-- PASS: GOTO 1
-- FAIL: GOTO Fallback
 
 ## Fallback
+- PASS: COMPLETE "Recovered via fallback"
+- FAIL: STOP "Unrecoverable error"
 
 Final fallback handler.
 
 ```bash
 rd echo "fallback recovery"
 ```
-
-- PASS: COMPLETE "Recovered via fallback"
-- FAIL: STOP "Unrecoverable error"
 ```
 
 
@@ -1148,12 +1118,11 @@ rd echo --result pass
 ```
 
 ## 2. Final step
+- PASS: COMPLETE
 
 ```bash
 rd echo --result pass
 ```
-
-- PASS: COMPLETE
 ```
 
 
@@ -1168,38 +1137,37 @@ Complex conditional transitions.
 # Complex Transitions
 
 ## 1. Aggregation
-
-```bash
-rd echo --result pass
-```
-
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP "Failed"
 
-## 2. Optimistic
-
 ```bash
 rd echo --result pass
 ```
 
+
+## 2. Optimistic
 - PASS ANY: GOTO 4
 - FAIL ALL: RETRY 3
 
-## 3. Empty
-
 ```bash
 rd echo --result pass
 ```
 
+
+## 3. Empty
 - PASS: CONTINUE
 
-## 4. End
-
 ```bash
 rd echo --result pass
 ```
 
+
+## 4. End
 - PASS: COMPLETE
+
+```bash
+rd echo --result pass
+```
 ```
 
 
@@ -1216,6 +1184,8 @@ PASS leading to STOP - workflow halts on success.
 Demonstrates PASS leading to STOP - workflow halts on success.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Prepare the environment.
 
@@ -1223,10 +1193,10 @@ Prepare the environment.
 rd echo "setup environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
+- PASS: STOP "Check passed, halting workflow"
+- FAIL: CONTINUE
 
 Execute the critical check.
 
@@ -1234,19 +1204,16 @@ Execute the critical check.
 rd echo "critical check"
 ```
 
-- PASS: STOP "Check passed, halting workflow"
-- FAIL: CONTINUE
 
 ## 3. Cleanup
+- PASS: COMPLETE
+- FAIL: STOP
 
 This step only runs if Execute failed.
 
 ```bash
 rd echo "cleanup resources"
 ```
-
-- PASS: COMPLETE
-- FAIL: STOP
 ```
 
 
@@ -1263,6 +1230,8 @@ FAIL leading to CONTINUE - proceed despite failure.
 Demonstrates FAIL leading to CONTINUE - proceed despite failure.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Prepare the environment.
 
@@ -1270,10 +1239,10 @@ Prepare the environment.
 rd echo "setup environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
+- PASS: CONTINUE
+- FAIL: CONTINUE
 
 Non-critical step that may fail.
 
@@ -1281,19 +1250,16 @@ Non-critical step that may fail.
 rd echo "execute non-critical task" --result fail
 ```
 
-- PASS: CONTINUE
-- FAIL: CONTINUE
 
 ## 3. Cleanup
+- PASS: COMPLETE
+- FAIL: STOP
 
 Always runs regardless of Execute result.
 
 ```bash
 rd echo "cleanup resources"
 ```
-
-- PASS: COMPLETE
-- FAIL: STOP
 ```
 
 
@@ -1310,6 +1276,8 @@ FAIL leading to COMPLETE - workflow completes on failure.
 Demonstrates FAIL leading to COMPLETE - workflow completes on failure.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Prepare the environment.
 
@@ -1317,10 +1285,10 @@ Prepare the environment.
 rd echo "setup environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
+- PASS: CONTINUE
+- FAIL: COMPLETE "Early exit condition met"
 
 Check for early exit condition.
 
@@ -1328,19 +1296,16 @@ Check for early exit condition.
 rd echo "check exit condition" --result fail
 ```
 
-- PASS: CONTINUE
-- FAIL: COMPLETE "Early exit condition met"
 
 ## 3. Cleanup
+- PASS: COMPLETE
+- FAIL: STOP
 
 Only runs if Execute passed.
 
 ```bash
 rd echo "cleanup after success"
 ```
-
-- PASS: COMPLETE
-- FAIL: STOP
 ```
 
 
@@ -1363,13 +1328,12 @@ Basic retry until success.
 Tests that RETRY succeeds before count is exhausted.
 
 ## 1. Flaky step that recovers
+- PASS: COMPLETE
+- FAIL: RETRY 3 STOP
 
 ```bash
 rd echo --result fail --result pass
 ```
-
-- PASS: COMPLETE
-- FAIL: RETRY 3 STOP
 ```
 
 
@@ -1386,22 +1350,21 @@ Retry counter reset behavior.
 Tests spec rule: "GOTO resets the retry counter to 0 for the target location"
 
 ## 1. First attempt
+- PASS: CONTINUE
+- FAIL: RETRY 1 GOTO 2
 
 ```bash
 rd echo --result fail --result fail
 ```
 
-- PASS: CONTINUE
-- FAIL: RETRY 1 GOTO 2
 
 ## 2. Second attempt (counter should be 0 again)
+- PASS: COMPLETE
+- FAIL: RETRY 1 STOP
 
 ```bash
 rd echo --result fail --result pass
 ```
-
-- PASS: COMPLETE
-- FAIL: RETRY 1 STOP
 ```
 
 
@@ -1418,21 +1381,20 @@ Continue to next step on retry exhaustion.
 Tests that RETRY exhaustion triggers CONTINUE fallback action.
 
 ## 1. Flaky step
+- PASS: COMPLETE
+- FAIL: RETRY 1 CONTINUE
 
 ```bash
 rd echo --result fail --result fail
 ```
 
-- PASS: COMPLETE
-- FAIL: RETRY 1 CONTINUE
 
 ## 2. Fallback step
+- PASS: COMPLETE
 
 ```bash
 rd echo --result pass
 ```
-
-- PASS: COMPLETE
 ```
 
 
@@ -1449,13 +1411,12 @@ Mark done on retry exhaustion.
 Tests that RETRY exhaustion triggers COMPLETE fallback action.
 
 ## 1. Flaky step
+- PASS: CONTINUE
+- FAIL: RETRY 1 COMPLETE
 
 ```bash
 rd echo --result fail --result fail
 ```
-
-- PASS: CONTINUE
-- FAIL: RETRY 1 COMPLETE
 ```
 
 
@@ -1472,29 +1433,28 @@ GOTO on retry exhaustion.
 Tests that RETRY exhaustion triggers GOTO fallback action.
 
 ## 1. Flaky step
+- PASS: CONTINUE
+- FAIL: RETRY 2 GOTO 3
 
 ```bash
 rd echo --result fail --result fail --result fail
 ```
 
-- PASS: CONTINUE
-- FAIL: RETRY 2 GOTO 3
 
 ## 2. Skip
+- PASS: COMPLETE
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS: COMPLETE
 
 ## 3. Recovery step
+- PASS: COMPLETE
 
 ```bash
 rd echo --result pass
 ```
-
-- PASS: COMPLETE
 ```
 
 
@@ -1511,6 +1471,8 @@ COMPLETE on retry exhaustion.
 Demonstrates RETRY with COMPLETE on exhaustion.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Prepare the environment.
 
@@ -1518,10 +1480,10 @@ Prepare the environment.
 rd echo "setup environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
+- PASS: CONTINUE
+- FAIL: RETRY 3 COMPLETE "Max retries reached, completing anyway"
 
 Retry up to 3 times, then complete successfully.
 
@@ -1529,19 +1491,16 @@ Retry up to 3 times, then complete successfully.
 rd echo "retry operation" --result fail --result fail --result pass
 ```
 
-- PASS: CONTINUE
-- FAIL: RETRY 3 COMPLETE "Max retries reached, completing anyway"
 
 ## 3. Cleanup
+- PASS: COMPLETE
+- FAIL: STOP
 
 Final cleanup.
 
 ```bash
 rd echo "cleanup resources"
 ```
-
-- PASS: COMPLETE
-- FAIL: STOP
 ```
 
 
@@ -1578,12 +1537,13 @@ Different prompt types in one workflow.
 # Mixed Prompt Types
 
 ## 1. Mixed prompts
+- PASS: CONTINUE
+- FAIL: STOP
+
+
 **Prompt:** Explicit prompt.
 - Implicit instruction 1
 - Implicit instruction 2
-
-- PASS: CONTINUE
-- FAIL: STOP
 ```
 
 
@@ -1674,6 +1634,8 @@ Static steps with a named error handler step.
 Demonstrates static steps with a named error handler step.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 Prepare the environment.
 
@@ -1681,10 +1643,10 @@ Prepare the environment.
 rd echo "setup environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
 
 ## 2. Execute
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 Execute the main task.
 
@@ -1692,10 +1654,10 @@ Execute the main task.
 rd echo "execute task"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
 
 ## 3. Cleanup
+- PASS: COMPLETE
+- FAIL: GOTO ErrorHandler
 
 Final cleanup.
 
@@ -1703,19 +1665,16 @@ Final cleanup.
 rd echo "cleanup resources"
 ```
 
-- PASS: COMPLETE
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
+- PASS: GOTO 1
+- FAIL: STOP "Unrecoverable error"
 
 Central error handling step.
 
 ```bash
 rd echo "handle error"
 ```
-
-- PASS: GOTO 1
-- FAIL: STOP "Unrecoverable error"
 ```
 
 
@@ -1732,6 +1691,8 @@ Dynamic iteration with a named recovery step.
 Demonstrates dynamic iteration with a named recovery step.
 
 ## {N}. Process Item
+- PASS: GOTO NEXT
+- FAIL: GOTO Recovery
 
 Process each item.
 
@@ -1739,20 +1700,17 @@ Process each item.
 rd echo "process item"
 ```
 
-- PASS: GOTO NEXT
-- FAIL: GOTO Recovery
 
 
 ## Recovery
+- PASS: GOTO {N}
+- FAIL: STOP "Recovery failed"
 
 Handle processing failures and resume iteration.
 
 ```bash
 rd echo "recovery action"
 ```
-
-- PASS: GOTO {N}
-- FAIL: STOP "Recovery failed"
 ```
 
 
@@ -1771,12 +1729,10 @@ Parent workflow delegating to child workflows.
 
 ```rundown
 ## 1. Verify
-
+- FAIL ANY: STOP "Verification failed"
 - lint.runbook.md
 - types.runbook.md
 - tests.runbook.md
-
-- FAIL ANY: STOP "Verification failed"
 ```
 
 
@@ -1793,6 +1749,8 @@ Various code block patterns in workflows.
 Demonstrates various code block patterns in workflows.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Setup with bash command.
 
@@ -1800,10 +1758,10 @@ Setup with bash command.
 rd echo "setup environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
+- PASS: CONTINUE
+- FAIL: STOP
 
 Execute with multiple commands.
 
@@ -1812,10 +1770,10 @@ rd echo "Starting execution"
 rd echo "run main task"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 3. Validate
+- PASS: COMPLETE
+- FAIL: STOP
 
 Validate with conditional.
 
@@ -1823,9 +1781,6 @@ Validate with conditional.
 rd echo "Validating..."
 rd echo "validate results"
 ```
-
-- PASS: COMPLETE
-- FAIL: STOP
 ```
 
 
@@ -1833,5 +1788,6 @@ rd echo "validate results"
 
 ## See Also
 
+- [MATRIX.md](./MATRIX.md) - Complete coverage matrix (48 patterns)
 - [SPEC.md](../../docs/SPEC.md) - Full specification
 - [FORMAT.md](../../docs/FORMAT.md) - BNF grammar
