@@ -1,3 +1,28 @@
+---
+name: goto-named
+description: Demonstrates GOTO <name> - jumping to a named step
+tags: [goto, navigation]
+
+scenarios:
+  success:
+    description: Navigate through Initialize -> Process -> Cleanup
+    commands:
+      - rd run --prompted goto-named.runbook.md
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+  error-recovery:
+    description: Process fails, jumps to ErrorHandler, then Cleanup
+    commands:
+      - rd run --prompted goto-named.runbook.md
+      - rd pass
+      - rd fail
+      - rd pass
+      - rd pass
+    result: COMPLETE
+---
+
 # GOTO Named Step
 Demonstrates GOTO <name> - jumping to a named step.
 
