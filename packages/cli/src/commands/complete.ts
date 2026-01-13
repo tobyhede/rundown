@@ -22,8 +22,9 @@ export function registerCompleteCommand(program: Command): void {
   program
     .command('complete')
     .description('Mark current workflow as complete')
+    .argument('[message]', 'Completion message')
     .option('--agent <agentId>', 'Complete workflow in agent-specific stack')
-    .action(async (options: { agent?: string }) => {
+    .action(async (message: string | undefined, options: { agent?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
         const manager = new WorkflowStateManager(cwd);
@@ -48,7 +49,7 @@ export function registerCompleteCommand(program: Command): void {
           variables: { ...state.variables, completed: true }
         });
         await manager.popWorkflow(options.agent);
-        printWorkflowComplete();
+        printWorkflowComplete(message);
       });
     });
 }
