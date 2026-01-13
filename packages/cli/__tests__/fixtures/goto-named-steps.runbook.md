@@ -1,15 +1,18 @@
 ## Setup (name: Setup)
 
+- PASS: CONTINUE
+- FAIL: STOP
+
 Initialize the workflow.
 
 ```bash
 rd echo --result pass
 ```
 
+## ProcessData (name: ProcessData)
+
 - PASS: CONTINUE
 - FAIL: STOP
-
-## ProcessData (name: ProcessData)
 
 Process the data.
 
@@ -17,16 +20,13 @@ Process the data.
 rd echo --result pass
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
-
 ## ErrorHandler (name: ErrorHandler)
+
+- PASS: COMPLETE
+- FAIL: STOP
 
 Handle any errors that occurred.
 
 ```bash
 rd echo --result pass
 ```
-
-- PASS: COMPLETE
-- FAIL: STOP
