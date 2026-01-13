@@ -117,6 +117,24 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 
 ---
 
+## Subworkflow Patterns
+
+| Pattern | Description |
+|---------|-------------|
+| agent-binding-simple | Parent delegates step to agent with child workflow |
+| agent-binding-failure | Parent handles agent failure gracefully |
+| multi-agent-dynamic | Multiple agents with different runbooks and dynamic iteration |
+
+---
+
+## Message Patterns
+
+| Pattern | Description |
+|---------|-------------|
+| action-messages | STOP and COMPLETE with message parameters |
+
+---
+
 ## Summary
 
 | Category | Count |
@@ -127,4 +145,6 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 | Retry | 6 |
 | Mixed Steps | 4 |
 | Other | 6 |
-| **Total** | **53** |
+| Subworkflow Patterns | 3 |
+| Message Patterns | 1 |
+| **Total** | **57** |
