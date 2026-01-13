@@ -172,20 +172,22 @@ Transition evaluation:
 Example of a step that auto-executes:
 ````markdown
 ## 3. Run tests
+- PASS: CONTINUE
+- FAIL: RETRY 2
+
 ```bash
 npm test
 ```
-- PASS: CONTINUE
-- FAIL: RETRY 2
 ````
 
 Example of a prompted step:
 ````markdown
 ## 4. Code review
-Review the implementation for issues.
-`rundown pass` if acceptable, `rundown fail` if blocked.
 - PASS: CONTINUE
 - FAIL: STOP
+
+Review the implementation for issues.
+`rundown pass` if acceptable, `rundown fail` if blocked.
 ````
 
 ---
@@ -363,6 +365,19 @@ rundown goto 3.1     # Jump to substep 3.1
 - Cannot use `GOTO NEXT` via CLI (runbook-only)
 - Resets retryCount to 0
 - Clears lastResult (prevents stale state)
+
+**Valid GOTO Formats (in runbook transitions):**
+
+| Target | Valid From | Description |
+|--------|------------|-------------|
+| `GOTO N` | Any step | Jump to step N (must exist, N ≤ total steps) |
+| `GOTO N.M` | Any step | Jump to substep M of step N |
+| `GOTO {N}.M` | Dynamic step {N} | Jump to substep M within current dynamic instance |
+| `GOTO NEXT` | Dynamic step {N} | Advance to next dynamic instance (N+1) |
+
+**Notes:**
+- `GOTO {N}` alone is invalid - use `GOTO NEXT` instead
+- `GOTO NEXT` is only valid in runbook transitions, not via CLI
 
 ### Status Commands
 
@@ -590,14 +605,13 @@ Agent decides next action based on context.
 
 ```markdown
 ## 5. Check remaining
+- PASS: CONTINUE
+- FAIL: STOP
 
 Check TodoWrite for remaining items.
 
 If more remain: `rundown goto 3`
 If complete: `rundown pass`
-
-- PASS: CONTINUE
-- FAIL: STOP
 ```
 
 Agent reads step, evaluates condition, runs appropriate CLI command.
@@ -608,11 +622,11 @@ Repeat step template until work complete.
 
 ```markdown
 ## {N} Process batch
-### {N}.1 Execute tasks
-### {N}.2 Verify results
-
 - PASS: GOTO NEXT
 - FAIL: STOP
+
+### {N}.1 Execute tasks
+### {N}.2 Verify results
 ```
 
 `GOTO NEXT` increments instance number (N=1, N=2, ...) until agent signals completion with `FAIL` or workflow reaches COMPLETE.
