@@ -36,7 +36,7 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 
 ## GOTO Navigation Matrix
 
-14 patterns for GOTO navigation targets.
+15 patterns for GOTO navigation targets.
 
 | Pattern | Target | File |
 |---------|--------|------|
@@ -50,6 +50,7 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 | GOTO from named to step | Named → N | [goto-from-named-step](goto-from-named-step.runbook.md) |
 | GOTO named to named | Named → Named | [goto-named-to-named](goto-named-to-named.runbook.md) |
 | GOTO restart dynamic | `GOTO {N}` | [goto-restart-dynamic](goto-restart-dynamic.runbook.md) |
+| GOTO dynamic infinite retry | `GOTO {N}` (self-loop) | [goto-dynamic-step-alone](goto-dynamic-step-alone.runbook.md) |
 | GOTO resume dynamic context | `GOTO {N}.{n}` | [goto-resume-dynamic-substep](goto-resume-dynamic-substep.runbook.md) |
 | GOTO current dynamic substep | `GOTO X.{n}` | [goto-current-dynamic-substep](goto-current-dynamic-substep.runbook.md) |
 | GOTO NEXT step instance | `GOTO NEXT {N}` | [goto-next-qualified-step](goto-next-qualified-step.runbook.md) |
@@ -140,11 +141,11 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 | Category | Count |
 |----------|-------|
 | Step × Substep Matrix | 15 |
-| GOTO Navigation | 14 |
+| GOTO Navigation | 15 |
 | Transitions | 8 |
 | Retry | 6 |
 | Mixed Steps | 4 |
 | Other | 6 |
 | Subworkflow Patterns | 3 |
 | Message Patterns | 1 |
-| **Total** | **57** |
+| **Total** | **58** |
