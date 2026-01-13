@@ -6,6 +6,8 @@ import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
 
 /**
  * Register the scenarios command for listing and running scenarios.
+ *
+ * @param program - The Commander program instance to register the command on
  */
 export function registerScenariosCommand(program: Command): void {
   program
@@ -56,6 +58,11 @@ export function registerScenariosCommand(program: Command): void {
     });
 }
 
+/**
+ * Display a list of all scenarios with their metadata.
+ *
+ * @param scenarios - Map of scenario names to their definitions
+ */
 function listScenarios(scenarios: Scenarios): void {
   console.log('Scenarios:\n');
 
@@ -68,6 +75,12 @@ function listScenarios(scenarios: Scenarios): void {
   }
 }
 
+/**
+ * Display detailed information for a specific scenario.
+ *
+ * @param name - The name of the scenario to display
+ * @param scenarios - Map of scenario names to their definitions
+ */
 function showScenarioDetails(name: string, scenarios: Scenarios): void {
   const scenario = scenarios[name];
 
