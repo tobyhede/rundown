@@ -80,4 +80,24 @@ name: no-scenarios
       expect(result.stderr).toContain('No scenarios');
     });
   });
+
+  describe('detail mode', () => {
+    it('shows details for a specific scenario', async () => {
+      const result = runCli('scenarios test-workflow.runbook.md success', workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Scenario: success');
+      expect(result.stdout).toContain('Happy path');
+      expect(result.stdout).toContain('$ rd run --prompted');
+      expect(result.stdout).toContain('Expected Result: COMPLETE');
+    });
+
+    it('shows error for non-existent scenario', async () => {
+      const result = runCli('scenarios test-workflow.runbook.md nonexistent', workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('not found');
+      expect(result.stderr).toContain('Available:');
+    });
+  });
 });
