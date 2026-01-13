@@ -6,11 +6,10 @@ describe('Step-level workflows', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 Execute workflow
-
- - task-details.runbook.md
-
 - PASS: CONTINUE
 - FAIL: STOP
+
+ - task-details.runbook.md
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].substeps).toHaveLength(1);
@@ -23,11 +22,10 @@ describe('Step-level workflows', () => {
  - task.runbook.md
 
 ### 1.1 Substep
-
-Do work.
-
 - PASS: CONTINUE
 - FAIL: STOP
+
+Do work.
 `;
     expect(() => parseWorkflow(markdown)).toThrow(/Violates Exclusivity Rule/i);
   });
@@ -36,12 +34,11 @@ Do work.
     const markdown = `## 1. Execute
 
 ### 1.1 Workflows
+- PASS: CONTINUE
+- FAIL: STOP
 
  - workflow-a.runbook.md
  - workflow-b.runbook.md
-
-- PASS: CONTINUE
-- FAIL: STOP
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].substeps).toHaveLength(1);
@@ -59,11 +56,11 @@ describe('parseWorkflow with substep workflows', () => {
 ## 1. Dispatch agents
 
 ### 1.{n} Review step
- - review.runbook.md
- - security.runbook.md
-
 - PASS: CONTINUE
 - FAIL: STOP
+
+ - review.runbook.md
+ - security.runbook.md
 `;
 
     const steps = parseWorkflow(markdown);
@@ -120,14 +117,13 @@ Please look at this example.
 
   it('treats prompt code blocks as rd prompt commands', () => {
     const md = `## 1. Step with prompted code
+- PASS: COMPLETE
 
 Show this to agent.
 
 \`\`\`prompt
 npm run example --flag value
 \`\`\`
-
-- PASS: COMPLETE
 `;
     const steps = parseWorkflow(md);
     // prompt block becomes command, text before it becomes prompt
@@ -153,14 +149,13 @@ echo 'hello world'
   // Keep but remove prompted check
   it('parses bash code blocks as executable commands', () => {
     const md = `## 1. Step with bash code
+- PASS: COMPLETE
 
 Run this automatically.
 
 \`\`\`bash
 npm run build
 \`\`\`
-
-- PASS: COMPLETE
 `;
     const steps = parseWorkflow(md);
     expect(steps[0].command).toEqual({
@@ -173,12 +168,12 @@ npm run build
 describe('Implicit prompts with lists', () => {
   it('preserves bulleted instructions in prompts', () => {
     const markdown = `## 1. Execute
+- PASS: CONTINUE
+- FAIL: STOP
+
 The following instructions are important:
 - instruction 1
 - instruction 2
-
-- PASS: CONTINUE
-- FAIL: STOP
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].prompt).toContain('The following instructions are important:');
@@ -191,18 +186,16 @@ describe('GOTO substep validation', () => {
   it('accepts GOTO 2.1 when step 2 has static substep 1', () => {
     const markdown = `
 ## 1. First
-
 - PASS: GOTO 2.1
 - FAIL: STOP
 
 ## 2. Second
 
 ### 2.1 Substep one
-
-Do something.
-
 - PASS: CONTINUE
 - FAIL: STOP
+
+Do something.
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].transitions?.pass).toEqual({
@@ -214,14 +207,12 @@ Do something.
   it('rejects GOTO 2.99 when substep does not exist', () => {
     const markdown = `
 ## 1. First
-
 - PASS: GOTO 2.99
 - FAIL: STOP
 
 ## 2. Second
 
 ### 2.1 Only substep
-
 - PASS: CONTINUE
 - FAIL: STOP
 `;
@@ -231,18 +222,16 @@ Do something.
   it('rejects GOTO N.M into dynamic substeps', () => {
     const markdown = `
 ## 1. First
-
 - PASS: GOTO 2.1
 - FAIL: STOP
 
 ## 2. Dynamic
 
 ### 2.{n} Agent dispatch
-
-Do work.
-
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP
+
+Do work.
 `;
     expect(() => parseWorkflow(markdown)).toThrow(/substep does not exist/i);
   });
@@ -253,11 +242,10 @@ describe('substep with prompts', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 Implement task
-
-This is the implicit prompt text.
-
 - PASS: CONTINUE
 - FAIL: STOP
+
+This is the implicit prompt text.
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].substeps![0].prompt).toBe('This is the implicit prompt text.');
@@ -269,18 +257,16 @@ describe('substep with transitions', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 First step
-
-Do work.
-
 - PASS: CONTINUE
 - FAIL: STOP "BLOCKED"
 
+Do work.
+
 ### 1.2 Second step
-
-More work.
-
 - PASS: COMPLETE
 - FAIL: GOTO 1.1
+
+More work.
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'CONTINUE' } });
@@ -293,11 +279,10 @@ More work.
     const markdown = `## 1. Execute
 
 ### 1.1 First step
-
-Do work.
-
 - PASS: CONTINUE
 - FAIL: STOP
+
+Do work.
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'CONTINUE' } });
@@ -310,15 +295,10 @@ describe('substep GOTO validation', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 First step
-
 - PASS: CONTINUE
 - FAIL: GOTO 1.2
 
 ### 1.2 Second step
-
-- PASS: CONTINUE
-- FAIL: STOP
-
 - PASS: CONTINUE
 - FAIL: STOP
 `;
@@ -333,15 +313,10 @@ describe('substep GOTO validation', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 First step
-
 - PASS: CONTINUE
 - FAIL: GOTO 1.99
 
 ### 1.2 Second step
-
-- PASS: CONTINUE
-- FAIL: STOP
-
 - PASS: CONTINUE
 - FAIL: STOP
 `;
@@ -354,13 +329,12 @@ describe('substep with command', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 Run checks
+- PASS: CONTINUE
+- FAIL: STOP
 
 \`\`\`bash
 npm run lint
 \`\`\`
-
-- PASS: CONTINUE
-- FAIL: STOP
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].substeps).toHaveLength(1);
@@ -371,6 +345,8 @@ npm run lint
     const markdown = `## 1. Execute
 
 ### 1.1 Run checks
+- PASS: CONTINUE
+- FAIL: STOP
 
 \`\`\`bash
 npm run lint
@@ -379,9 +355,6 @@ npm run lint
 \`\`\`bash
 npm test
 \`\`\`
-
-- PASS: CONTINUE
-- FAIL: STOP
 `;
     expect(() => parseWorkflow(markdown)).toThrow(/multiple code blocks/i);
   });
@@ -390,11 +363,11 @@ npm test
 describe('prompt as single string', () => {
   it('returns prompt as single string instead of array', () => {
     const markdown = `## 1. Step with prompt
-This is the prompt text.
-Multiple lines here.
-
 - PASS: CONTINUE
 - FAIL: STOP
+
+This is the prompt text.
+Multiple lines here.
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].prompt).toBe('This is the prompt text.\nMultiple lines here.');
@@ -405,46 +378,47 @@ Multiple lines here.
 describe('prompt ordering enforcement', () => {
   it('throws error when text appears after code block', () => {
     const markdown = `## 1. Bad ordering
+- PASS: CONTINUE
+- FAIL: STOP
 
 \`\`\`bash
 npm test
 \`\`\`
 
 This text appears after the code block.
-
-- PASS: CONTINUE
-- FAIL: STOP
 `;
     expect(() => parseWorkflow(markdown)).toThrow(/prompt.*must appear before/i);
   });
 
   it('allows text before code block', () => {
     const markdown = `## 1. Good ordering
+- PASS: CONTINUE
+- FAIL: STOP
 
 This prompt appears before the code block.
 
 \`\`\`bash
 npm test
 \`\`\`
-
-- PASS: CONTINUE
-- FAIL: STOP
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].prompt).toBe('This prompt appears before the code block.');
     expect(steps[0].command?.code).toBe('npm test');
   });
 
-  it('throws error when text appears after substep header', () => {
+  it('throws error when text appears after code block in substep', () => {
     const markdown = `## 1. Parent
 
 ### 1.1 Substep
+- PASS: CONTINUE
 
 Do work.
 
-- PASS: CONTINUE
+\`\`\`bash
+echo "code"
+\`\`\`
 
-Text after substep - invalid.
+Text after code block - invalid.
 `;
     expect(() => parseWorkflow(markdown)).toThrow(/prompt.*must appear before/i);
   });
@@ -452,19 +426,19 @@ Text after substep - invalid.
   // E5-R1: Edge case tests added from cross-check validation
   it('throws error when text appears after runbook list', () => {
     const markdown = `## 1. Step with runbooks
+- PASS: CONTINUE
 
 - setup.runbook.md
 - cleanup.runbook.md
 
 This text appears after runbooks - invalid.
-
-- PASS: CONTINUE
 `;
     expect(() => parseWorkflow(markdown)).toThrow(/prompt.*must appear before/i);
   });
 
   it('concatenates multiple paragraphs before code block', () => {
     const markdown = `## 1. Multi-paragraph prompt
+- PASS: CONTINUE
 
 First paragraph of instructions.
 
@@ -473,8 +447,6 @@ Second paragraph with more details.
 \`\`\`bash
 npm test
 \`\`\`
-
-- PASS: CONTINUE
 `;
     const steps = parseWorkflow(markdown);
     expect(steps[0].prompt).toContain('First paragraph');
@@ -483,16 +455,13 @@ npm test
 
   it('ignores whitespace-only paragraphs after code block', () => {
     const markdown = `## 1. Step with trailing whitespace
+- PASS: CONTINUE
 
 Prompt text.
 
 \`\`\`bash
 npm test
 \`\`\`
-
-
-
-- PASS: CONTINUE
 `;
     // Should not throw - whitespace-only is ignored
     const steps = parseWorkflow(markdown);
