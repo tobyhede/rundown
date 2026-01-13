@@ -4,27 +4,27 @@ Dispatch code-review-agent to review implementation.
 
 ## 1. Dispatch reviewer
 
-Dispatch code-review-agent subagent.
-
 - PASS: CONTINUE
 - FAIL: RETRY 1
 
-## 2. Categorize issues
+Dispatch code-review-agent subagent.
 
-Categorize feedback as BLOCKING or NON-BLOCKING.
+## 2. Categorize issues
 
 - PASS: CONTINUE
 - FAIL: STOP "Could not categorize issues."
 
-## 3. Handle blocking issues
+Categorize feedback as BLOCKING or NON-BLOCKING.
 
-Review categorized issues. If any are BLOCKING, fix them before continuing.
+## 3. Handle blocking issues
 
 - PASS: CONTINUE
 - FAIL: STOP "BLOCKING issues found. Fix before continuing."
 
+Review categorized issues. If any are BLOCKING, fix them before continuing.
+
 ## 4. Address feedback
 
-Address NON-BLOCKING feedback or defer with justification.
-
 - PASS: COMPLETE
+
+Address NON-BLOCKING feedback or defer with justification.
