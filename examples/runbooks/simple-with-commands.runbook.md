@@ -10,36 +10,36 @@ tsv echo npm install
 
 ## 2. Run lint
 
+- PASS: CONTINUE
+- FAIL: STOP
+
 ```bash
 tsv echo npm run lint
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
-
 ## 3. Run tests
+
+- PASS: CONTINUE
+- FAIL: STOP "Failed to run tests"
 
 ```bash
 tsv echo npm test
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP "Failed to run tests"
-
 ## 4. Build
+
+- PASS: CONTINUE
+- FAIL: RETRY
 
 ```bash
 tsv echo --result fail --result pass npm run build
 ```
 
-- PASS: CONTINUE
-- FAIL: RETRY
-
 ## 5. Deploy
+
+- PASS: COMPLETE
+- FAIL: RETRY 3
 
 ```bash
 tsv echo --result fail --result fail --result pass npm run deploy
 ```
-
-- PASS: COMPLETE
-- FAIL: RETRY 3

@@ -4,31 +4,34 @@ Execute an implementation plan in batches with review checkpoints.
 
  ## 1. Review plan
 
+- YES: CONTINUE
+- NO: STOP
+
 Read and review the implementation plan.
 
 Is the plan clear and complete?
 
-- YES: CONTINUE
-- NO: STOP
-
 ## 2. Execute batch
-
-### 2.{n}
- - examples/runbooks/implement-task.runbook.md
 
 - PASS ALL: CONTINUE
 - FAIL ANY: GOTO 4
 
+### 2.{n}
+ - examples/runbooks/implement-task.runbook.md
+
 ## 3. Check batch
+
+- PASS: CONTINUE
+- FAIL: GOTO 4
 
 ```bash
 tsv echo npm run lint && tsv echo npm run build && tsv echo npm test
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO 4
-
 ## 4. Handle failures
+
+- PASS: GOTO 5
+- FAIL: STOP "STOPPED: Orchestrator decision required"
 
 Analyze failures and present options to orchestrator.
 
@@ -40,10 +43,10 @@ Analyze failures and present options to orchestrator.
 **tsv pass:** Orchestrator chose FIX, issues are resolvable
 **tsv fail:** Orchestrator chose REVISE or ABORT
 
-- PASS: GOTO 5
-- FAIL: STOP "STOPPED: Orchestrator decision required"
-
 ## 5. Apply fixes
+
+- PASS: GOTO 3
+- FAIL: STOP "STOPPED: Requires plan revision"
 
 Apply inline fixes within plan constraints.
 
@@ -52,10 +55,10 @@ Apply inline fixes within plan constraints.
 
 When uncertain, `tsv fail`.
 
-- PASS: GOTO 3
-- FAIL: STOP "STOPPED: Requires plan revision"
-
 ## 6. Code review
+
+- PASS: CONTINUE
+- FAIL: STOP "STOPPED: Code review issues"
 
 Review batch changes before proceeding.
 
@@ -65,34 +68,31 @@ Categorize findings: BLOCKING or NON-BLOCKING.
 **tsv pass:** No blocking issues (or fixed)
 **tsv fail:** Blocking issues remain
 
-- PASS: CONTINUE
-- FAIL: STOP "STOPPED: Code review issues"
-
 ## 7. Check remaining
+
+- PASS: GOTO 2
+- FAIL: CONTINUE
 
 Evaluate remaining work.
 
 **tsv yes:** More batches remain → goto 2
 **tsv no:** All batches complete
 
-- PASS: GOTO 2
-- FAIL: CONTINUE
-
 ## 8. Final validation
+
+- PASS: CONTINUE
+- FAIL: STOP "STOPPED: Final validation failed"
 
 ```bash
 tsv echo npm run lint && tsv echo npm run build && tsv echo npm test
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP "STOPPED: Final validation failed"
-
 ## 9. Complete
+
+- PASS: COMPLETE
 
 ```
 STATUS: COMPLETE
 PLAN: {plan_name}
 BATCHES: {count}
 ```
-
-- PASS: COMPLETE
