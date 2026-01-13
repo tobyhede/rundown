@@ -35,6 +35,27 @@ describe('GOTO NEXT action handling', () => {
   });
 });
 
+describe('evaluatePassCondition', () => {
+  it('returns message for COMPLETE action with message', () => {
+    const step = {
+      name: '1',
+      description: 'Test',
+      isDynamic: false,
+      transitions: {
+        pass: {
+          kind: 'pass' as const,
+          action: { type: 'COMPLETE' as const, message: 'Success message' }
+        },
+        fail: { kind: 'fail' as const, action: { type: 'STOP' as const } },
+        all: true as const
+      }
+    };
+    const result = evaluatePassCondition(step);
+    expect(result.action).toBe('complete');
+    expect(result.message).toBe('Success message');
+  });
+});
+
 describe('evaluateSubstepAggregation', () => {
   // PASS ALL mode (all: true)
   const passAllTransitions = {

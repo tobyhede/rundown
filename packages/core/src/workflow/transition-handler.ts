@@ -100,7 +100,7 @@ export function evaluatePassCondition(step: Step): ConditionResult {
 
   switch (passAction.type) {
     case 'COMPLETE':
-      return { action: 'complete' };
+      return { action: 'complete', message: passAction.message };
 
     case 'GOTO':
       return {
@@ -161,7 +161,7 @@ function evaluateNonRetryAction(action: NonRetryAction): ConditionResult {
     case 'STOP':
       return { action: 'stopped', message: action.message };
     case 'COMPLETE':
-      return { action: 'complete' };
+      return { action: 'complete', message: action.message };
     case 'GOTO':
       return { action: 'goto', gotoTarget: action.target };
   }
