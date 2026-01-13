@@ -102,10 +102,16 @@ export function printWorkflowComplete(): void {
  * Print workflow stopped message to stdout.
  *
  * Outputs a message indicating the workflow has been stopped.
+ *
+ * @param message - Optional stop message to display
  */
-export function printWorkflowStopped(): void {
+export function printWorkflowStopped(message?: string): void {
   console.log('');
-  console.log('Workflow stopped.');
+  if (message) {
+    console.log(`Workflow stopped: ${message}`);
+  } else {
+    console.log('Workflow stopped.');
+  }
 }
 
 /**

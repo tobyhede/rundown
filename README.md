@@ -73,7 +73,7 @@ The `rd` command is an alias for `rundown`.
 | `rundown fail` | Mark current step as failed (evaluates FAIL condition) |
 | `rundown goto <n>` | Jump to step number |
 | `rundown status` | Show current state |
-| `rundown stop` | Abort workflow |
+| `rundown stop [message]` | Abort workflow with optional message |
 | `rundown complete` | Mark workflow as complete |
 | `rundown stash` | Pause enforcement (stash active workflow) |
 | `rundown pop` | Resume enforcement (restore stashed workflow) |

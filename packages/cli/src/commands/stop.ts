@@ -19,8 +19,9 @@ export function registerStopCommand(program: Command): void {
   program
     .command('stop')
     .description('Abort current workflow')
+    .argument('[message]', 'Stop message')
     .option('--agent <agentId>', 'Stop workflow in agent-specific stack')
-    .action(async (options: { agent?: string }) => {
+    .action(async (message: string | undefined, options: { agent?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
         const manager = new WorkflowStateManager(cwd);
@@ -38,7 +39,7 @@ export function registerStopCommand(program: Command): void {
         await manager.popWorkflow(options.agent);
 
         // Print terminal message
-        printWorkflowStopped();
+        printWorkflowStopped(message);
       });
     });
 }

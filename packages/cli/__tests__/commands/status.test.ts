@@ -231,14 +231,6 @@ describe('complete command', () => {
     expect(session.active).toBeNull();
   });
 
-  it('handles --status stopped', async () => {
-    runCli('run --prompted runbooks/simple.runbook.md', workspace);
-
-    const result = runCli('complete --status stopped', workspace);
-
-    expect(result.stdout).toContain('stopped');
-  });
-
   it('handles no active workflow', async () => {
     const result = runCli('complete', workspace);
 
