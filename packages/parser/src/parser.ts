@@ -73,6 +73,7 @@ interface StepBuilder {
   command?: Command;
   promptText: string;
   hasSeenContent: boolean;
+  hasSeenTransitions: boolean;
   substeps: Substep[];
   pendingSubstep?: SubstepBuilder;
   content: string;
@@ -211,6 +212,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           description: parsed.description,
           promptText: '',
           hasSeenContent: false,
+          hasSeenTransitions: false,
           substeps: [],
           content: '',
           line: node.position?.start.line
@@ -344,9 +346,16 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
               // Mark that we've seen a transition in the substep
               currentStep.pendingSubstep.hasSeenTransitions = true;
             } else {
+              // Reject transitions after content (code blocks, substeps, runbooks)
+              if (currentStep.hasSeenContent) {
+                const stepLabel = currentStep.name;
+                const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+                throw new WorkflowSyntaxError(
+                  `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`
+                );
+              }
               pendingConditionals.push(conditional);
-              // Mark that we've seen a transition in the step
-              currentStep.hasSeenContent = true;
+              currentStep.hasSeenTransitions = true;
             }
             hasConditional = true;
           } else if (line.trim()) {
