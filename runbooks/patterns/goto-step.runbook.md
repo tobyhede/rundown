@@ -1,3 +1,18 @@
+---
+name: goto-step
+description: Demonstrates GOTO N - jumping to a specific step
+tags: [goto, navigation]
+
+scenarios:
+  success:
+    description: Jump from step 1 to step 3, complete workflow
+    commands:
+      - rd run --prompted goto-step.runbook.md
+      - rd pass
+      - rd pass
+    result: COMPLETE
+---
+
 # GOTO Step
 Demonstrates GOTO N - jumping to a specific step number.
 
