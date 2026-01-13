@@ -23,7 +23,7 @@ rundown fail             # Mark current step as failed (evaluates FAIL condition
 rundown goto <n>         # Jump to specific step number
 rundown status           # Show current state
 rundown stop [message]   # Abort workflow with optional message
-rundown complete         # Mark complete
+rundown complete [message] # Mark complete with optional message
 rundown stash            # Pause enforcement
 rundown pop              # Resume enforcement
 rundown ls               # List active workflows

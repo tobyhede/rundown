@@ -302,12 +302,13 @@ rundown stop --agent <agentId>
 
 Deletes workflow state and clears from session.
 
-#### `rundown complete` - Mark Complete
+#### `rundown complete [message]` - Mark Complete
 
 Force workflow completion (success).
 
 ```bash
-rundown complete
+rundown complete [message]                  # Mark as success with optional message
+rundown complete "All tasks finished"       # Complete with custom message
 ```
 
 ### State Transitions
@@ -730,7 +731,7 @@ Both runbook state and session tracking survive:
 # Lifecycle
 rundown run <file>           # Start workflow
 rundown stop [message]       # Abort workflow with optional message
-rundown complete             # Mark complete
+rundown complete [message]   # Mark complete with optional message
 
 # Transitions
 rundown pass                 # Step succeeded (aliases: yes, ok)
