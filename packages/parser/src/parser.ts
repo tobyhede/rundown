@@ -399,13 +399,27 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         const conditional = parseConditional(text);
         if (conditional) {
           if (currentStep.pendingSubstep) {
+            // Reject transitions after content
+            if (currentStep.pendingSubstep.hasSeenContent) {
+              const stepLabel = currentStep.name;
+              const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+              throw new WorkflowSyntaxError(
+                `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`
+              );
+            }
             currentStep.pendingSubstep.pendingConditionals.push(conditional);
-            // Mark that we've seen a transition in the substep
             currentStep.pendingSubstep.hasSeenTransitions = true;
           } else {
+            // Reject transitions after content
+            if (currentStep.hasSeenContent) {
+              const stepLabel = currentStep.name;
+              const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+              throw new WorkflowSyntaxError(
+                `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`
+              );
+            }
             pendingConditionals.push(conditional);
-            // Mark that we've seen a transition in the step
-            currentStep.hasSeenContent = true;
+            currentStep.hasSeenTransitions = true;
           }
         } else if (currentStep.pendingSubstep) {
           // FIXED: Check ordering BEFORE adding content (C2 fix)
