@@ -5,7 +5,8 @@ exits on FAIL (defaults to STOP). Use for operations that should retry
 indefinitely until an external condition causes failure.
 
 ## {N}. Dynamic
+- PASS: GOTO {N}
+
 ```bash
 rd echo --result pass --result pass --result pass --result pass --result fail
 ```
-- PASS: GOTO {N}
