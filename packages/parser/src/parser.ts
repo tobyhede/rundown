@@ -359,10 +359,11 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             }
             hasConditional = true;
           } else if (line.trim()) {
-            // NEW: Check ordering - text must come before content
+            // Check ordering - text must come before content (code blocks, runbooks)
+            // Transitions don't count as content - text CAN appear after transitions
             if (currentStep.pendingSubstep) {
-              // In substeps: text cannot appear after transitions, but CAN appear after code blocks
-              if (currentStep.pendingSubstep.hasSeenTransitions) {
+              // In substeps: text cannot appear after code blocks/runbooks
+              if (currentStep.pendingSubstep.hasSeenContent) {
                 const stepLabel = currentStep.name;
                 // E17-R2: Include line number in error for better DX
                 const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
