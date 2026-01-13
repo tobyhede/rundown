@@ -2,6 +2,8 @@
 Demonstrates GOTO NEXT - advancing to the next dynamic step instance.
 
 ## {N}. Iteration
+- PASS: GOTO NEXT
+- FAIL: COMPLETE
 
 Process item N. Use COMPLETE to exit loop.
 
@@ -9,5 +11,3 @@ Process item N. Use COMPLETE to exit loop.
 rd echo --result pass
 ```
 
-- PASS: GOTO NEXT
-- FAIL: COMPLETE

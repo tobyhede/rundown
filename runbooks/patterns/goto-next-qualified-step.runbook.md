@@ -3,15 +3,17 @@
 Demonstrates explicitly advancing to next step instance from anywhere.
 
 ## {N}. Main Loop
+- PASS: GOTO NEXT
+- FAIL: GOTO ErrorHandler
 
 ```bash
 rd echo --result pass --result fail
 ```
 
-- PASS: GOTO NEXT
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
+- PASS: GOTO NEXT {N}
+- FAIL: STOP
 
 Handles errors and returns to main loop.
 
@@ -19,5 +21,3 @@ Handles errors and returns to main loop.
 rd echo --result pass
 ```
 
-- PASS: GOTO NEXT {N}
-- FAIL: STOP

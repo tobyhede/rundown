@@ -3,6 +3,8 @@
 Demonstrates various code block patterns in workflows.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: STOP
 
 Setup with bash command.
 
@@ -10,10 +12,10 @@ Setup with bash command.
 rd echo "setup environment"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 2. Execute
+- PASS: CONTINUE
+- FAIL: STOP
 
 Execute with multiple commands.
 
@@ -22,10 +24,10 @@ rd echo "Starting execution"
 rd echo "run main task"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 3. Validate
+- PASS: COMPLETE
+- FAIL: STOP
 
 Validate with conditional.
 
@@ -34,5 +36,3 @@ rd echo "Validating..."
 rd echo "validate results"
 ```
 
-- PASS: COMPLETE
-- FAIL: STOP

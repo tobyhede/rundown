@@ -4,13 +4,13 @@ Demonstrates GOTO N.M - jumping to a specific substep.
 ## 1. Parent step
 
 ### 1.1 Setup
+- PASS: GOTO 1.3
+- FAIL: STOP
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS: GOTO 1.3
-- FAIL: STOP
 
 ### 1.2 Skipped
 

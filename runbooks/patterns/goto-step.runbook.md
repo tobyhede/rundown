@@ -2,15 +2,17 @@
 Demonstrates GOTO N - jumping to a specific step number.
 
 ## 1. Setup
+- PASS: GOTO 3
+- FAIL: STOP
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS: GOTO 3
-- FAIL: STOP
 
 ## 2. Skip
+- PASS: CONTINUE
+- FAIL: STOP
 
 This step is skipped via GOTO.
 
@@ -18,10 +20,10 @@ This step is skipped via GOTO.
 rd echo --result fail
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
 
 ## 3. Jump target
+- PASS: COMPLETE
+- FAIL: STOP
 
 Reached via GOTO from step 1.
 
@@ -29,5 +31,3 @@ Reached via GOTO from step 1.
 rd echo --result pass
 ```
 
-- PASS: COMPLETE
-- FAIL: STOP

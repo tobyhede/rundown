@@ -9,9 +9,9 @@ rd echo --result pass
 ```
 
 ## 2. Final step
+- PASS: COMPLETE
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS: COMPLETE

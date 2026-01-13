@@ -5,6 +5,8 @@ Demonstrates dynamic steps with both static and named substeps.
 ## {N}. Process Batch
 
 ### {N}.1 Prepare
+- PASS: CONTINUE
+- FAIL: GOTO {N}.Recovery
 
 Prepare batch N for processing.
 
@@ -12,10 +14,10 @@ Prepare batch N for processing.
 rd echo "prepare batch"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO {N}.Recovery
 
 ### {N}.2 Execute
+- PASS: GOTO NEXT
+- FAIL: GOTO {N}.Recovery
 
 Process the batch.
 
@@ -23,10 +25,10 @@ Process the batch.
 rd echo "process batch"
 ```
 
-- PASS: GOTO NEXT
-- FAIL: GOTO {N}.Recovery
 
 ### {N}.Recovery
+- PASS: GOTO NEXT
+- FAIL: STOP
 
 Handle batch processing failure.
 
@@ -34,5 +36,3 @@ Handle batch processing failure.
 rd echo "recover from failure"
 ```
 
-- PASS: GOTO NEXT
-- FAIL: STOP

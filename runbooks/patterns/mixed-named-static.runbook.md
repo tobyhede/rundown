@@ -11,5 +11,7 @@
 - PASS: COMPLETE
 
 ## ErrorHandler
-Log the error and stop
+
 - PASS: STOP ERROR
+
+Log the error and stop

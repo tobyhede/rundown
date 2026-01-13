@@ -19,17 +19,17 @@ rd echo --result pass
 - FAIL ALL: RETRY 3
 
 ## 3. Empty
-
-```bash
-rd echo --result pass
-```
-
 - PASS: CONTINUE
 
+```bash
+rd echo --result pass
+```
+
+
 ## 4. End
+- PASS: COMPLETE
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS: COMPLETE

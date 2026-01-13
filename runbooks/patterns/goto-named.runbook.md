@@ -2,6 +2,8 @@
 Demonstrates GOTO <name> - jumping to a named step.
 
 ## Initialize
+- PASS: CONTINUE
+- FAIL: GOTO Cleanup
 
 Set up the workflow.
 
@@ -9,10 +11,10 @@ Set up the workflow.
 rd echo --result pass
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO Cleanup
 
 ## Process
+- PASS: GOTO Cleanup
+- FAIL: GOTO ErrorHandler
 
 Do the main work.
 
@@ -20,10 +22,10 @@ Do the main work.
 rd echo --result pass
 ```
 
-- PASS: GOTO Cleanup
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
+- PASS: GOTO Cleanup
+- FAIL: STOP
 
 Handle errors.
 
@@ -31,10 +33,10 @@ Handle errors.
 rd echo --result pass
 ```
 
-- PASS: GOTO Cleanup
-- FAIL: STOP
 
 ## Cleanup
+- PASS: COMPLETE
+- FAIL: STOP
 
 Clean up resources.
 
@@ -42,5 +44,3 @@ Clean up resources.
 rd echo --result pass
 ```
 
-- PASS: COMPLETE
-- FAIL: STOP

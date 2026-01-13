@@ -3,6 +3,8 @@
 Demonstrates navigation between named steps.
 
 ## 1. Setup
+- PASS: CONTINUE
+- FAIL: GOTO ErrorHandler
 
 Initial setup.
 
@@ -10,10 +12,10 @@ Initial setup.
 rd echo "initial setup"
 ```
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
 
 ## 2. Execute
+- PASS: COMPLETE
+- FAIL: GOTO ErrorHandler
 
 Main execution.
 
@@ -21,10 +23,10 @@ Main execution.
 rd echo "main execution"
 ```
 
-- PASS: COMPLETE
-- FAIL: GOTO ErrorHandler
 
 ## ErrorHandler
+- PASS: GOTO 1
+- FAIL: GOTO Fallback
 
 Primary error handler.
 
@@ -32,10 +34,10 @@ Primary error handler.
 rd echo "handle error"
 ```
 
-- PASS: GOTO 1
-- FAIL: GOTO Fallback
 
 ## Fallback
+- PASS: COMPLETE "Recovered via fallback"
+- FAIL: STOP "Unrecoverable error"
 
 Final fallback handler.
 
@@ -43,5 +45,3 @@ Final fallback handler.
 rd echo "fallback recovery"
 ```
 
-- PASS: COMPLETE "Recovered via fallback"
-- FAIL: STOP "Unrecoverable error"

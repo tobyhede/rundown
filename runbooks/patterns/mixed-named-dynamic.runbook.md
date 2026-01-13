@@ -10,5 +10,7 @@
 - FAIL: GOTO GlobalError
 
 ## GlobalError
-Handle global errors
+
 - PASS: STOP "All items failed"
+
+Handle global errors
