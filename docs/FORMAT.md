@@ -104,6 +104,10 @@ RETRY n action =>  RETRY n action
 <none>  =>  - PASS ALL: CONTINUE
             - FAIL ANY: STOP
 
+-- Partial transition defaults
+When only PASS defined  =>  FAIL defaults to FAIL ANY: STOP
+When only FAIL defined  =>  PASS defaults to PASS ALL: CONTINUE
+
 -- Code block semantics
 ```bash | sh | shell            =>  Command (Executable)
 ```{language} prompt            =>  Command (rd prompt '...' - outputs content in fences)

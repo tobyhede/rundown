@@ -116,11 +116,11 @@ Example:
 
 ### Named Steps
 
-Named steps are identified by a name instead of a number. They follow all the same rules as regular steps but are only reachable via explicit GOTO.
+Named steps (and named substeps) are identified by a name instead of a number. They follow all the same rules as regular steps but are only reachable via explicit GOTO.
 
 **Rules:**
 - Named steps can coexist with static OR dynamic steps
-- Named steps are NOT part of sequential flow - CONTINUE skips them
+- Named steps and named substeps are NOT part of sequential flow - CONTINUE skips them
 - Names must match: `/^[A-Za-z_][A-Za-z0-9_]*$/`
 - Reserved words cannot be used as names: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY
 - **Reserved word matching is case-sensitive.** `NEXT` is reserved, but `Next`, `next`, or `NextStep` are valid identifiers.
@@ -254,6 +254,11 @@ Used when a step has substeps or runbooks.
 - `PASS` implies `PASS ALL`
 - `FAIL` implies `FAIL ANY`
 
+**Partial Transition Defaults:**
+When only one transition is defined, the other uses its default action:
+- If only `PASS` defined → `FAIL` defaults to `FAIL ANY: STOP`
+- If only `FAIL` defined → `PASS` defaults to `PASS ALL: CONTINUE`
+
 ---
 
 ## Actions
@@ -275,20 +280,20 @@ Actions determine what happens next.
 
 ### GOTO
 
-| Target              | Valid From        | Description                                       |
-|---------------------|-------------------|---------------------------------------------------|
-| GOTO N              | Any step          | Jump to step N (must exist)                       |
-| GOTO N.M            | Any step          | Jump to substep M of step N                       |
-| GOTO Name           | Any step          | Jump to named step                                |
-| GOTO Name.M         | Any step          | Jump to substep M of named step                   |
-| GOTO {N}            | Dynamic step {N}  | Restart current dynamic step instance             |
-| GOTO {N}.M          | Dynamic step {N}  | Jump to substep M within current dynamic instance |
-| GOTO {N}.{n}        | Dynamic step {N}  | Resume at current substep of current step         |
-| GOTO X.{n}          | Step X            | Jump to current dynamic substep instance          |
-| GOTO NEXT           | Any dynamic       | Advance innermost dynamic context                 |
-| GOTO NEXT {N}       | Any step          | Advance to next dynamic step instance             |
-| GOTO NEXT {N}.{n}   | Dynamic step {N}  | Advance substep, stay in current step instance    |
-| GOTO NEXT X.{n}     | Any step          | Advance to next substep instance in step X        |
+| Target              | Valid From                | Description                                       |
+|---------------------|---------------------------|---------------------------------------------------|
+| GOTO N              | Any step                  | Jump to step N (must exist)                       |
+| GOTO N.M            | Any step                  | Jump to substep M of step N                       |
+| GOTO Name           | Any step                  | Jump to named step                                |
+| GOTO Name.M         | Any step                  | Jump to substep M of named step                   |
+| GOTO {N}            | Any (dynamic context)     | Restart current dynamic step instance             |
+| GOTO {N}.M          | Any (dynamic context)     | Jump to substep M within current dynamic instance |
+| GOTO {N}.{n}        | Any (dynamic context)     | Resume at current substep of current step         |
+| GOTO X.{n}          | Any (dynamic context)     | Jump to current dynamic substep instance          |
+| GOTO NEXT           | Any (dynamic context)     | Advance innermost dynamic context                 |
+| GOTO NEXT {N}       | Any step                  | Advance to next dynamic step instance             |
+| GOTO NEXT {N}.{n}   | Any (dynamic context)     | Advance substep, stay in current step instance    |
+| GOTO NEXT X.{n}     | Any step                  | Advance to next substep instance in step X        |
 
 **Semantics:**
 - `GOTO {N}` restarts the current dynamic step instance from the beginning.
@@ -296,6 +301,11 @@ Actions determine what happens next.
 - `GOTO NEXT` without qualifier advances the innermost dynamic context.
 - `GOTO NEXT {N}` advances to the next step instance.
 - `GOTO NEXT {N}.{n}` advances to the next substep, staying in the current step instance.
+
+**Dynamic Context:**
+- "Any (dynamic context)" means the target is valid from any step or substep, including named steps, as long as there is an active dynamic step instance.
+- The runtime tracks the current dynamic context. When a named step is reached via GOTO from within a dynamic step, it inherits that dynamic context.
+- Example: `## {N}` → `GOTO ErrorHandler` → `GOTO {N}` returns to the active dynamic instance.
 
 
 
