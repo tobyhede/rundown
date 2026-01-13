@@ -69,7 +69,7 @@ function listScenarios(scenarios: Scenarios): void {
   for (const [name, scenario] of Object.entries(scenarios)) {
     const desc = scenario.description ? ` - ${scenario.description}` : '';
     console.log(`  ${name}${desc}`);
-    console.log(`    Commands: ${scenario.commands.length}`);
+    console.log(`    Commands: ${String(scenario.commands.length)}`);
     console.log(`    Result: ${scenario.result}`);
     console.log();
   }
@@ -82,13 +82,13 @@ function listScenarios(scenarios: Scenarios): void {
  * @param scenarios - Map of scenario names to their definitions
  */
 function showScenarioDetails(name: string, scenarios: Scenarios): void {
-  const scenario = scenarios[name];
-
-  if (!scenario) {
+  if (!(name in scenarios)) {
     console.error(`Scenario "${name}" not found`);
     console.error(`Available: ${Object.keys(scenarios).join(', ')}`);
     process.exit(1);
   }
+
+  const scenario = scenarios[name];
 
   console.log(`Scenario: ${name}\n`);
 

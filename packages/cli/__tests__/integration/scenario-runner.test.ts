@@ -26,10 +26,10 @@ describe('scenario runner', () => {
   /**
    * Load pattern files that have scenarios defined.
    */
-  async function loadPatternsWithScenarios(): Promise<Array<{ file: string; scenarios: Scenarios }>> {
+  async function loadPatternsWithScenarios(): Promise<{ file: string; scenarios: Scenarios }[]> {
     const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
     const files = await readdir(patternsDir);
-    const results: Array<{ file: string; scenarios: Scenarios }> = [];
+    const results: { file: string; scenarios: Scenarios }[] = [];
 
     for (const file of files) {
       if (!file.endsWith('.runbook.md')) continue;
@@ -78,13 +78,13 @@ describe('scenario runner', () => {
       // - Last command may fail only for STOP scenarios (e.g., rd fail causes stop)
       const allowNonZero = isLastCommand && scenario.result === 'STOP';
       if (!allowNonZero && result.exitCode !== 0) {
-        throw new Error(`Command "${cmd}" failed with exit code ${result.exitCode}: ${result.stderr}`);
+        throw new Error(`Command "${cmd}" failed with exit code ${String(result.exitCode)}: ${result.stderr}`);
       }
     }
 
     // Verify result - use getAllStates since completed workflows have no active state
     const states = await getAllStates(workspace);
-    const state = states.find(s => (s.workflow as string)?.includes(filename));
+    const state = states.find(s => (s.workflow as string).includes(filename));
 
     if (!state) {
       throw new Error(`No state found for workflow ${filename}`);
@@ -94,7 +94,7 @@ describe('scenario runner', () => {
 
     if (scenario.result === 'COMPLETE') {
       expect(variables?.completed).toBe(true);
-    } else if (scenario.result === 'STOP') {
+    } else {
       expect(variables?.stopped).toBe(true);
     }
   }
@@ -116,7 +116,7 @@ describe('scenario runner', () => {
         try {
           await executeScenario(file, scenario);
         } catch (error) {
-          throw new Error(`Failed: ${file} / ${name}: ${error}`);
+          throw new Error(`Failed: ${file} / ${name}: ${String(error)}`);
         }
       }
     }
