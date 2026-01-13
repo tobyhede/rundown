@@ -11,13 +11,13 @@ Demonstrates `GOTO X.{n}` - referencing the current dynamic substep instance wit
 ## 1. Process Items
 
 ### 1.{n} Handle Item
-Process each item in sequence.
-
 - PASS: GOTO NEXT
 - FAIL: GOTO ErrorHandler
 
-## ErrorHandler
-Handle errors and resume at current item.
+Process each item in sequence.
 
+## ErrorHandler
 - PASS: GOTO 1.{n}
 - FAIL: STOP
+
+Handle errors and resume at current item.

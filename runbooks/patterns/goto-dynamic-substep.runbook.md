@@ -13,10 +13,10 @@ rd echo --result pass
 
 
 ### {N}.2 Skipped task
-This task is skipped via GOTO.
-
 - PASS: CONTINUE
 - FAIL: STOP
+
+This task is skipped via GOTO.
 
 ```bash
 rd echo --result fail
@@ -24,10 +24,10 @@ rd echo --result fail
 
 
 ### {N}.3 Final task
-Reached via GOTO from {N}.1.
-
 - PASS: GOTO NEXT
 - FAIL: STOP
+
+Reached via GOTO from {N}.1.
 
 ```bash
 rd echo --result pass
