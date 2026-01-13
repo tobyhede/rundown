@@ -29,6 +29,9 @@ rundown pop              # Resume enforcement
 rundown ls               # List active workflows
 rundown ls --all         # List available workflow files
 rundown check <file>     # Check workflow for errors
+rundown echo             # Test helper: echo with configurable result
+rundown prune            # Remove stale workflow state files
+rundown scenarios <file> # List or show scenarios from runbook
 ```
 
 The `rd` command is an alias for `rundown`.
