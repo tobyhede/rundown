@@ -22,7 +22,7 @@ scenarios:
 - PASS: COMPLETE
 - FAIL: GOTO Cleanup
 
-  - child-task.runbook.md
+- child-task.runbook.md
 
 ## Cleanup
 

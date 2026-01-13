@@ -1,6 +1,6 @@
 # Named Substeps Example
 
-## 1 Main step
+## 1. Main step
 ### 1.1 Prepare
 Execute first action.
 ### 1.2 Run

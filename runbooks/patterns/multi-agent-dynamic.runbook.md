@@ -33,14 +33,14 @@ Demonstrates multiple agents working on different runbooks with dynamic iteratio
 - PASS: CONTINUE
 - FAIL: STOP
 
-  - agent-task-lint.runbook.md
+- agent-task-lint.runbook.md
 
 ### {N}.2 Test Agent
 
 - PASS: CONTINUE
 - FAIL: STOP
 
-  - agent-task-test.runbook.md
+- agent-task-test.runbook.md
 
 ## Finalize
 
