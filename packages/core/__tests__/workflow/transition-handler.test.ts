@@ -1,4 +1,4 @@
-import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation } from '../../src/workflow/transition-handler.js';
+import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation, evaluateNonRetryAction } from '../../src/workflow/transition-handler.js';
 import type { SubstepState } from '../../src/workflow/types.js';
 
 describe('GOTO NEXT action handling', () => {
@@ -32,6 +32,15 @@ describe('GOTO NEXT action handling', () => {
     const result = evaluateFailCondition(step, 0);
     expect(result.action).toBe('goto');
     expect(result.gotoTarget).toEqual({ step: 'NEXT' });
+  });
+});
+
+describe('evaluateNonRetryAction', () => {
+  it('returns message for COMPLETE action with message', () => {
+    const action: any = { type: 'COMPLETE', message: 'Done!' };
+    const result = evaluateNonRetryAction(action);
+    expect(result.action).toBe('complete');
+    expect(result.message).toBe('Done!');
   });
 });
 
@@ -123,6 +132,24 @@ describe('evaluateSubstepAggregation', () => {
       const result = evaluateSubstepAggregation(states, passAnyTransitions);
       expect(result?.action).toBe('stopped');
     });
+  });
+});
+
+describe('evaluateFailCondition', () => {
+  it('returns message for COMPLETE action with message', () => {
+    const step: any = {
+      name: '1',
+      description: 'Test',
+      isDynamic: false,
+      transitions: {
+        all: true,
+        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', action: { type: 'COMPLETE', message: 'Failed gracefully' } },
+      }
+    };
+    const result = evaluateFailCondition(step, 0);
+    expect(result.action).toBe('complete');
+    expect(result.message).toBe('Failed gracefully');
   });
 });
 

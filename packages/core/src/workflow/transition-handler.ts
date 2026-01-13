@@ -71,8 +71,10 @@ export function evaluateFailCondition(
       };
 
     case 'CONTINUE':
-    case 'COMPLETE':
       return { action: 'continue' };
+
+    case 'COMPLETE':
+      return { action: 'complete', message: failAction.message };
 
     default:
       return {
@@ -154,7 +156,15 @@ export function evaluateSubstepAggregation(
   }
 }
 
-function evaluateNonRetryAction(action: NonRetryAction): ConditionResult {
+/**
+ * Evaluate a non-retry transition action.
+ *
+ * Handles evaluation of CONTINUE, STOP, COMPLETE, or GOTO actions.
+ *
+ * @param action - The non-retry action to evaluate
+ * @returns A ConditionResult indicating the action to take
+ */
+export function evaluateNonRetryAction(action: NonRetryAction): ConditionResult {
   switch (action.type) {
     case 'CONTINUE':
       return { action: 'continue' };

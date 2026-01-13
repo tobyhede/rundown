@@ -145,7 +145,7 @@ describe('output formatter', () => {
   });
 
   describe('printWorkflowComplete', () => {
-    it('prints completion message', () => {
+    it('prints workflow complete message without custom message', () => {
       printWorkflowComplete();
       expect(consoleOutput).toContain('Workflow complete.');
     });
@@ -169,7 +169,7 @@ describe('output formatter', () => {
   });
 
   describe('printWorkflowStopped', () => {
-    it('prints stopped message with step number', () => {
+    it('prints stop message with step position without custom message', () => {
       printWorkflowStoppedAtStep({ current: '2', total: 5 });
       expect(consoleOutput).toContain('Workflow stopped at step 2.');
     });
