@@ -92,10 +92,16 @@ export function printCommandExec(command: string): void {
  * Print workflow complete message to stdout.
  *
  * Outputs a message indicating the workflow has completed successfully.
+ *
+ * @param message - Optional completion message to display
  */
-export function printWorkflowComplete(): void {
+export function printWorkflowComplete(message?: string): void {
   console.log('');
-  console.log('Workflow complete.');
+  if (message) {
+    console.log(`Workflow complete: ${message}`);
+  } else {
+    console.log('Workflow complete.');
+  }
 }
 
 /**
@@ -120,13 +126,18 @@ export function printWorkflowStopped(message?: string): void {
  * Outputs a message indicating the workflow was stopped at a specific step.
  *
  * @param pos - The step position where the workflow was stopped
+ * @param message - Optional stop message to display
  */
-export function printWorkflowStoppedAtStep(pos: StepPosition): void {
+export function printWorkflowStoppedAtStep(pos: StepPosition, message?: string): void {
   console.log('');
   const stepStr = pos.substep
     ? `${pos.current}.${pos.substep}`
     : pos.current;
-  console.log(`Workflow stopped at step ${stepStr}.`);
+  if (message) {
+    console.log(`Workflow stopped at step ${stepStr}: ${message}`);
+  } else {
+    console.log(`Workflow stopped at step ${stepStr}.`);
+  }
 }
 
 /**

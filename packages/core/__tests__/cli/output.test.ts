@@ -149,6 +149,11 @@ describe('output formatter', () => {
       printWorkflowComplete();
       expect(consoleOutput).toContain('Workflow complete.');
     });
+
+    it('prints custom completion message when provided', () => {
+      printWorkflowComplete('All tasks finished');
+      expect(consoleOutput).toContain('Workflow complete: All tasks finished');
+    });
   });
 
   describe('printWorkflowStopped', () => {
@@ -172,6 +177,11 @@ describe('output formatter', () => {
     it('prints stopped message with substep', () => {
       printWorkflowStoppedAtStep({ current: '2', total: 5, substep: '1' });
       expect(consoleOutput).toContain('Workflow stopped at step 2.1.');
+    });
+
+    it('prints stop message with step and custom message', () => {
+      printWorkflowStoppedAtStep({ current: '2', total: 5 }, 'Validation failed');
+      expect(consoleOutput).toContain('Workflow stopped at step 2: Validation failed');
     });
   });
 
