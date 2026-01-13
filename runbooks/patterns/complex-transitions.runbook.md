@@ -1,22 +1,22 @@
 # Complex Transitions
 
 ## 1. Aggregation
-
-```bash
-rd echo --result pass
-```
-
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP "Failed"
 
+```bash
+rd echo --result pass
+```
+
+
 ## 2. Optimistic
+- PASS ANY: GOTO 4
+- FAIL ALL: RETRY 3
 
 ```bash
 rd echo --result pass
 ```
 
-- PASS ANY: GOTO 4
-- FAIL ALL: RETRY 3
 
 ## 3. Empty
 - PASS: CONTINUE
