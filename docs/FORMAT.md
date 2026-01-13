@@ -14,15 +14,15 @@ where static_steps is:
 
 where static_step is:
   "##" integer title
+    [ transition ... ]
     [ prompt ]
     {{ code_block | substeps | runbooks }}
-    [ transition ... ]
 
 where dynamic_step is:
   "##" "{N}" title
+    [ transition ... ]
     [ prompt ]
     [{ code_block | substeps | runbooks }]
-    [ transition ... ]
 
 where prompt is:
   [ text ]
@@ -32,9 +32,9 @@ where substeps is:
 
 where substep is:
   "###" substep_id title
+    [ transition ... ]
     [ prompt ]
     [{ code_block  | runbooks }]
-    [ transition ... ]
 
 where substep_id is:
   parent_ref "." { integer | "{n}" }
