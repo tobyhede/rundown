@@ -32,31 +32,28 @@ title: Deploy to Production
 ---
 
 ## 1. Run Tests
+- PASS: CONTINUE
+- FAIL: STOP
 
 ```bash
 npm test
 ```
 
+## 2. Build Application
 - PASS: CONTINUE
 - FAIL: STOP
-
-## 2. Build Application
 
 ```bash
 npm run build
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
-
 ## 3. Deploy
+- PASS: COMPLETE
+- FAIL: STOP
 
 ```bash
 npm run deploy
 ```
-
-- PASS: COMPLETE
-- FAIL: STOP
 ```
 
 Run the workflow:
