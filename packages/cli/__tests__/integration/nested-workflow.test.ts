@@ -21,17 +21,15 @@ describe('Nested Workflow Integration', () => {
   it('should complete full parent-child workflow cycle', async () => {
     // 1. Create parent and child workflows
     const parentWorkflow = `## 1. Dispatch agent
+- PASS: COMPLETE
 
 Parent step that dispatches work.
-
-- PASS: COMPLETE
 `;
 
     const childWorkflow = `## 1. Do work
+- PASS: COMPLETE
 
 Complete the work.
-
-- PASS: COMPLETE
 `;
 
     // Write workflows to workspace

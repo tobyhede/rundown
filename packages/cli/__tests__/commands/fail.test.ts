@@ -108,18 +108,16 @@ describe('fail command', () => {
     it('pops to parent workflow on fail completion', async () => {
       // Create parent/child workflows
       const parentWorkflow = `## 1. Step one
+- PASS: COMPLETE
+- FAIL: COMPLETE
 
 Do something.
-
-- PASS: COMPLETE
-- FAIL: COMPLETE
 `;
       const childWorkflow = `## 1. Step one
-
-Do work.
-
 - PASS: COMPLETE
 - FAIL: COMPLETE
+
+Do work.
 `;
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'parent-fail.md'), parentWorkflow);

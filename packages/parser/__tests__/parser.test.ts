@@ -475,8 +475,9 @@ describe('parseWorkflow with named steps', () => {
 - PASS: COMPLETE
 
 ## Cleanup
-Handle cleanup
-- PASS: STOP`;
+- PASS: STOP
+
+Handle cleanup`;
 
     const steps = parseWorkflow(md);
     expect(steps).toHaveLength(2);
