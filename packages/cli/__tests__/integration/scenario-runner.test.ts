@@ -1,4 +1,4 @@
-import { createTestWorkspace, runCli, getActiveState, readSession, type TestWorkspace } from '../helpers/test-utils.js';
+import { createTestWorkspace, runCli, getAllStates, type TestWorkspace } from '../helpers/test-utils.js';
 import { readFile, readdir } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -82,13 +82,18 @@ describe('scenario runner', () => {
       }
     }
 
-    // Verify result
-    const state = await getActiveState(workspace);
+    // Verify result - use getAllStates since completed workflows have no active state
+    const states = await getAllStates(workspace);
+    const state = states.find(s => (s.workflow as string)?.includes(filename));
+
+    if (!state) {
+      throw new Error(`No state found for workflow ${filename}`);
+    }
 
     if (scenario.result === 'COMPLETE') {
-      expect(state?.variables?.completed).toBe(true);
+      expect((state.variables as Record<string, unknown>)?.completed).toBe(true);
     } else if (scenario.result === 'STOP') {
-      expect(state?.variables?.stopped).toBe(true);
+      expect((state.variables as Record<string, unknown>)?.stopped).toBe(true);
     }
   }
 
