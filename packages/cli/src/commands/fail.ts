@@ -169,8 +169,9 @@ export function registerFailCommand(program: Command): void {
 
         // Handle stopped
         if (isStopped) {
+          const failResult = evaluateFailCondition(currentStep, prevRetryCount);
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
-          printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep });
+          printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep }, failResult.message);
 
           // If this was a child workflow with agent, update parent's agent binding
           if (options.agent && state.parentWorkflowId) {
@@ -186,11 +187,12 @@ export function registerFailCommand(program: Command): void {
 
         // Handle completion (rare for fail, but possible with GOTO to end)
         if (isComplete) {
+          const failResult = evaluateFailCondition(currentStep, prevRetryCount);
           await manager.update(state.id, {
             step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true }
           });
-          printWorkflowComplete();
+          printWorkflowComplete(failResult.message);
 
           // If this was a child workflow with agent, update parent's agent binding
           if (options.agent && state.parentWorkflowId) {
