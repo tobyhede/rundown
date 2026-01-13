@@ -7,7 +7,7 @@ scenarios:
   basic:
     description: Basic child workflow execution
     commands:
-      - rd run --step 1 child-task.runbook.md
+      - rd run --prompted child-task.runbook.md
       - rd pass
     result: COMPLETE
 ---

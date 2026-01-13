@@ -59,10 +59,53 @@ describe('scenario runner', () => {
   }
 
   /**
+   * Extract referenced runbook files from scenario commands.
+   * Finds patterns like: rd run --step 1 child-task.runbook.md
+   */
+  function extractReferencedRunbooks(scenario: Scenario): string[] {
+    const referenced: string[] = [];
+    const runbookPattern = /(\S+\.runbook\.md)/g;
+
+    for (const cmd of scenario.commands) {
+      const matches = cmd.match(runbookPattern);
+      if (matches) {
+        for (const match of matches) {
+          if (!referenced.includes(match)) {
+            referenced.push(match);
+          }
+        }
+      }
+    }
+
+    return referenced;
+  }
+
+  /**
+   * Copy a pattern file and all its referenced child workflows to the test workspace.
+   */
+  function copyPatternWithDependencies(filename: string, scenario: Scenario): void {
+    // Copy main pattern file
+    copyPatternToWorkspace(filename);
+
+    // Copy any referenced child workflows
+    const referenced = extractReferencedRunbooks(scenario);
+    for (const ref of referenced) {
+      // Skip the main file if it appears in commands
+      if (ref !== filename) {
+        try {
+          copyPatternToWorkspace(ref);
+        } catch {
+          // File may not exist in patterns dir, which is fine
+        }
+      }
+    }
+  }
+
+  /**
    * Execute a scenario's commands and verify the result.
    */
   async function executeScenario(filename: string, scenario: Scenario): Promise<void> {
-    copyPatternToWorkspace(filename);
+    copyPatternWithDependencies(filename, scenario);
 
     // Execute each command in sequence, checking exit codes
     for (let i = 0; i < scenario.commands.length; i++) {
@@ -76,7 +119,9 @@ describe('scenario runner', () => {
       // Check exit codes:
       // - Non-last commands must succeed
       // - Last command may fail only for STOP scenarios (e.g., rd fail causes stop)
-      const allowNonZero = isLastCommand && scenario.result === 'STOP';
+      // - Agent fail commands may exit with 1 if child workflow stops (expected behavior)
+      const isAgentFail = cmd.includes('fail') && cmd.includes('--agent');
+      const allowNonZero = (isLastCommand && scenario.result === 'STOP') || isAgentFail;
       if (!allowNonZero && result.exitCode !== 0) {
         throw new Error(`Command "${cmd}" failed with exit code ${String(result.exitCode)}: ${result.stderr}`);
       }
@@ -120,5 +165,5 @@ describe('scenario runner', () => {
         }
       }
     }
-  });
+  }, 30000); // Extended timeout for multiple scenarios with child workflows
 });

@@ -11,6 +11,7 @@ scenarios:
       - rd run --step 1 child-task.runbook.md
       - rd run --agent agent-1
       - rd pass --agent agent-1
+      - rd pass
     result: COMPLETE
 ---
 
