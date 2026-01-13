@@ -37,6 +37,29 @@ A Rundown document (`.runbook.md`) consists of an optional title and description
 ### Steps
 Steps are the fundamental units of execution. They are defined using H2 (`##`) headers.
 
+### Scenarios
+
+Scenarios define executable command sequences for testing and documentation:
+
+```yaml
+scenarios:
+  success:
+    description: Optional description
+    commands:
+      - rd run --prompted workflow.runbook.md
+      - rd pass
+    result: COMPLETE  # or STOP
+```
+
+**Fields:**
+- `description` (optional): Explains what the scenario demonstrates
+- `commands` (required): Array of CLI commands to execute in order
+- `result` (required): Expected terminal state (`COMPLETE` or `STOP`)
+
+**CLI Usage:**
+- `rd scenarios <file>` - List all scenarios
+- `rd scenarios <file> <name>` - Show scenario details
+
 ---
 
 ## Step Definitions
