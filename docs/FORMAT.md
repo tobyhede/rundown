@@ -13,16 +13,19 @@ where static_steps is:
   static_step [ static_step ... ]
 
 where static_step is:
-  "##" integer title
+  "##" integer [ separator ] title
     [ transition ... ]
     [ prompt ]
     {{ code_block | substeps | runbooks }}
 
 where dynamic_step is:
-  "##" "{N}" title
+  "##" "{N}" [ separator ] title
     [ transition ... ]
     [ prompt ]
     [{ code_block | substeps | runbooks }]
+
+where separator is:
+  [ "." | ":" | "—" | "→" | "-" | ")" | " " ]+
 
 where prompt is:
   [ text ]
