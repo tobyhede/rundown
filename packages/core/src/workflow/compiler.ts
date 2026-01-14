@@ -52,6 +52,18 @@ function formatStateId(stepName: string, substepId?: string): string {
   return substepId ? `step_${stepName}_${substepId}` : `step_${stepName}`;
 }
 
+/**
+ * Check if a step is a numbered step (vs named step).
+ * Numbered steps: "1", "2", "10", "{N}" (dynamic)
+ * Named steps: "ErrorHandler", "Cleanup", "Recovery"
+ */
+function isNumberedStep(step: Step): boolean {
+  // Dynamic steps are part of the numbered sequence
+  if (step.isDynamic) return true;
+  // Numeric step names: 1, 2, 3, etc.
+  return /^\d+$/.test(step.name);
+}
+
 // XState requires any for transition builder (snapshot types not fully typed)
 function actionToTransition(
   action: Action,
@@ -95,9 +107,12 @@ function findNextStateId(stepName: string, substepId: string | undefined, steps:
     }
   }
 
-  // Otherwise, move to next H2 step
-  if (currentStepIndex < steps.length - 1) {
-    const nextStep = steps[currentStepIndex + 1];
+  // Move to next NUMBERED H2 step (skip named steps)
+  for (let i = currentStepIndex + 1; i < steps.length; i++) {
+    const nextStep = steps[i];
+    // Skip named steps - they're only reachable via GOTO
+    if (!isNumberedStep(nextStep)) continue;
+
     if (nextStep.substeps && nextStep.substeps.length > 0) {
       return formatStateId(nextStep.name, nextStep.substeps[0].id);
     }
@@ -139,10 +154,16 @@ function nonRetryActionToTransition(
 
       // Handle GOTO NEXT - advance to next dynamic instance
       if (targetStep === 'NEXT') {
-        const firstStep = steps[0];
-        const nextSubstepId = firstStep.substeps?.[0]?.id;
+        // NEXT requires a dynamic step - validator should catch this,
+        // but fail safely if it reaches the compiler
+        const dynamicStep = steps.find(s => s.isDynamic);
+        if (!dynamicStep) {
+          return { target: 'STOPPED' };
+        }
+
+        const nextSubstepId = dynamicStep.substeps?.[0]?.id;
         return {
-          target: formatStateId(firstStep.name, nextSubstepId),
+          target: formatStateId(dynamicStep.name, nextSubstepId),
           actions: assign({
             retryCount: 0,
             substep: nextSubstepId,
@@ -151,15 +172,24 @@ function nonRetryActionToTransition(
         };
       }
 
-      // Handle dynamic {N}.M references
+      // Handle dynamic {N} and {N}.M references
       if (targetStep === '{N}') {
-        // {N}.M - find dynamic step and target substep M
+        // {N} requires a dynamic step - validator should catch this,
+        // but fail safely if it reaches the compiler
         const dynamicStep = steps.find(s => s.isDynamic);
+        if (!dynamicStep) {
+          return { target: 'STOPPED' };
+        }
+
+        const stepName = dynamicStep.name;
+        // Use explicit substep, or first substep if exists, or undefined (no suffix)
+        const resolvedSubstep = action.target.substep ?? dynamicStep.substeps?.[0]?.id;
+
         return {
-          target: formatStateId(dynamicStep?.name ?? '{N}', action.target.substep ?? '1'),
+          target: formatStateId(stepName, resolvedSubstep),
           actions: assign({
             retryCount: 0,
-            substep: action.target.substep
+            substep: resolvedSubstep
           })
         };
       }

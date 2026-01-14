@@ -107,4 +107,166 @@ describe('workflow compiler', () => {
       expect(snapshot.context.nextInstance).toBe(true);
     });
   });
+
+  describe('CONTINUE with named steps', () => {
+    it('skips named step and returns COMPLETE when no more numbered steps', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Setup',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: 'ErrorHandler',
+          isDynamic: false,
+          description: 'Named step - should be skipped by CONTINUE'
+        }
+      ];
+      const machine = compileWorkflowToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // PASS on step 1 should go to COMPLETE, not ErrorHandler
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+    });
+
+    it('continues to next numbered step, skipping named steps in between', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'First',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: 'ErrorHandler',
+          isDynamic: false,
+          description: 'Named - skipped'
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Second'
+        }
+      ];
+      const machine = compileWorkflowToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step_2');
+    });
+  });
+
+  describe('GOTO {N} resolution', () => {
+    it('targets dynamic step without substep suffix when step has no substeps', () => {
+      const steps: Step[] = [
+        {
+          name: '{N}',
+          isDynamic: true,
+          description: 'Dynamic step without substeps',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
+            fail: { kind: 'fail', action: { type: 'GOTO', target: { step: 'Recovery' } } }
+          }
+        },
+        {
+          name: 'Recovery',
+          isDynamic: false,
+          description: 'Recovery step',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }
+      ];
+      const machine = compileWorkflowToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Fail -> Recovery
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step_Recovery');
+
+      // Pass -> GOTO {N} should go to step_{N}, not step_{N}_1
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_{N}');
+    });
+  });
+
+  describe('GOTO NEXT with non-first dynamic step', () => {
+    it('targets dynamic step even when static step is first', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Static setup step',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '{N}',
+          isDynamic: true,
+          description: 'Dynamic step',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }
+      ];
+      const machine = compileWorkflowToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Pass step 1 -> go to {N}
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_{N}');
+
+      // Pass {N} -> GOTO NEXT should stay on {N} with nextInstance flag
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step_{N}');
+      expect(snapshot.context.nextInstance).toBe(true);
+    });
+
+    it('returns STOPPED when GOTO NEXT used without dynamic step', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Static step with invalid GOTO NEXT',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }
+      ];
+      const machine = compileWorkflowToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // GOTO NEXT without dynamic step should fail safely
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+  });
 });
