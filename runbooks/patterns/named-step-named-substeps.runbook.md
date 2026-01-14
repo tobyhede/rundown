@@ -1,3 +1,23 @@
+---
+name: named-step-named-substeps
+description: Demonstrates named steps containing named substeps with explicit step references (ErrorHandler.Prepare, ErrorHandler.Execute, ErrorHandler.Verify).
+
+scenarios:
+  success-completes:
+    description: Setup passes, workflow completes (skips ErrorHandler)
+    commands:
+      - rd run --prompted named-step-named-substeps.runbook.md
+      - rd pass
+    result: COMPLETE
+  error-handler-failure-at-prepare:
+    description: Tests error handler failing at prepare stage and stopping workflow
+    commands:
+      - rd run --prompted named-step-named-substeps.runbook.md
+      - rd fail
+      - rd fail
+    result: STOP
+---
+
 # Named Step With Named Substeps
 
 Demonstrates named steps containing named substeps.

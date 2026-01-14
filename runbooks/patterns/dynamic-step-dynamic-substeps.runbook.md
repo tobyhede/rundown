@@ -1,3 +1,8 @@
+---
+name: dynamic-step-dynamic-substeps
+description: Demonstrates doubly-dynamic iteration with {N}.{n} pattern
+---
+
 # Dynamic Step With Dynamic Substeps
 
 Demonstrates doubly-dynamic iteration with {N}.{n} pattern.

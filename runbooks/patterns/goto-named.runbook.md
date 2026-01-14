@@ -1,7 +1,6 @@
 ---
 name: goto-named
 description: Demonstrates GOTO <name> - jumping to a named step
-tags: [goto, navigation]
 
 scenarios:
   success:
@@ -27,7 +26,7 @@ scenarios:
 Demonstrates GOTO <name> - jumping to a named step.
 
 ## Initialize
-- PASS: CONTINUE
+- PASS: GOTO Process
 - FAIL: GOTO Cleanup
 
 Set up the workflow.

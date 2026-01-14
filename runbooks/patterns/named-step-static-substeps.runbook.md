@@ -1,3 +1,23 @@
+---
+name: named-step-static-substeps
+description: Demonstrates named steps containing static numbered substeps (ErrorHandler.1, ErrorHandler.2, ErrorHandler.3).
+
+scenarios:
+  success-completes:
+    description: Setup passes, workflow completes (skips ErrorHandler)
+    commands:
+      - rd run --prompted named-step-static-substeps.runbook.md
+      - rd pass
+    result: COMPLETE
+  error-handler-failure-at-prepare:
+    description: Tests error handler failing at first prepare step and stopping workflow
+    commands:
+      - rd run --prompted named-step-static-substeps.runbook.md
+      - rd fail
+      - rd fail
+    result: STOP
+---
+
 # Named Step With Static Substeps
 
 Demonstrates named steps containing numbered substeps.
