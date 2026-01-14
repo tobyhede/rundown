@@ -143,14 +143,28 @@ function nonRetryActionToTransition(
           // Extract substep from ID: step_N_M -> M
           substep: target.startsWith('step_') && target.includes('_', 5)
             ? target.split('_')[2]
-            : undefined
+            : undefined,
+          nextInstance: undefined,
+          nextSubstepInstance: undefined
         })
       };
     }
     case 'COMPLETE':
-      return { target: 'COMPLETE' };
+      return {
+        target: 'COMPLETE',
+        actions: assign({
+          nextInstance: undefined,
+          nextSubstepInstance: undefined
+        })
+      };
     case 'STOP':
-      return { target: 'STOPPED' };
+      return {
+        target: 'STOPPED',
+        actions: assign({
+          nextInstance: undefined,
+          nextSubstepInstance: undefined
+        })
+      };
     case 'GOTO': {
       const targetStep = action.target.step;
 
@@ -265,7 +279,9 @@ function nonRetryActionToTransition(
           target: formatStateId(stepName, resolvedSubstep),
           actions: assign({
             retryCount: 0,
-            substep: resolvedSubstep
+            substep: resolvedSubstep,
+            nextInstance: undefined,
+            nextSubstepInstance: undefined
           })
         };
       }
@@ -284,7 +300,9 @@ function nonRetryActionToTransition(
         target: formatStateId(targetStepObj.name, resolvedSubstepId),
         actions: assign({
           retryCount: 0,
-          substep: resolvedSubstepId
+          substep: resolvedSubstepId,
+          nextInstance: undefined,
+          nextSubstepInstance: undefined
         })
       };
     }
@@ -359,7 +377,9 @@ export function compileWorkflowToMachine(steps: Step[]) {
     actions: assign({
       retryCount: 0,
       substep: ({ event }: { event: WorkflowEvent }) =>
-        event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined
+        event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
+      nextInstance: undefined,
+      nextSubstepInstance: undefined
     })
   }));
 
