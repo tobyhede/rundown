@@ -103,4 +103,79 @@ describe('GOTO to self (implicit retry)', () => {
     expect(actor.getSnapshot().context.retryCount).toBe(0);
     expect(actor.getSnapshot().value).toBe('step_2');
   });
+
+  it('should increment retryCount when GOTO targets same step and substep', () => {
+    // Transitions must be defined at substep level when step has substeps
+    const steps: Step[] = [{
+      name: '1',
+      description: 'Step with substeps',
+      substeps: [
+        {
+          id: 'a',
+          title: 'Substep A',
+          transitions: {
+            all: false,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '1', substep: 'a' } } }
+          }
+        },
+        { id: 'b', title: 'Substep B' }
+      ]
+    }];
+
+    const machine = compileWorkflowToMachine(steps);
+    const actor = createActor(machine);
+    actor.start();
+
+    // Initial state - starts at step 1 substep a
+    expect(actor.getSnapshot().context.retryCount).toBe(0);
+    expect(actor.getSnapshot().value).toBe('step_1_a');
+
+    // FAIL with GOTO to same step+substep should increment
+    actor.send({ type: 'FAIL' });
+    expect(actor.getSnapshot().context.retryCount).toBe(1);
+    expect(actor.getSnapshot().value).toBe('step_1_a');
+
+    // Second FAIL should increment again
+    actor.send({ type: 'FAIL' });
+    expect(actor.getSnapshot().context.retryCount).toBe(2);
+  });
+
+  it('should reset retryCount when GOTO targets same step but different substep', () => {
+    // Transitions must be defined at substep level when step has substeps
+    const steps: Step[] = [{
+      name: '1',
+      description: 'Step with substeps',
+      substeps: [
+        {
+          id: 'a',
+          title: 'Substep A',
+          transitions: {
+            all: false,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '1', substep: 'b' } } }
+          }
+        },
+        { id: 'b', title: 'Substep B' }
+      ]
+    }];
+
+    const machine = compileWorkflowToMachine(steps);
+    const actor = createActor(machine);
+    actor.start();
+
+    // Initial state - starts at step 1 substep a
+    expect(actor.getSnapshot().context.retryCount).toBe(0);
+    expect(actor.getSnapshot().value).toBe('step_1_a');
+
+    // Simulate some retries
+    actor.send({ type: 'RETRY' });
+    actor.send({ type: 'RETRY' });
+    expect(actor.getSnapshot().context.retryCount).toBe(2);
+
+    // FAIL with GOTO to same step but different substep should reset
+    actor.send({ type: 'FAIL' });
+    expect(actor.getSnapshot().context.retryCount).toBe(0);
+    expect(actor.getSnapshot().value).toBe('step_1_b');
+  });
 });
