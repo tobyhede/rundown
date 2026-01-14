@@ -197,6 +197,113 @@ describe('workflow compiler', () => {
       expect(snapshot.context.nextSubstepInstance).toBe(true);
       expect(snapshot.context.nextInstance).toBeUndefined();
     });
+
+    it('sets nextSubstepInstance when GOTO NEXT {N}.{n} is used', () => {
+      const steps: Step[] = [
+        {
+          name: '{N}',
+          isDynamic: true,
+          description: 'Dynamic step',
+          substeps: [
+            {
+              id: '{n}',
+              isDynamic: true,
+              description: 'Dynamic substep',
+              transitions: {
+                all: true,
+                pass: {
+                  kind: 'pass',
+                  action: {
+                    type: 'GOTO',
+                    target: { step: 'NEXT', qualifier: { step: '{N}', substep: '{n}' } }
+                  }
+                },
+                fail: { kind: 'fail', action: { type: 'STOP' } }
+              }
+            }
+          ]
+        }
+      ];
+      const machine = compileWorkflowToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.nextSubstepInstance).toBe(true);
+      expect(snapshot.context.nextInstance).toBeUndefined();
+    });
+
+    it('sets nextInstance when GOTO NEXT {N} is used', () => {
+      const steps: Step[] = [
+        {
+          name: '{N}',
+          isDynamic: true,
+          description: 'Dynamic step',
+          substeps: [
+            {
+              id: '{n}',
+              isDynamic: true,
+              description: 'Dynamic substep',
+              transitions: {
+                all: true,
+                pass: {
+                  kind: 'pass',
+                  action: {
+                    type: 'GOTO',
+                    target: { step: 'NEXT', qualifier: { step: '{N}' } }
+                  }
+                },
+                fail: { kind: 'fail', action: { type: 'STOP' } }
+              }
+            }
+          ]
+        }
+      ];
+      const machine = compileWorkflowToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.nextInstance).toBe(true);
+      expect(snapshot.context.nextSubstepInstance).toBeUndefined();
+    });
+
+    it('sets nextSubstepInstance with GOTO NEXT 1.{n} when no {N} step exists', () => {
+      // Key case: qualified GOTO NEXT X.{n} should work without {N} step
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Static step with dynamic substep',
+          substeps: [
+            {
+              id: '{n}',
+              isDynamic: true,
+              description: 'Dynamic substep',
+              transitions: {
+                all: true,
+                pass: {
+                  kind: 'pass',
+                  action: {
+                    type: 'GOTO',
+                    target: { step: 'NEXT', qualifier: { step: '1', substep: '{n}' } }
+                  }
+                },
+                fail: { kind: 'fail', action: { type: 'STOP' } }
+              }
+            }
+          ]
+        }
+      ];
+      const machine = compileWorkflowToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      // Should advance substep in step 1, no {N} step required
+      expect(snapshot.context.nextSubstepInstance).toBe(true);
+      expect(snapshot.context.nextInstance).toBeUndefined();
+    });
   });
 
   describe('CONTINUE with named steps', () => {
