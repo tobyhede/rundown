@@ -154,22 +154,96 @@ function nonRetryActionToTransition(
     case 'GOTO': {
       const targetStep = action.target.step;
 
-      // Handle GOTO NEXT - advance to next dynamic instance
+      // Handle GOTO NEXT - context-sensitive
       if (targetStep === 'NEXT') {
-        // NEXT requires a dynamic step - validator should catch this,
-        // but fail safely if it reaches the compiler
+        const qualifier = action.target.qualifier;
+
+        // === QUALIFIED FORMS ===
+        if (qualifier) {
+          // GOTO NEXT X.{n} - advance substep instance in step X
+          // Does NOT require {N} step - works with static steps too (e.g., GOTO NEXT 1.{n})
+          if (qualifier.substep === '{n}') {
+            // Resolve target step: {N} means the dynamic step, otherwise use literal step name
+            let targetStepName: string;
+            if (qualifier.step === '{N}') {
+              const dynamicStep = steps.find(s => s.isDynamic);
+              if (!dynamicStep) {
+                return { target: 'STOPPED' };
+              }
+              targetStepName = dynamicStep.name;
+            } else {
+              targetStepName = qualifier.step;
+            }
+
+            const targetStepObj = steps.find(s => s.name === targetStepName);
+            const dynSubstep = targetStepObj?.substeps?.find(s => s.isDynamic);
+
+            if (!dynSubstep) {
+              return { target: 'STOPPED' };
+            }
+
+            return {
+              target: formatStateId(targetStepName, dynSubstep.id),
+              actions: assign({
+                retryCount: 0,
+                substep: dynSubstep.id,
+                nextSubstepInstance: true,
+                nextInstance: undefined
+              })
+            };
+          }
+
+          // GOTO NEXT {N} - advance step instance (requires dynamic step)
+          if (qualifier.step === '{N}' && !qualifier.substep) {
+            const dynamicStep = steps.find(s => s.isDynamic);
+            if (!dynamicStep) {
+              return { target: 'STOPPED' };
+            }
+            const nextSubstepId = dynamicStep.substeps?.[0]?.id;
+            return {
+              target: formatStateId(dynamicStep.name, nextSubstepId),
+              actions: assign({
+                retryCount: 0,
+                substep: nextSubstepId,
+                nextInstance: true,
+                nextSubstepInstance: undefined
+              })
+            };
+          }
+        }
+
+        // === UNQUALIFIED NEXT - context-sensitive ===
+        // Check if current substep is dynamic
+        const currentStep = steps.find(s => s.name === stepName);
+        const currentSubstep = currentStep?.substeps?.find(s => s.id === substepId);
+
+        if (currentSubstep?.isDynamic) {
+          // In dynamic substep context (e.g., 1.{n} or {N}.{n}): advance substep only
+          // Does NOT require {N} step - works with static parent step too
+          return {
+            target: formatStateId(stepName, substepId),
+            actions: assign({
+              retryCount: 0,
+              substep: substepId,
+              nextSubstepInstance: true,
+              nextInstance: undefined
+            })
+          };
+        }
+
+        // Fallback: advance step instance (requires dynamic step)
         const dynamicStep = steps.find(s => s.isDynamic);
         if (!dynamicStep) {
           return { target: 'STOPPED' };
         }
-
         const nextSubstepId = dynamicStep.substeps?.[0]?.id;
         return {
           target: formatStateId(dynamicStep.name, nextSubstepId),
           actions: assign({
             retryCount: 0,
             substep: nextSubstepId,
-            nextInstance: true
+            nextInstance: true,
+            nextSubstepInstance: undefined
           })
         };
       }
