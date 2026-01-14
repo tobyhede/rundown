@@ -154,6 +154,12 @@ Static steps containing both numbered and named substeps.
 
 - [static-step-mixed-substeps.runbook.md](./static-step-mixed-substeps.runbook.md)
 
+### substep-runbooks.runbook.md
+
+Runbook references within substeps (composition at substep level).
+
+- [substep-runbooks.runbook.md](./substep-runbooks.runbook.md)
+
 ---
 
 ## GOTO Navigation
@@ -315,6 +321,12 @@ Different prompt types in one workflow.
 Aliases for yes/no prompts.
 
 - [yes-no-aliases.runbook.md](./yes-no-aliases.runbook.md)
+
+### prompt-code-block.runbook.md
+
+Code blocks with `prompt` info string (displayed but not executed).
+
+- [prompt-code-block.runbook.md](./prompt-code-block.runbook.md)
 
 ---
 
