@@ -38,4 +38,41 @@ describe('GOTO to self (implicit retry)', () => {
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(3);
   });
+
+  it('should reset retryCount when GOTO targets different step', () => {
+    const steps: Step[] = [
+      {
+        name: '1',
+        title: 'Step One',
+        transitions: {
+          all: false,
+          pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '2' } } }
+        }
+      },
+      {
+        name: '2',
+        title: 'Step Two',
+        transitions: {
+          all: false,
+          pass: { kind: 'pass', action: { type: 'COMPLETE' } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      }
+    ];
+
+    const machine = compileWorkflowToMachine(steps);
+    const actor = createActor(machine);
+    actor.start();
+
+    // Simulate some retries
+    actor.send({ type: 'RETRY' });
+    actor.send({ type: 'RETRY' });
+    expect(actor.getSnapshot().context.retryCount).toBe(2);
+
+    // FAIL with GOTO to different step should reset
+    actor.send({ type: 'FAIL' });
+    expect(actor.getSnapshot().context.retryCount).toBe(0);
+    expect(actor.getSnapshot().value).toBe('step_2');
+  });
 });
