@@ -1,0 +1,9 @@
+# WebContainer requirements - SharedArrayBuffer needs these headers
+/patterns/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+
+# If you want interactive runner on landing page too:
+# /*
+#   Cross-Origin-Opener-Policy: same-origin
+#   Cross-Origin-Embedder-Policy: require-corp
