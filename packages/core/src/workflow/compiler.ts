@@ -295,10 +295,16 @@ function nonRetryActionToTransition(
       const resolvedSubstepId = action.target.substep ??
         (targetStepObj.substeps?.[0]?.id);
 
+      const computedTarget = formatStateId(targetStepObj.name, resolvedSubstepId);
+      const currentStateId = formatStateId(stepName, substepId);
+      const isGotoToSelf = computedTarget === currentStateId;
+
       return {
-        target: formatStateId(targetStepObj.name, resolvedSubstepId),
+        target: computedTarget,
         actions: assign({
-          retryCount: 0,
+          retryCount: isGotoToSelf
+            ? ({ context }) => (context.retryCount as number) + 1
+            : 0,
           substep: resolvedSubstepId,
           ...CLEAR_NEXT_FLAGS
         })

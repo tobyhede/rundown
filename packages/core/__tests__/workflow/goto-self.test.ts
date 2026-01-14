@@ -39,6 +39,34 @@ describe('GOTO to self (implicit retry)', () => {
     expect(actor.getSnapshot().context.retryCount).toBe(3);
   });
 
+  it('should increment retryCount when GOTO targets current step by numeric name', () => {
+    // Tests non-dynamic step that uses GOTO to itself by step number
+    const steps: Step[] = [{
+      name: '1',
+      description: 'Retry Step',
+      isDynamic: false,
+      transitions: {
+        all: false,
+        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '1' } } }
+      }
+    }];
+
+    const machine = compileWorkflowToMachine(steps);
+    const actor = createActor(machine);
+    actor.start();
+
+    expect(actor.getSnapshot().context.retryCount).toBe(0);
+    expect(actor.getSnapshot().value).toBe('step_1');
+
+    actor.send({ type: 'FAIL' });
+    expect(actor.getSnapshot().context.retryCount).toBe(1);
+    expect(actor.getSnapshot().value).toBe('step_1');
+
+    actor.send({ type: 'FAIL' });
+    expect(actor.getSnapshot().context.retryCount).toBe(2);
+  });
+
   it('should reset retryCount when GOTO targets different step', () => {
     const steps: Step[] = [
       {
