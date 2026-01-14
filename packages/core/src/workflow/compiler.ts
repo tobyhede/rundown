@@ -13,8 +13,10 @@ export interface WorkflowContext {
   retryCount: number;
   /** Current substep ID within the active step */
   substep?: string;
-  /** Flag indicating transition to next dynamic instance */
+  /** Flag indicating transition to next dynamic step instance */
   nextInstance?: boolean;
+  /** Flag indicating transition to next dynamic substep instance */
+  nextSubstepInstance?: boolean;
   /** User-defined workflow variables */
   variables: Record<string, boolean | number | string>;
 }
@@ -317,6 +319,8 @@ export function compileWorkflowToMachine(steps: Step[]) {
     context: {
       retryCount: 0,
       substep: undefined,
+      nextInstance: undefined,
+      nextSubstepInstance: undefined,
       variables: {},
     },
     states: {
