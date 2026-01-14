@@ -136,6 +136,25 @@ export async function runExecutionLoop(
       // Continue loop to process next instance
     }
 
+    // Handle NEXT substep action: create new dynamic substep instance
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const nextSubstepInstance = snapshot.context.nextSubstepInstance as boolean | undefined;
+    if (nextSubstepInstance && !isComplete && !isStopped) {
+      // Guard: only advance if current step actually has a dynamic substep
+      const currentStepDef = steps.find(s => s.name === updatedState.step || s.isDynamic);
+      const hasDynamicSubstep = currentStepDef?.substeps?.some(s => s.isDynamic);
+
+      if (hasDynamicSubstep) {
+        const currentSubstep = updatedState.substep;
+        // Use addDynamicSubstep to properly track substep states and get new ID
+        const nextSubstepId = await manager.addDynamicSubstep(workflowId);
+        updatedState = await manager.update(workflowId, {
+          substep: nextSubstepId
+        });
+        console.log(`Substep ${String(currentSubstep ?? '?')} complete. Starting substep ${String(nextSubstepId)}...`);
+      }
+    }
+
     // Derive action string
     const retryMax = getStepRetryMax(currentStep);
     const action = deriveAction(
