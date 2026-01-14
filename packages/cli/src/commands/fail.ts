@@ -130,14 +130,50 @@ export function registerFailCommand(program: Command): void {
         // Send FAIL event
         actor.send({ type: 'FAIL' });
 
-        const updatedState = await manager.updateFromActor(state.id, actor, steps);
+        let updatedState = await manager.updateFromActor(state.id, actor, steps);
         // XState snapshot type is not fully typed
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
         const snapshot = actor.getPersistedSnapshot() as any;
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-        const isComplete = isWorkflowComplete(snapshot);
+        let isComplete = isWorkflowComplete(snapshot);
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-        const isStopped = isWorkflowStopped(snapshot);
+        let isStopped = isWorkflowStopped(snapshot);
+
+        // Handle NEXT step action: increment step instance for dynamic steps
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        const nextInstance = snapshot.context.nextInstance as boolean | undefined;
+        if (nextInstance && !isComplete && !isStopped) {
+          // Increment instance number for dynamic workflows (step_1 -> step_2, etc.)
+          const match = /^step_(\d+)$/.exec(updatedState.step);
+          if (match) {
+            const currentInstanceNum = parseInt(match[1], 10);
+            const nextStepNumberValue = currentInstanceNum + 1;
+            const nextStepName = `step_${String(nextStepNumberValue)}`;
+            updatedState = await manager.update(state.id, {
+              step: nextStepName,
+              substep: '1'
+            });
+            console.log(`Instance ${String(currentInstanceNum)} complete. Starting instance ${String(nextStepNumberValue)}...`);
+          }
+        }
+
+        // Handle NEXT substep action: create new dynamic substep instance
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        const nextSubstepInstance = snapshot.context.nextSubstepInstance as boolean | undefined;
+        if (nextSubstepInstance && !isComplete && !isStopped) {
+          // Guard: only advance if current step actually has a dynamic substep
+          const currentStepDef = steps.find(s => s.name === updatedState.step || s.isDynamic);
+          const hasDynamicSubstep = currentStepDef?.substeps?.some(s => s.isDynamic);
+
+          if (hasDynamicSubstep) {
+            const currentSubstep = updatedState.substep;
+            const nextSubstepId = await manager.addDynamicSubstep(state.id);
+            updatedState = await manager.update(state.id, {
+              substep: nextSubstepId
+            });
+            console.log(`Substep ${currentSubstep ?? '?'} complete. Starting substep ${nextSubstepId}...`);
+          }
+        }
 
         // Derive action
         const retryMax = getStepRetryMax(currentStep);
