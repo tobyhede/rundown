@@ -267,15 +267,19 @@ function nonRetryActionToTransition(
           return { target: 'STOPPED' };
         }
 
-        const stepName = dynamicStep.name;
-        // Use explicit substep, or first substep if exists, or undefined (no suffix)
-        const resolvedSubstep = action.target.substep ?? dynamicStep.substeps?.[0]?.id;
+        const resolvedSubstepId = action.target.substep ??
+          (dynamicStep.substeps?.[0]?.id);
+        const computedTarget = formatStateId(dynamicStep.name, resolvedSubstepId);
+        const currentStateId = formatStateId(stepName, substepId);
+        const isGotoToSelf = computedTarget === currentStateId;
 
         return {
-          target: formatStateId(stepName, resolvedSubstep),
+          target: computedTarget,
           actions: assign({
-            retryCount: 0,
-            substep: resolvedSubstep,
+            retryCount: isGotoToSelf
+              ? ({ context }) => (context.retryCount as number) + 1
+              : 0,
+            substep: resolvedSubstepId,
             ...CLEAR_NEXT_FLAGS
           })
         };
