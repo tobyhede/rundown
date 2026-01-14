@@ -46,6 +46,9 @@ const DEFAULT_TRANSITIONS: Transitions = {
   fail: { kind: 'fail', action: { type: 'STOP' } }
 };
 
+/** Clears dynamic instance flags to prevent stale state */
+const CLEAR_NEXT_FLAGS = { nextInstance: undefined, nextSubstepInstance: undefined } as const;
+
 /**
  * Internal helper to format state IDs for the XState machine.
  * Uses _ instead of . to avoid XState path resolution issues.
@@ -144,8 +147,7 @@ function nonRetryActionToTransition(
           substep: target.startsWith('step_') && target.includes('_', 5)
             ? target.split('_')[2]
             : undefined,
-          nextInstance: undefined,
-          nextSubstepInstance: undefined
+          ...CLEAR_NEXT_FLAGS
         })
       };
     }
@@ -153,16 +155,14 @@ function nonRetryActionToTransition(
       return {
         target: 'COMPLETE',
         actions: assign({
-          nextInstance: undefined,
-          nextSubstepInstance: undefined
+          ...CLEAR_NEXT_FLAGS
         })
       };
     case 'STOP':
       return {
         target: 'STOPPED',
         actions: assign({
-          nextInstance: undefined,
-          nextSubstepInstance: undefined
+          ...CLEAR_NEXT_FLAGS
         })
       };
     case 'GOTO': {
@@ -201,8 +201,7 @@ function nonRetryActionToTransition(
               actions: assign({
                 retryCount: 0,
                 substep: dynSubstep.id,
-                nextSubstepInstance: true,
-                nextInstance: undefined
+                nextSubstepInstance: true
               })
             };
           }
@@ -219,8 +218,7 @@ function nonRetryActionToTransition(
               actions: assign({
                 retryCount: 0,
                 substep: nextSubstepId,
-                nextInstance: true,
-                nextSubstepInstance: undefined
+                nextInstance: true
               })
             };
           }
@@ -239,8 +237,7 @@ function nonRetryActionToTransition(
             actions: assign({
               retryCount: 0,
               substep: substepId,
-              nextSubstepInstance: true,
-              nextInstance: undefined
+              nextSubstepInstance: true
             })
           };
         }
@@ -256,8 +253,7 @@ function nonRetryActionToTransition(
           actions: assign({
             retryCount: 0,
             substep: nextSubstepId,
-            nextInstance: true,
-            nextSubstepInstance: undefined
+            nextInstance: true
           })
         };
       }
@@ -280,8 +276,7 @@ function nonRetryActionToTransition(
           actions: assign({
             retryCount: 0,
             substep: resolvedSubstep,
-            nextInstance: undefined,
-            nextSubstepInstance: undefined
+            ...CLEAR_NEXT_FLAGS
           })
         };
       }
@@ -301,8 +296,7 @@ function nonRetryActionToTransition(
         actions: assign({
           retryCount: 0,
           substep: resolvedSubstepId,
-          nextInstance: undefined,
-          nextSubstepInstance: undefined
+          ...CLEAR_NEXT_FLAGS
         })
       };
     }
@@ -378,8 +372,7 @@ export function compileWorkflowToMachine(steps: Step[]) {
       retryCount: 0,
       substep: ({ event }: { event: WorkflowEvent }) =>
         event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
-      nextInstance: undefined,
-      nextSubstepInstance: undefined
+      ...CLEAR_NEXT_FLAGS
     })
   }));
 

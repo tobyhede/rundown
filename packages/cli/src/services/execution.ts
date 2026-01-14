@@ -35,6 +35,70 @@ export function isWorkflowStopped(snapshot: { status: string; value: unknown }):
 }
 
 /**
+ * Handle dynamic instance and substep advancement via NEXT flags.
+ *
+ * When a transition sets nextInstance or nextSubstepInstance flags,
+ * this function applies the appropriate state updates.
+ *
+ * @param snapshot - XState snapshot with context and flags
+ * @param updatedState - Current workflow state to potentially update
+ * @param manager - Workflow state manager
+ * @param workflowId - ID of the workflow
+ * @param steps - Array of workflow steps
+ * @param isComplete - Whether the workflow is complete
+ * @param isStopped - Whether the workflow is stopped
+ * @returns Updated workflow state with instance/substep advancement applied
+ */
+export async function handleNextInstanceFlags(
+  snapshot: { context: { nextInstance?: boolean; nextSubstepInstance?: boolean } },
+  updatedState: WorkflowState,
+  manager: WorkflowStateManager,
+  workflowId: string,
+  steps: Step[],
+  isComplete: boolean,
+  isStopped: boolean
+): Promise<WorkflowState> {
+  let state = updatedState;
+
+  // Handle NEXT step action: increment step instance for dynamic steps
+  const nextInstance = snapshot.context.nextInstance;
+  if (nextInstance && !isComplete && !isStopped) {
+    // Increment instance number for dynamic workflows (step_1 -> step_2, etc.)
+    const match = /^step_(\\d+)$/.exec(state.step);
+    if (match) {
+      const currentInstanceNum = parseInt(match[1], 10);
+      const nextStepNumberValue = currentInstanceNum + 1;
+      const nextStepName = `step_${String(nextStepNumberValue)}`;
+      state = await manager.update(workflowId, {
+        step: nextStepName,
+        substep: '1'
+      });
+      console.log(`Instance ${String(currentInstanceNum)} complete. Starting instance ${String(nextStepNumberValue)}...`);
+    }
+  }
+
+  // Handle NEXT substep action: create new dynamic substep instance
+  const nextSubstepInstance = snapshot.context.nextSubstepInstance;
+  if (nextSubstepInstance && !isComplete && !isStopped) {
+    // Guard: only advance if current step actually has a dynamic substep
+    const currentStepDef = steps.find(s => s.name === state.step || s.isDynamic);
+    const hasDynamicSubstep = currentStepDef?.substeps?.some(s => s.isDynamic);
+
+    if (hasDynamicSubstep) {
+      const currentSubstep = state.substep;
+      // Use addDynamicSubstep to properly track substep states and get new ID
+      const nextSubstepId = await manager.addDynamicSubstep(workflowId);
+      state = await manager.update(workflowId, {
+        substep: nextSubstepId
+      });
+      console.log(`Substep ${currentSubstep ?? '?'} complete. Starting substep ${nextSubstepId}...`);
+    }
+  }
+
+  return state;
+}
+
+/**
  * Execute command steps in a loop until:
  * - Workflow completes or stops
  * - A prompt-only step is reached (no command)
@@ -117,43 +181,9 @@ export async function runExecutionLoop(
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     const isStopped = isWorkflowStopped(snapshot);
 
-    // Handle NEXT action: increment instance number for dynamic steps
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const nextInstance = snapshot.context.nextInstance as boolean | undefined;
-    if (nextInstance && !isComplete && !isStopped) {
-      // Increment instance number for dynamic workflows (step_1 -> step_2, etc.)
-      const match = /^step_(\d+)$/.exec(updatedState.step);
-      if (match) {
-        const currentInstanceNum = parseInt(match[1], 10);
-        const nextStepNumberValue = currentInstanceNum + 1;
-        const nextStepName = `step_${String(nextStepNumberValue)}`;
-        updatedState = await manager.update(workflowId, {
-          step: nextStepName,
-          substep: '1'
-        });
-        console.log(`Instance ${String(currentInstanceNum)} complete. Starting instance ${String(nextStepNumberValue)}...`);
-      }
-      // Continue loop to process next instance
-    }
-
-    // Handle NEXT substep action: create new dynamic substep instance
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const nextSubstepInstance = snapshot.context.nextSubstepInstance as boolean | undefined;
-    if (nextSubstepInstance && !isComplete && !isStopped) {
-      // Guard: only advance if current step actually has a dynamic substep
-      const currentStepDef = steps.find(s => s.name === updatedState.step || s.isDynamic);
-      const hasDynamicSubstep = currentStepDef?.substeps?.some(s => s.isDynamic);
-
-      if (hasDynamicSubstep) {
-        const currentSubstep = updatedState.substep;
-        // Use addDynamicSubstep to properly track substep states and get new ID
-        const nextSubstepId = await manager.addDynamicSubstep(workflowId);
-        updatedState = await manager.update(workflowId, {
-          substep: nextSubstepId
-        });
-        console.log(`Substep ${currentSubstep ?? '?'} complete. Starting substep ${nextSubstepId}...`);
-      }
-    }
+    // Handle NEXT instance/substep flags
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    updatedState = await handleNextInstanceFlags(snapshot, updatedState, manager, workflowId, steps, isComplete, isStopped);
 
     // Derive action string
     const retryMax = getStepRetryMax(currentStep);

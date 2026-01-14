@@ -109,7 +109,7 @@ describe('workflow compiler', () => {
   });
 
   describe('GOTO NEXT from dynamic substep', () => {
-    it('sets nextSubstepInstance flag when PASS triggers GOTO NEXT from {N}.{n}', () => {
+    it('advances substep only when unqualified GOTO NEXT from {N}.{n}', () => {
       const steps: Step[] = [
         {
           name: '{N}',
@@ -138,7 +138,7 @@ describe('workflow compiler', () => {
       expect(snapshot.context.nextInstance).toBeUndefined();
     });
 
-    it('sets nextInstance flag when PASS triggers GOTO NEXT from {N} without dynamic substep', () => {
+    it('advances step when unqualified GOTO NEXT from {N}.1 (static substep)', () => {
       const steps: Step[] = [
         {
           name: '{N}',
@@ -167,7 +167,7 @@ describe('workflow compiler', () => {
       expect(snapshot.context.nextSubstepInstance).toBeUndefined();
     });
 
-    it('sets nextSubstepInstance from static step with dynamic substep (1.{n})', () => {
+    it('advances substep when unqualified GOTO NEXT from 1.{n} (no {N} step required)', () => {
       // Key case: static step 1 with dynamic substep - NO {N} step exists
       const steps: Step[] = [
         {
@@ -198,7 +198,7 @@ describe('workflow compiler', () => {
       expect(snapshot.context.nextInstance).toBeUndefined();
     });
 
-    it('sets nextSubstepInstance when GOTO NEXT {N}.{n} is used', () => {
+    it('advances substep when qualified GOTO NEXT {N}.{n} is used', () => {
       const steps: Step[] = [
         {
           name: '{N}',
@@ -233,7 +233,7 @@ describe('workflow compiler', () => {
       expect(snapshot.context.nextInstance).toBeUndefined();
     });
 
-    it('sets nextInstance when GOTO NEXT {N} is used', () => {
+    it('advances step when qualified GOTO NEXT {N} is used', () => {
       const steps: Step[] = [
         {
           name: '{N}',
@@ -268,7 +268,7 @@ describe('workflow compiler', () => {
       expect(snapshot.context.nextSubstepInstance).toBeUndefined();
     });
 
-    it('sets nextSubstepInstance with GOTO NEXT 1.{n} when no {N} step exists', () => {
+    it('advances substep when qualified GOTO NEXT 1.{n} without {N} step', () => {
       // Key case: qualified GOTO NEXT X.{n} should work without {N} step
       const steps: Step[] = [
         {
@@ -465,6 +465,68 @@ describe('workflow compiler', () => {
       // GOTO NEXT without dynamic step should fail safely
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+  });
+
+  describe('flag clearing in terminal transitions', () => {
+    it('clears flags when transition reaches COMPLETE', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step that completes',
+          substeps: [
+            {
+              id: '1',
+              isDynamic: false,
+              description: 'Substep',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', action: { type: 'COMPLETE' } },
+                fail: { kind: 'fail', action: { type: 'STOP' } }
+              }
+            }
+          ]
+        }
+      ];
+      const machine = compileWorkflowToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.nextInstance).toBeUndefined();
+      expect(snapshot.context.nextSubstepInstance).toBeUndefined();
+    });
+
+    it('clears flags when transition reaches STOPPED', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step that stops',
+          substeps: [
+            {
+              id: '1',
+              isDynamic: false,
+              description: 'Substep',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', action: { type: 'STOP' } },
+                fail: { kind: 'fail', action: { type: 'STOP' } }
+              }
+            }
+          ]
+        }
+      ];
+      const machine = compileWorkflowToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.nextInstance).toBeUndefined();
+      expect(snapshot.context.nextSubstepInstance).toBeUndefined();
     });
   });
 });
