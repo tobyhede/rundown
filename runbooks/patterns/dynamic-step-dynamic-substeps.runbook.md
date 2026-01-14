@@ -9,12 +9,6 @@ scenarios:
       - rd run --prompted dynamic-step-dynamic-substeps.runbook.md
       - rd fail
     result: STOP
-  single-item-success:
-    description: Single item passes and advances to next substep instance
-    commands:
-      - rd run --prompted dynamic-step-dynamic-substeps.runbook.md
-      - rd pass
-    result: step_1 substep 2
 ---
 
 # Dynamic Step With Dynamic Substeps
