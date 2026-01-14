@@ -1,3 +1,17 @@
+---
+name: retry-exhaustion-done
+description: Tests that RETRY exhaustion triggers COMPLETE fallback action
+
+scenarios:
+  exhaustion:
+    description: Exhausts retry count, completes via COMPLETE fallback
+    commands:
+      - rd run --prompted retry-exhaustion-done.runbook.md
+      - rd fail
+      - rd fail
+    result: COMPLETE
+---
+
 # RETRY Exhaustion with COMPLETE
 
 Tests that RETRY exhaustion triggers COMPLETE fallback action.

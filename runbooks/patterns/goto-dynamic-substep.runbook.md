@@ -1,3 +1,18 @@
+---
+name: goto-dynamic-substep
+description: Demonstrates GOTO {N}.M - jumping within a dynamic step instance
+
+scenarios:
+  iterate-then-stop:
+    description: First task GOTOs to final task, GOTO NEXT iterates, then fails to stop
+    commands:
+      - rd run --prompted goto-dynamic-substep.runbook.md
+      - rd pass
+      - rd pass
+      - rd fail
+    result: STOP
+---
+
 # GOTO Dynamic Substep
 Demonstrates GOTO {N}.M - jumping within a dynamic step instance.
 

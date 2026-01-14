@@ -1,3 +1,26 @@
+---
+name: fail-continue-transition
+description: Demonstrates FAIL leading to CONTINUE - proceed despite failure
+
+scenarios:
+  success-path:
+    description: All steps pass including non-critical Execute
+    commands:
+      - rd run --prompted fail-continue-transition.runbook.md
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+  fail-continue:
+    description: Execute fails but workflow continues to Cleanup
+    commands:
+      - rd run --prompted fail-continue-transition.runbook.md
+      - rd pass
+      - rd fail
+      - rd pass
+    result: COMPLETE
+---
+
 # FAIL CONTINUE Transition
 
 Demonstrates FAIL leading to CONTINUE - proceed despite failure.

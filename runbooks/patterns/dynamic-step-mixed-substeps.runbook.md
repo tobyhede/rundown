@@ -1,3 +1,17 @@
+---
+name: dynamic-step-mixed-substeps
+description: Demonstrates dynamic steps with both static and named substeps
+
+scenarios:
+  recovery-fails:
+    description: Recovery step fails and workflow stops
+    commands:
+      - rd run --prompted dynamic-step-mixed-substeps.runbook.md
+      - rd fail
+      - rd fail
+    result: STOP
+---
+
 # Dynamic Step With Mixed Substeps
 
 Demonstrates dynamic steps with both static and named substeps.

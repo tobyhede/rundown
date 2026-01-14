@@ -1,7 +1,6 @@
 ---
 name: goto-step
 description: Demonstrates GOTO N - jumping to a specific step
-tags: [goto, navigation]
 
 scenarios:
   success:

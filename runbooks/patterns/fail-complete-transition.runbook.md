@@ -1,3 +1,25 @@
+---
+name: fail-complete-transition
+description: Demonstrates FAIL leading to COMPLETE - workflow completes on failure
+
+scenarios:
+  success-path:
+    description: All steps pass, reaching Cleanup
+    commands:
+      - rd run --prompted fail-complete-transition.runbook.md
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+  fail-complete:
+    description: Execute fails, workflow completes immediately
+    commands:
+      - rd run --prompted fail-complete-transition.runbook.md
+      - rd pass
+      - rd fail
+    result: COMPLETE
+---
+
 # FAIL COMPLETE Transition
 
 Demonstrates FAIL leading to COMPLETE - workflow completes on failure.

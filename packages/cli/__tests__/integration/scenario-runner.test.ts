@@ -165,5 +165,5 @@ describe('scenario runner', () => {
         }
       }
     }
-  }, 30000); // Extended timeout for multiple scenarios with child workflows
+  }, 60000); // Extended timeout for running 60+ pattern scenarios
 });

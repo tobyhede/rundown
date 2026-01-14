@@ -1,3 +1,18 @@
+---
+name: goto-restart-dynamic
+description: Demonstrates restarting the current dynamic step from the beginning using GOTO {N}
+
+scenarios:
+  iterate-then-stop:
+    description: Setup and Execute pass, GOTO NEXT advances, then fail stops
+    commands:
+      - rd run --prompted goto-restart-dynamic.runbook.md
+      - rd pass
+      - rd pass
+      - rd fail
+    result: STOP
+---
+
 # GOTO {N} - Restart Dynamic Instance
 
 Demonstrates restarting the current dynamic step from the beginning.

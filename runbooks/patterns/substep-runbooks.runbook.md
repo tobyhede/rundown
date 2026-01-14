@@ -4,6 +4,7 @@ description: Demonstrates runbook references within substeps
 
 scenarios:
   basic:
+    description: Tests successful execution of child runbooks referenced within substeps
     commands:
       - rd run --prompted substep-runbooks.runbook.md
       - rd pass

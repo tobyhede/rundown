@@ -1,3 +1,19 @@
+---
+name: retry-counter-reset
+description: Tests that GOTO resets the retry counter to 0 for the target location
+
+scenarios:
+  success:
+    description: First step exhausts retry then GOTOs to step 2, which retries and succeeds
+    commands:
+      - rd run --prompted retry-counter-reset.runbook.md
+      - rd fail
+      - rd fail
+      - rd fail
+      - rd pass
+    result: COMPLETE
+---
+
 # Retry Counter Reset on GOTO
 
 Tests spec rule: "GOTO resets the retry counter to 0 for the target location"

@@ -1,3 +1,39 @@
+---
+name: mixed-static-named-error
+description: Demonstrates static steps with a named error handler step that redirects failures to central error handling
+
+scenarios:
+  success-path:
+    description: Tests successful completion through all steps
+    commands:
+      - rd run --prompted mixed-static-named-error.runbook.md
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
+  error-recovery:
+    description: Tests error handling and recovery by going back to setup
+    commands:
+      - rd run --prompted mixed-static-named-error.runbook.md
+      - rd pass
+      - rd fail
+      - rd pass
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
+  unrecoverable-error:
+    description: Tests unrecoverable error that stops the workflow
+    commands:
+      - rd run --prompted mixed-static-named-error.runbook.md
+      - rd pass
+      - rd fail
+      - rd fail
+    result: STOP
+---
+
 # Mixed Static And Named With Error Handler
 
 Demonstrates static steps with a named error handler step.

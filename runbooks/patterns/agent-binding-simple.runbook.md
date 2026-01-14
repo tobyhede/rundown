@@ -1,7 +1,6 @@
 ---
 name: agent-binding-simple
 description: Parent workflow delegates step to agent with child workflow
-tags: [subworkflow, agent]
 
 scenarios:
   success:

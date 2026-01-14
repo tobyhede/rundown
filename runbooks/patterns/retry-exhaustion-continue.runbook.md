@@ -1,7 +1,6 @@
 ---
 name: retry-exhaustion-continue
 description: Tests that RETRY exhaustion triggers CONTINUE fallback action
-tags: [retry, exhaustion]
 
 scenarios:
   retry-success:

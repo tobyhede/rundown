@@ -1,7 +1,6 @@
 ---
 name: agent-binding-failure
 description: Parent handles agent failure gracefully
-tags: [subworkflow, agent, error-handling]
 
 scenarios:
   agent-fails:

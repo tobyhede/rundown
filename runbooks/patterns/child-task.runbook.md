@@ -1,7 +1,6 @@
 ---
 name: child-task
 description: Simple child workflow for subworkflow patterns
-tags: [subworkflow]
 
 scenarios:
   basic:

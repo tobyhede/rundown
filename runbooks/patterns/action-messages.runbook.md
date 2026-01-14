@@ -1,7 +1,6 @@
 ---
 name: action-messages
 description: Demonstrates STOP and COMPLETE with message parameters
-tags: [transitions, messages]
 
 scenarios:
   complete-with-message:

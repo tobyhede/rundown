@@ -117,9 +117,9 @@ export function registerPassCommand(program: Command): void {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
         const snapshot = actor.getPersistedSnapshot() as any;
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-        let isComplete = isWorkflowComplete(snapshot);
+        const isComplete = isWorkflowComplete(snapshot);
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-        let isStopped = isWorkflowStopped(snapshot);
+        const isStopped = isWorkflowStopped(snapshot);
 
         // Handle NEXT step action: increment step instance for dynamic steps
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access

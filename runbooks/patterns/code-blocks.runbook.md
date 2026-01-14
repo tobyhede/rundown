@@ -1,3 +1,18 @@
+---
+name: code-blocks
+description: Demonstrates various code block patterns in workflows
+
+scenarios:
+  success:
+    description: All three steps complete successfully
+    commands:
+      - rd run --prompted code-blocks.runbook.md
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+---
+
 # Code Blocks
 
 Demonstrates various code block patterns in workflows.

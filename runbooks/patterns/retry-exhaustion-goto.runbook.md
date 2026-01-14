@@ -1,3 +1,27 @@
+---
+name: retry-exhaustion-goto
+description: Tests that RETRY exhaustion triggers GOTO fallback action
+
+scenarios:
+  success-after-retry:
+    description: Step 1 fails then passes, continues to step 2
+    commands:
+      - rd run --prompted retry-exhaustion-goto.runbook.md
+      - rd fail
+      - rd pass
+      - rd pass
+    result: COMPLETE
+  exhaustion-goto:
+    description: Step 1 exhausts retries, GOTOs to recovery step 3
+    commands:
+      - rd run --prompted retry-exhaustion-goto.runbook.md
+      - rd fail
+      - rd fail
+      - rd fail
+      - rd pass
+    result: COMPLETE
+---
+
 # RETRY Exhaustion with GOTO
 
 Tests that RETRY exhaustion triggers GOTO fallback action.

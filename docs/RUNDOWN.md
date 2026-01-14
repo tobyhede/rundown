@@ -376,7 +376,6 @@ rundown goto 3.1     # Jump to substep 3.1
 | `GOTO NEXT` | Dynamic step {N} | Advance to next dynamic instance (N+1) |
 
 **Notes:**
-- `GOTO {N}` alone is invalid - use `GOTO NEXT` instead
 - `GOTO NEXT` is only valid in runbook transitions, not via CLI
 
 ### Status Commands

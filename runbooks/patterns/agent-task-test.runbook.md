@@ -1,7 +1,19 @@
 ---
 name: agent-task-test
 description: Test task for agent
-tags: [agent-task]
+scenarios:
+  success:
+    description: Test task completes successfully
+    commands:
+      - rd run --prompted agent-task-test.runbook.md
+      - rd pass
+    result: COMPLETE
+  failure:
+    description: Test task fails
+    commands:
+      - rd run --prompted agent-task-test.runbook.md
+      - rd fail
+    result: STOP
 ---
 
 # Test Task

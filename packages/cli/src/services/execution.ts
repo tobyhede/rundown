@@ -151,7 +151,7 @@ export async function runExecutionLoop(
         updatedState = await manager.update(workflowId, {
           substep: nextSubstepId
         });
-        console.log(`Substep ${String(currentSubstep ?? '?')} complete. Starting substep ${String(nextSubstepId)}...`);
+        console.log(`Substep ${currentSubstep ?? '?'} complete. Starting substep ${nextSubstepId}...`);
       }
     }
 

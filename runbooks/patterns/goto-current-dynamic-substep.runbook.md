@@ -1,7 +1,15 @@
 ---
-title: GOTO Current Dynamic Substep
+name: goto-current-dynamic-substep
 description: Demonstrates GOTO X.{n} - jumping to the current instance of a dynamic substep
-tags: [goto, dynamic, substep]
+
+scenarios:
+  error-handler-fails:
+    description: Error handler fails and workflow stops
+    commands:
+      - rd run --prompted goto-current-dynamic-substep.runbook.md
+      - rd fail
+      - rd fail
+    result: STOP
 ---
 
 # GOTO Current Dynamic Substep

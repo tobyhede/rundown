@@ -193,7 +193,7 @@ export function RunbookRunner({
           >
             {Object.entries(scenarios).map(([key, s]) => (
               <option key={key} value={key}>
-                {s.description}
+                {s.description || key}
               </option>
             ))}
           </select>

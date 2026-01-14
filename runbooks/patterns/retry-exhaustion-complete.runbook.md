@@ -1,3 +1,30 @@
+---
+name: retry-exhaustion-complete
+description: Demonstrates RETRY with COMPLETE on exhaustion
+
+scenarios:
+  success-after-retry:
+    description: Step 2 fails twice then passes on third try
+    commands:
+      - rd run --prompted retry-exhaustion-complete.runbook.md
+      - rd pass
+      - rd fail
+      - rd fail
+      - rd pass
+      - rd pass
+    result: COMPLETE
+  exhaustion-complete:
+    description: Step 2 exhausts retries, completes via fallback
+    commands:
+      - rd run --prompted retry-exhaustion-complete.runbook.md
+      - rd pass
+      - rd fail
+      - rd fail
+      - rd fail
+      - rd fail
+    result: COMPLETE
+---
+
 # Retry Exhaustion COMPLETE
 
 Demonstrates RETRY with COMPLETE on exhaustion.

@@ -1,7 +1,6 @@
 ---
 name: multi-agent-dynamic
 description: Multiple agents work on different runbooks with dynamic iteration
-tags: [subworkflow, agent, dynamic, multi-agent]
 
 scenarios:
   two-agents-cycle:

@@ -89,31 +89,75 @@ export async function cleanRundownState(container: WebContainer): Promise<void> 
  * @param container - The WebContainer instance to run the command in
  * @param command - The command to execute
  * @param args - Arguments to pass to the command
+ * @param timeoutMs - Timeout in milliseconds (default: 10000)
  * @returns Object containing command output and exit code
  */
 export async function runCommand(
   container: WebContainer,
   command: string,
-  args: string[]
+  args: string[],
+  timeoutMs = 10000
 ): Promise<{ output: string; exitCode: number }> {
+  console.log(`[WebContainer] Running: ${command} ${args.join(' ')}`);
   const process = await container.spawn(command, args);
 
   let output = '';
+  let exitCode = 0;
+  let resolved = false;
 
-  // Capture stdout (WebContainer API returns strings directly)
-  const reader = process.output.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    output += value;
-  }
+  return new Promise((resolve, reject) => {
+    // Timeout handler
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        console.log(`[WebContainer] Command timed out, returning captured output`);
+        process.kill();
+        resolve({ output: output || '(command timed out)', exitCode: -1 });
+      }
+    }, timeoutMs);
 
-  const exitCode = await process.exit;
-  return { output, exitCode };
+    // Read output asynchronously
+    const reader = process.output.getReader();
+    const readOutput = async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          output += value;
+          console.log(`[WebContainer] Output chunk:`, value);
+        }
+      } catch (err) {
+        console.error(`[WebContainer] Read error:`, err);
+      } finally {
+        reader.releaseLock();
+      }
+    };
+
+    // Handle process exit
+    process.exit.then((code) => {
+      console.log(`[WebContainer] Process exited with code:`, code);
+      exitCode = code;
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        // Small delay to ensure all output is captured
+        setTimeout(() => resolve({ output, exitCode }), 100);
+      }
+    }).catch((err) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        reject(err);
+      }
+    });
+
+    // Start reading output
+    readOutput();
+  });
 }
 
 /**
- * Run an rd command using the direct binary path (avoids npx overhead).
+ * Run an rd command using node to invoke the CLI directly (avoids permission issues).
  *
  * @param container - The WebContainer instance to run the command in
  * @param args - Arguments to pass to the rd command
@@ -123,6 +167,8 @@ export async function runRdCommand(
   container: WebContainer,
   args: string[]
 ): Promise<{ output: string; exitCode: number }> {
-  // Use direct path to avoid npx overhead and prompts
-  return runCommand(container, './node_modules/.bin/rd', args);
+  // Use node to run the CLI script directly (avoids execute permission issues)
+  const cliPath = './node_modules/@rundown/cli/dist/cli.js';
+  console.log(`[WebContainer] Running rd via node: ${cliPath} ${args.join(' ')}`);
+  return runCommand(container, 'node', [cliPath, ...args]);
 }

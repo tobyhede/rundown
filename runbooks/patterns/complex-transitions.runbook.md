@@ -1,3 +1,19 @@
+---
+name: complex-transitions
+description: Demonstrates complex transition conditions with ALL/ANY modifiers
+
+scenarios:
+  success:
+    description: All steps pass through to completion
+    commands:
+      - rd run --prompted complex-transitions.runbook.md
+      - rd pass
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+---
+
 # Complex Transitions
 
 ## 1. Aggregation

@@ -1,3 +1,8 @@
+---
+name: goto-resume-dynamic-substep
+description: Demonstrates error recovery that resumes at the exact dynamic substep where the error occurred
+---
+
 # GOTO {N}.{n} - Resume at Current Context
 
 Demonstrates error recovery that returns to exactly where we came from.

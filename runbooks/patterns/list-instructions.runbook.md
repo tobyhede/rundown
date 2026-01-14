@@ -1,3 +1,17 @@
+---
+name: list-instructions
+description: Demonstrates steps with list-formatted instructions
+
+scenarios:
+  success:
+    description: Both steps with list instructions complete successfully
+    commands:
+      - rd run --prompted list-instructions.runbook.md
+      - rd pass
+      - rd pass
+    result: COMPLETE
+---
+
 # List Instructions
 
 ## 1. Step with list instructions

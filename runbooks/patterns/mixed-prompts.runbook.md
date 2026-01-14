@@ -1,3 +1,16 @@
+---
+name: mixed-prompts
+description: Step with both explicit Prompt and implicit instruction list
+
+scenarios:
+  success:
+    description: Step with mixed prompts completes successfully
+    commands:
+      - rd run --prompted mixed-prompts.runbook.md
+      - rd pass
+    result: COMPLETE
+---
+
 # Mixed Prompt Types
 
 ## 1. Mixed prompts

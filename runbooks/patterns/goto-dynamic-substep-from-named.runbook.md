@@ -1,7 +1,16 @@
 ---
-title: GOTO Dynamic Named Substep
+name: goto-dynamic-substep-from-named
 description: Demonstrates GOTO {N}.Name - jumping to a named substep within a dynamic step
-tags: [goto, dynamic, substep, named]
+
+scenarios:
+  cleanup-failure:
+    description: Cleanup substep fails causing workflow to stop
+    commands:
+      - rd run --prompted goto-dynamic-substep-from-named.runbook.md
+      - rd pass
+      - rd fail
+      - rd fail
+    result: STOP
 ---
 
 # GOTO Dynamic Named Substep

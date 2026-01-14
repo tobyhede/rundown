@@ -1,3 +1,8 @@
+---
+name: mixed-named-dynamic
+description: Demonstrates mixed named and dynamic steps with individual recovery handlers for each iteration
+---
+
 # Mixed Named and Dynamic Steps
 
 ## {N}. Process Item
@@ -11,6 +16,5 @@
 
 ## GlobalError
 - PASS: STOP "All items failed"
-
 
 Handle global errors
