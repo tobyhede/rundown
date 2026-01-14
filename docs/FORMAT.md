@@ -4,6 +4,7 @@ version: 1.0.0
 
 # Rundown Format
 
+[ frontmatter ]
 # title
 [ description ]
 
@@ -82,6 +83,30 @@ where message is:
 
 where target is:
   step-identifier | substep-identifier | "NEXT" | "NEXT" step-identifier | "NEXT" substep-identifier
+
+where frontmatter is:
+  "---"
+    "name:" slug
+    [ "description:" text ]
+    [ "version:" text ]
+    [ "author:" text ]
+    [ scenarios ]
+  "---"
+
+where slug is:
+  [a-z0-9-]+
+  (lowercase alphanumeric with hyphens)
+
+where scenarios is:
+  "scenarios:"
+    scenario { scenario }
+
+where scenario is:
+  slug ":"
+    [ "description:" text ]
+    "commands:"
+      "- " text { "- " text }
+    "result:" ( "COMPLETE" | "STOP" )
 
 ---
 
