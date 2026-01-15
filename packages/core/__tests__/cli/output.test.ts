@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach } from '@jest/globals';
 import {
   formatPosition,
   printSeparator,
@@ -11,22 +11,15 @@ import {
   printWorkflowStoppedAtStep,
   printWorkflowStashed,
   printNoActiveWorkflow,
-} from '../../src/cli/output.js';
+  TestWriter,
+} from '../../src/cli/index.js';
 import type { Step } from '../../src/workflow/types.js';
 
 describe('output formatter', () => {
-  let consoleOutput: string[];
-  const originalLog = console.log;
+  let writer: TestWriter;
 
   beforeEach(() => {
-    consoleOutput = [];
-    console.log = (...args: unknown[]) => {
-      consoleOutput.push(args.map(String).join(' '));
-    };
-  });
-
-  afterEach(() => {
-    console.log = originalLog;
+    writer = new TestWriter();
   });
 
   describe('formatPosition', () => {
@@ -35,7 +28,9 @@ describe('output formatter', () => {
     });
 
     it('formats position with substep', () => {
-      expect(formatPosition({ current: '2', total: 5, substep: '1' })).toBe('2.1/5');
+      expect(formatPosition({ current: '2', total: 5, substep: '1' })).toBe(
+        '2.1/5'
+      );
     });
 
     it('formats position with string total for dynamic workflows', () => {
@@ -43,62 +38,76 @@ describe('output formatter', () => {
     });
 
     it('formats position with substep and string total', () => {
-      expect(formatPosition({ current: '1', total: '{N}', substep: '2' })).toBe('1.2/{N}');
+      expect(formatPosition({ current: '1', total: '{N}', substep: '2' })).toBe(
+        '1.2/{N}'
+      );
     });
   });
 
   describe('printSeparator', () => {
     it('prints separator line', () => {
-      printSeparator();
-      expect(consoleOutput).toEqual(['-----']);
+      printSeparator(writer);
+      expect(writer.getLines()).toEqual(['-----']);
     });
   });
 
   describe('printMetadata', () => {
     it('prints metadata without prompt line in default mode', () => {
-      printMetadata({
-        file: 'runbooks/build.md',
-        state: '.claude/rundown/runs/wf-123.json',
-      });
-      expect(consoleOutput).toEqual([
+      printMetadata(
+        {
+          file: 'runbooks/build.md',
+          state: '.claude/rundown/runs/wf-123.json',
+        },
+        writer
+      );
+      expect(writer.getLines()).toEqual([
         'File:     runbooks/build.md',
         'State:    .claude/rundown/runs/wf-123.json',
       ]);
     });
 
     it('prints prompt line when prompted is true', () => {
-      printMetadata({
-        file: 'runbooks/build.md',
-        state: '.claude/rundown/runs/wf-123.json',
-        prompted: true,
-      });
-      expect(consoleOutput).toContain('Prompt:   Yes');
+      printMetadata(
+        {
+          file: 'runbooks/build.md',
+          state: '.claude/rundown/runs/wf-123.json',
+          prompted: true,
+        },
+        writer
+      );
+      expect(writer.getOutput()).toContain('Prompt:   Yes');
     });
 
     it('omits prompt line when prompted is false', () => {
-      printMetadata({
-        file: 'runbooks/build.md',
-        state: '.claude/rundown/runs/wf-123.json',
-        prompted: false,
-      });
-      expect(consoleOutput).not.toContain('Prompt:   Yes');
-      expect(consoleOutput).not.toContain('Prompt:   No');
+      printMetadata(
+        {
+          file: 'runbooks/build.md',
+          state: '.claude/rundown/runs/wf-123.json',
+          prompted: false,
+        },
+        writer
+      );
+      expect(writer.getOutput()).not.toContain('Prompt:   Yes');
+      expect(writer.getOutput()).not.toContain('Prompt:   No');
     });
   });
 
   describe('printActionBlock', () => {
     it('prints action only (start command)', () => {
-      printActionBlock({ action: 'START' });
-      expect(consoleOutput).toEqual(['Action:   START']);
+      printActionBlock({ action: 'START' }, writer);
+      expect(writer.getLines()).toEqual(['Action:   START']);
     });
 
     it('prints action with from and result (pass command)', () => {
-      printActionBlock({
-        action: 'CONTINUE',
-        from: { current: '1', total: 5 },
-        result: 'PASS',
-      });
-      expect(consoleOutput).toEqual([
+      printActionBlock(
+        {
+          action: 'CONTINUE',
+          from: { current: '1', total: 5 },
+          result: 'PASS',
+        },
+        writer
+      );
+      expect(writer.getLines()).toEqual([
         'Action:   CONTINUE',
         'From:     1/5',
         'Result:   PASS',
@@ -106,23 +115,26 @@ describe('output formatter', () => {
     });
 
     it('prints action with from but no result (goto command)', () => {
-      printActionBlock({
-        action: 'GOTO 3',
-        from: { current: '1', total: 5 },
-      });
-      expect(consoleOutput).toEqual([
-        'Action:   GOTO 3',
-        'From:     1/5',
-      ]);
+      printActionBlock(
+        {
+          action: 'GOTO 3',
+          from: { current: '1', total: 5 },
+        },
+        writer
+      );
+      expect(writer.getLines()).toEqual(['Action:   GOTO 3', 'From:     1/5']);
     });
 
     it('prints retry with count', () => {
-      printActionBlock({
-        action: 'RETRY (1/3)',
-        from: { current: '2', total: 5 },
-        result: 'FAIL',
-      });
-      expect(consoleOutput).toContain('Action:   RETRY (1/3)');
+      printActionBlock(
+        {
+          action: 'RETRY (1/3)',
+          from: { current: '2', total: 5 },
+          result: 'FAIL',
+        },
+        writer
+      );
+      expect(writer.getOutput()).toContain('Action:   RETRY (1/3)');
     });
   });
 
@@ -135,9 +147,9 @@ describe('output formatter', () => {
         prompt: 'Do something.',
         command: { code: 'npm test' },
       };
-      printStepBlock({ current: '1', total: 3 }, step);
+      printStepBlock({ current: '1', total: 3 }, step, writer);
 
-      const output = consoleOutput.join('\n');
+      const output = writer.getOutput();
       expect(output).toContain('Step:     1/3');
       expect(output).toContain('## 1. First step');
       expect(output).toContain('Do something.');
@@ -151,9 +163,9 @@ describe('output formatter', () => {
         isDynamic: true,
         prompt: 'Process the batch.',
       };
-      printStepBlock({ current: '1', total: '{N}' }, step);
+      printStepBlock({ current: '1', total: '{N}' }, step, writer);
 
-      const output = consoleOutput.join('\n');
+      const output = writer.getOutput();
       expect(output).toContain('Step:     1/{N}');
       expect(output).toContain('## 1. Process Batch');
       expect(output).not.toContain('## {N}.');
@@ -166,9 +178,9 @@ describe('output formatter', () => {
         isDynamic: true,
         prompt: 'Process item {n}.',
       };
-      printStepBlock({ current: '2', total: '{N}', substep: '3' }, step);
+      printStepBlock({ current: '2', total: '{N}', substep: '3' }, step, writer);
 
-      const output = consoleOutput.join('\n');
+      const output = writer.getOutput();
       expect(output).toContain('Step:     2.3/{N}');
       expect(output).toContain('Process item 3.');
     });
@@ -176,64 +188,74 @@ describe('output formatter', () => {
 
   describe('printCommandExec', () => {
     it('prints command with $ prefix', () => {
-      printCommandExec('npm test');
-      expect(consoleOutput).toContain('$ npm test');
+      printCommandExec('npm test', writer);
+      expect(writer.getOutput()).toContain('$ npm test');
     });
   });
 
   describe('printWorkflowComplete', () => {
     it('prints workflow complete message without custom message', () => {
-      printWorkflowComplete();
-      expect(consoleOutput).toContain('Workflow complete.');
+      printWorkflowComplete(undefined, writer);
+      expect(writer.getOutput()).toContain('Workflow complete.');
     });
 
     it('prints custom completion message when provided', () => {
-      printWorkflowComplete('All tasks finished');
-      expect(consoleOutput).toContain('Workflow complete: All tasks finished');
+      printWorkflowComplete('All tasks finished', writer);
+      expect(writer.getOutput()).toContain('Workflow complete: All tasks finished');
     });
   });
 
   describe('printWorkflowStopped', () => {
     it('prints stopped message', () => {
-      printWorkflowStopped();
-      expect(consoleOutput).toContain('Workflow stopped.');
+      printWorkflowStopped(undefined, writer);
+      expect(writer.getOutput()).toContain('Workflow stopped.');
     });
 
     it('prints stopped message with details', () => {
-      printWorkflowStopped('User cancelled');
-      expect(consoleOutput).toContain('Workflow stopped: User cancelled');
+      printWorkflowStopped('User cancelled', writer);
+      expect(writer.getOutput()).toContain('Workflow stopped: User cancelled');
     });
   });
 
-  describe('printWorkflowStopped', () => {
+  describe('printWorkflowStoppedAtStep', () => {
     it('prints stop message with step position without custom message', () => {
-      printWorkflowStoppedAtStep({ current: '2', total: 5 });
-      expect(consoleOutput).toContain('Workflow stopped at step 2.');
+      printWorkflowStoppedAtStep({ current: '2', total: 5 }, undefined, writer);
+      expect(writer.getOutput()).toContain('Workflow stopped at step 2.');
     });
 
     it('prints stopped message with substep', () => {
-      printWorkflowStoppedAtStep({ current: '2', total: 5, substep: '1' });
-      expect(consoleOutput).toContain('Workflow stopped at step 2.1.');
+      printWorkflowStoppedAtStep(
+        { current: '2', total: 5, substep: '1' },
+        undefined,
+        writer
+      );
+      expect(writer.getOutput()).toContain('Workflow stopped at step 2.1.');
     });
 
     it('prints stop message with step and custom message', () => {
-      printWorkflowStoppedAtStep({ current: '2', total: 5 }, 'Validation failed');
-      expect(consoleOutput).toContain('Workflow stopped at step 2: Validation failed');
+      printWorkflowStoppedAtStep(
+        { current: '2', total: 5 },
+        'Validation failed',
+        writer
+      );
+      expect(writer.getOutput()).toContain(
+        'Workflow stopped at step 2: Validation failed'
+      );
     });
   });
 
   describe('printWorkflowStashed', () => {
     it('prints step position and stashed message', () => {
-      printWorkflowStashed({ current: '2', total: 5 });
-      expect(consoleOutput).toContain('Step:     2/5');
-      expect(consoleOutput).toContain('Workflow stashed.');
+      printWorkflowStashed({ current: '2', total: 5 }, writer);
+      expect(writer.getOutput()).toContain('Step:     2/5');
+      expect(writer.getOutput()).toContain('Workflow stashed.');
     });
   });
 
   describe('printNoActiveWorkflow', () => {
     it('prints no active workflow message', () => {
-      printNoActiveWorkflow();
-      expect(consoleOutput).toEqual(['No active workflow.']);
+      printNoActiveWorkflow(writer);
+      expect(writer.getLines()).toEqual(['No active workflow.']);
     });
   });
 });
