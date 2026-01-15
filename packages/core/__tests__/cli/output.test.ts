@@ -37,6 +37,14 @@ describe('output formatter', () => {
     it('formats position with substep', () => {
       expect(formatPosition({ current: '2', total: 5, substep: '1' })).toBe('2.1/5');
     });
+
+    it('formats position with string total for dynamic workflows', () => {
+      expect(formatPosition({ current: '1', total: '{N}' })).toBe('1/{N}');
+    });
+
+    it('formats position with substep and string total', () => {
+      expect(formatPosition({ current: '1', total: '{N}', substep: '2' })).toBe('1.2/{N}');
+    });
   });
 
   describe('printSeparator', () => {

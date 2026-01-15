@@ -18,12 +18,13 @@ export interface WorkflowMetadata {
  *
  * Represents the current position within a workflow, typically
  * displayed in n/N format (e.g., "1/5" or "2.1/5").
+ * For dynamic workflows, total may be '{N}' to indicate unbounded.
  */
 export interface StepPosition {
   /** Current step identifier (e.g., "1", "ErrorHandler", "{N}") */
   current: string;
-  /** Total number of steps in the workflow */
-  total: number;
+  /** Total number of steps, or '{N}' for dynamic workflows */
+  total: number | string;
   /** Current substep identifier within the step (e.g., "1", "2") */
   substep?: string;
 }
