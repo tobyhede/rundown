@@ -62,15 +62,13 @@ describe('integration: GOTO patterns', () => {
 
         expect(result1.stdout).toContain('Jump Target');
 
-  
+
 
         const state = await getActiveState(workspace);
 
         expect(state?.step).toBe('3');
 
-  
 
-        // Complete from step 3
 
         // Complete from step 3
 

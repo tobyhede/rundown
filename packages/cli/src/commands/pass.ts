@@ -54,10 +54,10 @@ export function registerPassCommand(program: Command): void {
           }
         }
 
-              if (!state) {
-                console.log('No active runbook');
-                return;
-              }
+        if (!state) {
+          console.log('No active runbook');
+          return;
+        }
         const workflowPath = await resolveRunbookFile(cwd, state.workflow);
         if (!workflowPath) {
           throw new Error(`Workflow file ${state.workflow} not found`);

@@ -32,10 +32,11 @@ export function registerEchoCommand(program: Command): void {
         const cwd = getCwd();
         const manager = new WorkflowStateManager(cwd);
         const state = await manager.getActive();
-            if (!state) {
-              console.error('Error: No active runbook.');
-              process.exit(1);
-            }        const sequence = options.result.length > 0 ? options.result.map(r => r.toLowerCase()) : DEFAULT_RESULT_SEQUENCE;
+        if (!state) {
+          console.error('Error: No active runbook.');
+          process.exit(1);
+        }
+        const sequence = options.result.length > 0 ? options.result.map(r => r.toLowerCase()) : DEFAULT_RESULT_SEQUENCE;
 
         // Validate all results are 'pass' or 'fail'
         for (const r of sequence) {
@@ -58,7 +59,6 @@ export function registerEchoCommand(program: Command): void {
           const currentStepIndex = steps.findIndex(s => s.name === state.step);
           const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
           // currentStep is guaranteed to exist from array index
-           
           if (currentStep) {
             retryMax = getStepRetryMax(currentStep);
           }

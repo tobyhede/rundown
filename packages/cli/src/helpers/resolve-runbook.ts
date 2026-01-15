@@ -55,7 +55,7 @@ async function resolveByPath(cwd: string, filename: string): Promise<string | nu
  * Path mode: contains '/' or ends with '.md'
  * Name mode: plain identifier (e.g., "verify")
  *
- * @param identifier - Workflow identifier
+ * @param identifier - Runbook identifier
  * @returns true if path-based, false if name-based
  */
 function isPathIdentifier(identifier: string): boolean {
