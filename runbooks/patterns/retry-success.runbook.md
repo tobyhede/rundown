@@ -1,6 +1,10 @@
 ---
 name: retry-success
 description: Tests that RETRY succeeds before count is exhausted
+tags:
+  - retry
+  - transition
+  - auto-exec
 
 scenarios:
   success-first-try:
@@ -15,6 +19,11 @@ scenarios:
       - rd run --prompted retry-success.runbook.md
       - rd fail
       - rd pass
+    result: COMPLETE
+  auto-execution:
+    description: Code block auto-executes - fails once then passes on retry
+    commands:
+      - rd run retry-success.runbook.md
     result: COMPLETE
 ---
 
