@@ -19,7 +19,7 @@ function getFilesRecursively(dir: string): string[] {
     const filePath = path.join(dir, file);
     const stat = fs.statSync(filePath);
     
-    if (stat && stat.isDirectory()) {
+    if (stat.isDirectory()) {
       results = results.concat(getFilesRecursively(filePath));
     } else if (file.endsWith('.runbook.md')) {
       results.push(filePath);

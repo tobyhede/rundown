@@ -56,11 +56,11 @@ describe('integration: GOTO patterns', () => {
 
         // Step 1 passes → GOTO 3
 
-        let result = runCli('pass', workspace);
+        const result1 = runCli('pass', workspace);
 
-        expect(result.stdout).toContain('## 3');
+        expect(result1.stdout).toContain('## 3');
 
-        expect(result.stdout).toContain('Jump Target');
+        expect(result1.stdout).toContain('Jump Target');
 
   
 
@@ -72,9 +72,9 @@ describe('integration: GOTO patterns', () => {
 
         // Complete from step 3
 
-        result = runCli('pass', workspace);
+        const result2 = runCli('pass', workspace);
 
-        expect(result.stdout).toContain('complete');
+        expect(result2.stdout).toContain('complete');
 
       });
 
@@ -96,11 +96,11 @@ describe('integration: GOTO patterns', () => {
 
         // Substep 4.1 passes → GOTO 4.3
 
-        let result = runCli('pass', workspace);
+        const result1 = runCli('pass', workspace);
 
-        expect(result.stdout).toContain('GOTO 4.3');
+        expect(result1.stdout).toContain('GOTO 4.3');
 
-        expect(result.stdout).toContain('Step:     4.3');
+        expect(result1.stdout).toContain('Step:     4.3');
 
   
 
@@ -116,9 +116,9 @@ describe('integration: GOTO patterns', () => {
 
         // Complete from 4.3
 
-        result = runCli('pass', workspace);
+        const result2 = runCli('pass', workspace);
 
-        expect(result.stdout).toContain('complete');
+        expect(result2.stdout).toContain('complete');
 
       });
 
@@ -138,21 +138,21 @@ describe('integration: GOTO patterns', () => {
 
         // First instance: {N}.1 → GOTO {N}.3 (dynamic steps use {N} template)
 
-        let result = runCli('pass', workspace);
+        const result1 = runCli('pass', workspace);
 
-        expect(result.stdout).toContain('GOTO {N}.3');
+        expect(result1.stdout).toContain('GOTO {N}.3');
 
-        expect(result.stdout).toContain('Step:     1.3/{N}');
+        expect(result1.stdout).toContain('Step:     1.3/{N}');
 
   
 
         // {N}.3 passes → GOTO NEXT advances the dynamic instance
 
-        result = runCli('pass', workspace);
+        const result2 = runCli('pass', workspace);
 
         // Dynamic step advancement is indicated by step counter reset
 
-        expect(result.stdout).toContain('{N}');
+        expect(result2.stdout).toContain('{N}');
 
       });
 
@@ -172,7 +172,7 @@ describe('integration: GOTO patterns', () => {
 
         // Instance passes → GOTO NEXT (rendered as step advancement)
 
-        let result = runCli('pass', workspace);
+        const result = runCli('pass', workspace);
 
         // Dynamic steps show {N} template in output
 
@@ -202,17 +202,17 @@ describe('integration: GOTO patterns', () => {
 
         // Initialize passes → GOTO Cleanup
 
-        let result = runCli('pass', workspace);
+        const result1 = runCli('pass', workspace);
 
-        expect(result.stdout).toContain('Cleanup');
+        expect(result1.stdout).toContain('Cleanup');
 
   
 
         // Cleanup passes → COMPLETE
 
-        result = runCli('pass', workspace);
+        const result2 = runCli('pass', workspace);
 
-        expect(result.stdout).toContain('complete');
+        expect(result2.stdout).toContain('complete');
 
       });
 
@@ -230,7 +230,7 @@ describe('integration: GOTO patterns', () => {
 
         // Process passes → GOTO 1
 
-        let result = runCli('pass', workspace);
+        const result = runCli('pass', workspace);
 
         expect(result.stdout).toContain('## 1');
 

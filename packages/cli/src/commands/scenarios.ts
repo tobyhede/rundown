@@ -6,13 +6,9 @@ import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import {
-  success,
-  failure,
   info,
   dim,
-  colorizeResult,
   colorizeStatus,
-  printSeparator,
 } from '@rundown/core';
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
 import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
