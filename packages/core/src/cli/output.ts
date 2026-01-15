@@ -1,4 +1,4 @@
-import type { Step } from '../workflow/types.js';
+import type { Step, Substep } from '../workflow/types.js';
 import type { WorkflowMetadata, StepPosition, ActionBlockData } from './types.js';
 import { renderStepForCLI } from './render.js';
 
@@ -61,19 +61,19 @@ export function printActionBlock(data: ActionBlockData): void {
 }
 
 /**
- * Print step block to stdout.
+ * Print step or substep block to stdout.
  *
- * Outputs the step position and rendered step content.
- * For dynamic steps, substitutes {N} and {n} with actual instance/substep numbers.
+ * Outputs the step position and rendered content for the current item.
+ * For dynamic items, substitutes {N} and {n} with the actual instance/substep numbers.
  *
  * @param pos - The current step position
- * @param step - The Step to render and display
+ * @param item - The Step or Substep to render and display
  */
-export function printStepBlock(pos: StepPosition, step: Step): void {
+export function printStepBlock(pos: StepPosition, item: Step | Substep): void {
   console.log('');
   console.log(`Step:     ${formatPosition(pos)}`);
   console.log('');
-  console.log(renderStepForCLI(step, pos.current, pos.substep));
+  console.log(renderStepForCLI(item, pos.current, pos.substep));
 }
 
 /**
