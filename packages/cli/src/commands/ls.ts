@@ -6,7 +6,7 @@ import {
   printNoWorkflows,
 } from '@rundown/core';
 import { discoverRunbooks } from '../services/discovery.js';
-import { getCwd, getStepCount } from '../helpers/context.js';
+import { getCwd, getStepTotal } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { printTable } from '../helpers/table-formatter.js';
 
@@ -107,11 +107,15 @@ export function registerLsCommand(program: Command): void {
               status = 'inactive';
             }
 
-            const totalSteps = await getStepCount(cwd, state.workflow);
+            const totalSteps = await getStepTotal(cwd, state.workflow);
+            // Use state.instance for dynamic workflows
+            const displayStep = state.instance !== undefined
+              ? String(state.instance)
+              : state.step;
             return {
               id: state.id.slice(0, 8),
               status,
-              step: `${state.step}/${String(totalSteps)}`,
+              step: `${displayStep}/${String(totalSteps)}`,
               workflow: state.workflow,
               title: state.title ?? '',
             };
