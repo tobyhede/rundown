@@ -1,5 +1,7 @@
 import type { Step, Substep } from '../workflow/types.js';
 import type { WorkflowMetadata, StepPosition, ActionBlockData } from './types.js';
+import type { OutputWriter } from './writer.js';
+import { getWriter } from './context.js';
 import { renderStepForCLI } from './render.js';
 
 const SEPARATOR = '-----';
@@ -13,9 +15,7 @@ const SEPARATOR = '-----';
  * @returns Formatted position string (e.g., "1/5", "2.1/5")
  */
 export function formatPosition(pos: StepPosition): string {
-  const stepPart = pos.substep
-    ? `${pos.current}.${pos.substep}`
-    : pos.current;
+  const stepPart = pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
   return `${stepPart}/${String(pos.total)}`;
 }
 
@@ -23,9 +23,11 @@ export function formatPosition(pos: StepPosition): string {
  * Print separator line to stdout.
  *
  * Outputs a visual separator ("-----") for CLI output formatting.
+ *
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printSeparator(): void {
-  console.log(SEPARATOR);
+export function printSeparator(writer: OutputWriter = getWriter()): void {
+  writer.writeLine(SEPARATOR);
 }
 
 /**
@@ -34,12 +36,16 @@ export function printSeparator(): void {
  * Outputs workflow metadata including file path, state, and optional prompt status.
  *
  * @param meta - The WorkflowMetadata to display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printMetadata(meta: WorkflowMetadata): void {
-  console.log(`File:     ${meta.file}`);
-  console.log(`State:    ${meta.state}`);
+export function printMetadata(
+  meta: WorkflowMetadata,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine(`File:     ${meta.file}`);
+  writer.writeLine(`State:    ${meta.state}`);
   if (meta.prompted) {
-    console.log(`Prompt:   Yes`);
+    writer.writeLine(`Prompt:   Yes`);
   }
 }
 
@@ -49,14 +55,18 @@ export function printMetadata(meta: WorkflowMetadata): void {
  * Outputs the action taken, optional source step position, and optional result.
  *
  * @param data - The ActionBlockData containing action details
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printActionBlock(data: ActionBlockData): void {
-  console.log(`Action:   ${data.action}`);
+export function printActionBlock(
+  data: ActionBlockData,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine(`Action:   ${data.action}`);
   if (data.from) {
-    console.log(`From:     ${formatPosition(data.from)}`);
+    writer.writeLine(`From:     ${formatPosition(data.from)}`);
   }
   if (data.result) {
-    console.log(`Result:   ${data.result}`);
+    writer.writeLine(`Result:   ${data.result}`);
   }
 }
 
@@ -68,12 +78,17 @@ export function printActionBlock(data: ActionBlockData): void {
  *
  * @param pos - The current step position
  * @param item - The Step or Substep to render and display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printStepBlock(pos: StepPosition, item: Step | Substep): void {
-  console.log('');
-  console.log(`Step:     ${formatPosition(pos)}`);
-  console.log('');
-  console.log(renderStepForCLI(item, pos.current, pos.substep));
+export function printStepBlock(
+  pos: StepPosition,
+  item: Step | Substep,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('');
+  writer.writeLine(`Step:     ${formatPosition(pos)}`);
+  writer.writeLine('');
+  writer.writeLine(renderStepForCLI(item, pos.current, pos.substep));
 }
 
 /**
@@ -82,11 +97,15 @@ export function printStepBlock(pos: StepPosition, item: Step | Substep): void {
  * Outputs the command that is about to be executed with a shell prompt prefix.
  *
  * @param command - The shell command to display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printCommandExec(command: string): void {
-  console.log('');
-  console.log(`$ ${command}`);
-  console.log('');
+export function printCommandExec(
+  command: string,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('');
+  writer.writeLine(`$ ${command}`);
+  writer.writeLine('');
 }
 
 /**
@@ -95,13 +114,17 @@ export function printCommandExec(command: string): void {
  * Outputs a message indicating the workflow has completed successfully.
  *
  * @param message - Optional completion message to display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowComplete(message?: string): void {
-  console.log('');
+export function printWorkflowComplete(
+  message?: string,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('');
   if (message) {
-    console.log(`Workflow complete: ${message}`);
+    writer.writeLine(`Workflow complete: ${message}`);
   } else {
-    console.log('Workflow complete.');
+    writer.writeLine('Workflow complete.');
   }
 }
 
@@ -111,13 +134,17 @@ export function printWorkflowComplete(message?: string): void {
  * Outputs a message indicating the workflow has been stopped.
  *
  * @param message - Optional stop message to display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowStopped(message?: string): void {
-  console.log('');
+export function printWorkflowStopped(
+  message?: string,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('');
   if (message) {
-    console.log(`Workflow stopped: ${message}`);
+    writer.writeLine(`Workflow stopped: ${message}`);
   } else {
-    console.log('Workflow stopped.');
+    writer.writeLine('Workflow stopped.');
   }
 }
 
@@ -128,16 +155,19 @@ export function printWorkflowStopped(message?: string): void {
  *
  * @param pos - The step position where the workflow was stopped
  * @param message - Optional stop message to display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowStoppedAtStep(pos: StepPosition, message?: string): void {
-  console.log('');
-  const stepStr = pos.substep
-    ? `${pos.current}.${pos.substep}`
-    : pos.current;
+export function printWorkflowStoppedAtStep(
+  pos: StepPosition,
+  message?: string,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('');
+  const stepStr = pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
   if (message) {
-    console.log(`Workflow stopped at step ${stepStr}: ${message}`);
+    writer.writeLine(`Workflow stopped at step ${stepStr}: ${message}`);
   } else {
-    console.log(`Workflow stopped at step ${stepStr}.`);
+    writer.writeLine(`Workflow stopped at step ${stepStr}.`);
   }
 }
 
@@ -147,30 +177,40 @@ export function printWorkflowStoppedAtStep(pos: StepPosition, message?: string):
  * Outputs a message indicating the workflow has been stashed at the given position.
  *
  * @param pos - The step position where the workflow was stashed
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowStashed(pos: StepPosition): void {
-  console.log('');
-  console.log(`Step:     ${formatPosition(pos)}`);
-  console.log('');
-  console.log('Workflow stashed.');
+export function printWorkflowStashed(
+  pos: StepPosition,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('');
+  writer.writeLine(`Step:     ${formatPosition(pos)}`);
+  writer.writeLine('');
+  writer.writeLine('Workflow stashed.');
 }
 
 /**
  * Print no active workflow message to stdout.
  *
  * Outputs a message indicating there is no currently active workflow.
+ *
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printNoActiveWorkflow(): void {
-  console.log('No active workflow.');
+export function printNoActiveWorkflow(
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('No active workflow.');
 }
 
 /**
  * Print no workflows message to stdout.
  *
  * Outputs a message indicating there are no workflows available.
+ *
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printNoWorkflows(): void {
-  console.log('No workflows.');
+export function printNoWorkflows(writer: OutputWriter = getWriter()): void {
+  writer.writeLine('No workflows.');
 }
 
 /**
@@ -183,14 +223,16 @@ export function printNoWorkflows(): void {
  * @param step - The current step position
  * @param file - The workflow source file path
  * @param title - Optional workflow title
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printWorkflowListEntry(
   id: string,
   status: string,
   step: string,
   file: string,
-  title?: string
+  title?: string,
+  writer: OutputWriter = getWriter()
 ): void {
   const titleStr = title ? `  [${title}]` : '';
-  console.log(`${id}  ${status}  ${step}  ${file}${titleStr}`);
+  writer.writeLine(`${id}  ${status}  ${step}  ${file}${titleStr}`);
 }
