@@ -3,14 +3,14 @@ name: dynamic-batch
 description: Dynamic batch processing with {n} substep pattern for iteration
 
 scenarios:
-  single-item:
+  single:
     description: Process one item and complete
     commands:
       - rd run --prompted dynamic-batch.runbook.md
       - rd pass
       - rd fail
     result: COMPLETE
-  multiple-items:
+  multiple:
     description: Process multiple items before completing
     commands:
       - rd run --prompted dynamic-batch.runbook.md

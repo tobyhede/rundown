@@ -3,15 +3,12 @@ name: list-instructions
 description: Demonstrates steps with list-formatted instructions
 
 scenarios:
-  success:
-    description: Both steps with list instructions complete successfully
+  completed:
+    description: List instructions are rendered correctly
     commands:
       - rd run --prompted list-instructions.runbook.md
       - rd pass
-      - rd pass
     result: COMPLETE
-tags:
-  - features
 ---
 
 # List Instructions

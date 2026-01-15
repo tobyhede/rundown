@@ -5,14 +5,14 @@ tags:
   - sequential
 
 scenarios:
-  success-first-try:
+  immediate:
     description: Both steps pass on first attempt
     commands:
       - rd run --prompted standard-sequential.runbook.md
       - rd pass
       - rd pass
     result: COMPLETE
-  success-after-retry:
+  after-retry:
     description: Step 2 fails twice then passes (using retry)
     commands:
       - rd run --prompted standard-sequential.runbook.md

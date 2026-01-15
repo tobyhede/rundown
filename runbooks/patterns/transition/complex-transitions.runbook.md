@@ -5,7 +5,7 @@ tags:
   - transition
 
 scenarios:
-  success:
+  completed:
     description: All steps pass through to completion
     commands:
       - rd run --prompted complex-transitions.runbook.md

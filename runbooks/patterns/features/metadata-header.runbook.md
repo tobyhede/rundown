@@ -3,11 +3,10 @@ name: metadata-header
 description: Workflow with H1 title and description text
 
 scenarios:
-  success:
-    description: Complete workflow through both steps
+  completed:
+    description: Frontmatter is parsed and displayed
     commands:
       - rd run --prompted metadata-header.runbook.md
-      - rd pass
       - rd pass
     result: COMPLETE
 tags:

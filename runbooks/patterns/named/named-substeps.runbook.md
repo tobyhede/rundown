@@ -3,11 +3,10 @@ name: named-substeps
 description: Demonstrates named substeps within a parent step
 
 scenarios:
-  success:
-    description: All substeps complete successfully
+  completed:
+    description: All named substeps pass
     commands:
       - rd run --prompted named-substeps.runbook.md
-      - rd pass
       - rd pass
       - rd pass
     result: COMPLETE

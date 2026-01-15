@@ -2,10 +2,10 @@
 name: agent-task-lint
 description: Lint task for agent
 scenarios:
-  success:
-    description: Lint task completes successfully
+  completed:
+    description: Lint passes
     commands:
-      - rd run --prompted agent-task-lint.runbook.md
+      - rd run --rd run --prompted agent-task-lint.runbook.md
       - rd pass
     result: COMPLETE
   failure:

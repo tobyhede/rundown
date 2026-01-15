@@ -3,7 +3,7 @@ name: workflow-composition
 description: Demonstrates composing multiple child workflows to verify lint, types, and tests all pass
 
 scenarios:
-  all-checks-pass:
+  completed:
     description: Tests successful completion when all child workflows pass
     commands:
       - rd run --prompted workflow-composition.runbook.md
@@ -12,7 +12,7 @@ scenarios:
       - rd pass
     result: COMPLETE
 
-  child-workflow-fails:
+  child-fails:
     description: Tests failure when a child workflow fails
     commands:
       - rd run --prompted workflow-composition.runbook.md

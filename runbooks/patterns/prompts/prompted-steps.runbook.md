@@ -3,8 +3,8 @@ name: prompted-steps
 description: Steps with explicit and implicit prompt definitions
 
 scenarios:
-  success:
-    description: Both prompted steps complete successfully
+  completed:
+    description: All steps pass successfully
     commands:
       - rd run --prompted prompted-steps.runbook.md
       - rd pass

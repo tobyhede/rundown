@@ -5,7 +5,7 @@ tags:
   - composition
 
 scenarios:
-  success:
+  completed:
     description: Agent binds and completes child workflow
     commands:
       - rd run --prompted agent-binding-simple.runbook.md

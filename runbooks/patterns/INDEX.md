@@ -1,6 +1,30 @@
 # Rundown Patterns
 
-Common patterns for Rundown workflows. See [MATRIX.md](./MATRIX.md) for complete coverage matrix and [SPEC.md](../../docs/SPEC.md) for syntax reference.
+Common patterns for Rundown runbooks. See [MATRIX.md](./MATRIX.md) for complete coverage matrix and [SPEC.md](../../docs/SPEC.md) for syntax reference.
+
+## Scenario Naming Taxonomy
+
+To ensure clarity and consistency across all pattern examples, we follow a holistic naming strategy where the **filename** and **scenario name** work together to describe the intent.
+
+### Holistic Strategy
+
+1.  **The "Default" Rule**: If a runbook demonstrates a single primary path, use `completed`. This is concise and avoids repeating words from the filename.
+2.  **The "Variation" Rule**: When a runbook has multiple paths to the same result, the scenario name describes the **differentiating branch or condition** (e.g., `via-named` vs `via-static`).
+3.  **The "Choice" Rule**: If the runbook centers on a specific decision point (like a failure transition), use the **action taken** as the scenario name (e.g., `continue` vs `stop`).
+4.  **Remove Redundancy**: Do not include "success", "failure", or the core topic of the filename in the scenario name. The `result` field already indicates the outcome.
+
+### Coherent Taxonomy
+
+| Category | Scenario Name | Focus |
+| :--- | :--- | :--- |
+| **Simple** | `completed`, `stopped` | Standard primary outcomes. |
+| **Branching** | `via-[name]`, `skipped-[name]` | Destination or path taken. |
+| **Retries** | `immediate`, `after-retry` | Timing of success. |
+| **Exhaustion** | `continue`, `stop`, `goto-[name]` | Action taken after retry limit reached. |
+| **Dynamic** | `single`, `multiple`, `batch` | Volume of iterations. |
+| **Composition** | `completed`, `agent-fails`, `child-fails` | Failure mode in delegation. |
+
+---
 
 ## Contents
 

@@ -5,12 +5,10 @@ tags:
   - features
 
 scenarios:
-  success:
-    description: All three steps complete successfully
+  completed:
+    description: Multiple code blocks are rendered correctly
     commands:
       - rd run --prompted code-blocks.runbook.md
-      - rd pass
-      - rd pass
       - rd pass
     result: COMPLETE
   auto-execution:

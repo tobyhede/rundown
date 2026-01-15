@@ -3,7 +3,7 @@ name: nested-static-substeps
 description: Demonstrates static nested substeps without explicit transitions, showing hierarchical structure and implicit step completion.
 
 scenarios:
-  basic-completion:
+  completed:
     description: Tests completing all static substeps in sequence
     commands:
       - rd run --prompted nested-static-substeps.runbook.md

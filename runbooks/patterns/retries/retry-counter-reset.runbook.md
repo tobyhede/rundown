@@ -5,7 +5,7 @@ tags:
   - retries
 
 scenarios:
-  success:
+  after-retry:
     description: First step exhausts retry then GOTOs to step 2, which retries and succeeds
     commands:
       - rd run --prompted retry-counter-reset.runbook.md

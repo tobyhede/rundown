@@ -5,6 +5,15 @@ import { basename, dirname, join } from 'path';
 import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import {
+  success,
+  failure,
+  info,
+  dim,
+  colorizeResult,
+  colorizeStatus,
+  printSeparator,
+} from '@rundown/core';
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
 import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
@@ -250,14 +259,18 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
       }
     }
 
-    // 4. Print plan (Name + Expected)
-    console.log(`Name:     ${scenarioName}`);
-    console.log(`Expected: ${scenario.result}`);
+    // 4. Print scenario header
+    console.log(`${dim('Scenario:')}  ${info(scenarioName)}`);
     console.log();
 
     // 5. Execute commands in sequence
     for (const cmd of scenario.commands) {
-      console.log(`$ ${cmd}`);
+      if (!quiet) {
+        console.log(dim('---'));
+        console.log(`${dim('$')} ${cmd}`);
+        console.log();
+      }
+
       // Replace 'rd ' with actual CLI path to avoid shell alias issues
       const actualCmd = cmd.replace(/^rd\s+/, `node ${CLI_PATH} `);
       try {
@@ -271,7 +284,10 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
         // Command may exit non-zero for STOP scenarios, which is expected
       }
     }
-    console.log();
+
+    if (!quiet) {
+      console.log();
+    }
 
     // 6. Check final state
     const runsDir = join(tmpDir, '.claude', 'rundown', 'runs');
@@ -302,14 +318,19 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
       // State file may not exist
     }
 
-    // 6. Report result
-    console.log(`Result: ${actualResult}`);
+    // 7. Report result
+    const matches = actualResult === scenario.result;
+    
+    if (!quiet) {
+      console.log(dim('---'));
+    }
+    console.log(`Scenario: ${colorizeStatus(actualResult)}`);
 
-    if (actualResult !== scenario.result) {
+    if (!matches) {
       process.exit(1);
     }
   } finally {
-    // 7. Cleanup temp directory
+    // 8. Cleanup temp directory
     await rm(tmpDir, { recursive: true, force: true });
   }
 }

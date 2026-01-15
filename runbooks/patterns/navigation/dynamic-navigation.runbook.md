@@ -3,7 +3,7 @@ name: dynamic-navigation
 description: Dynamic step navigation with conditional flow control and GOTO patterns
 
 scenarios:
-  single-iteration:
+  single:
     description: Process one iteration then stop via fail
     commands:
       - rd run --prompted dynamic-navigation.runbook.md
@@ -11,7 +11,7 @@ scenarios:
       - rd pass
       - rd fail
     result: STOP
-  multiple-iterations:
+  multiple:
     description: Process two iterations then stop via fail
     commands:
       - rd run --prompted dynamic-navigation.runbook.md

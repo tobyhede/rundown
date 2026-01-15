@@ -5,13 +5,13 @@ tags:
   - retries
 
 scenarios:
-  success-first-try:
+  immediate:
     description: Step passes on first attempt
     commands:
       - rd run --prompted retry-success.runbook.md
       - rd pass
     result: COMPLETE
-  success-after-retry:
+  after-retry:
     description: Fails first, succeeds on retry
     commands:
       - rd run --prompted retry-success.runbook.md

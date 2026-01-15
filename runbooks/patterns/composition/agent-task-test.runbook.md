@@ -2,8 +2,8 @@
 name: agent-task-test
 description: Test task for agent
 scenarios:
-  success:
-    description: Test task completes successfully
+  completed:
+    description: Tests pass
     commands:
       - rd run --prompted agent-task-test.runbook.md
       - rd pass

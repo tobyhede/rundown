@@ -3,7 +3,7 @@ name: substep-transitions
 description: Tests discrete transitions and navigation at the substep level, including conditional branching with GOTO and error handling with retries.
 
 scenarios:
-  happy-path:
+  completed:
     description: Tests successful completion through branch point
     commands:
       - rd run --prompted substep-transitions.runbook.md
@@ -12,7 +12,7 @@ scenarios:
       - rd pass
       - rd pass
     result: COMPLETE
-  retry-on-failure:
+  after-retry:
     description: Tests retry behavior when initial step fails
     commands:
       - rd run --prompted substep-transitions.runbook.md
@@ -22,7 +22,7 @@ scenarios:
       - rd pass
       - rd pass
     result: COMPLETE
-  goto-branch:
+  via-branch:
     description: Tests GOTO transition to skip alternative path
     commands:
       - rd run --prompted substep-transitions.runbook.md

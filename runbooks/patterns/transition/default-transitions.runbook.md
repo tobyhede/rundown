@@ -5,14 +5,14 @@ tags:
   - transition
 
 scenarios:
-  success:
+  completed:
     description: Both steps pass with implicit transitions
     commands:
       - rd run --prompted default-transitions.runbook.md
       - rd pass
       - rd pass
     result: COMPLETE
-  fail-stops:
+  stopped:
     description: First step fails, workflow stops due to implicit FAIL to STOP
     commands:
       - rd run --prompted default-transitions.runbook.md

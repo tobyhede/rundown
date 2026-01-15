@@ -131,9 +131,9 @@ export function printWorkflowComplete(
 ): void {
   writer.writeLine('');
   if (message) {
-    writer.writeLine(success(`Workflow complete: ${message}`));
+    writer.writeLine(`${success('Runbook:')}  ${success('COMPLETE')} (${message})`);
   } else {
-    writer.writeLine(success('Workflow complete.'));
+    writer.writeLine(`${success('Runbook:')}  ${success('COMPLETE')}`);
   }
 }
 
@@ -151,9 +151,9 @@ export function printWorkflowStopped(
 ): void {
   writer.writeLine('');
   if (message) {
-    writer.writeLine(failure(`Workflow stopped: ${message}`));
+    writer.writeLine(`${failure('Runbook:')}  ${failure('STOPPED')} (${message})`);
   } else {
-    writer.writeLine(failure('Workflow stopped.'));
+    writer.writeLine(`${failure('Runbook:')}  ${failure('STOPPED')}`);
   }
 }
 
@@ -174,9 +174,9 @@ export function printWorkflowStoppedAtStep(
   writer.writeLine('');
   const stepStr = pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
   if (message) {
-    writer.writeLine(failure(`Workflow stopped at step ${stepStr}: ${message}`));
+    writer.writeLine(`${failure('Runbook:')}  ${failure('STOPPED')} (step ${stepStr}: ${message})`);
   } else {
-    writer.writeLine(failure(`Workflow stopped at step ${stepStr}.`));
+    writer.writeLine(`${failure('Runbook:')}  ${failure('STOPPED')} (step ${stepStr})`);
   }
 }
 
@@ -195,7 +195,7 @@ export function printWorkflowStashed(
   writer.writeLine('');
   writer.writeLine(`Step:     ${info(formatPosition(pos))}`);
   writer.writeLine('');
-  writer.writeLine(warning('Workflow stashed.'));
+  writer.writeLine(`${warning('Runbook:')}  ${warning('STASHED')}`);
 }
 
 /**
@@ -208,7 +208,7 @@ export function printWorkflowStashed(
 export function printNoActiveWorkflow(
   writer: OutputWriter = getWriter()
 ): void {
-  writer.writeLine(dim('No active workflow.'));
+  writer.writeLine(dim('No active runbook.'));
 }
 
 /**
@@ -219,7 +219,7 @@ export function printNoActiveWorkflow(
  * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printNoWorkflows(writer: OutputWriter = getWriter()): void {
-  writer.writeLine(dim('No workflows.'));
+  writer.writeLine(dim('No runbooks.'));
 }
 
 /**

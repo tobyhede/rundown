@@ -3,7 +3,7 @@ name: dynamic-step-next
 description: Tests GOTO NEXT navigation which advances to the next step in dynamic workflow
 
 scenarios:
-  iterate-then-stop:
+  stopped:
     description: Pass to advance, then fail to stop workflow
     commands:
       - rd run --prompted dynamic-step-next.runbook.md
