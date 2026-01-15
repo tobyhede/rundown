@@ -73,3 +73,46 @@ describe('renderStepForCLI', () => {
     expect(result).not.toContain('Substep');
   });
 });
+
+describe('dynamic step rendering', () => {
+  it('substitutes {N} with instance number in heading', () => {
+    const step: Step = {
+      name: '{N}',
+      description: 'Process Batch',
+      isDynamic: true,
+      prompt: 'Process the batch.',
+    };
+
+    const result = renderStepForCLI(step, '1');
+
+    expect(result).toContain('## 1. Process Batch');
+    expect(result).not.toContain('{N}');
+  });
+
+  it('substitutes {N} and {n} with instance and substep numbers', () => {
+    const step: Step = {
+      name: '{N}',
+      description: 'Process Batch',
+      isDynamic: true,
+      prompt: 'Process item {n} in batch {N}.',
+    };
+
+    const result = renderStepForCLI(step, '2', '3');
+
+    expect(result).toContain('## 2. Process Batch');
+    expect(result).toContain('Process item 3 in batch 2.');
+  });
+
+  it('leaves non-dynamic steps unchanged', () => {
+    const step: Step = {
+      name: '1',
+      description: 'First step',
+      isDynamic: false,
+      prompt: 'Do something.',
+    };
+
+    const result = renderStepForCLI(step);
+
+    expect(result).toContain('## 1. First step');
+  });
+});
