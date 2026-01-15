@@ -3,7 +3,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { parseWorkflow } from '@rundown/core';
-import { resolveWorkflowFile } from './resolve-workflow.js';
+import { resolveRunbookFile } from './resolve-runbook.js';
 
 /**
  * Get current working directory.
@@ -22,7 +22,7 @@ export function getCwd(): string {
  */
 export async function isDynamicWorkflow(cwd: string, workflowPath: string): Promise<boolean> {
   try {
-    const fullPath = await resolveWorkflowFile(cwd, workflowPath);
+    const fullPath = await resolveRunbookFile(cwd, workflowPath);
     if (!fullPath) return false;
     const content = await fs.readFile(fullPath, 'utf8');
     const steps = parseWorkflow(content);
@@ -42,7 +42,7 @@ export async function isDynamicWorkflow(cwd: string, workflowPath: string): Prom
  */
 export async function getStepTotal(cwd: string, workflowPath: string): Promise<number | string> {
   try {
-    const fullPath = await resolveWorkflowFile(cwd, workflowPath);
+    const fullPath = await resolveRunbookFile(cwd, workflowPath);
     if (!fullPath) return 0;
     const content = await fs.readFile(fullPath, 'utf8');
     const steps = parseWorkflow(content);
@@ -64,7 +64,7 @@ export async function getStepTotal(cwd: string, workflowPath: string): Promise<n
  */
 export async function getStepCount(cwd: string, workflowPath: string): Promise<number> {
   try {
-    const fullPath = await resolveWorkflowFile(cwd, workflowPath);
+    const fullPath = await resolveRunbookFile(cwd, workflowPath);
     if (!fullPath) return 0;
     const content = await fs.readFile(fullPath, 'utf8');
     const steps = parseWorkflow(content);

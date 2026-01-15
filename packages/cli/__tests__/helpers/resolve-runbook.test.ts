@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { resolveWorkflowFile } from '../../src/helpers/resolve-workflow.js';
+import { resolveRunbookFile } from '../../src/helpers/resolve-runbook.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
-describe('resolveWorkflowFile', () => {
+describe('resolveRunbookFile', () => {
   let testDir: string;
   let originalPluginRoot: string | undefined;
 
@@ -25,7 +25,7 @@ describe('resolveWorkflowFile', () => {
     await fs.mkdir(claudeDir, { recursive: true });
     await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Test');
 
-    const result = await resolveWorkflowFile(testDir, 'test.runbook.md');
+    const result = await resolveRunbookFile(testDir, 'test.runbook.md');
 
     expect(result).toBe(path.join(claudeDir, 'test.runbook.md'));
   });
@@ -38,7 +38,7 @@ describe('resolveWorkflowFile', () => {
     // Set CLAUDE_PLUGIN_ROOT for this test
     process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
 
-    const result = await resolveWorkflowFile(testDir, 'plugin.runbook.md');
+    const result = await resolveRunbookFile(testDir, 'plugin.runbook.md');
     expect(result).toBe(path.join(pluginDir, 'plugin.runbook.md'));
     // afterEach restores originalPluginRoot
   });
@@ -46,13 +46,13 @@ describe('resolveWorkflowFile', () => {
   it('should find workflow relative to cwd', async () => {
     await fs.writeFile(path.join(testDir, 'relative.runbook.md'), '# Relative');
 
-    const result = await resolveWorkflowFile(testDir, 'relative.runbook.md');
+    const result = await resolveRunbookFile(testDir, 'relative.runbook.md');
 
     expect(result).toBe(path.join(testDir, 'relative.runbook.md'));
   });
 
   it('should return null if workflow not found', async () => {
-    const result = await resolveWorkflowFile(testDir, 'nonexistent.runbook.md');
+    const result = await resolveRunbookFile(testDir, 'nonexistent.runbook.md');
 
     expect(result).toBeNull();
   });
@@ -64,7 +64,7 @@ describe('resolveWorkflowFile', () => {
     await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Claude');
     await fs.writeFile(path.join(testDir, 'test.runbook.md'), '# Relative');
 
-    const result = await resolveWorkflowFile(testDir, 'test.runbook.md');
+    const result = await resolveRunbookFile(testDir, 'test.runbook.md');
 
     expect(result).toBe(path.join(claudeDir, 'test.runbook.md'));
   });
@@ -77,7 +77,7 @@ describe('resolveWorkflowFile', () => {
 
       try {
         // Use a known bundled runbook filename (retry-success exists in runbooks/patterns/retries/)
-        const result = await resolveWorkflowFile(testDir, 'retry-success.runbook.md');
+        const result = await resolveRunbookFile(testDir, 'retry-success.runbook.md');
 
         expect(result).not.toBeNull();
         expect(result).toContain('runbooks');

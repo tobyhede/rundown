@@ -10,7 +10,7 @@ import {
   printNoActiveWorkflow,
 } from '@rundown/core';
 import { getCwd } from '../helpers/context.js';
-import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
+import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
@@ -38,7 +38,7 @@ export function registerCompleteCommand(program: Command): void {
         // Print metadata
         printMetadata(buildMetadata(state));
 
-        const workflowPath = await resolveWorkflowFile(cwd, state.workflow);
+        const workflowPath = await resolveRunbookFile(cwd, state.workflow);
         if (!workflowPath) {
           throw new Error(`Workflow file ${state.workflow} not found`);
         }

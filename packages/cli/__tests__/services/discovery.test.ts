@@ -13,6 +13,7 @@ describe('discovery service', () => {
   let tempDir: string;
   let projectRunbooksDir: string;
   let pluginRunbooksDir: string;
+  let originalBundledRunbooksPath: string | undefined;
 
   beforeEach(async () => {
     // Create isolated temp directories
@@ -22,10 +23,20 @@ describe('discovery service', () => {
 
     await mkdir(projectRunbooksDir, { recursive: true });
     await mkdir(pluginRunbooksDir, { recursive: true });
+
+    // Disable bundled runbooks for discovery tests to isolate behavior
+    originalBundledRunbooksPath = process.env.BUNDLED_RUNBOOKS_PATH;
+    process.env.BUNDLED_RUNBOOKS_PATH = '';
   });
 
   afterEach(async () => {
     await rm(tempDir, { recursive: true, force: true });
+    // Restore original bundled runbooks path
+    if (originalBundledRunbooksPath) {
+      process.env.BUNDLED_RUNBOOKS_PATH = originalBundledRunbooksPath;
+    } else {
+      delete process.env.BUNDLED_RUNBOOKS_PATH;
+    }
   });
 
   describe('getSearchPaths()', () => {

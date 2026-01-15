@@ -8,7 +8,7 @@ import {
   parseStepIdFromString,
   stepIdToString,
 } from '@rundown/core';
-import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
+import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
 import { printSeparator, printActionBlock } from '@rundown/core';
@@ -46,7 +46,7 @@ export function registerGotoCommand(program: Command): void {
           process.exit(1);
         }
 
-        const workflowPath = await resolveWorkflowFile(cwd, state.workflow);
+        const workflowPath = await resolveRunbookFile(cwd, state.workflow);
         if (!workflowPath) {
           console.error(`Error: Workflow file ${state.workflow} not found`);
           process.exit(1);

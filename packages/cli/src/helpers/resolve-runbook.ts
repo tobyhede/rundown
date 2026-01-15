@@ -82,7 +82,7 @@ function isPathIdentifier(identifier: string): boolean {
  * @returns Absolute path to runbook file, or null if not found
  * @throws May throw filesystem errors if directory access fails unexpectedly
  */
-export async function resolveWorkflowFile(cwd: string, identifier: string): Promise<string | null> {
+export async function resolveRunbookFile(cwd: string, identifier: string): Promise<string | null> {
   // Detect if identifier is path-based or name-based
   if (isPathIdentifier(identifier)) {
     // Path-based resolution: use existing logic

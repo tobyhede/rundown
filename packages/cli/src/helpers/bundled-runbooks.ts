@@ -11,6 +11,10 @@ const __dirname = dirname(__filename);
  * @returns Absolute path to the bundled runbooks directory
  */
 export function getBundledRunbooksPath(): string {
+  // Allow override for testing or custom deployments
+  if (process.env.BUNDLED_RUNBOOKS_PATH) {
+    return process.env.BUNDLED_RUNBOOKS_PATH;
+  }
   // In dist: dist/helpers/bundled-runbooks.js -> dist/runbooks/
   return join(__dirname, '..', 'runbooks');
 }

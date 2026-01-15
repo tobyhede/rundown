@@ -11,7 +11,7 @@ import {
   colorizeStatus,
 } from '@rundown/core';
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
-import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
+import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
 import { printTable } from '../helpers/table-formatter.js';
 
@@ -72,7 +72,7 @@ interface LoadedRunbook {
 
 async function loadScenarios(file: string): Promise<LoadedRunbook> {
   const cwd = process.cwd();
-  const filePath = await resolveWorkflowFile(cwd, file);
+  const filePath = await resolveRunbookFile(cwd, file);
 
   if (!filePath) {
     console.error(`Workflow file not found: ${file}`);

@@ -11,7 +11,7 @@ import {
   printWorkflowStoppedAtStep,
   evaluatePassCondition,
 } from '@rundown/core';
-import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
+import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import {
   runExecutionLoop,
@@ -58,7 +58,7 @@ export function registerPassCommand(program: Command): void {
                 console.log('No active runbook');
                 return;
               }
-        const workflowPath = await resolveWorkflowFile(cwd, state.workflow);
+        const workflowPath = await resolveRunbookFile(cwd, state.workflow);
         if (!workflowPath) {
           throw new Error(`Workflow file ${state.workflow} not found`);
         }

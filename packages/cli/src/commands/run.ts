@@ -15,7 +15,7 @@ import {
   printActionBlock,
   type PendingStep,
 } from '@rundown/core';
-import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
+import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import {
   runExecutionLoop,
@@ -67,7 +67,7 @@ export function registerRunCommand(program: Command): void {
 
         // Mode 2: File start (must come before Mode 3 to handle file + --agent case)
         if (file && !options.step) {
-          const filePath = await resolveWorkflowFile(cwd, file);
+          const filePath = await resolveRunbookFile(cwd, file);
 
           if (!filePath) {
             console.error(`Error: Runbook not found: ${file}`);
@@ -131,7 +131,7 @@ export function registerRunCommand(program: Command): void {
           console.log(`Agent ${options.agent} bound to step ${stepIdToString(pending.stepId)}`);
 
           if (pending.workflow) {
-            const workflowPath = await resolveWorkflowFile(cwd, pending.workflow);
+            const workflowPath = await resolveRunbookFile(cwd, pending.workflow);
             if (!workflowPath) {
               console.error(`Error: Runbook file not found: ${pending.workflow}`);
               process.exit(1);

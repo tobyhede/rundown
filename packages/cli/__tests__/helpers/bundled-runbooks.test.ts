@@ -11,4 +11,22 @@ describe('getBundledRunbooksPath', () => {
     const bundledPath = getBundledRunbooksPath();
     expect(bundledPath.startsWith('/')).toBe(true);
   });
+
+  describe('environment variable override', () => {
+    it('uses BUNDLED_RUNBOOKS_PATH when set', () => {
+      const originalPath = process.env.BUNDLED_RUNBOOKS_PATH;
+      process.env.BUNDLED_RUNBOOKS_PATH = '/custom/path/runbooks';
+
+      try {
+        const bundledPath = getBundledRunbooksPath();
+        expect(bundledPath).toBe('/custom/path/runbooks');
+      } finally {
+        if (originalPath) {
+          process.env.BUNDLED_RUNBOOKS_PATH = originalPath;
+        } else {
+          delete process.env.BUNDLED_RUNBOOKS_PATH;
+        }
+      }
+    });
+  });
 });
