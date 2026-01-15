@@ -84,14 +84,16 @@ export class WorkflowStateManager {
     const now = new Date().toISOString();
 
     const initialStep = workflow.steps[0];
-    const stepName = initialStep.name;  // Already a string: "1", "ErrorHandler", "{N}"
+    // For dynamic workflows, initialize instance counter to 1
+    const instance = initialStep.isDynamic ? 1 : undefined;
 
     const state: WorkflowState = {
       id,
       workflow: workflowFile,
       title: workflow.title,
       description: workflow.description,
-      step: stepName,           // string, not StepNumber
+      step: initialStep.name,    // Keep as '{N}' for dynamic, original name for static
+      instance,                   // 1 for dynamic, undefined for static
       stepName: initialStep.description,
       retryCount: 0,
       variables: {},

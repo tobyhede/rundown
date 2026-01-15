@@ -205,6 +205,41 @@ describe('WorkflowStateManager', () => {
     });
   });
 
+  describe('dynamic workflow initialization', () => {
+    it('initializes dynamic workflow with instance=1 and step={N}', async () => {
+      const dynamicWorkflow: Workflow = {
+        title: 'Dynamic Test',
+        steps: [{
+          name: '{N}',
+          description: 'Process Batch',
+          isDynamic: true,
+        }],
+      };
+
+      const state = await manager.create('dynamic.runbook.md', dynamicWorkflow);
+
+      expect(state.step).toBe('{N}');        // Keep {N} for machine integrity
+      expect(state.instance).toBe(1);         // Use instance field for display
+      expect(state.stepName).toBe('Process Batch');
+    });
+
+    it('does not set instance for non-dynamic workflows', async () => {
+      const staticWorkflow: Workflow = {
+        title: 'Static Test',
+        steps: [{
+          name: 'Setup',
+          description: 'Setup Step',
+          isDynamic: false,
+        }],
+      };
+
+      const state = await manager.create('static.runbook.md', staticWorkflow);
+
+      expect(state.step).toBe('Setup');
+      expect(state.instance).toBeUndefined();
+    });
+  });
+
   describe('Per-agent workflow stacks', () => {
     it('pushWorkflow adds to default stack when no agentId', async () => {
       const state = await manager.create('test.md', mockWorkflow);
