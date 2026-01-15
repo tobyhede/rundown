@@ -9,6 +9,7 @@ import {
   printWorkflowComplete,
   printWorkflowStoppedAtStep,
   type Step,
+  type Substep,
   type WorkflowMetadata,
   type WorkflowState,
   executeCommand,
@@ -147,8 +148,20 @@ export async function runExecutionLoop(
     // '{N}' indicates dynamic workflow with unbounded iterations
     const totalSteps: number | string = isDynamicWorkflow ? '{N}' : steps.length;
 
-    // Print step block with resolved instance number
-    printStepBlock({ current: displayStep, total: totalSteps, substep: state.substep }, currentStep);
+    // Determine what to render: substep if we're at one, otherwise the step
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    let itemToRender: Step | Substep = currentStep;
+    if (state!.substep && currentStep.substeps) {
+      // Find the substep - for dynamic substeps use the template, otherwise match by id
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const substep = currentStep.substeps.find(s => s.isDynamic || s.id === state!.substep);
+      if (substep) {
+        itemToRender = substep;
+      }
+    }
+
+    // Print step/substep block with resolved instance number
+    printStepBlock({ current: displayStep, total: totalSteps, substep: state.substep }, itemToRender);
 
     // If CLI prompted mode, OR no command
     if (prompted || !currentStep.command) {
