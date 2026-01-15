@@ -144,6 +144,7 @@ export async function runExecutionLoop(
       : state.step;              // Use step name: "1", "ErrorHandler", etc.
 
     // For dynamic workflows, display {N} as total; for static, use steps.length
+    // '{N}' indicates dynamic workflow with unbounded iterations
     const totalSteps: number | string = isDynamicWorkflow ? '{N}' : steps.length;
 
     // Print step block with resolved instance number

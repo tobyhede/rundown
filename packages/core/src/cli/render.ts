@@ -12,7 +12,7 @@ import type { Step } from '../workflow/types.js';
  * @param substepNumber - For dynamic substeps, the current substep number (replaces {n})
  * @returns Markdown string suitable for CLI output
  */
-export function renderStepForCLI(step: Step, instanceNumber?: string, substepNumber?: string): string {
+export function renderStepForCLI(step: Readonly<Step>, instanceNumber?: string, substepNumber?: string): string {
   const lines: string[] = [];
 
   // Resolve step name: replace {N} with instance number for dynamic steps

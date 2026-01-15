@@ -63,6 +63,7 @@ export function registerStatusCommand(program: Command): void {
         // For dynamic workflows, find step by checking if it's the dynamic template
         const currentStepIndex = isDynamic ? 0 : steps.findIndex(s => s.name === state.step);
         const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
+        // '{N}' indicates dynamic workflow with unbounded iterations
         const totalSteps: number | string = isDynamic ? '{N}' : steps.length;
         // Use state.instance for dynamic workflows, state.step for static
         const displayStep = isDynamic && state.instance !== undefined

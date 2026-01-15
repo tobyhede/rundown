@@ -15,9 +15,10 @@ export function getCwd(): string {
 
 /**
  * Check if a workflow is dynamic (first step has isDynamic: true).
+ *
  * @param cwd - Current working directory
  * @param workflowPath - Path to the workflow file
- * @returns True if the workflow's first step is dynamic
+ * @returns True if the workflow's first step is dynamic, false otherwise or on error
  */
 export async function isDynamicWorkflow(cwd: string, workflowPath: string): Promise<boolean> {
   try {
@@ -34,9 +35,10 @@ export async function isDynamicWorkflow(cwd: string, workflowPath: string): Prom
 /**
  * Get total step display value for a workflow.
  * Returns '{N}' for dynamic workflows, step count for static workflows.
+ *
  * @param cwd - Current working directory
  * @param workflowPath - Path to the workflow file
- * @returns '{N}' for dynamic workflows, or step count number
+ * @returns '{N}' for dynamic workflows, or numeric step count for static workflows, or 0 on error
  */
 export async function getStepTotal(cwd: string, workflowPath: string): Promise<number | string> {
   try {

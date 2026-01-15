@@ -130,6 +130,7 @@ export function registerFailCommand(program: Command): void {
         const prevSubstep = state.substep;
         const prevRetryCount = state.retryCount;
         const isDynamic = steps.length > 0 && steps[0].isDynamic;
+        // '{N}' indicates dynamic workflow with unbounded iterations
         const totalSteps: number | string = isDynamic ? '{N}' : steps.length;
         // Use state.instance for dynamic workflows
         const displayStep = isDynamic && state.instance !== undefined
