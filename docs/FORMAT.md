@@ -90,12 +90,20 @@ where frontmatter is:
     [ "description:" text ]
     [ "version:" text ]
     [ "author:" text ]
+    [ "tags:" tag_list ]
     [ scenarios ]
   "---"
 
 where slug is:
   [a-z0-9-]+
   (lowercase alphanumeric with hyphens)
+
+where tag_list is:
+  "- " tag { "- " tag }
+
+where tag is:
+  text
+  (any string - convention is lowercase alphanumeric with hyphens)
 
 where scenarios is:
   "scenarios:"
