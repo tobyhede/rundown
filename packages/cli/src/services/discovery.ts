@@ -3,6 +3,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { extractFrontmatter, nameFromFilename } from '@rundown/parser';
+import { getBundledRunbooksPath } from '../helpers/bundled-runbooks.js';
 
 /**
  * Metadata for a discovered runbook file.
@@ -31,14 +32,14 @@ interface SearchPath {
 
 /**
  * Get search paths for runbooks.
- * Returns project directory first (takes precedence), then plugin directory.
+ * Returns project directory first (takes precedence), then plugin directory, then bundled.
  * @param cwd - Current working directory
  * @returns Array of search paths with source information
  */
 export function getSearchPaths(cwd: string): SearchPath[] {
   const paths: SearchPath[] = [];
 
-  // Project runbooks directory
+  // Project runbooks directory (highest priority)
   const projectRunbooksDir = path.join(cwd, '.claude', 'rundown', 'runbooks');
   paths.push({
     path: projectRunbooksDir,
@@ -54,6 +55,13 @@ export function getSearchPaths(cwd: string): SearchPath[] {
       source: 'plugin',
     });
   }
+
+  // Bundled runbooks (lowest priority - fallback)
+  const bundledRunbooksDir = getBundledRunbooksPath();
+  paths.push({
+    path: bundledRunbooksDir,
+    source: 'bundled',
+  });
 
   return paths;
 }

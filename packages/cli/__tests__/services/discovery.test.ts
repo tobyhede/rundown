@@ -44,10 +44,11 @@ describe('discovery service', () => {
       try {
         const paths = getSearchPaths(tempDir);
 
-        expect(paths.length).toBe(2);
+        expect(paths.length).toBe(3);
         expect(paths[0].source).toBe('project');
         expect(paths[1].source).toBe('plugin');
         expect(paths[1].path).toBe(join(pluginRunbooksDir, 'runbooks'));
+        expect(paths[2].source).toBe('bundled');
       } finally {
         process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
       }
@@ -60,11 +61,22 @@ describe('discovery service', () => {
       try {
         const paths = getSearchPaths(tempDir);
 
-        expect(paths.length).toBe(1);
+        expect(paths.length).toBe(2);
         expect(paths[0].source).toBe('project');
+        expect(paths[1].source).toBe('bundled');
       } finally {
         process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
       }
+    });
+  });
+
+  describe('bundled runbooks', () => {
+    it('includes bundled path in search paths', () => {
+      const paths = getSearchPaths(tempDir);
+
+      const bundledPath = paths.find(p => p.source === 'bundled');
+      expect(bundledPath).toBeDefined();
+      expect(bundledPath?.path).toMatch(/runbooks$/);
     });
   });
 
