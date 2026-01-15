@@ -145,8 +145,9 @@ describe('substep rendering', () => {
 
     const result = renderStepForCLI(substep, '1', '2');
 
-    expect(result).toContain('### 1.2 Process Item');
+    expect(result).toContain('### 1.2. Process Item');
     expect(result).toContain('Process next item.');
+    expect(result).not.toContain('{n}');
   });
 
   it('substitutes {N} and {n} in substep prompt', () => {
@@ -159,7 +160,7 @@ describe('substep rendering', () => {
 
     const result = renderStepForCLI(substep, '3', '5');
 
-    expect(result).toContain('### 3.5 Process Item');
+    expect(result).toContain('### 3.5. Process Item');
     expect(result).toContain('Processing item 5 in batch 3.');
   });
 
@@ -173,7 +174,7 @@ describe('substep rendering', () => {
 
     const result = renderStepForCLI(substep, '2', '1');
 
-    expect(result).toContain('### 2.1 First Substep');
+    expect(result).toContain('### 2.1. First Substep');
   });
 
   it('substitutes {N} and {n} in substep command', () => {

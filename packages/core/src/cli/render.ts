@@ -36,7 +36,7 @@ export function renderStepForCLI(
   const headingPrefix = isStep ? '##' : '###';
   const heading = isStep
     ? `${headingPrefix} ${resolvedId}. ${item.description}`
-    : `${headingPrefix} ${instanceNumber ? `${instanceNumber}.${resolvedId}` : resolvedId} ${item.description}`;
+    : `${headingPrefix} ${instanceNumber ? `${instanceNumber}.${resolvedId}` : resolvedId}. ${item.description}`;
 
   lines.push(heading);
 

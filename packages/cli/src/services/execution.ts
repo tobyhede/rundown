@@ -149,7 +149,6 @@ export async function runExecutionLoop(
     const totalSteps: number | string = isDynamicWorkflow ? '{N}' : steps.length;
 
     // Determine what to render: substep if we're at one, otherwise the step
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     let itemToRender: Step | Substep = currentStep;
     if (state!.substep && currentStep.substeps) {
       // Find the substep - for dynamic substeps use the template, otherwise match by id
