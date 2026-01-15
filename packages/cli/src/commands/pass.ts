@@ -111,7 +111,12 @@ export function registerPassCommand(program: Command): void {
         const prevStep = state.step;
         const prevSubstep = state.substep;
         const prevRetryCount = state.retryCount;
-        const totalSteps = steps.length;
+        const isDynamic = steps.length > 0 && steps[0].isDynamic;
+        const totalSteps: number | string = isDynamic ? '{N}' : steps.length;
+        // Use state.instance for dynamic workflows
+        const displayStep = isDynamic && state.instance !== undefined
+          ? String(state.instance)
+          : state.step;
 
         // Send PASS event
         actor.send({ type: 'PASS' });
@@ -155,7 +160,7 @@ export function registerPassCommand(program: Command): void {
         printSeparator();
         printActionBlock({
           action,
-          from: { current: prevStep, total: totalSteps, substep: prevSubstep },
+          from: { current: displayStep, total: totalSteps, substep: prevSubstep },
           result: 'PASS',
         });
 
@@ -185,7 +190,7 @@ export function registerPassCommand(program: Command): void {
 
         if (isStopped) {
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
-          printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep }, passResult.message);
+          printWorkflowStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevSubstep }, passResult.message);
           process.exit(1);
         }
 
