@@ -1,6 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
 import { parseWorkflowDocument } from '../src/parser.js';
 
+/**
+ * Tests tags extraction through full document parsing (parseWorkflowDocument).
+ *
+ * These tests verify tags flow correctly from frontmatter through to the
+ * final Workflow object. For isolated frontmatter parsing tests, see
+ * frontmatter.test.ts which tests WorkflowFrontmatterSchema validation.
+ */
 describe('Tags extraction', () => {
   it('should extract tags from frontmatter', () => {
     const markdown = `---

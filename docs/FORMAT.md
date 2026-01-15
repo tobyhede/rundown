@@ -4,6 +4,18 @@ version: 1.0.0
 
 # Rundown Format
 
+## Grammar Notation
+
+| Symbol | Meaning |
+|--------|---------|
+| `[ x ]` | Optional element |
+| `{ x }` | Zero or more repetitions |
+| `x \| y` | Choice (x or y) |
+| `"text"` | Literal text |
+| `x ...` | One or more of x |
+
+---
+
 [ frontmatter ]
 # title
 [ description ]
