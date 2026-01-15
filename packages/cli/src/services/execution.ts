@@ -60,20 +60,18 @@ export async function handleNextInstanceFlags(
 ): Promise<WorkflowState> {
   let state = updatedState;
 
-  // Handle NEXT step action: increment step instance for dynamic steps
+  // Handle NEXT step action: increment instance for dynamic workflows
   const nextInstance = snapshot.context.nextInstance;
   if (nextInstance && !isComplete && !isStopped) {
-    // Increment instance number for dynamic workflows (step_1 -> step_2, etc.)
-    const match = /^step_(\\d+)$/.exec(state.step);
-    if (match) {
-      const currentInstanceNum = parseInt(match[1], 10);
-      const nextStepNumberValue = currentInstanceNum + 1;
-      const nextStepName = `step_${String(nextStepNumberValue)}`;
+    // Check if this is a dynamic workflow (has instance field set)
+    if (state.instance !== undefined) {
+      const currentInstance = state.instance;
+      const nextInstanceNum = currentInstance + 1;
       state = await manager.update(workflowId, {
-        step: nextStepName,
+        instance: nextInstanceNum,
         substep: '1'
       });
-      console.log(`Instance ${String(currentInstanceNum)} complete. Starting instance ${String(nextStepNumberValue)}...`);
+      console.log(`Instance ${String(currentInstance)} complete. Starting instance ${String(nextInstanceNum)}...`);
     }
   }
 
@@ -138,12 +136,18 @@ export async function runExecutionLoop(
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const currentStepIndex = isDynamicWorkflow ? 0 : steps.findIndex(s => s.name === state!.step);
     const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
-     
-    const totalSteps = isDynamicWorkflow ? parseInt(state.step.split('_')[1] || '0', 10) : steps.length;
 
-    // Print step block
-     
-    printStepBlock({ current: state.step, total: totalSteps, substep: state.substep }, currentStep);
+    // For dynamic workflows, use state.instance for display; for static, use step name
+    // state.instance is set to 1 on initialization for dynamic workflows
+    const displayStep = isDynamicWorkflow && state.instance !== undefined
+      ? String(state.instance)   // Use instance field: 1, 2, 3, ...
+      : state.step;              // Use step name: "1", "ErrorHandler", etc.
+
+    // For dynamic workflows, display {N} as total; for static, use steps.length
+    const totalSteps: number | string = isDynamicWorkflow ? '{N}' : steps.length;
+
+    // Print step block with resolved instance number
+    printStepBlock({ current: displayStep, total: totalSteps, substep: state.substep }, currentStep);
 
     // If CLI prompted mode, OR no command
     if (prompted || !currentStep.command) {
@@ -159,11 +163,9 @@ export async function runExecutionLoop(
     await manager.setLastResult(workflowId, lastResult);
 
     // Capture prev state BEFORE mutation
-     
     const prevStep = state.step;
-     
+    const prevInstance = state.instance;
     const prevSubstep = state.substep;
-     
     const prevRetryCount = state.retryCount;
 
     // Send event to actor
@@ -205,11 +207,16 @@ export async function runExecutionLoop(
                        action as 'CONTINUE' | 'COMPLETE' | 'STOP';
     await manager.update(workflowId, { lastAction: actionType });
 
+    // Compute prev display step (for action block output)
+    const prevDisplayStep = isDynamicWorkflow && prevInstance !== undefined
+      ? String(prevInstance)   // Use instance field: 1, 2, 3, ...
+      : prevStep;              // Use step name: "1", "ErrorHandler", etc.
+
     // Print separator and action block
     printSeparator();
     printActionBlock({
       action,
-      from: { current: prevStep, total: totalSteps, substep: prevSubstep },
+      from: { current: prevDisplayStep, total: totalSteps, substep: prevSubstep },
       result: execResult.success ? 'PASS' : 'FAIL',
     });
 
@@ -243,7 +250,7 @@ export async function runExecutionLoop(
         ? evaluatePassCondition(currentStep).message
         : evaluateFailCondition(currentStep, prevRetryCount).message;
       await manager.update(workflowId, { variables: { ...updatedState.variables, stopped: true } });
-      printWorkflowStoppedAtStep({ current: prevStep, total: totalSteps, substep: prevSubstep }, stopMessage);
+      printWorkflowStoppedAtStep({ current: prevDisplayStep, total: totalSteps, substep: prevSubstep }, stopMessage);
 
       // If this was a child workflow with agent, update parent's agent binding
        
