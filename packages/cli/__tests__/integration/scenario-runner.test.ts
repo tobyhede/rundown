@@ -169,48 +169,91 @@ describe('scenario runner', () => {
   async function executeScenario(filename: string, scenario: Scenario): Promise<void> {
     copyPatternWithDependencies(filename, scenario);
 
-    // Execute each command in sequence, checking exit codes
-    for (let i = 0; i < scenario.commands.length; i++) {
-      const cmd = scenario.commands[i];
-      const isLastCommand = i === scenario.commands.length - 1;
+            // Execute each command in sequence, checking exit codes
 
-      // Strip 'rd ' prefix and run
-      const args = cmd.replace(/^rd\s+/, '');
-      const result = runCli(args, workspace);
-      
-      // Check exit codes:
-      // - Non-last commands must succeed
-      // - Last command may fail only for STOP scenarios (e.g., rd fail causes stop)
-      // - Agent fail commands may exit with 1 if child workflow stops (expected behavior)
-      const isAgentFail = cmd.includes('fail') && cmd.includes('--agent');
-      const allowNonZero = (isLastCommand && scenario.result === 'STOP') || isAgentFail;
-      if (!allowNonZero && result.exitCode !== 0) {
-        throw new Error(`Command "${cmd}" failed with exit code ${String(result.exitCode)}: ${result.stderr}`);
-      }
-    }
+            for (let i = 0; i < scenario.commands.length; i++) {
 
-    // Verify result - use getAllStates since completed workflows have no active state
-    const states = await getAllStates(workspace);
-    const state = states.find(s => {
-      const workflowPath = s.workflow as string;
-      // Since we flatten files in the test workspace, check if the filename matches
-      // filename is relative (e.g. composition/foo.md) or just foo.md
-      const expectedName = filename.split('/').pop()!;
-      return workflowPath.endsWith(expectedName);
-    });
+              const cmd = scenario.commands[i];
 
-    if (!state) {
-      throw new Error(`No state found for workflow ${filename}`);
-    }
+              const isLastCommand = i === scenario.commands.length - 1;
 
-    const variables = state.variables as Record<string, unknown> | undefined;
+        
 
-    if (scenario.result === 'COMPLETE') {
-      expect(variables?.completed).toBe(true);
-    } else {
-      expect(variables?.stopped).toBe(true);
-    }
-  }
+              // Strip 'rd ' prefix and run
+
+              const args = cmd.replace(/^rd\s+/, '');
+
+              const result = runCli(args, workspace);
+
+        
+
+              // Check exit codes:
+
+              // - Non-last commands must succeed
+
+              // - Last command may fail only for STOP scenarios (e.g., rd fail causes stop)
+
+              // - Agent fail commands may exit with 1 if child workflow stops (expected behavior)
+
+              const isAgentFail = cmd.includes('fail') && cmd.includes('--agent');
+
+              const allowNonZero = (isLastCommand && scenario.result === 'STOP') || isAgentFail;
+
+              if (!allowNonZero && result.exitCode !== 0) {
+
+                throw new Error(`Command "${cmd}" failed with exit code ${String(result.exitCode)}: ${result.stderr}`);
+
+              }
+
+            }
+
+        
+
+            // Verify result - use getAllStates since completed workflows have no active state
+
+            const states = await getAllStates(workspace);
+
+            const state = states.find(s => {
+
+              const workflowPath = s.workflow as string;
+
+              // Since we flatten files in the test workspace, check if the filename matches
+
+              // filename is relative (e.g. composition/foo.md) or just foo.md
+
+              const expectedName = filename.split('/').pop()!;
+
+              return workflowPath.endsWith(expectedName);
+
+            });
+
+        
+
+            if (!state) {
+
+              throw new Error(`No state found for workflow ${filename}`);
+
+            }
+
+        
+
+            const variables = state.variables as Record<string, unknown> | undefined;
+
+        
+
+            if (scenario.result === 'COMPLETE') {
+
+              expect(variables?.completed).toBe(true);
+
+            } else {
+
+              expect(variables?.stopped).toBe(true);
+
+            }
+
+          }
+
+        
 
   it('runs all pattern scenarios', async () => {
     const patterns = await loadPatternsWithScenarios();

@@ -16,7 +16,9 @@ scenarios:
   named-to-static:
     description: Jump from Process to Step 1 (Name -> Static)
     commands:
-      - rd run --step Process goto-named.runbook.md
+      - rd run --prompted goto-named.runbook.md
+      - rd goto Process
+      - rd pass
       - rd pass
       - rd pass
     result: COMPLETE
@@ -24,7 +26,8 @@ scenarios:
   static-to-named:
     description: Jump from Step 1 to Cleanup (Static -> Name)
     commands:
-      - rd run --step 1 goto-named.runbook.md
+      - rd run --prompted goto-named.runbook.md
+      - rd goto 1
       - rd pass
       - rd pass
     result: COMPLETE

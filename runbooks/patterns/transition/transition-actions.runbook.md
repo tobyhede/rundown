@@ -8,14 +8,15 @@ scenarios:
   pass-stop:
     description: PASS triggers STOP, workflow halts successfully
     commands:
-      - rd run --step 1 transition-actions.runbook.md
+      - rd run --prompted transition-actions.runbook.md
       - rd pass
     result: STOP
 
   fail-continue:
     description: FAIL triggers CONTINUE, workflow proceeds to next step
     commands:
-      - rd run --step 2 transition-actions.runbook.md
+      - rd run --prompted transition-actions.runbook.md
+      - rd goto 2
       - rd fail
       - rd pass
     result: COMPLETE
@@ -23,7 +24,8 @@ scenarios:
   fail-complete:
     description: FAIL triggers COMPLETE, workflow finishes successfully
     commands:
-      - rd run --step 4 transition-actions.runbook.md
+      - rd run --prompted transition-actions.runbook.md
+      - rd goto 4
       - rd fail
     result: COMPLETE
 ---

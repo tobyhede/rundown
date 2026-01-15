@@ -327,11 +327,17 @@ Runbook references within substeps.
 
 - [substep-runbooks.runbook.md](./composition/substep-runbooks.runbook.md)
 
-### agent-binding.runbook.md
+### agent-binding-simple.runbook.md
 
-Consolidated agent binding patterns (success/failure).
+Basic agent delegation.
 
-- [agent-binding.runbook.md](./composition/agent-binding.runbook.md)
+- [agent-binding-simple.runbook.md](./composition/agent-binding-simple.runbook.md)
+
+### agent-binding-failure.runbook.md
+
+Handling failure in agent delegation.
+
+- [agent-binding-failure.runbook.md](./composition/agent-binding-failure.runbook.md)
 
 ### multi-agent-dynamic.runbook.md
 

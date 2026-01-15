@@ -122,8 +122,8 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 
 | Pattern | Description | File |
 |---------|-------------|------|
-| agent-binding-simple | Parent delegates step to agent with child workflow | [agent-binding](composition/agent-binding.runbook.md) |
-| agent-binding-failure | Parent handles agent failure gracefully | [agent-binding](composition/agent-binding.runbook.md) |
+| agent-binding-simple | Parent delegates step to agent with child workflow | [agent-binding-simple](composition/agent-binding-simple.runbook.md) |
+| agent-binding-failure | Parent handles agent failure gracefully | [agent-binding-failure](composition/agent-binding-failure.runbook.md) |
 | multi-agent-dynamic | Multiple agents with different runbooks and dynamic iteration | [multi-agent-dynamic](composition/multi-agent-dynamic.runbook.md) |
 | substep-runbooks | Runbook references within substeps | [substep-runbooks](composition/substep-runbooks.runbook.md) |
 

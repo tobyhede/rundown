@@ -9,7 +9,7 @@ scenarios:
   goto-step:
     description: Jump from step 1 to step 3
     commands:
-      - rd run --step 1 goto-static.runbook.md
+      - rd run --prompted goto-static.runbook.md
       - rd pass
       - rd pass
     result: COMPLETE
@@ -17,23 +17,17 @@ scenarios:
   goto-substep:
     description: Jump from substep 4.1 to 4.3
     commands:
-      - rd run --step 4 goto-static.runbook.md
-      - rd pass
-      - rd pass
-    result: COMPLETE
-
-  goto-next:
-    description: Explicit jump to NEXT step
-    commands:
-      - rd run --step 6 goto-static.runbook.md
+      - rd run --prompted goto-static.runbook.md
+      - rd goto 4
       - rd pass
       - rd pass
     result: COMPLETE
 
   goto-named-substep:
-    description: Jump from 8.1 to 8.Cleanup
+    description: Jump from 5.1 to 5.Cleanup
     commands:
-      - rd run --step 8 goto-static.runbook.md
+      - rd run --prompted goto-static.runbook.md
+      - rd goto 5
       - rd pass
       - rd pass
     result: COMPLETE
@@ -96,38 +90,10 @@ rd echo --result fail
 rd echo "substep landed"
 ```
 
-## 5. Setup for Next
-- PASS: CONTINUE
+## 5. Named Substep Jump
 
-Just a spacer.
-
-```bash
-rd echo "spacer"
-```
-
-## 6. GOTO NEXT
-- PASS: GOTO NEXT
-- FAIL: STOP
-
-Please confirm to jump to the next step.
-
-Explicitly jumps to the next step (7).
-
-```bash
-rd echo "goto next"
-```
-
-## 7. Next Target
-- PASS: COMPLETE
-
-```bash
-rd echo "next landed"
-```
-
-## 8. Named Substep Jump
-
-### 8.1 Start
-- PASS: GOTO 8.Cleanup
+### 5.1 Start
+- PASS: GOTO 5.Cleanup
 - FAIL: STOP
 
 Please confirm to jump to the cleanup substep.
@@ -138,7 +104,7 @@ Jumps to a named substep in the same step.
 rd echo "named start"
 ```
 
-### 8.Cleanup
+### 5.Cleanup
 - PASS: COMPLETE
 
 Target named substep.

@@ -17,7 +17,8 @@ scenarios:
   stop:
     description: Exhaustion triggers STOP (default or explicit), workflow halts
     commands:
-      - rd run --step 2 retry-exhaustion.runbook.md
+      - rd run --prompted retry-exhaustion.runbook.md
+      - rd goto 2
       - rd fail
       - rd fail
     result: STOP
@@ -25,7 +26,8 @@ scenarios:
   goto:
     description: Exhaustion triggers GOTO, jumps to recovery step
     commands:
-      - rd run --step 3 retry-exhaustion.runbook.md
+      - rd run --prompted retry-exhaustion.runbook.md
+      - rd goto 3
       - rd fail
       - rd fail
       - rd fail
@@ -35,7 +37,8 @@ scenarios:
   complete:
     description: Exhaustion triggers COMPLETE, workflow finishes immediately
     commands:
-      - rd run --step 5 retry-exhaustion.runbook.md
+      - rd run --prompted retry-exhaustion.runbook.md
+      - rd goto 5
       - rd pass
       - rd fail
       - rd fail
@@ -72,7 +75,7 @@ rd echo --result fail --result fail
 
 ## 3. Exhaustion GOTO
 - PASS: COMPLETE
-- FAIL: RETRY 2 GOTO Recovery
+- FAIL: RETRY 2 GOTO 4
 
 Fails up to 2 times. If it exhausts, it jumps to the Recovery step.
 
