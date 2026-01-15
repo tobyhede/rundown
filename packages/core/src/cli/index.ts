@@ -5,3 +5,16 @@ export { TestWriter, type CapturedOutput } from './test-writer.js';
 export { getWriter, setWriter, withWriter, withWriterAsync } from './context.js';
 export * from './output.js';
 export * from './render.js';
+export {
+  isColorEnabled,
+  setColorEnabled,
+  resetColorCache,
+  success,
+  failure,
+  warning,
+  info,
+  dim,
+  bold,
+  colorizeStatus,
+  colorizeResult,
+} from './colors.js';
