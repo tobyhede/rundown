@@ -125,9 +125,9 @@ export async function runExecutionLoop(
   let state = await manager.load(workflowId);
   if (!state) return 'stopped';
 
-  // Detect if this is a dynamic workflow (single step with isDynamic: true)
-  // In dynamic workflows, steps array has only the template step, but state.step is the instance number
-  const isDynamicWorkflow = steps.length === 1 && steps[0].isDynamic;
+  // Detect if this is a dynamic workflow (first step has isDynamic: true)
+  // In dynamic workflows, state.step is '{N}' but state.instance tracks the current instance number
+  const isDynamicWorkflow = steps.length > 0 && steps[0].isDynamic;
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {

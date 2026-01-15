@@ -89,7 +89,7 @@ describe('integration: GOTO patterns', () => {
       // First instance: {N}.1 → GOTO {N}.3 (dynamic steps use {N} template)
       let result = runCli('pass', workspace);
       expect(result.stdout).toContain('GOTO {N}.3');
-      expect(result.stdout).toContain('Step:     {N}.3');
+      expect(result.stdout).toContain('Step:     1.3/{N}');
 
       // {N}.3 passes → GOTO NEXT advances the dynamic instance
       result = runCli('pass', workspace);
