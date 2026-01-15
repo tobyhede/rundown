@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { renderStepForCLI } from '../../src/cli/render.js';
-import type { Step } from '../../src/workflow/types.js';
+import type { Step, Substep } from '../../src/workflow/types.js';
 
 describe('renderStepForCLI', () => {
   it('renders step with prompts before command', () => {
@@ -131,5 +131,61 @@ describe('dynamic step rendering', () => {
     expect(result).toContain('process-batch --instance 2 --item 5');
     expect(result).not.toContain('{N}');
     expect(result).not.toContain('{n}');
+  });
+});
+
+describe('substep rendering', () => {
+  it('renders substep with H3 heading and instance.substep format', () => {
+    const substep: Substep = {
+      id: '{n}',
+      description: 'Process Item',
+      isDynamic: true,
+      prompt: 'Process next item.',
+    };
+
+    const result = renderStepForCLI(substep, '1', '2');
+
+    expect(result).toContain('### 1.2 Process Item');
+    expect(result).toContain('Process next item.');
+  });
+
+  it('substitutes {N} and {n} in substep prompt', () => {
+    const substep: Substep = {
+      id: '{n}',
+      description: 'Process Item',
+      isDynamic: true,
+      prompt: 'Processing item {n} in batch {N}.',
+    };
+
+    const result = renderStepForCLI(substep, '3', '5');
+
+    expect(result).toContain('### 3.5 Process Item');
+    expect(result).toContain('Processing item 5 in batch 3.');
+  });
+
+  it('renders static substep with correct heading', () => {
+    const substep: Substep = {
+      id: '1',
+      description: 'First Substep',
+      isDynamic: false,
+      prompt: 'Do the first thing.',
+    };
+
+    const result = renderStepForCLI(substep, '2', '1');
+
+    expect(result).toContain('### 2.1 First Substep');
+  });
+
+  it('substitutes {N} and {n} in substep command', () => {
+    const substep: Substep = {
+      id: '{n}',
+      description: 'Process Item',
+      isDynamic: true,
+      command: { code: 'process --batch {N} --item {n}' },
+    };
+
+    const result = renderStepForCLI(substep, '2', '3');
+
+    expect(result).toContain('process --batch 2 --item 3');
   });
 });
