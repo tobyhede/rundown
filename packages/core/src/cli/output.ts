@@ -3,6 +3,15 @@ import type { WorkflowMetadata, StepPosition, ActionBlockData } from './types.js
 import type { OutputWriter } from './writer.js';
 import { getWriter } from './context.js';
 import { renderStepForCLI } from './render.js';
+import {
+  success,
+  failure,
+  warning,
+  info,
+  dim,
+  colorizeStatus,
+  colorizeResult,
+} from './colors.js';
 
 const SEPARATOR = '-----';
 
@@ -27,7 +36,7 @@ export function formatPosition(pos: StepPosition): string {
  * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printSeparator(writer: OutputWriter = getWriter()): void {
-  writer.writeLine(SEPARATOR);
+  writer.writeLine(dim(SEPARATOR));
 }
 
 /**
@@ -43,9 +52,9 @@ export function printMetadata(
   writer: OutputWriter = getWriter()
 ): void {
   writer.writeLine(`File:     ${meta.file}`);
-  writer.writeLine(`State:    ${meta.state}`);
+  writer.writeLine(`State:    ${colorizeStatus(meta.state)}`);
   if (meta.prompted) {
-    writer.writeLine(`Prompt:   Yes`);
+    writer.writeLine(`Prompt:   ${success('Yes')}`);
   }
 }
 
@@ -61,12 +70,12 @@ export function printActionBlock(
   data: ActionBlockData,
   writer: OutputWriter = getWriter()
 ): void {
-  writer.writeLine(`Action:   ${data.action}`);
+  writer.writeLine(`Action:   ${info(data.action)}`);
   if (data.from) {
     writer.writeLine(`From:     ${formatPosition(data.from)}`);
   }
   if (data.result) {
-    writer.writeLine(`Result:   ${data.result}`);
+    writer.writeLine(`Result:   ${colorizeResult(data.result)}`);
   }
 }
 
@@ -86,7 +95,7 @@ export function printStepBlock(
   writer: OutputWriter = getWriter()
 ): void {
   writer.writeLine('');
-  writer.writeLine(`Step:     ${formatPosition(pos)}`);
+  writer.writeLine(`Step:     ${info(formatPosition(pos))}`);
   writer.writeLine('');
   writer.writeLine(renderStepForCLI(item, pos.current, pos.substep));
 }
@@ -122,9 +131,9 @@ export function printWorkflowComplete(
 ): void {
   writer.writeLine('');
   if (message) {
-    writer.writeLine(`Workflow complete: ${message}`);
+    writer.writeLine(success(`Workflow complete: ${message}`));
   } else {
-    writer.writeLine('Workflow complete.');
+    writer.writeLine(success('Workflow complete.'));
   }
 }
 
@@ -142,9 +151,9 @@ export function printWorkflowStopped(
 ): void {
   writer.writeLine('');
   if (message) {
-    writer.writeLine(`Workflow stopped: ${message}`);
+    writer.writeLine(failure(`Workflow stopped: ${message}`));
   } else {
-    writer.writeLine('Workflow stopped.');
+    writer.writeLine(failure('Workflow stopped.'));
   }
 }
 
@@ -165,9 +174,9 @@ export function printWorkflowStoppedAtStep(
   writer.writeLine('');
   const stepStr = pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
   if (message) {
-    writer.writeLine(`Workflow stopped at step ${stepStr}: ${message}`);
+    writer.writeLine(failure(`Workflow stopped at step ${stepStr}: ${message}`));
   } else {
-    writer.writeLine(`Workflow stopped at step ${stepStr}.`);
+    writer.writeLine(failure(`Workflow stopped at step ${stepStr}.`));
   }
 }
 
@@ -184,9 +193,9 @@ export function printWorkflowStashed(
   writer: OutputWriter = getWriter()
 ): void {
   writer.writeLine('');
-  writer.writeLine(`Step:     ${formatPosition(pos)}`);
+  writer.writeLine(`Step:     ${info(formatPosition(pos))}`);
   writer.writeLine('');
-  writer.writeLine('Workflow stashed.');
+  writer.writeLine(warning('Workflow stashed.'));
 }
 
 /**
@@ -199,7 +208,7 @@ export function printWorkflowStashed(
 export function printNoActiveWorkflow(
   writer: OutputWriter = getWriter()
 ): void {
-  writer.writeLine('No active workflow.');
+  writer.writeLine(dim('No active workflow.'));
 }
 
 /**
@@ -210,7 +219,7 @@ export function printNoActiveWorkflow(
  * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printNoWorkflows(writer: OutputWriter = getWriter()): void {
-  writer.writeLine('No workflows.');
+  writer.writeLine(dim('No workflows.'));
 }
 
 /**
@@ -234,5 +243,5 @@ export function printWorkflowListEntry(
   writer: OutputWriter = getWriter()
 ): void {
   const titleStr = title ? `  [${title}]` : '';
-  writer.writeLine(`${id}  ${status}  ${step}  ${file}${titleStr}`);
+  writer.writeLine(`${id}  ${colorizeStatus(status)}  ${step}  ${file}${titleStr}`);
 }

@@ -146,10 +146,30 @@ describe('validator strict rules', () => {
 
 
   describe('Exclusivity rules', () => {
-    it('rejects H2 step with both body and substeps', () => {
+    it('accepts H2 step with both prompt and workflows', () => {
       const steps = [mockStep({
         number: '1',
         prompt: 'P',
+        workflows: ['w.runbook.md']
+      })];
+      const errors = validateWorkflow(steps);
+      expect(errors.filter(e => e.message.includes('Violates Exclusivity Rule'))).toHaveLength(0);
+    });
+
+    it('accepts H2 step with both prompt and substeps', () => {
+      const steps = [mockStep({
+        number: '1',
+        prompt: 'P',
+        substeps: [{ id: '1', description: 'S', isDynamic: false }]
+      })];
+      const errors = validateWorkflow(steps);
+      expect(errors.filter(e => e.message.includes('Violates Exclusivity Rule'))).toHaveLength(0);
+    });
+
+    it('rejects H2 step with both command and substeps', () => {
+      const steps = [mockStep({
+        number: '1',
+        command: { code: 'echo', language: 'bash' },
         substeps: [{ id: '1', description: 'S', isDynamic: false }]
       })];
       const errors = validateWorkflow(steps);
@@ -162,7 +182,7 @@ describe('validator strict rules', () => {
         number: '1',
         substeps: [{
           id: '1', description: 'S', isDynamic: false,
-          prompt: 'P',
+          command: { code: 'echo', language: 'bash' },
           workflows: ['w.runbook.md']
         }]
       })];
@@ -178,6 +198,7 @@ describe('validator strict rules', () => {
         mockStep({
           name: '1',
           prompt: 'P',
+          command: { code: 'echo', language: 'bash' },
           substeps: [{ id: '1', description: 'S', isDynamic: false }],
           transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         })
@@ -191,6 +212,7 @@ describe('validator strict rules', () => {
         line: 42,
         number: '1',
         prompt: 'P',
+        command: { code: 'echo', language: 'bash' },
         substeps: [{ id: '1', description: 'S', isDynamic: false }]
       })];
       const errors = validateWorkflow(steps);

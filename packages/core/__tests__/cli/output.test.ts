@@ -12,6 +12,8 @@ import {
   printWorkflowStashed,
   printNoActiveWorkflow,
   TestWriter,
+  setColorEnabled,
+  resetColorCache,
 } from '../../src/cli/index.js';
 import type { Step } from '../../src/workflow/types.js';
 
@@ -20,6 +22,8 @@ describe('output formatter', () => {
 
   beforeEach(() => {
     writer = new TestWriter();
+    resetColorCache();
+    setColorEnabled(false);
   });
 
   describe('formatPosition', () => {

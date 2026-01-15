@@ -24,4 +24,6 @@ Demonstrates parent workflow delegating to an agent.
 - PASS: COMPLETE
 - FAIL: STOP
 
+Please delegate this task to an agent.
+
 - child-task.runbook.md

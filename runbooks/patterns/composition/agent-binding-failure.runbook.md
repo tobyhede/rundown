@@ -24,6 +24,8 @@ scenarios:
 - PASS: COMPLETE
 - FAIL: GOTO Cleanup
 
+Please delegate this task to an agent. We expect it to fail to test recovery.
+
 - child-task.runbook.md
 
 ## Cleanup

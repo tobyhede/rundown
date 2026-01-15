@@ -213,33 +213,50 @@ describe('scenario runner', () => {
 
             const states = await getAllStates(workspace);
 
-            const state = states.find(s => {
+            const expectedName = filename.split('/').pop()!;
+
+
+            // Find state that matches both the workflow filename AND the expected result
+            // This handles agent binding scenarios where multiple states exist for the same workflow
+            const matchingStates = states.filter(s => {
 
               const workflowPath = s.workflow as string;
-
-              // Since we flatten files in the test workspace, check if the filename matches
-
-              // filename is relative (e.g. composition/foo.md) or just foo.md
-
-              const expectedName = filename.split('/').pop()!;
 
               return workflowPath.endsWith(expectedName);
 
             });
 
-        
 
-            if (!state) {
+
+            if (matchingStates.length === 0) {
 
               throw new Error(`No state found for workflow ${filename}`);
 
             }
 
-        
+
+            // Find the state with the expected result
+            const state = matchingStates.find(s => {
+              const variables = s.variables as Record<string, unknown> | undefined;
+              if (scenario.result === 'COMPLETE') {
+                return variables?.completed === true;
+              } else {
+                return variables?.stopped === true;
+              }
+            });
+
+            if (!state) {
+              // Provide helpful error message
+              const statesSummary = matchingStates.map(s => {
+                const vars = s.variables as Record<string, unknown> | undefined;
+                return `completed=${String(vars?.completed)}, stopped=${String(vars?.stopped)}`;
+              }).join('; ');
+              throw new Error(`No state with expected result ${scenario.result} found for ${filename}. Found states: [${statesSummary}]`);
+            }
 
             const variables = state.variables as Record<string, unknown> | undefined;
 
-        
+
 
             if (scenario.result === 'COMPLETE') {
 

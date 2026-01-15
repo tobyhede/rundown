@@ -129,11 +129,12 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
 
   for (const step of steps) {
     // Conformance Rule 4: Exclusivity (Step level)
-    const hasBody = (step.command !== undefined) || (step.prompt !== undefined && step.prompt.length > 0);
+    // A step can optionally have a prompt, plus EXACTLY ONE OF: command, substeps, or workflows.
+    const hasCommand = (step.command !== undefined);
     const hasSubsteps = (step.substeps !== undefined && step.substeps.length > 0);
     const hasWorkflows = (step.workflows !== undefined && step.workflows.length > 0);
 
-    const contentCount = [hasBody, hasSubsteps, hasWorkflows].filter(Boolean).length;
+    const contentCount = [hasCommand, hasSubsteps, hasWorkflows].filter(Boolean).length;
     if (contentCount > 1) {
       errors.push({
         line: step.line,
@@ -148,10 +149,10 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
 
     if (step.substeps) {
       for (const substep of step.substeps) {
-        const sHasBody = (substep.command !== undefined) || (substep.prompt !== undefined && substep.prompt.length > 0);
+        const sHasCommand = (substep.command !== undefined);
         const sHasWorkflows = (substep.workflows !== undefined && substep.workflows.length > 0);
 
-        if (sHasBody && sHasWorkflows) {
+        if (sHasCommand && sHasWorkflows) {
           errors.push({
             line: step.line,
             message: `Substep ${step.name}.${substep.id}: Violates Exclusivity Rule. A substep must have either a Body or a Runbook List, but not both.`

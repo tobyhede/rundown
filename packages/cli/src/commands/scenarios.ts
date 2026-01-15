@@ -46,9 +46,9 @@ export function registerScenariosCommand(program: Command): void {
   scenario
     .command('run <file> <name>')
     .description('Execute a scenario and verify the result')
-    .option('-v, --verbose', 'Show command output')
-    .action(async (file: string, scenarioName: string, options: { verbose?: boolean }) => {
-      await runScenario(file, scenarioName, options.verbose ?? false);
+    .option('-q, --quiet', 'Suppress command output')
+    .action(async (file: string, scenarioName: string, options: { quiet?: boolean }) => {
+      await runScenario(file, scenarioName, options.quiet ?? false);
     });
 }
 
@@ -214,9 +214,9 @@ function extractReferencedRunbooks(scenario: Scenario): string[] {
  *
  * @param file - Runbook file path
  * @param scenarioName - Name of the scenario to run
- * @param verbose - Whether to show command output
+ * @param quiet - Whether to suppress command output
  */
-async function runScenario(file: string, scenarioName: string, verbose: boolean): Promise<void> {
+async function runScenario(file: string, scenarioName: string, quiet: boolean): Promise<void> {
   // 1. Load and validate scenarios
   const { filePath, scenarios } = await loadScenarios(file);
 
@@ -261,20 +261,14 @@ async function runScenario(file: string, scenarioName: string, verbose: boolean)
       // Replace 'rd ' with actual CLI path to avoid shell alias issues
       const actualCmd = cmd.replace(/^rd\s+/, `node ${CLI_PATH} `);
       try {
-        const result = execSync(actualCmd, {
+        execSync(actualCmd, {
           cwd: tmpDir,
           encoding: 'utf-8',
-          stdio: verbose ? 'inherit' : 'pipe',
+          stdio: quiet ? 'pipe' : 'inherit',
           env: { ...process.env, RUNDOWN_LOG: '0' }
         });
-        if (verbose && result) {
-          console.log(result);
-        }
-      } catch (error) {
+      } catch {
         // Command may exit non-zero for STOP scenarios, which is expected
-        if (verbose && error instanceof Error && 'stdout' in error) {
-          console.log((error as { stdout: string }).stdout);
-        }
       }
     }
     console.log();
