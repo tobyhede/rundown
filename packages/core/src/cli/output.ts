@@ -64,6 +64,7 @@ export function printActionBlock(data: ActionBlockData): void {
  * Print step block to stdout.
  *
  * Outputs the step position and rendered step content.
+ * For dynamic steps, substitutes {N} and {n} with actual instance/substep numbers.
  *
  * @param pos - The current step position
  * @param step - The Step to render and display
@@ -72,7 +73,7 @@ export function printStepBlock(pos: StepPosition, step: Step): void {
   console.log('');
   console.log(`Step:     ${formatPosition(pos)}`);
   console.log('');
-  console.log(renderStepForCLI(step));
+  console.log(renderStepForCLI(step, pos.current, pos.substep));
 }
 
 /**

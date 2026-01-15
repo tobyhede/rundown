@@ -143,6 +143,35 @@ describe('output formatter', () => {
       expect(output).toContain('Do something.');
       expect(output).toContain('npm test');
     });
+
+    it('prints dynamic step with resolved instance number', () => {
+      const step: Step = {
+        name: '{N}',
+        description: 'Process Batch',
+        isDynamic: true,
+        prompt: 'Process the batch.',
+      };
+      printStepBlock({ current: '1', total: '{N}' }, step);
+
+      const output = consoleOutput.join('\n');
+      expect(output).toContain('Step:     1/{N}');
+      expect(output).toContain('## 1. Process Batch');
+      expect(output).not.toContain('## {N}.');
+    });
+
+    it('prints dynamic step with substep', () => {
+      const step: Step = {
+        name: '{N}',
+        description: 'Process Batch',
+        isDynamic: true,
+        prompt: 'Process item {n}.',
+      };
+      printStepBlock({ current: '2', total: '{N}', substep: '3' }, step);
+
+      const output = consoleOutput.join('\n');
+      expect(output).toContain('Step:     2.3/{N}');
+      expect(output).toContain('Process item 3.');
+    });
   });
 
   describe('printCommandExec', () => {
