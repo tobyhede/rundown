@@ -42,7 +42,7 @@ export function isColorEnabled(): boolean {
   }
 
   // Check if stdout is a TTY
-  _colorEnabled = process.stdout.isTTY === true;
+  _colorEnabled = process.stdout.isTTY;
   return _colorEnabled;
 }
 

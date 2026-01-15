@@ -63,8 +63,8 @@ export class RundownError extends Error {
     this.context = context;
     this.cause = cause;
 
-    // Maintain proper stack trace
-    Error.captureStackTrace?.(this, this.constructor);
+    // Maintain proper stack trace (V8/Node.js)
+    Error.captureStackTrace(this, this.constructor);
   }
 
   /**
@@ -107,10 +107,10 @@ export class RundownError extends Error {
 
     // Primary identifier: first specific identifier wins, else file
     const specificId =
-      (value !== undefined && `"${value}"`) ||
-      scenario ||
-      argName ||
-      childId ||
+      (value !== undefined ? `"${value}"` : undefined) ??
+      scenario ??
+      argName ??
+      childId ??
       agentId;
 
     const primaryId = specificId ?? file;
@@ -122,9 +122,9 @@ export class RundownError extends Error {
       specificId && file && ` in ${file}`,
       stepLocation && ` at step ${stepLocation}`,
       expected !== undefined && found !== undefined &&
-        ` (expected ${expected}, found ${found})`,
+        ` (expected ${String(expected)}, found ${String(found)})`,
       message && ` - ${message}`,
-      line && ` (line ${line})`,
+      line && ` (line ${String(line)})`,
     ];
 
     return parts.filter(Boolean).join('');
