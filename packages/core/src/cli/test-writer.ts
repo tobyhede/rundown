@@ -27,7 +27,7 @@ export class TestWriter implements OutputWriter {
     this.output.push({ text, stream });
   }
 
-  writeLine(text: string = '', stream: OutputStream = 'stdout'): void {
+  writeLine(text = '', stream: OutputStream = 'stdout'): void {
     this.output.push({ text: text + '\n', stream });
   }
 
@@ -41,7 +41,7 @@ export class TestWriter implements OutputWriter {
     this.writeLine(text, 'stderr');
   }
 
-  writeJson(data: unknown, pretty: boolean = true): void {
+  writeJson(data: unknown, pretty = true): void {
     const json = pretty
       ? JSON.stringify(data, null, 2)
       : JSON.stringify(data);

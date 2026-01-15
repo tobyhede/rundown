@@ -15,7 +15,7 @@ export class ConsoleWriter implements OutputWriter {
     }
   }
 
-  writeLine(text: string = '', stream: OutputStream = 'stdout'): void {
+  writeLine(text = '', stream: OutputStream = 'stdout'): void {
     if (stream === 'stderr') {
       console.error(text);
     } else {
@@ -33,7 +33,7 @@ export class ConsoleWriter implements OutputWriter {
     this.writeLine(text, 'stderr');
   }
 
-  writeJson(data: unknown, pretty: boolean = true): void {
+  writeJson(data: unknown, pretty = true): void {
     const json = pretty
       ? JSON.stringify(data, null, 2)
       : JSON.stringify(data);
