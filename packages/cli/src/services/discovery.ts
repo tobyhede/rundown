@@ -14,7 +14,7 @@ export interface DiscoveredRunbook {
   /** Absolute path to the runbook file */
   path: string;
   /** Source directory where the runbook was found */
-  source: 'project' | 'plugin';
+  source: 'project' | 'plugin' | 'bundled';
   /** Optional description from frontmatter */
   description?: string;
   /** Optional tags from frontmatter for filtering */
@@ -26,7 +26,7 @@ export interface DiscoveredRunbook {
  */
 interface SearchPath {
   path: string;
-  source: 'project' | 'plugin';
+  source: 'project' | 'plugin' | 'bundled';
 }
 
 /**
@@ -66,7 +66,7 @@ export function getSearchPaths(cwd: string): SearchPath[] {
  * @param source - Source type for discovered runbooks
  * @returns Array of discovered runbooks with extracted metadata
  */
-export async function scanDirectory(dirPath: string, source: 'project' | 'plugin'): Promise<DiscoveredRunbook[]> {
+export async function scanDirectory(dirPath: string, source: 'project' | 'plugin' | 'bundled'): Promise<DiscoveredRunbook[]> {
   const runbooks: DiscoveredRunbook[] = [];
 
   try {
