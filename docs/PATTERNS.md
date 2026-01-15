@@ -454,6 +454,7 @@ scenarios:
       - rd run --prompted named-substeps.runbook.md
       - rd pass
       - rd pass
+      - rd pass
     result: COMPLETE
 tags:
   - named
@@ -2521,7 +2522,41 @@ Parent runbooks, agents, and delegation.
 
 Parent runbook delegating to child runbooks.
 
-- [runbook-composition.runbook.md](./composition/runbook-composition.runbook.md)
+
+**runbook-composition.runbook.md:**
+
+```rundown
+---
+name: workflow-composition
+description: Demonstrates composing multiple child workflows to verify lint, types, and tests all pass
+
+scenarios:
+  completed:
+    description: Tests successful completion when all child workflows pass
+    commands:
+      - rd run --prompted workflow-composition.runbook.md
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
+  child-fails:
+    description: Tests failure when a child workflow fails
+    commands:
+      - rd run --prompted workflow-composition.runbook.md
+      - rd fail
+    result: STOP
+tags:
+  - composition
+---
+
+## 1. Verify
+- FAIL ANY: STOP "Verification failed"
+- lint.runbook.md
+- types.runbook.md
+- tests.runbook.md
+```
+
 
 ### substep-runbooks.runbook.md
 
@@ -2949,6 +2984,8 @@ List-based step instructions.
 ---
 name: list-instructions
 description: Demonstrates steps with list-formatted instructions
+tags:
+  - features
 
 scenarios:
   completed:
@@ -2956,17 +2993,24 @@ scenarios:
     commands:
       - rd run --prompted list-instructions.runbook.md
       - rd pass
+      - rd pass
     result: COMPLETE
 ---
 
 # List Instructions
 
 ## 1. Step with list instructions
+- PASS: CONTINUE
+- FAIL: STOP
+
 The following instructions should be preserved:
 - instruction 1
 - instruction 2
 
 ## 2. Step with mixed content
+- PASS: COMPLETE
+- FAIL: STOP
+
 General prose.
 - instruction 3
 - instruction 4
@@ -2984,6 +3028,8 @@ YAML frontmatter metadata.
 ---
 name: metadata-header
 description: Runbook with H1 title and description text
+tags:
+  - features
 
 scenarios:
   completed:
@@ -2991,18 +3037,23 @@ scenarios:
     commands:
       - rd run --prompted metadata-header.runbook.md
       - rd pass
+      - rd pass
     result: COMPLETE
-tags:
-  - features
 ---
 
 # Runbook Title
 This is a description of the runbook.
 
 ## 1. First Step
+- PASS: CONTINUE
+- FAIL: STOP
+
 Execute.
 
 ## 2. Second Step
+- PASS: COMPLETE
+- FAIL: STOP
+
 Process.
 ```
 
