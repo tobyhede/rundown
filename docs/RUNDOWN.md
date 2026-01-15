@@ -672,6 +672,70 @@ Step:     2/5
 Next step description...
 ```
 
+### Table Output
+
+List commands (`rd ls`, `rd scenario ls`) use aligned tables following Linux CLI conventions:
+
+| Convention | Standard |
+|------------|----------|
+| **Headers** | UPPERCASE, first row, no decorative lines |
+| **Alignment** | Left for text, right for numbers |
+| **Separator** | 2 spaces between columns |
+| **Last column** | Extends to end (no padding) |
+| **Empty values** | Empty string |
+| **Machine output** | `--json` flag for programmatic use |
+
+Example (`rd ls --all`):
+```
+NAME           DESCRIPTION                    TAGS
+retry-success  Tests RETRY before exhaustion  retry, auto-exec
+simple         Basic two-step workflow
+```
+
+Example (`rd scenario ls`):
+```
+NAME              EXPECTED  DESCRIPTION                   TAGS
+success-first     COMPLETE  Step passes on first attempt
+retry-exhaustion  STOP      Retries exhausted, stops
+```
+
+### Detail Views
+
+Single-item display commands (`rd scenario show`) use aligned key-value format:
+
+| Convention | Standard |
+|------------|----------|
+| **Key alignment** | Pad to longest key + `:` |
+| **Format** | `Key:` followed by spaces to align values |
+| **Nested items** | Indent 2 spaces under label |
+
+Example (`rd scenario show`):
+```
+Name:        success-first-try
+Description: Step passes on first attempt
+Expected:    COMPLETE
+Commands:
+  $ rd run --prompted retry-success.runbook.md
+  $ rd pass
+```
+
+### Command Execution Output
+
+Commands that execute operations (`rd scenario run`) use a Plan/Execute/Result structure:
+
+```
+[Plan Block]
+Name:     scenario-name
+Expected: COMPLETE
+
+[Execution Block - blank line before/after]
+$ rd run --prompted file.runbook.md
+$ rd pass
+
+[Result Block]
+Result: COMPLETE
+```
+
 ### Key Elements
 
 | Element | Description |

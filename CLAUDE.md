@@ -89,6 +89,26 @@ export function parseWorkflowDocument(
 ): Workflow { ... }
 ```
 
+## CLI Output Standards
+
+New CLI commands MUST use the shared table formatter for consistent output:
+
+```typescript
+import { printTable } from '../helpers/table-formatter.js';
+
+printTable(rows, [
+  { header: 'NAME', key: 'name' },
+  { header: 'STATUS', key: 'status' },
+]);
+```
+
+Key conventions:
+- UPPERCASE headers, 2-space column separators
+- Left-align text, right-align numbers
+- `--json` flag for machine-readable output
+
+See [docs/RUNDOWN.md](docs/RUNDOWN.md#output-format) for full output formatting standards.
+
 ## Documentation
 
 - [docs/SPEC.md](docs/SPEC.md) - Rundown specification
