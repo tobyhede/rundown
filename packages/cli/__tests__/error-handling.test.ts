@@ -70,8 +70,8 @@ This doesn't have proper ## headers
       // Try to use the workflow
       const result = runCli('pass', workspace);
 
-      // Should handle gracefully (may show error or "no active workflow")
-      expect(result.exitCode).toBe(0); // May fallback to "no active workflow"
+      // Should handle gracefully (may show error or "no active runbook")
+      expect(result.exitCode).toBe(0); // May fallback to "no active runbook"
     });
   });
 

@@ -422,8 +422,18 @@ export function compileWorkflowToMachine(steps: Step[]) {
     },
     states: {
       ...states,
-      COMPLETE: { type: 'final' },
-      STOPPED: { type: 'final' }
+      COMPLETE: {
+        type: 'final',
+        entry: assign({
+          variables: ({ context }) => ({ ...context.variables, completed: true })
+        })
+      },
+      STOPPED: {
+        type: 'final',
+        entry: assign({
+          variables: ({ context }) => ({ ...context.variables, stopped: true })
+        })
+      }
     }
   });
 }

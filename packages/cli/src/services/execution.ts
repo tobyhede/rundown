@@ -239,7 +239,11 @@ export async function runExecutionLoop(
       const completionMessage = lastResult === 'pass'
         ? evaluatePassCondition(currentStep).message
         : evaluateFailCondition(currentStep, prevRetryCount).message;
-      await manager.update(workflowId, { variables: { ...updatedState.variables, completed: true } });
+      
+      const currentVars = updatedState.variables || {};
+      await manager.update(workflowId, { 
+        variables: { ...currentVars, completed: true } 
+      });
       printWorkflowComplete(completionMessage);
 
       // If this was a child workflow with agent, update parent's agent binding
@@ -262,7 +266,11 @@ export async function runExecutionLoop(
       const stopMessage = lastResult === 'pass'
         ? evaluatePassCondition(currentStep).message
         : evaluateFailCondition(currentStep, prevRetryCount).message;
-      await manager.update(workflowId, { variables: { ...updatedState.variables, stopped: true } });
+      
+      const currentVars = updatedState.variables || {};
+      await manager.update(workflowId, { 
+        variables: { ...currentVars, stopped: true } 
+      });
       printWorkflowStoppedAtStep({ current: prevDisplayStep, total: totalSteps, substep: prevSubstep }, stopMessage);
 
       // If this was a child workflow with agent, update parent's agent binding

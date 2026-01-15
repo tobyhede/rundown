@@ -92,7 +92,7 @@ describe('start command', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('$ rd echo --result pass');
       expect(result.stdout).toContain('[PASS]');
-      expect(result.stdout).toContain('Workflow complete');
+      expect(result.stdout).toContain('Runbook:  COMPLETE');
     });
 
     it('completes workflow when all commands pass', async () => {
@@ -138,13 +138,13 @@ describe('start command', () => {
       expect(state?.pendingSteps).toHaveLength(1);
     });
 
-    it('fails if no active workflow', async () => {
+    it('fails if no active runbook', async () => {
       // Stop current workflow
       runCli('stop', workspace);
 
       const result = runCli('run --step 2', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('No active workflow');
+      expect(result.stderr).toContain('No active runbook');
     });
 
     it('fails if invalid step format', async () => {
@@ -237,12 +237,12 @@ describe('start command', () => {
       expect(result.stderr).toContain('No pending step');
     });
 
-    it('fails if no active workflow', async () => {
+    it('fails if no active runbook', async () => {
       runCli('stop', workspace);
 
       const result = runCli('run --agent test-agent', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('No active workflow');
+      expect(result.stderr).toContain('No active runbook');
     });
 
     it('should create child workflow linked to parent', async () => {

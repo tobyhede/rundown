@@ -56,10 +56,10 @@ describe('status command', () => {
     expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
   });
 
-  it('outputs "No active workflow" when none', async () => {
+  it('outputs "No active runbook" when none', async () => {
     const result = runCli('status', workspace);
 
-    expect(result.stdout).toContain('No active workflow');
+    expect(result.stdout).toContain('No active runbook');
   });
 
   it('shows pending steps count', async () => {
@@ -108,11 +108,11 @@ describe('agent-scoped status', () => {
     expect(result.stdout).toContain('retry.runbook.md');
   });
 
-  it('shows no active workflow for empty agent stack', async () => {
+  it('shows no active runbook for empty agent stack', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     const result = runCli('status --agent nonexistent', workspace);
-    expect(result.stdout).toContain('No active workflow');
+    expect(result.stdout).toContain('No active runbook');
   });
 });
 
@@ -155,7 +155,7 @@ describe('ls command', () => {
   it('outputs "No workflows" when empty', async () => {
     const result = runCli('ls', workspace);
 
-    expect(result.stdout).toContain('No workflows');
+    expect(result.stdout).toContain('No runbooks');
   });
 });
 
@@ -193,13 +193,13 @@ describe('stop command', () => {
 
     const result = runCli('stop', workspace);
 
-    expect(result.stdout).toContain('stopped');
+    expect(result.stdout).toContain('STOPPED');
   });
 
-  it('handles no active workflow gracefully', async () => {
+  it('handles no active runbook gracefully', async () => {
     const result = runCli('stop', workspace);
 
-    expect(result.stdout).toContain('No active workflow');
+    expect(result.stdout).toContain('No active runbook');
   });
 });
 
@@ -219,7 +219,7 @@ describe('complete command', () => {
 
     const result = runCli('complete', workspace);
 
-    expect(result.stdout).toContain('complete');
+    expect(result.stdout).toContain('COMPLETE');
   });
 
   it('clears active workflow', async () => {
@@ -231,9 +231,9 @@ describe('complete command', () => {
     expect(session.active).toBeNull();
   });
 
-  it('handles no active workflow', async () => {
+  it('handles no active runbook', async () => {
     const result = runCli('complete', workspace);
 
-    expect(result.stdout).toContain('No active workflow');
+    expect(result.stdout).toContain('No active runbook');
   });
 });

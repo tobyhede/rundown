@@ -54,7 +54,7 @@ describe('fail command', () => {
     it('outputs error message', async () => {
       const result = runCli('fail', workspace);
 
-      expect(result.stdout).toContain('stopped');
+      expect(result.stdout).toContain('STOPPED');
     });
 
     it('should set variables.stopped=true when STOP action triggered', async () => {
@@ -102,7 +102,7 @@ describe('fail command', () => {
 
       // Agent stack should be empty
       const statusResult = runCli('status --agent agent-001', workspace);
-      expect(statusResult.stdout).toContain('No active workflow');
+      expect(statusResult.stdout).toContain('No active runbook');
     });
 
     it('pops to parent workflow on fail completion', async () => {
@@ -131,7 +131,7 @@ Do work.
 
       // Fail child - should complete (FAIL: COMPLETE) and pop to parent
       const result = runCli('fail', workspace);
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
 
       // Should now be on parent
       const statusResult = runCli('status', workspace);

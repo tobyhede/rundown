@@ -246,7 +246,7 @@ export class WorkflowStateManager {
     // Just update the snapshot and variables, preserving the last step number.
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        const variables = snapshot.context.variables as Record<string, boolean | number | string>;
+        const variables = (snapshot.context?.variables || {}) as Record<string, boolean | number | string>;
         return await this.update(id, { variables, snapshot });
     }
 
@@ -265,9 +265,9 @@ export class WorkflowStateManager {
     const step = steps.find(s => s.name === stepName) ?? steps[0];
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const retryCount = snapshot.context.retryCount as number;
+    const retryCount = snapshot.context?.retryCount as number;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const variables = snapshot.context.variables as Record<string, boolean | number | string>;
+    const variables = (snapshot.context?.variables || {}) as Record<string, boolean | number | string>;
 
     return await this.update(id, {
       step: stepName,           // string

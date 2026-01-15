@@ -32,11 +32,10 @@ export function registerEchoCommand(program: Command): void {
         const cwd = getCwd();
         const manager = new WorkflowStateManager(cwd);
         const state = await manager.getActive();
-        if (!state) {
-          console.error('Error: No active workflow.');
-          process.exit(1);
-        }
-        const sequence = options.result.length > 0 ? options.result.map(r => r.toLowerCase()) : DEFAULT_RESULT_SEQUENCE;
+            if (!state) {
+              console.error('Error: No active runbook.');
+              process.exit(1);
+            }        const sequence = options.result.length > 0 ? options.result.map(r => r.toLowerCase()) : DEFAULT_RESULT_SEQUENCE;
 
         // Validate all results are 'pass' or 'fail'
         for (const r of sequence) {

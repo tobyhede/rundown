@@ -31,9 +31,9 @@ describe('integration: full workflow scenarios', () => {
 
     // Complete workflow
     result = runCli('pass', workspace);
-    expect(result.stdout).toContain('complete');
+    expect(result.stdout).toContain('COMPLETE');
 
-    // Verify no active workflow
+    // Verify no active runbook
     const session = await readSession(workspace);
     expect(session.active).toBeNull();
   });
@@ -55,7 +55,7 @@ describe('integration: full workflow scenarios', () => {
 
     // Complete
     result = runCli('pass', workspace);
-    expect(result.stdout).toContain('complete');
+    expect(result.stdout).toContain('COMPLETE');
   });
 
   it('handles GOTO flow', async () => {
@@ -71,7 +71,7 @@ describe('integration: full workflow scenarios', () => {
 
     // Complete from step 3
     result = runCli('pass', workspace);
-    expect(result.stdout).toContain('complete');
+    expect(result.stdout).toContain('COMPLETE');
   });
 
   it('handles stash and pop during workflow', async () => {
@@ -80,11 +80,11 @@ describe('integration: full workflow scenarios', () => {
 
     // Stash
     let result = runCli('stash', workspace);
-    expect(result.stdout).toContain('stashed');
+    expect(result.stdout).toContain('STASHED');
 
-    // Verify no active workflow
+    // Verify no active runbook
     result = runCli('status', workspace);
-    expect(result.stdout).toContain('stashed');
+    expect(result.stdout).toContain('STASHED');
 
     // Pop
     result = runCli('pop', workspace);
@@ -93,7 +93,7 @@ describe('integration: full workflow scenarios', () => {
 
     // Continue and complete
     result = runCli('pass', workspace);
-    expect(result.stdout).toContain('complete');
+    expect(result.stdout).toContain('COMPLETE');
   });
 
   it('handles agent binding workflow', async () => {

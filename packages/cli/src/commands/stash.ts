@@ -18,8 +18,8 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 export function registerStashCommand(program: Command): void {
   program
     .command('stash')
-    .description('Pause workflow enforcement, preserve state')
-    .option('--agent <agentId>', 'Stash workflow from agent-specific stack')
+    .description('Pause runbook enforcement, preserve state')
+    .option('--agent <agentId>', 'Stash runbook from agent-specific stack')
     .action(async (options: { agent?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();

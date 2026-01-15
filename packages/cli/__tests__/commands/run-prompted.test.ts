@@ -103,14 +103,14 @@ describe('start --prompted', () => {
       const result = runCli('run runbooks/with-commands.runbook.md', workspace);
 
       // Workflow completes in auto mode (both steps pass)
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('stores lastResult as pass on successful command', async () => {
       const result = runCli('run runbooks/with-commands.runbook.md', workspace);
 
       // Workflow completes in auto mode
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('stores lastResult as fail on failed command', async () => {
@@ -120,7 +120,7 @@ describe('start --prompted', () => {
       // Should show RETRY behavior then eventually pass
       expect(result.stdout).toContain('$ rd echo');
       // The workflow now completes successfully after retries
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('continues execution loop on pass condition', async () => {
@@ -129,7 +129,7 @@ describe('start --prompted', () => {
       // Workflow should complete (both steps executed in auto mode)
       expect(result.stdout).toContain('## 1.');
       expect(result.stdout).toContain('## 2.');
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('chains multiple auto-executing steps', async () => {
@@ -137,7 +137,7 @@ describe('start --prompted', () => {
 
       // Both steps should execute automatically
       expect(result.stdout).toContain('Execute command');
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('applies FAIL condition when command fails', async () => {
@@ -147,7 +147,7 @@ describe('start --prompted', () => {
       expect(result.stdout).toContain('$ rd echo');
       expect(result.stdout).toContain('RETRY');
       // Workflow completes after successful retry
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('respects max retries on repeated failures', async () => {
@@ -210,7 +210,7 @@ npm run dangerous-command
       // Second: auto mode - workflow completes immediately
       const result = runCli('run runbooks/simple.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('enforces prompted mode across manual steps', async () => {
@@ -231,7 +231,7 @@ npm run dangerous-command
       // Auto mode - workflow completes immediately
       const result1 = runCli('run runbooks/simple.runbook.md', workspace);
       expect(result1.stdout).not.toContain('Prompt:   Yes');
-      expect(result1.stdout).toContain('complete');
+      expect(result1.stdout).toContain('COMPLETE');
 
       // Prompted mode
       const result2 = runCli('run --prompted runbooks/simple.runbook.md', workspace);
@@ -267,7 +267,7 @@ npm run dangerous-command
       const result = runCli('run runbooks/with-commands.runbook.md', workspace);
 
       // Workflow completes in auto mode (all steps pass)
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
   });
 });

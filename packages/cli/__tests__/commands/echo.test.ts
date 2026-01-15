@@ -51,11 +51,12 @@ describe('echo command', () => {
   });
 
   describe('error handling', () => {
-    it('fails when no active workflow', () => {
-      const result = runCli('echo npm install', workspace);
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('No active workflow');
-    });
+  it('fails when no active runbook', () => {
+    const result = runCli('echo "hello"', workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('No active runbook');
+  });
 
     it('fails with invalid result value', () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);

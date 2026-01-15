@@ -28,11 +28,10 @@ export function registerGotoCommand(program: Command): void {
         const manager = new WorkflowStateManager(cwd);
         const state = await manager.getActive();
 
-        if (!state) {
-          console.log('No active workflow');
-          return;
-        }
-
+              if (!state) {
+                console.log('No active runbook');
+                return;
+              }
         // Parse target with StepId
         const target = parseStepIdFromString(stepArg);
         if (!target) {

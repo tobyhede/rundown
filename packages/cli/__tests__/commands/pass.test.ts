@@ -44,7 +44,7 @@ describe('pass command', () => {
     it('marks workflow complete', async () => {
       const result = runCli('pass', workspace);
 
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('clears active workflow', async () => {
@@ -177,7 +177,7 @@ Do work.
 
       // Complete child
       let result = runCli('pass', workspace);
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
 
       // Should now be on parent
       result = runCli('status', workspace);
@@ -199,7 +199,7 @@ Do work.
 
       // Agent stack should be empty
       const result = runCli('status --agent agent-001', workspace);
-      expect(result.stdout).toContain('No active workflow');
+      expect(result.stdout).toContain('No active runbook');
     });
   });
 });

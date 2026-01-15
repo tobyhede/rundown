@@ -18,9 +18,9 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 export function registerStopCommand(program: Command): void {
   program
     .command('stop')
-    .description('Abort current workflow')
+    .description('Abort current runbook')
     .argument('[message]', 'Stop message')
-    .option('--agent <agentId>', 'Stop workflow in agent-specific stack')
+    .option('--agent <agentId>', 'Stop runbook in agent-specific stack')
     .action(async (message: string | undefined, options: { agent?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();

@@ -229,9 +229,8 @@ describe('scenario runner', () => {
 
 
             if (matchingStates.length === 0) {
-
-              throw new Error(`No state found for workflow ${filename}`);
-
+              const allWorkflowPaths = states.map(s => s.workflow).join(', ');
+              throw new Error(`No state found for runbook ${filename}. Found paths: [${allWorkflowPaths}]`);
             }
 
 
@@ -249,9 +248,10 @@ describe('scenario runner', () => {
               // Provide helpful error message
               const statesSummary = matchingStates.map(s => {
                 const vars = s.variables as Record<string, unknown> | undefined;
-                return `completed=${String(vars?.completed)}, stopped=${String(vars?.stopped)}`;
+                const varsStr = vars ? JSON.stringify(vars) : 'undefined';
+                return `ID=${String(s.id).slice(0, 8)}, vars=${varsStr}`;
               }).join('; ');
-              throw new Error(`No state with expected result ${scenario.result} found for ${filename}. Found states: [${statesSummary}]`);
+              throw new Error(`No state with expected result ${scenario.result} found for runbook ${filename}. Found states: [${statesSummary}]`);
             }
 
             const variables = state.variables as Record<string, unknown> | undefined;

@@ -22,7 +22,7 @@ function countSubsteps(steps: readonly Step[]): number {
 export function registerCheckCommand(program: Command): void {
   program
     .command('check <file>')
-    .description('Check a workflow file for errors')
+    .description('Check a runbook file for errors')
     .action((file: string) => {
       // Resolve file path
       const resolvedPath = path.resolve(file);

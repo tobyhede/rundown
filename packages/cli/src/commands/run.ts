@@ -42,7 +42,7 @@ export function registerRunCommand(program: Command): void {
         if (options.step && !options.agent) {
           const state = await manager.getActive();
           if (!state) {
-            console.error('Error: No active workflow');
+            console.error('Error: No active runbook');
             process.exit(1);
           }
 
@@ -60,7 +60,7 @@ export function registerRunCommand(program: Command): void {
 
           await manager.pushPendingStep(state.id, pendingStep);
 
-          const workflowInfo = file ? ` with workflow ${file}` : '';
+          const workflowInfo = file ? ` with runbook ${file}` : '';
           console.log(`Step ${stepIdToString(stepId)} queued for agent binding${workflowInfo}`);
           return;
         }
@@ -70,8 +70,8 @@ export function registerRunCommand(program: Command): void {
           const filePath = await resolveWorkflowFile(cwd, file);
 
           if (!filePath) {
-            console.error(`Error: Workflow not found: ${file}`);
-            console.error(`Try 'rd ls --all' to list available workflows.`);
+            console.error(`Error: Runbook not found: ${file}`);
+            console.error(`Try 'rd ls --all' to list available runbooks.`);
             process.exit(1);
           }
 
@@ -79,7 +79,7 @@ export function registerRunCommand(program: Command): void {
           const workflow = parseWorkflowDocument(content, path.basename(filePath));
 
           if (workflow.steps.length === 0) {
-            console.error('Error: Workflow has no steps');
+            console.error('Error: Runbook has no steps');
             process.exit(1);
           }
 
@@ -117,7 +117,7 @@ export function registerRunCommand(program: Command): void {
         if (options.agent) {
           const state = await manager.getActive();
           if (!state) {
-            console.error('Error: No active workflow');
+            console.error('Error: No active runbook');
             process.exit(1);
           }
 
@@ -133,7 +133,7 @@ export function registerRunCommand(program: Command): void {
           if (pending.workflow) {
             const workflowPath = await resolveWorkflowFile(cwd, pending.workflow);
             if (!workflowPath) {
-              console.error(`Error: Workflow file not found: ${pending.workflow}`);
+              console.error(`Error: Runbook file not found: ${pending.workflow}`);
               process.exit(1);
             }
 
@@ -141,7 +141,7 @@ export function registerRunCommand(program: Command): void {
             const workflow = parseWorkflowDocument(content, path.basename(workflowPath));
 
             if (workflow.steps.length === 0) {
-              console.error('Error: Child workflow has no steps');
+              console.error('Error: Child runbook has no steps');
               process.exit(1);
             }
 
@@ -180,13 +180,13 @@ export function registerRunCommand(program: Command): void {
         }
 
         if (!file && !options.step && !options.agent) {
-          console.error('Error: Workflow file, --step, or --agent option required');
+          console.error('Error: Runbook file, --step, or --agent option required');
           process.exit(1);
         }
       } catch (error) {
         if (isNodeError(error) && error.code === 'ENOENT') {
-          console.error(`Error: Workflow not found: ${file ?? 'unknown'}`);
-          console.error(`Try 'rd ls --all' to list available workflows.`);
+          console.error(`Error: Runbook not found: ${file ?? 'unknown'}`);
+          console.error(`Try 'rd ls --all' to list available runbooks.`);
         } else if (error instanceof WorkflowSyntaxError) {
           console.error(`Syntax error: ${error.message}`);
         } else {

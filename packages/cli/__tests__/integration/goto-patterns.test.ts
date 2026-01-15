@@ -72,9 +72,11 @@ describe('integration: GOTO patterns', () => {
 
         // Complete from step 3
 
+        // Complete from step 3
+
         const result2 = runCli('pass', workspace);
 
-        expect(result2.stdout).toContain('complete');
+        expect(result2.stdout).toContain('COMPLETE');
 
       });
 
@@ -116,9 +118,11 @@ describe('integration: GOTO patterns', () => {
 
         // Complete from 4.3
 
+        // Complete from step 3
+
         const result2 = runCli('pass', workspace);
 
-        expect(result2.stdout).toContain('complete');
+        expect(result2.stdout).toContain('COMPLETE');
 
       });
 
@@ -210,9 +214,11 @@ describe('integration: GOTO patterns', () => {
 
         // Cleanup passes → COMPLETE
 
+        // Complete from step 3
+
         const result2 = runCli('pass', workspace);
 
-        expect(result2.stdout).toContain('complete');
+        expect(result2.stdout).toContain('COMPLETE');
 
       });
 

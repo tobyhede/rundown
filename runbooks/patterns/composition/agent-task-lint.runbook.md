@@ -5,7 +5,7 @@ scenarios:
   completed:
     description: Lint passes
     commands:
-      - rd run --rd run --prompted agent-task-lint.runbook.md
+      - rd run --prompted agent-task-lint.runbook.md
       - rd pass
     result: COMPLETE
   failure:

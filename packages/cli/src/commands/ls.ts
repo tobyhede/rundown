@@ -17,10 +17,10 @@ import { printTable } from '../helpers/table-formatter.js';
 export function registerLsCommand(program: Command): void {
   program
     .command('ls')
-    .description('List workflows (active by default, --all for available)')
-    .option('-a, --all', 'List all available workflow files')
+    .description('List runbooks (active by default, --all for available)')
+    .option('-a, --all', 'List all available runbook files')
     .option('--json', 'Output as JSON for programmatic use')
-    .option('--tags <tags>', 'Filter available workflows by comma-separated tags')
+    .option('--tags <tags>', 'Filter available runbooks by comma-separated tags')
     .action(async (options: { all?: boolean; json?: boolean; tags?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
@@ -126,7 +126,7 @@ export function registerLsCommand(program: Command): void {
           { header: 'ID', key: 'id' },
           { header: 'STATUS', key: 'status' },
           { header: 'STEP', key: 'step' },
-          { header: 'WORKFLOW', key: 'workflow' },
+          { header: 'RUNBOOK', key: 'workflow' },
           { header: 'TITLE', key: 'title' },
         ]);
       });

@@ -35,9 +35,9 @@ export const ErrorCodes = {
   FILE_NOT_FOUND: {
     code: 'RD-101',
     category: ErrorCategory.FILE_IO,
-    title: 'Workflow file not found',
+    title: 'Runbook file not found',
     description:
-      'The specified workflow file does not exist or cannot be accessed.',
+      'The specified runbook file does not exist or cannot be accessed.',
     docSlug: 'file-not-found',
   },
   FILE_NOT_READABLE: {
@@ -45,7 +45,7 @@ export const ErrorCodes = {
     category: ErrorCategory.FILE_IO,
     title: 'File not readable',
     description:
-      'The workflow file exists but cannot be read due to permission restrictions.',
+      'The runbook file exists but cannot be read due to permission restrictions.',
     docSlug: 'file-not-readable',
   },
   STATE_DIR_NOT_ACCESSIBLE: {
@@ -60,8 +60,8 @@ export const ErrorCodes = {
   EMPTY_WORKFLOW: {
     code: 'RD-201',
     category: ErrorCategory.PARSE_SYNTAX,
-    title: 'Empty workflow file',
-    description: 'The workflow file contains no content.',
+    title: 'Empty runbook file',
+    description: 'The runbook file contains no content.',
     docSlug: 'empty-workflow',
   },
   NO_STEPS_FOUND: {
@@ -69,7 +69,7 @@ export const ErrorCodes = {
     category: ErrorCategory.PARSE_SYNTAX,
     title: 'No valid steps found',
     description:
-      'The workflow file does not contain any valid step headings (## headers).',
+      'The runbook file does not contain any valid step headings (## headers).',
     docSlug: 'no-steps-found',
   },
   INVALID_FRONTMATTER: {
@@ -83,8 +83,8 @@ export const ErrorCodes = {
   SYNTAX_ERROR: {
     code: 'RD-204',
     category: ErrorCategory.PARSE_SYNTAX,
-    title: 'Workflow syntax error',
-    description: 'The workflow file contains invalid syntax.',
+    title: 'Runbook syntax error',
+    description: 'The runbook file contains invalid syntax.',
     docSlug: 'syntax-error',
   },
 
@@ -92,9 +92,9 @@ export const ErrorCodes = {
   NO_ACTIVE_WORKFLOW: {
     code: 'RD-301',
     category: ErrorCategory.STATE,
-    title: 'No active workflow',
+    title: 'No active runbook',
     description:
-      'No workflow is currently running. Start a workflow with "rd run <file>".',
+      'No runbook is currently running. Start a runbook with "rd run <file>".',
     docSlug: 'no-active-workflow',
   },
   STATE_PARSE_ERROR: {
@@ -102,23 +102,23 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'State file parse error',
     description:
-      'The workflow state file contains invalid JSON. Try running "rd prune" to clean up.',
+      'The runbook state file contains invalid JSON. Try running "rd prune" to clean up.',
     docSlug: 'state-parse-error',
   },
   WORKFLOW_COMPLETED: {
     code: 'RD-303',
     category: ErrorCategory.STATE,
-    title: 'Workflow already completed',
+    title: 'Runbook already completed',
     description:
-      'This workflow has already been marked as complete. Start a new run.',
+      'This runbook has already been marked as complete. Start a new run.',
     docSlug: 'workflow-completed',
   },
   WORKFLOW_STOPPED: {
     code: 'RD-304',
     category: ErrorCategory.STATE,
-    title: 'Workflow stopped',
+    title: 'Runbook stopped',
     description:
-      'This workflow was stopped. Start a new run or use "rd pop" to resume if stashed.',
+      'This runbook was stopped. Start a new run or use "rd pop" to resume if stashed.',
     docSlug: 'workflow-stopped',
   },
 
@@ -127,7 +127,7 @@ export const ErrorCodes = {
     code: 'RD-401',
     category: ErrorCategory.VALIDATION,
     title: 'GOTO target not found',
-    description: 'The specified step or substep does not exist in the workflow.',
+    description: 'The specified step or substep does not exist in the runbook.',
     docSlug: 'goto-target-not-found',
   },
   INVALID_STEP_SEQUENCE: {
@@ -150,24 +150,24 @@ export const ErrorCodes = {
   ENGINE_INIT_FAILED: {
     code: 'RD-501',
     category: ErrorCategory.EXECUTION,
-    title: 'Failed to initialize workflow engine',
-    description: 'The XState workflow engine could not be initialized.',
+    title: 'Failed to initialize runbook engine',
+    description: 'The XState runbook engine could not be initialized.',
     docSlug: 'engine-init-failed',
   },
   WORKFLOW_HAS_NO_STEPS: {
     code: 'RD-502',
     category: ErrorCategory.EXECUTION,
-    title: 'Workflow has no steps',
+    title: 'Runbook has no steps',
     description:
-      'The workflow file does not contain any executable steps.',
+      'The runbook file does not contain any executable steps.',
     docSlug: 'workflow-has-no-steps',
   },
   CHILD_WORKFLOW_ACTIVE: {
     code: 'RD-503',
     category: ErrorCategory.EXECUTION,
-    title: 'Child workflow still active',
+    title: 'Child runbook still active',
     description:
-      'A child workflow is still running. Complete or stop it first.',
+      'A child runbook is still running. Complete or stop it first.',
     docSlug: 'child-workflow-active',
   },
 
@@ -190,7 +190,7 @@ export const ErrorCodes = {
     code: 'RD-603',
     category: ErrorCategory.COMMAND,
     title: 'Scenario not found',
-    description: 'The specified scenario does not exist in the workflow.',
+    description: 'The specified scenario does not exist in the runbook.',
     docSlug: 'scenario-not-found',
   },
 

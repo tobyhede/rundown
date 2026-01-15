@@ -21,9 +21,9 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 export function registerCompleteCommand(program: Command): void {
   program
     .command('complete')
-    .description('Mark current workflow as complete')
+    .description('Mark current runbook as complete')
     .argument('[message]', 'Completion message')
-    .option('--agent <agentId>', 'Complete workflow in agent-specific stack')
+    .option('--agent <agentId>', 'Complete runbook in agent-specific stack')
     .action(async (message: string | undefined, options: { agent?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();

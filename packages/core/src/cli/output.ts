@@ -199,9 +199,9 @@ export function printWorkflowStashed(
 }
 
 /**
- * Print no active workflow message to stdout.
+ * Print no active runbook message to stdout.
  *
- * Outputs a message indicating there is no currently active workflow.
+ * Outputs a message indicating there is no currently active runbook.
  *
  * @param writer - OutputWriter to use (defaults to global writer)
  */

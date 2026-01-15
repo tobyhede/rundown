@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { findRunbookByName } from '../services/discovery.js';
+import { getBundledRunbooksPath } from './bundled-runbooks.js';
 
 /**
  * Resolve runbook file by path (existing logic).
@@ -8,6 +9,7 @@ import { findRunbookByName } from '../services/discovery.js';
  * 1. .claude/rundown/runbooks/ (project-local)
  * 2. $CLAUDE_PLUGIN_ROOT/runbooks/ (plugin directory)
  * 3. Relative to cwd
+ * 4. Bundled runbooks (lowest priority)
  *
  * @param cwd - Current working directory
  * @param filename - Runbook filename to find
@@ -36,6 +38,13 @@ async function resolveByPath(cwd: string, filename: string): Promise<string | nu
   try {
     await fs.access(relativePath);
     return relativePath;
+  } catch { /* not found */ }
+
+  // 4. Check bundled runbooks (lowest priority)
+  const bundledPath = path.join(getBundledRunbooksPath(), filename);
+  try {
+    await fs.access(bundledPath);
+    return bundledPath;
   } catch { /* not found */ }
 
   return null;

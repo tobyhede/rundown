@@ -68,4 +68,25 @@ describe('resolveWorkflowFile', () => {
 
     expect(result).toBe(path.join(claudeDir, 'test.runbook.md'));
   });
+
+  describe('bundled runbook resolution', () => {
+    it('finds bundled runbook when not found elsewhere', async () => {
+      // Clear plugin root to isolate test
+      const originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+
+      try {
+        // Use a known bundled runbook filename (retry-success exists in runbooks/patterns/retries/)
+        const result = await resolveWorkflowFile(testDir, 'retry-success.runbook.md');
+
+        expect(result).not.toBeNull();
+        expect(result).toContain('runbooks');
+        expect(result).toContain('retry-success.runbook.md');
+      } finally {
+        if (originalPluginRoot) {
+          process.env.CLAUDE_PLUGIN_ROOT = originalPluginRoot;
+        }
+      }
+    });
+  });
 });

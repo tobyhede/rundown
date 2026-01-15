@@ -7,7 +7,7 @@ describe('RundownError', () => {
       const error = new RundownError('FILE_NOT_FOUND', { file: 'test.md' });
 
       expect(error.code).toBe('RD-101');
-      expect(error.message).toBe('Workflow file not found: test.md');
+      expect(error.message).toBe('Runbook file not found: test.md');
       expect(error.context.file).toBe('test.md');
     });
 
@@ -90,7 +90,7 @@ describe('RundownError', () => {
       const error = new RundownError('FILE_NOT_FOUND', { file: 'test.md' });
       const output = error.toCliString();
 
-      expect(output).toBe('Error RD-101: Workflow file not found: test.md');
+      expect(output).toBe('Error RD-101: Runbook file not found: test.md');
     });
 
     it('includes description and docs URL when verbose', () => {
@@ -111,8 +111,8 @@ describe('RundownError', () => {
       expect(json).toEqual({
         code: 'RD-101',
         category: 'FILE_IO',
-        title: 'Workflow file not found',
-        message: 'Workflow file not found: test.md',
+        title: 'Runbook file not found',
+        message: 'Runbook file not found: test.md',
         context: { file: 'test.md' },
         docsUrl: 'https://rundown.dev/docs/errors/file-not-found',
       });
@@ -127,14 +127,14 @@ describe('Errors factory', () => {
     expect(error).toBeInstanceOf(RundownError);
     expect(error.code).toBe('RD-101');
     expect(error.context.file).toBe('workflow.md');
-    expect(error.message).toBe('Workflow file not found: workflow.md');
+    expect(error.message).toBe('Runbook file not found: workflow.md');
   });
 
   it('noActiveWorkflow creates correct error', () => {
     const error = Errors.noActiveWorkflow();
 
     expect(error.code).toBe('RD-301');
-    expect(error.message).toBe('No active workflow');
+    expect(error.message).toBe('No active runbook');
   });
 
   it('invalidStepFormat creates correct error with value', () => {
@@ -158,7 +158,7 @@ describe('Errors factory', () => {
     expect(error.code).toBe('RD-204');
     // File is primary (no specific identifier), message and line are appended
     expect(error.message).toBe(
-      'Workflow syntax error: test.md - Unexpected token at position 5 (line 10)'
+      'Runbook syntax error: test.md - Unexpected token at position 5 (line 10)'
     );
   });
 
@@ -166,7 +166,7 @@ describe('Errors factory', () => {
     const error = Errors.syntaxError('Invalid YAML');
 
     expect(error.code).toBe('RD-204');
-    expect(error.message).toBe('Workflow syntax error - Invalid YAML');
+    expect(error.message).toBe('Runbook syntax error - Invalid YAML');
   });
 
   it('invalidStepSequence includes expected and found', () => {

@@ -43,14 +43,14 @@ describe('stash command', () => {
 
     const result = runCli('stash', workspace);
 
-    expect(result.stdout).toContain('stashed');
-    expect(result.stdout).toContain('Workflow stashed');
+    expect(result.stdout).toContain('STASHED');
+    expect(result.stdout).toContain('Runbook:');
   });
 
-  it('fails if no active workflow', async () => {
+  it('fails if no active runbook', async () => {
     const result = runCli('stash', workspace);
 
-    expect(result.stdout).toContain('No active workflow');
+    expect(result.stdout).toContain('No active runbook');
   });
 
   it('preserves workflow state', async () => {

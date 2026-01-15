@@ -200,31 +200,31 @@ describe('output formatter', () => {
   describe('printWorkflowComplete', () => {
     it('prints workflow complete message without custom message', () => {
       printWorkflowComplete(undefined, writer);
-      expect(writer.getOutput()).toContain('Workflow complete.');
+      expect(writer.getOutput()).toContain('Runbook:  COMPLETE');
     });
 
     it('prints custom completion message when provided', () => {
       printWorkflowComplete('All tasks finished', writer);
-      expect(writer.getOutput()).toContain('Workflow complete: All tasks finished');
+      expect(writer.getOutput()).toContain('Runbook:  COMPLETE (All tasks finished)');
     });
   });
 
   describe('printWorkflowStopped', () => {
     it('prints stopped message', () => {
       printWorkflowStopped(undefined, writer);
-      expect(writer.getOutput()).toContain('Workflow stopped.');
+      expect(writer.getOutput()).toContain('Runbook:  STOPPED');
     });
 
     it('prints stopped message with details', () => {
       printWorkflowStopped('User cancelled', writer);
-      expect(writer.getOutput()).toContain('Workflow stopped: User cancelled');
+      expect(writer.getOutput()).toContain('Runbook:  STOPPED (User cancelled)');
     });
   });
 
   describe('printWorkflowStoppedAtStep', () => {
     it('prints stop message with step position without custom message', () => {
       printWorkflowStoppedAtStep({ current: '2', total: 5 }, undefined, writer);
-      expect(writer.getOutput()).toContain('Workflow stopped at step 2.');
+      expect(writer.getOutput()).toContain('Runbook:  STOPPED (step 2)');
     });
 
     it('prints stopped message with substep', () => {
@@ -233,7 +233,7 @@ describe('output formatter', () => {
         undefined,
         writer
       );
-      expect(writer.getOutput()).toContain('Workflow stopped at step 2.1.');
+      expect(writer.getOutput()).toContain('Runbook:  STOPPED (step 2.1)');
     });
 
     it('prints stop message with step and custom message', () => {
@@ -243,7 +243,7 @@ describe('output formatter', () => {
         writer
       );
       expect(writer.getOutput()).toContain(
-        'Workflow stopped at step 2: Validation failed'
+        'Runbook:  STOPPED (step 2: Validation failed)'
       );
     });
   });
@@ -252,14 +252,14 @@ describe('output formatter', () => {
     it('prints step position and stashed message', () => {
       printWorkflowStashed({ current: '2', total: 5 }, writer);
       expect(writer.getOutput()).toContain('Step:     2/5');
-      expect(writer.getOutput()).toContain('Workflow stashed.');
+      expect(writer.getOutput()).toContain('Runbook:  STASHED');
     });
   });
 
   describe('printNoActiveWorkflow', () => {
-    it('prints no active workflow message', () => {
+    it('prints no active runbook message', () => {
       printNoActiveWorkflow(writer);
-      expect(writer.getLines()).toEqual(['No active workflow.']);
+      expect(writer.getLines()).toEqual(['No active runbook.']);
     });
   });
 });

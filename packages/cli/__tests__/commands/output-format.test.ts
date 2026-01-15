@@ -189,7 +189,7 @@ describe('output format integration tests', () => {
       const result = runCli('stop', workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('stopped');
+      expect(result.stdout).toContain('STOPPED');
       expect(result.stdout).toContain('simple.runbook.md');
     });
 
@@ -203,13 +203,13 @@ describe('output format integration tests', () => {
       const result = runCli('stop', workspace);
 
       // Should confirm the stop action
-      expect(result.stdout.toLowerCase()).toContain('stopped');
+      expect(result.stdout).toContain('STOPPED');
     });
 
     it('prints stop message details when provided', async () => {
       const result = runCli(['stop', 'User cancelled'], workspace);
 
-      expect(result.stdout).toContain('Workflow stopped: User cancelled');
+      expect(result.stdout).toContain('Runbook:  STOPPED (User cancelled)');
     });
   });
 
@@ -223,7 +223,7 @@ describe('output format integration tests', () => {
       const result = runCli('pass', workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout.toLowerCase()).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
       // Completion message shows without file reference
       expect(result.stdout).toContain('Action:');
     });
@@ -231,7 +231,7 @@ describe('output format integration tests', () => {
     it('shows completion confirmation', async () => {
       const result = runCli('pass', workspace);
 
-      expect(result.stdout.toLowerCase()).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('includes action in output', async () => {
@@ -256,7 +256,7 @@ describe('output format integration tests', () => {
       // Step info
       expect(result.stdout).toContain('Step:');
       // Stashed message
-      expect(result.stdout).toContain('stashed');
+      expect(result.stdout).toContain('STASHED');
     });
 
     it('shows file metadata in output', async () => {
@@ -269,7 +269,7 @@ describe('output format integration tests', () => {
     it('includes stashed confirmation', async () => {
       const result = runCli('stash', workspace);
 
-      expect(result.stdout).toContain('Workflow stashed');
+      expect(result.stdout).toContain('Runbook:  STASHED');
     });
   });
 
@@ -349,7 +349,7 @@ describe('output format integration tests', () => {
     it('displays "No workflows" when empty', async () => {
       const result = runCli('ls', workspace);
 
-      expect(result.stdout).toContain('No workflows');
+      expect(result.stdout).toContain('No runbooks');
     });
   });
 

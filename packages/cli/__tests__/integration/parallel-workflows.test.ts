@@ -72,11 +72,11 @@ Complete task.
 
     // 5. Complete agent-001's workflow
     result = runCli('pass --agent agent-001', workspace);
-    expect(result.stdout).toContain('complete');
+    expect(result.stdout).toContain('COMPLETE');
 
     // 6. Verify agent-001 stack is empty, others still active
     result = runCli('status --agent agent-001', workspace);
-    expect(result.stdout).toContain('No active workflow');
+    expect(result.stdout).toContain('No active runbook');
 
     result = runCli('status --agent agent-002', workspace);
     expect(result.stdout).toContain('child.md');
@@ -126,7 +126,7 @@ Complete task.
     // Complete level1 - should be empty
     runCli('pass', workspace);
     result = runCli('status', workspace);
-    expect(result.stdout).toContain('No active workflow');
+    expect(result.stdout).toContain('No active runbook');
   });
 
   it('session stacks persist correctly', async () => {
