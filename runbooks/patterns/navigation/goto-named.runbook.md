@@ -36,6 +36,8 @@ scenarios:
 - PASS: GOTO Cleanup
 - FAIL: STOP
 
+Please initialize.
+
 Tests GOTO Name -> Name.
 
 ```bash
@@ -45,6 +47,8 @@ rd echo "initialize"
 ## Process
 - PASS: GOTO 1
 - FAIL: STOP
+
+Please process.
 
 Tests GOTO Name -> Static.
 

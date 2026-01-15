@@ -45,7 +45,7 @@ scenarios:
 - PASS: GOTO 3
 - FAIL: STOP
 
-Jumps over step 2.
+Please confirm to jump to step 3.
 
 ```bash
 rd echo "jump start"
@@ -76,7 +76,7 @@ rd echo "jump landed"
 - PASS: GOTO 4.3
 - FAIL: STOP
 
-Jumps over 4.2.
+Please confirm to jump to substep 4.3.
 
 ```bash
 rd echo "substep start"
@@ -109,6 +109,8 @@ rd echo "spacer"
 - PASS: GOTO NEXT
 - FAIL: STOP
 
+Please confirm to jump to the next step.
+
 Explicitly jumps to the next step (7).
 
 ```bash
@@ -127,6 +129,8 @@ rd echo "next landed"
 ### 8.1 Start
 - PASS: GOTO 8.Cleanup
 - FAIL: STOP
+
+Please confirm to jump to the cleanup substep.
 
 Jumps to a named substep in the same step.
 

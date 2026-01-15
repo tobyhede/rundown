@@ -46,7 +46,9 @@ describe('integration: GOTO patterns', () => {
 
   describe('GOTO N (step jump)', () => {
     it('jumps from step 1 to step 3, skipping step 2', async () => {
-      runCli('run --prompted --step 1 goto-static.runbook.md', workspace);
+      const start = runCli('run --prompted goto-static.runbook.md', workspace);
+      if (start.exitCode !== 0) console.log(start.stderr);
+      expect(start.exitCode).toBe(0);
 
       // Step 1 passes → GOTO 3
       let result = runCli('pass', workspace);
@@ -64,7 +66,10 @@ describe('integration: GOTO patterns', () => {
 
   describe('GOTO N.M (substep jump)', () => {
     it('jumps from 4.1 to 4.3, skipping 4.2', async () => {
-      runCli('run --prompted --step 4 goto-static.runbook.md', workspace);
+      const start = runCli('run --prompted goto-static.runbook.md', workspace);
+      if (start.exitCode !== 0) console.log(start.stderr);
+      expect(start.exitCode).toBe(0);
+      runCli('goto 4', workspace);
 
       // Substep 4.1 passes → GOTO 4.3
       let result = runCli('pass', workspace);
@@ -84,7 +89,9 @@ describe('integration: GOTO patterns', () => {
 
   describe('GOTO {N}.M (dynamic substep)', () => {
     it('jumps within dynamic instance from {N}.1 to {N}.3', async () => {
-      runCli('run --prompted goto-dynamic-substep.runbook.md', workspace);
+      const start = runCli('run --prompted goto-dynamic-substep.runbook.md', workspace);
+      if (start.exitCode !== 0) console.log(start.stderr);
+      expect(start.exitCode).toBe(0);
 
       // First instance: {N}.1 → GOTO {N}.3 (dynamic steps use {N} template)
       let result = runCli('pass', workspace);
@@ -100,7 +107,9 @@ describe('integration: GOTO patterns', () => {
 
   describe('GOTO NEXT (dynamic instance advance)', () => {
     it('advances through dynamic instances via GOTO NEXT', async () => {
-      runCli('run --prompted dynamic-step-next.runbook.md', workspace);
+      const start = runCli('run --prompted dynamic-step-next.runbook.md', workspace);
+      if (start.exitCode !== 0) console.log(start.stderr);
+      expect(start.exitCode).toBe(0);
 
       // Instance passes → GOTO NEXT (rendered as step advancement)
       let result = runCli('pass', workspace);
@@ -108,14 +117,16 @@ describe('integration: GOTO patterns', () => {
       expect(result.stdout).toContain('{N}');
 
       // Check for iteration (next instance)
-      // Actually {N} output is usually like "Step: 1/{N}"
       expect(result.stdout).toContain('1/{N}');
     });
   });
   
   describe('GOTO NEXT (static)', () => {
     it('advances to next static step via GOTO NEXT', async () => {
-      runCli('run --prompted --step 6 goto-static.runbook.md', workspace);
+      const start = runCli('run --prompted goto-static.runbook.md', workspace);
+      if (start.exitCode !== 0) console.log(start.stderr);
+      expect(start.exitCode).toBe(0);
+      runCli('goto 6', workspace);
       
       // Step 6 passes -> GOTO NEXT (step 7)
       let result = runCli('pass', workspace);
@@ -127,7 +138,9 @@ describe('integration: GOTO patterns', () => {
 
   describe('GOTO named (named step jump)', () => {
     it('jumps to named steps (Initialize → Cleanup)', async () => {
-      runCli('run --prompted goto-named.runbook.md', workspace);
+      const start = runCli('run --prompted goto-named.runbook.md', workspace);
+      if (start.exitCode !== 0) console.log(start.stderr);
+      expect(start.exitCode).toBe(0);
 
       // Initialize passes → GOTO Cleanup
       let result = runCli('pass', workspace);
@@ -139,7 +152,10 @@ describe('integration: GOTO patterns', () => {
     });
 
     it('jumps from named to static (Process → 1)', async () => {
-      runCli('run --prompted --step Process goto-named.runbook.md', workspace);
+      const start = runCli('run --prompted goto-named.runbook.md', workspace);
+      if (start.exitCode !== 0) console.log(start.stderr);
+      expect(start.exitCode).toBe(0);
+      runCli('goto Process', workspace);
 
       // Process passes → GOTO 1
       let result = runCli('pass', workspace);
