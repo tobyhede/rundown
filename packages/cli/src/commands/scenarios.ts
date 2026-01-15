@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
 import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
+import { printTable } from '../helpers/table-formatter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -25,9 +26,9 @@ export function registerScenariosCommand(program: Command): void {
     .command('scenario')
     .description('List, show, or run scenarios from a runbook');
 
-  // rd scenario list <file>
+  // rd scenario ls <file>
   scenario
-    .command('list <file>')
+    .command('ls <file>')
     .description('List all scenarios in a runbook')
     .action(async (file: string) => {
       await handleList(file);
@@ -57,7 +58,14 @@ export function registerScenariosCommand(program: Command): void {
  * @param file - Runbook file path
  * @returns Object with filePath and validated scenarios
  */
-async function loadScenarios(file: string): Promise<{ filePath: string; scenarios: Scenarios }> {
+interface LoadedRunbook {
+  filePath: string;
+  name: string;
+  description?: string;
+  scenarios: Scenarios;
+}
+
+async function loadScenarios(file: string): Promise<LoadedRunbook> {
   const cwd = process.cwd();
   const filePath = await resolveWorkflowFile(cwd, file);
 
@@ -89,7 +97,10 @@ async function loadScenarios(file: string): Promise<{ filePath: string; scenario
     process.exit(1);
   }
 
-  return { filePath, scenarios };
+  const name = (frontmatter.name as string) ?? file;
+  const description = frontmatter.description as string | undefined;
+
+  return { filePath, name, description, scenarios };
 }
 
 /**
@@ -129,15 +140,22 @@ async function handleShow(file: string, scenarioName: string): Promise<void> {
  * @param scenarios - Map of scenario names to their definitions
  */
 function listScenarios(scenarios: Scenarios): void {
-  console.log('Scenarios:\n');
+  const rows = Object.entries(scenarios).map(([name, scenario]) => {
+    const scenarioWithTags = scenario as { tags?: string[] };
+    return {
+      name,
+      expected: scenario.result,
+      description: scenario.description ?? '',
+      tags: scenarioWithTags.tags?.join(', ') ?? '',
+    };
+  });
 
-  for (const [name, scenario] of Object.entries(scenarios)) {
-    const desc = scenario.description ? ` - ${scenario.description}` : '';
-    console.log(`  ${name}${desc}`);
-    console.log(`    Commands: ${String(scenario.commands.length)}`);
-    console.log(`    Result: ${scenario.result}`);
-    console.log();
-  }
+  printTable(rows, [
+    { header: 'NAME', key: 'name' },
+    { header: 'EXPECTED', key: 'expected' },
+    { header: 'DESCRIPTION', key: 'description' },
+    { header: 'TAGS', key: 'tags' },
+  ]);
 }
 
 /**
@@ -155,18 +173,16 @@ function showScenarioDetails(name: string, scenarios: Scenarios): void {
 
   const scenario = scenarios[name];
 
-  console.log(`Scenario: ${name}\n`);
-
+  // Aligned keys (12 chars = "Description:")
+  console.log(`Name:        ${name}`);
   if (scenario.description) {
-    console.log(`${scenario.description}\n`);
+    console.log(`Description: ${scenario.description}`);
   }
-
+  console.log(`Expected:    ${scenario.result}`);
   console.log('Commands:');
   for (const cmd of scenario.commands) {
     console.log(`  $ ${cmd}`);
   }
-
-  console.log(`\nExpected Result: ${scenario.result}`);
 }
 
 /**
@@ -234,14 +250,14 @@ async function runScenario(file: string, scenarioName: string, verbose: boolean)
       }
     }
 
-    // 4. Execute commands in sequence
-    console.log(`Running scenario: ${scenarioName}`);
-    if (scenario.description) {
-      console.log(`  ${scenario.description}\n`);
-    }
+    // 4. Print plan (Name + Expected)
+    console.log(`Name:     ${scenarioName}`);
+    console.log(`Expected: ${scenario.result}`);
+    console.log();
 
+    // 5. Execute commands in sequence
     for (const cmd of scenario.commands) {
-      console.log(`  $ ${cmd}`);
+      console.log(`$ ${cmd}`);
       // Replace 'rd ' with actual CLI path to avoid shell alias issues
       const actualCmd = cmd.replace(/^rd\s+/, `node ${CLI_PATH} `);
       try {
@@ -261,8 +277,9 @@ async function runScenario(file: string, scenarioName: string, verbose: boolean)
         }
       }
     }
+    console.log();
 
-    // 5. Check final state
+    // 6. Check final state
     const runsDir = join(tmpDir, '.claude', 'rundown', 'runs');
     let actualResult = 'UNKNOWN';
 
@@ -292,12 +309,9 @@ async function runScenario(file: string, scenarioName: string, verbose: boolean)
     }
 
     // 6. Report result
-    console.log(`\nResult: ${actualResult} (expected: ${scenario.result})`);
+    console.log(`Result: ${actualResult}`);
 
-    if (actualResult === scenario.result) {
-      console.log('✓ PASS');
-    } else {
-      console.log('✗ FAIL');
+    if (actualResult !== scenario.result) {
       process.exit(1);
     }
   } finally {

@@ -29,7 +29,8 @@ describe('rd ls', () => {
 
   it('shows available runbooks with --all flag', () => {
     const result = runCli('ls --all', workspace);
-    expect(result.stdout).toContain('Available runbooks:');
+    expect(result.stdout).toContain('NAME');
+    expect(result.stdout).toContain('DESCRIPTION');
     expect(result.stdout).toContain('simple');
   });
 });

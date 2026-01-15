@@ -4,11 +4,11 @@ import type { Command } from 'commander';
 import {
   WorkflowStateManager,
   printNoWorkflows,
-  printWorkflowListEntry,
 } from '@rundown/core';
 import { discoverRunbooks } from '../services/discovery.js';
 import { getCwd, getStepCount } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { printTable } from '../helpers/table-formatter.js';
 
 /**
  * Registers the 'ls' command for listing workflows.
@@ -57,14 +57,17 @@ export function registerLsCommand(program: Command): void {
               return;
             }
 
-            console.log('Available runbooks:\n');
-            for (const workflow of runbooks) {
-              const displayName =
-                workflow.source === 'plugin' ? `${workflow.name} [${workflow.source}]` : workflow.name;
-              const description = workflow.description ? ` - ${workflow.description}` : '';
-              console.log(`  ${displayName}${description}`);
-            }
-            console.log("\nUse 'rd run <name>' to run a workflow.");
+            const rows = runbooks.map((w) => ({
+              name: w.source === 'plugin' ? `${w.name} [${w.source}]` : w.name,
+              description: w.description ?? '',
+              tags: w.tags?.join(', ') ?? '',
+            }));
+
+            printTable(rows, [
+              { header: 'NAME', key: 'name' },
+              { header: 'DESCRIPTION', key: 'description' },
+              { header: 'TAGS', key: 'tags' },
+            ]);
             return;
         }
 
@@ -88,25 +91,40 @@ export function registerLsCommand(program: Command): void {
            return;
         }
 
-        for (const state of states) {
-          let status: string;
-          if (active?.id === state.id) {
-            status = 'active';
-          } else if (state.id === stashedId) {
-            status = 'stashed';
-          } else if (state.variables.completed) {
-            status = 'complete';
-          } else if (state.variables.stopped) {
-            status = 'stopped';
-          } else {
-            status = 'inactive';
-          }
+        // Build rows
+        const rows = await Promise.all(
+          states.map(async (state) => {
+            let status: string;
+            if (active?.id === state.id) {
+              status = 'active';
+            } else if (state.id === stashedId) {
+              status = 'stashed';
+            } else if (state.variables.completed) {
+              status = 'complete';
+            } else if (state.variables.stopped) {
+              status = 'stopped';
+            } else {
+              status = 'inactive';
+            }
 
-          const totalSteps = await getStepCount(cwd, state.workflow);
-          const stepStr = `${state.step}/${String(totalSteps)}`;
+            const totalSteps = await getStepCount(cwd, state.workflow);
+            return {
+              id: state.id.slice(0, 8),
+              status,
+              step: `${state.step}/${String(totalSteps)}`,
+              workflow: state.workflow,
+              title: state.title ?? '',
+            };
+          })
+        );
 
-          printWorkflowListEntry(state.id, status, stepStr, state.workflow, state.title);
-        }
+        printTable(rows, [
+          { header: 'ID', key: 'id' },
+          { header: 'STATUS', key: 'status' },
+          { header: 'STEP', key: 'step' },
+          { header: 'WORKFLOW', key: 'workflow' },
+          { header: 'TITLE', key: 'title' },
+        ]);
       });
     });
 }

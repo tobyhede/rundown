@@ -50,11 +50,15 @@ scenarios:
 
   describe('list subcommand', () => {
     it('lists available scenarios', async () => {
-      const result = runCli('scenario list test-workflow.runbook.md', workspace);
+      const result = runCli('scenario ls test-workflow.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('NAME');
+      expect(result.stdout).toContain('EXPECTED');
       expect(result.stdout).toContain('success');
+      expect(result.stdout).toContain('COMPLETE');
       expect(result.stdout).toContain('failure');
+      expect(result.stdout).toContain('STOP');
       expect(result.stdout).toContain('Happy path');
     });
 
@@ -74,7 +78,7 @@ name: no-scenarios
         noScenarios
       );
 
-      const result = runCli('scenario list no-scenarios.runbook.md', workspace);
+      const result = runCli('scenario ls no-scenarios.runbook.md', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('No scenarios');
@@ -86,10 +90,11 @@ name: no-scenarios
       const result = runCli('scenario show test-workflow.runbook.md success', workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('Scenario: success');
-      expect(result.stdout).toContain('Happy path');
-      expect(result.stdout).toContain('$ rd run --prompted');
-      expect(result.stdout).toContain('Expected Result: COMPLETE');
+      expect(result.stdout).toContain('Name:        success');
+      expect(result.stdout).toContain('Description: Happy path');
+      expect(result.stdout).toContain('Expected:    COMPLETE');
+      expect(result.stdout).toContain('Commands:');
+      expect(result.stdout).toContain('  $ rd run --prompted');
     });
 
     it('shows error for non-existent scenario', async () => {

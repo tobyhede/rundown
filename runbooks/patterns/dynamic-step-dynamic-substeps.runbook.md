@@ -3,8 +3,8 @@ name: dynamic-step-dynamic-substeps
 description: Demonstrates doubly-dynamic iteration with {N}.{n} pattern
 
 scenarios:
-  item-failure:
-    description: Item processing fails and stops workflow
+  Stopped:
+    description: Runbook STOPPED on fail
     commands:
       - rd run --prompted dynamic-step-dynamic-substeps.runbook.md
       - rd fail
