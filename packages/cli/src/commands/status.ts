@@ -13,7 +13,7 @@ import {
   printNoActiveWorkflow,
   type ActionBlockData,
 } from '@rundown/core';
-import { getCwd, getStepCount, findWorkflowFile } from '../helpers/context.js';
+import { getCwd, getStepTotal, findWorkflowFile } from '../helpers/context.js';
 import {
   getStepRetryMax,
   buildMetadata,
@@ -45,7 +45,7 @@ export function registerStatusCommand(program: Command): void {
           const stashed = await manager.load(stashedId);
           if (stashed) {
             printMetadata(buildMetadata(stashed));
-            const totalSteps = await getStepCount(cwd, stashed.workflow);
+            const totalSteps = await getStepTotal(cwd, stashed.workflow);
             printWorkflowStashed({ current: stashed.step, total: totalSteps, substep: stashed.substep });
           }
           return;
@@ -90,9 +90,9 @@ export function registerStatusCommand(program: Command): void {
 
         // Print step block
         // currentStep is guaranteed to exist from array index
-         
+
         if (currentStep) {
-          printStepBlock({ current: state.step, total: totalSteps, substep: state.substep }, currentStep);
+          printStepBlock({ current: displayStep, total: totalSteps, substep: state.substep }, currentStep);
         }
 
         // Show pending steps and agent bindings
