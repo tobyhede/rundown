@@ -16,70 +16,107 @@ const __dirname = dirname(__filename);
 const CLI_PATH = join(__dirname, '..', 'cli.js');
 
 /**
- * Register the scenarios command for listing, showing, and running scenarios.
+ * Register the scenarios command with subcommands for listing, showing, and running scenarios.
  *
  * @param program - The Commander program instance to register the command on
  */
 export function registerScenariosCommand(program: Command): void {
-  // Main command: rd scenarios <file> [scenario]
-  program
-    .command('scenarios <file> [scenario]')
-    .description('List or show scenarios from a runbook')
-    .option('--run', 'Execute the scenario and verify result')
-    .option('-v, --verbose', 'Show command output (with --run)')
-    .action(async (file: string, scenarioName: string | undefined, options: { run?: boolean; verbose?: boolean }) => {
-      if (options.run && scenarioName) {
-        await runScenario(file, scenarioName, options.verbose ?? false);
-      } else {
-        await handleListOrShow(file, scenarioName);
-      }
+  const scenarios = program
+    .command('scenarios')
+    .description('List, show, or run scenarios from a runbook');
+
+  // rd scenarios list <file>
+  scenarios
+    .command('list <file>')
+    .description('List all scenarios in a runbook')
+    .action(async (file: string) => {
+      await handleList(file);
+    });
+
+  // rd scenarios show <file> <scenario>
+  scenarios
+    .command('show <file> <scenario>')
+    .description('Show details for a specific scenario')
+    .action(async (file: string, scenarioName: string) => {
+      await handleShow(file, scenarioName);
+    });
+
+  // rd scenarios run <file> <scenario>
+  scenarios
+    .command('run <file> <scenario>')
+    .description('Execute a scenario and verify the result')
+    .option('-v, --verbose', 'Show command output')
+    .action(async (file: string, scenarioName: string, options: { verbose?: boolean }) => {
+      await runScenario(file, scenarioName, options.verbose ?? false);
     });
 }
 
 /**
- * Handle listing scenarios or showing details for a specific scenario.
+ * Load and validate scenarios from a runbook file.
  *
  * @param file - Runbook file path
- * @param scenarioName - Optional scenario name to show details
+ * @returns Object with filePath and validated scenarios
  */
-async function handleListOrShow(file: string, scenarioName?: string): Promise<void> {
+async function loadScenarios(file: string): Promise<{ filePath: string; scenarios: Scenarios }> {
+  const cwd = process.cwd();
+  const filePath = await resolveWorkflowFile(cwd, file);
+
+  if (!filePath) {
+    console.error(`Workflow file not found: ${file}`);
+    process.exit(1);
+  }
+
+  const content = await readFile(filePath, 'utf-8');
+  const { frontmatter } = extractRawFrontmatter(content);
+
+  if (!frontmatter) {
+    console.error('No frontmatter found in this runbook');
+    process.exit(1);
+  }
+
+  const { scenarios, errors } = parseScenarios(frontmatter);
+
+  if (errors.length > 0) {
+    console.error('Invalid scenarios in frontmatter:');
+    for (const error of errors) {
+      console.error(`  - ${error}`);
+    }
+    process.exit(1);
+  }
+
+  if (!scenarios || Object.keys(scenarios).length === 0) {
+    console.error('No scenarios defined in this runbook');
+    process.exit(1);
+  }
+
+  return { filePath, scenarios };
+}
+
+/**
+ * List all scenarios in a runbook.
+ *
+ * @param file - Runbook file path
+ */
+async function handleList(file: string): Promise<void> {
   try {
-    const cwd = process.cwd();
-    const filePath = await resolveWorkflowFile(cwd, file);
+    const { scenarios } = await loadScenarios(file);
+    listScenarios(scenarios);
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    process.exit(1);
+  }
+}
 
-    if (!filePath) {
-      console.error(`Workflow file not found: ${file}`);
-      process.exit(1);
-    }
-
-    const content = await readFile(filePath, 'utf-8');
-    const { frontmatter } = extractRawFrontmatter(content);
-
-    if (!frontmatter) {
-      console.error('No frontmatter found in this runbook');
-      process.exit(1);
-    }
-
-    const { scenarios, errors } = parseScenarios(frontmatter);
-
-    if (errors.length > 0) {
-      console.error('Invalid scenarios in frontmatter:');
-      for (const error of errors) {
-        console.error(`  - ${error}`);
-      }
-      process.exit(1);
-    }
-
-    if (!scenarios || Object.keys(scenarios).length === 0) {
-      console.error('No scenarios defined in this runbook');
-      process.exit(1);
-    }
-
-    if (scenarioName) {
-      showScenarioDetails(scenarioName, scenarios);
-    } else {
-      listScenarios(scenarios);
-    }
+/**
+ * Show details for a specific scenario.
+ *
+ * @param file - Runbook file path
+ * @param scenarioName - Name of the scenario to show
+ */
+async function handleShow(file: string, scenarioName: string): Promise<void> {
+  try {
+    const { scenarios } = await loadScenarios(file);
+    showScenarioDetails(scenarioName, scenarios);
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     process.exit(1);
@@ -164,52 +201,25 @@ function extractReferencedRunbooks(scenario: Scenario): string[] {
  * @param verbose - Whether to show command output
  */
 async function runScenario(file: string, scenarioName: string, verbose: boolean): Promise<void> {
-  const cwd = process.cwd();
+  // 1. Load and validate scenarios
+  const { filePath, scenarios } = await loadScenarios(file);
 
-  // 1. Resolve runbook file path
-  const filePath = await resolveWorkflowFile(cwd, file);
-  if (!filePath) {
-    console.error(`Workflow file not found: ${file}`);
-    process.exit(1);
-  }
-
-  // 2. Parse and validate scenario
-  const content = await readFile(filePath, 'utf-8');
-  const { frontmatter } = extractRawFrontmatter(content);
-
-  if (!frontmatter) {
-    console.error('No frontmatter found in this runbook');
-    process.exit(1);
-  }
-
-  const { scenarios, errors } = parseScenarios(frontmatter);
-
-  if (errors.length > 0) {
-    console.error('Invalid scenarios in frontmatter:');
-    for (const error of errors) {
-      console.error(`  - ${error}`);
-    }
-    process.exit(1);
-  }
-
-  if (!scenarios || !(scenarioName in scenarios)) {
+  if (!(scenarioName in scenarios)) {
     console.error(`Scenario "${scenarioName}" not found`);
-    if (scenarios) {
-      console.error(`Available: ${Object.keys(scenarios).join(', ')}`);
-    }
+    console.error(`Available: ${Object.keys(scenarios).join(', ')}`);
     process.exit(1);
   }
 
   const scenario = scenarios[scenarioName];
   const runbookFilename = basename(file);
 
-  // 3. Create isolated temp workspace
+  // 2. Create isolated temp workspace
   const tmpDir = mkdtempSync(join(tmpdir(), 'rd-scenario-'));
   const runbooksDir = join(tmpDir, '.claude', 'rundown', 'runbooks');
   mkdirSync(runbooksDir, { recursive: true });
 
   try {
-    // 4. Copy runbook and any referenced child workflows
+    // 3. Copy runbook and any referenced child workflows
     copyFileSync(filePath, join(runbooksDir, runbookFilename));
 
     const referenced = extractReferencedRunbooks(scenario);
@@ -224,7 +234,7 @@ async function runScenario(file: string, scenarioName: string, verbose: boolean)
       }
     }
 
-    // 5. Execute commands in sequence
+    // 4. Execute commands in sequence
     console.log(`Running scenario: ${scenarioName}`);
     if (scenario.description) {
       console.log(`  ${scenario.description}\n`);
@@ -252,7 +262,7 @@ async function runScenario(file: string, scenarioName: string, verbose: boolean)
       }
     }
 
-    // 6. Check final state
+    // 5. Check final state
     const runsDir = join(tmpDir, '.claude', 'rundown', 'runs');
     let actualResult = 'UNKNOWN';
 
@@ -281,7 +291,7 @@ async function runScenario(file: string, scenarioName: string, verbose: boolean)
       // State file may not exist
     }
 
-    // 7. Report result
+    // 6. Report result
     console.log(`\nResult: ${actualResult} (expected: ${scenario.result})`);
 
     if (actualResult === scenario.result) {
@@ -291,7 +301,7 @@ async function runScenario(file: string, scenarioName: string, verbose: boolean)
       process.exit(1);
     }
   } finally {
-    // 8. Cleanup temp directory
+    // 7. Cleanup temp directory
     await rm(tmpDir, { recursive: true, force: true });
   }
 }

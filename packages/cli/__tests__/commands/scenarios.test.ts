@@ -48,9 +48,9 @@ scenarios:
     await workspace.cleanup();
   });
 
-  describe('list mode', () => {
+  describe('list subcommand', () => {
     it('lists available scenarios', async () => {
-      const result = runCli('scenarios test-workflow.runbook.md', workspace);
+      const result = runCli('scenarios list test-workflow.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('success');
@@ -74,16 +74,16 @@ name: no-scenarios
         noScenarios
       );
 
-      const result = runCli('scenarios no-scenarios.runbook.md', workspace);
+      const result = runCli('scenarios list no-scenarios.runbook.md', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('No scenarios');
     });
   });
 
-  describe('detail mode', () => {
+  describe('show subcommand', () => {
     it('shows details for a specific scenario', async () => {
-      const result = runCli('scenarios test-workflow.runbook.md success', workspace);
+      const result = runCli('scenarios show test-workflow.runbook.md success', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Scenario: success');
@@ -93,7 +93,7 @@ name: no-scenarios
     });
 
     it('shows error for non-existent scenario', async () => {
-      const result = runCli('scenarios test-workflow.runbook.md nonexistent', workspace);
+      const result = runCli('scenarios show test-workflow.runbook.md nonexistent', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('not found');
