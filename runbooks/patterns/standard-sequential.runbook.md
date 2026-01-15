@@ -1,6 +1,11 @@
 ---
 name: standard-sequential
 description: Sequential workflow with CONTINUE and RETRY transitions
+tags:
+  - sequential
+  - retry
+  - transition
+  - auto-exec
 
 scenarios:
   success-first-try:
@@ -18,6 +23,11 @@ scenarios:
       - rd fail
       - rd fail
       - rd pass
+    result: COMPLETE
+  auto-execution:
+    description: Step 1 passes, step 2 fails twice then passes on retry
+    commands:
+      - rd run standard-sequential.runbook.md
     result: COMPLETE
 ---
 

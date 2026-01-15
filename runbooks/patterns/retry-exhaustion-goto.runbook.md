@@ -1,6 +1,11 @@
 ---
 name: retry-exhaustion-goto
 description: Tests that RETRY exhaustion triggers GOTO fallback action
+tags:
+  - retry
+  - goto
+  - transition
+  - auto-exec
 
 scenarios:
   success-after-retry:
@@ -19,6 +24,11 @@ scenarios:
       - rd fail
       - rd fail
       - rd pass
+    result: COMPLETE
+  auto-execution:
+    description: Step 1 fails 3 times (exhausts retry), GOTOs to recovery step 3 which passes
+    commands:
+      - rd run retry-exhaustion-goto.runbook.md
     result: COMPLETE
 ---
 

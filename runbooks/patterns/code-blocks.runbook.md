@@ -1,6 +1,9 @@
 ---
 name: code-blocks
 description: Demonstrates various code block patterns in workflows
+tags:
+  - code-blocks
+  - auto-exec
 
 scenarios:
   success:
@@ -10,6 +13,11 @@ scenarios:
       - rd pass
       - rd pass
       - rd pass
+    result: COMPLETE
+  auto-execution:
+    description: All three steps with bash code blocks pass immediately
+    commands:
+      - rd run code-blocks.runbook.md
     result: COMPLETE
 ---
 

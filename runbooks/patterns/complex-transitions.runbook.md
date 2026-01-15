@@ -1,6 +1,11 @@
 ---
 name: complex-transitions
 description: Demonstrates complex transition conditions with ALL/ANY modifiers
+tags:
+  - transition
+  - modifiers
+  - goto
+  - auto-exec
 
 scenarios:
   success:
@@ -11,6 +16,11 @@ scenarios:
       - rd pass
       - rd pass
       - rd pass
+    result: COMPLETE
+  auto-execution:
+    description: Step 1 passes, step 2 passes and GOTOs to step 4, which completes
+    commands:
+      - rd run complex-transitions.runbook.md
     result: COMPLETE
 ---
 

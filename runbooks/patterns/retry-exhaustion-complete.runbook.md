@@ -1,6 +1,10 @@
 ---
 name: retry-exhaustion-complete
 description: Demonstrates RETRY with COMPLETE on exhaustion
+tags:
+  - retry
+  - transition
+  - auto-exec
 
 scenarios:
   success-after-retry:
@@ -22,6 +26,11 @@ scenarios:
       - rd fail
       - rd fail
       - rd fail
+    result: COMPLETE
+  auto-execution:
+    description: Setup passes, execute fails twice then passes on retry 3, cleanup passes
+    commands:
+      - rd run retry-exhaustion-complete.runbook.md
     result: COMPLETE
 ---
 

@@ -1,6 +1,10 @@
 ---
 name: default-transitions
 description: Tests implicit PASS to CONTINUE and FAIL to STOP when no transitions defined
+tags:
+  - transition
+  - defaults
+  - auto-exec
 
 scenarios:
   success:
@@ -16,6 +20,11 @@ scenarios:
       - rd run --prompted default-transitions.runbook.md
       - rd fail
     result: STOP
+  auto-execution:
+    description: Both steps pass with implicit default transitions
+    commands:
+      - rd run default-transitions.runbook.md
+    result: COMPLETE
 ---
 
 # Default Transitions

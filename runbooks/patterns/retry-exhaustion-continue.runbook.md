@@ -1,6 +1,10 @@
 ---
 name: retry-exhaustion-continue
 description: Tests that RETRY exhaustion triggers CONTINUE fallback action
+tags:
+  - retry
+  - transition
+  - auto-exec
 
 scenarios:
   retry-success:
@@ -17,6 +21,11 @@ scenarios:
       - rd fail
       - rd fail
       - rd pass
+    result: COMPLETE
+  auto-execution:
+    description: Step 1 fails twice (exhausts retry), continues to step 2 which passes
+    commands:
+      - rd run retry-exhaustion-continue.runbook.md
     result: COMPLETE
 ---
 

@@ -1,6 +1,11 @@
 ---
 name: retry-counter-reset
 description: Tests that GOTO resets the retry counter to 0 for the target location
+tags:
+  - retry
+  - goto
+  - transition
+  - auto-exec
 
 scenarios:
   success:
@@ -11,6 +16,11 @@ scenarios:
       - rd fail
       - rd fail
       - rd pass
+    result: COMPLETE
+  auto-execution:
+    description: Code blocks auto-execute - step 1 fails twice, GOTOs step 2, which retries once then passes
+    commands:
+      - rd run retry-counter-reset.runbook.md
     result: COMPLETE
 ---
 
