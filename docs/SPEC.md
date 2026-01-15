@@ -2,9 +2,9 @@
 version: 1.0.0
 ---
 
-# Rundown Workflow Specification
+# Rundown Runbook Specification
 
-Rundown is a format for defining executable workflows using Markdown.
+Rundown is a format for defining executable runbooks using Markdown.
 
 ---
 
@@ -43,10 +43,10 @@ Scenarios define executable command sequences for testing and documentation:
 
 ```yaml
 scenarios:
-  success:
+  completed:
     description: Optional description
     commands:
-      - rd run --prompted workflow.runbook.md
+      - rd run --prompted example.runbook.md
       - rd pass
     result: COMPLETE  # or STOP
 ```
@@ -57,8 +57,9 @@ scenarios:
 - `result` (required): Expected terminal state (`COMPLETE` or `STOP`)
 
 **CLI Usage:**
-- `rd scenarios <file>` - List all scenarios
-- `rd scenarios <file> <name>` - Show scenario details
+- `rd scenario ls <file>` - List all scenarios
+- `rd scenario show <file> <name>` - Show scenario details
+- `rd scenario run <file> <name>` - Run a scenario
 
 ---
 
@@ -269,7 +270,7 @@ Actions determine what happens next.
 |--------|-------------|
 | `CONTINUE` | Proceed to the next unit in sequence. |
 | `COMPLETE [msg]` | Runbook has completed successfully. Optional message. |
-| `STOP [msg]` | Halt execution immediately. Optional message. |
+| `STOP [msg]` | Halt runbook execution immediately. Optional message. |
 | `GOTO {id \| NEXT}` | Jump to Step `id` or create new dynamic step instance. |
 | `RETRY [n] [action]` | Retry the current unit `n` times (default 1). If exhausted, perform `action`. |
 
@@ -288,7 +289,7 @@ Actions determine what happens next.
 | GOTO Name.M         | Any step                  | Jump to substep M of named step                   |
 | GOTO {N}            | Any (dynamic context)     | Restart current dynamic step instance             |
 | GOTO {N}.M          | Any (dynamic context)     | Jump to substep M within current dynamic instance |
-| GOTO {N}.{n}        | Any (dynamic context)     | Resume at current substep of current step         |
+| GOTO {N}.{n}        | Any (dynamic context)     | Resume at current substep of current runbook step |
 | GOTO X.{n}          | Any (dynamic context)     | Jump to current dynamic substep instance          |
 | GOTO NEXT           | Any (dynamic context)     | Advance innermost dynamic context                 |
 | GOTO NEXT {N}       | Any step                  | Advance to next dynamic step instance             |

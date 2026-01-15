@@ -1,6 +1,6 @@
 # Rundown CLI Guide and Reference
 
-This document provides a comprehensive guide and reference for the Rundown CLI (`rundown`), explaining how it executes workflows defined in the Rundown format, tracks workflow state, manages execution, and dispatches subagents.
+This document provides a comprehensive guide and reference for the Rundown CLI (`rundown`), explaining how it executes runbooks defined in the Rundown format, tracks runbook state, manages execution, and dispatches subagents.
 
 **For syntax and format details, see:**
 - [SPEC.md](./SPEC.md) - Rundown specification
@@ -20,9 +20,9 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
 - [State Persistence](#state-persistence)
   - [File Locations](#file-locations)
   - [Session Structure](#session-structure)
-  - [Workflow State Structure](#workflow-state-structure)
+  - [Runbook State Structure](#workflow-state-structure)
 - [CLI Commands](#cli-commands)
-  - [Workflow Lifecycle](#workflow-lifecycle)
+  - [Runbook Lifecycle](#workflow-lifecycle)
   - [State Transitions](#state-transitions)
   - [Status Commands](#status-commands)
   - [Enforcement Control](#enforcement-control)
@@ -53,11 +53,11 @@ The Rundown system separates concerns into three layers:
 
 | Layer | Component | Responsibility |
 |-------|-----------|----------------|
-| **Format** | `.runbook.md` files | Workflow definition (steps, transitions, commands) |
+| **Format** | `.runbook.md` files | Runbook definition (steps, transitions, commands) |
 | **State Machine** | XState-compiled machine | State transitions and guards |
-| **Persistence** | JSON files | Workflow state survives context clears |
+| **Persistence** | JSON files | Runbook state survives context clears |
 
-The CLI is a control interface. Claude executes the actual work.
+The CLI is an orchestration and control interface. Claude executes the actual work.
 
 ```
 [Runbook File] --> [Parser] --> [XState Machine] --> [State Manager]
@@ -85,7 +85,7 @@ The `rd` command is an alias for `rundown`.
 
 ## Quick Start
 
-**Run a workflow:**
+**Run a runbook:**
 ```bash
 rundown run examples/runbooks/simple.runbook.md
 ```
@@ -101,7 +101,7 @@ rundown pass    # Step succeeded, apply PASS transition
 rundown fail    # Step failed, apply FAIL transition
 ```
 
-**Stop a workflow:**
+**Stop a runbook:**
 ```bash
 rundown stop [message]
 ```
@@ -112,15 +112,15 @@ rundown stop [message]
 
 ### Execution Model
 
-Rundown separates **workflow definition** from **state tracking**:
+Rundown separates **runbook definition** from **state tracking**:
 
 | Component | Role |
 |-----------|------|
 | **Runbook file** | Markdown document defining steps, transitions, and conditions |
-| **CLI (`rundown`)** | Tracks state: current step, retry count, variables |
+| **CLI (`rundown`)** | Tracks runbook state: current step, retry count, variables |
 | **Agent (Claude)** | Executes work, uses CLI to report outcomes |
 
-**Key concept:** The CLI does not execute your code. It tracks which step you are on and what happens when you report PASS or FAIL. The agent (or user) does the actual work.
+**Key concept:** The CLI tracks which step you are on and what happens when you report PASS or FAIL. For code blocks, it can execute commands automatically. Otherwise, the agent (or user) does the actual work.
 
 ### State Machine
 
@@ -198,13 +198,13 @@ Review the implementation for issues.
 
 | Path | Purpose |
 |------|---------|
-| `.claude/rundown/runs/` | Workflow state files (`wf-YYYY-MM-DD-xxxxx.json`) |
-| `.claude/rundown/session.json` | Active workflow tracking, stash, agent stacks |
-| `.claude/rundown/runbooks/` | Workflow source files (discovered for `rundown ls --all`) |
+| `.claude/rundown/runs/` | Runbook state files (`wf-YYYY-MM-DD-xxxxx.json`) |
+| `.claude/rundown/session.json` | Active runbook tracking, stash, agent stacks |
+| `.claude/rundown/runbooks/` | Runbook source files (discovered for `rundown ls --all`) |
 
 ### Session Structure
 
-The session tracks which workflows are active using a **stack-based model**:
+The session tracks which runbooks are active using a **stack-based model**:
 
 ```json
 {
@@ -216,20 +216,20 @@ The session tracks which workflows are active using a **stack-based model**:
 }
 ```
 
-- **defaultStack**: Main workflow stack (no agent ID)
-- **stacks**: Per-agent workflow stacks
-- **stashedWorkflowId**: Temporarily paused workflow (for `rundown stash`/`rundown pop`)
+- **defaultStack**: Main runbook stack (no agent ID)
+- **stacks**: Per-agent runbook stacks
+- **stashedWorkflowId**: Temporarily paused runbook (for `rundown stash`/`rundown pop`)
 
-### Workflow State Structure
+### Runbook State Structure
 
-Each workflow state file contains:
+Each runbook state file contains:
 
 ```json
 {
   "id": "wf-2024-01-07-abc123",
-  "workflow": "my-workflow.runbook.md",
-  "title": "My Workflow",
-  "description": "Workflow description",
+  "workflow": "my-runbook.runbook.md",
+  "name": "My Runbook",
+  "description": "Runbook description",
   "step": "2",
   "instance": 1,
   "substep": "1",
@@ -251,10 +251,10 @@ Each workflow state file contains:
 
 Key fields:
 - `step`: Current step identifier (string: "1", "ErrorHandler", "{N}")
-- `instance`: Dynamic workflow instance counter (1, 2, 3, ...)
+- `instance`: Dynamic runbook instance counter (1, 2, 3, ...)
 - `substep`: Current substep ID (e.g., "1", "2")
 - `retryCount`: Current retry attempt
-- `steps`: Array of step states for all workflow steps
+- `steps`: Array of step states for all runbook steps
 - `lastAction`: Most recent transition (`START`, `CONTINUE`, `GOTO`, `RETRY`, `COMPLETE`, `STOP`)
 - `lastResult`: Last PASS/FAIL signal (`pass` or `fail`)
 - `snapshot`: XState persisted snapshot for state restoration
@@ -263,21 +263,21 @@ Key fields:
 
 ## CLI Commands
 
-### Workflow Lifecycle
+### Runbook Lifecycle
 
-#### `rundown run <file>` - Start Workflow
+#### `rundown run <file>` - Start Runbook
 
-Start a new workflow from a runbook file.
+Start a new runbook from a runbook file.
 
 ```bash
-rundown run my-workflow.runbook.md
-rundown run my-workflow.runbook.md --prompted  # Disable automatic execution
+rundown run my-runbook.runbook.md
+rundown run my-runbook.runbook.md --prompted  # Disable automatic execution
 ```
 
 **Behavior:**
 1. Parse runbook file
-2. Create workflow state with unique ID
-3. Push workflow to session stack
+2. Create runbook state with unique ID
+3. Push runbook to session stack
 4. Enter execution loop
 
 **Execution Loop:**
@@ -291,20 +291,20 @@ rundown run my-workflow.runbook.md --prompted  # Disable automatic execution
 - Agent must run command manually
 - Use `rundown pass` or `rundown fail` after command
 
-#### `rundown stop` - Abort Workflow
+#### `rundown stop` - Abort Runbook
 
-Immediately terminate the active workflow.
+Immediately terminate the active runbook.
 
 ```bash
 rundown stop [message]
 rundown stop --agent <agentId>
 ```
 
-Deletes workflow state and clears from session.
+Deletes runbook state and clears from session.
 
 #### `rundown complete [message]` - Mark Complete
 
-Force workflow completion (success).
+Force runbook completion (success).
 
 ```bash
 rundown complete [message]                  # Mark as success with optional message
@@ -382,7 +382,7 @@ rundown goto 3.1     # Jump to substep 3.1
 
 #### `rundown status` - Show Current State
 
-Display active workflow information.
+Display active runbook information.
 
 ```bash
 rundown status
@@ -391,7 +391,7 @@ rundown status --agent <agentId>
 
 **Output:**
 ```
-File:     my-workflow.runbook.md
+File:     my-runbook.runbook.md
 State:    .claude/rundown/runs/wf-2024-01-07-abc123.json
 Action:   CONTINUE
 Result:   PASS
@@ -405,18 +405,18 @@ Agents:
   agent-123: 3.1 [running]
 ```
 
-#### `rundown ls` - List Workflows
+#### `rundown ls` - List Runbooks
 
-List active or available workflows.
+List active or available runbooks.
 
 ```bash
-rundown ls           # List active workflows
+rundown ls           # List active runbooks
 rundown ls --all     # List available runbook files
 rundown ls --json    # JSON output
 rundown ls --all --tags review  # Filter by tag
 ```
 
-**Active workflow status values:**
+**Active runbook status values:**
 - `active` - Currently executing
 - `stashed` - Paused via `rundown stash`
 - `complete` - Successfully finished
@@ -427,23 +427,23 @@ rundown ls --all --tags review  # Filter by tag
 
 #### `rundown stash` - Pause Enforcement
 
-Temporarily pause workflow tracking.
+Temporarily pause runbook tracking.
 
 ```bash
 rundown stash
 ```
 
-Removes active workflow from stack, preserves state.
+Removes active runbook from stack, preserves state.
 
 #### `rundown pop` - Resume Enforcement
 
-Resume from stashed workflow.
+Resume from stashed runbook.
 
 ```bash
 rundown pop
 ```
 
-Restores stashed workflow to active stack.
+Restores stashed runbook to active stack.
 
 ### Validation
 
@@ -452,7 +452,7 @@ Restores stashed workflow to active stack.
 Check a runbook file for syntax errors.
 
 ```bash
-rundown check my-workflow.runbook.md
+rundown check my-runbook.runbook.md
 ```
 
 **Output:**
@@ -469,13 +469,13 @@ Line 22: Invalid transition: GOTO 10 (step does not exist)
 
 ### Maintenance
 
-#### `rundown prune` - Remove Workflow State
+#### `rundown prune` - Remove Runbook State
 
-Clean up workflow state files (not runbook files).
+Clean up runbook state files (not runbook source files).
 
 ```bash
-rundown prune               # Remove completed workflows (default)
-rundown prune --all         # Remove all workflow state
+rundown prune               # Remove completed runbooks (default)
+rundown prune --all         # Remove all runbook state
 rundown prune --dry-run     # Preview what would be removed
 rundown prune --completed   # Only completed
 rundown prune --inactive    # Only inactive
@@ -495,25 +495,25 @@ rundown prune --active      # Only active (careful!)
 
 ## Common Tasks
 
-### Task: Run a Simple Sequential Workflow
+### Task: Run a Simple Sequential Runbook
 
 ```bash
-# Start the workflow
-rundown run myworkflow.runbook.md
+# Start the runbook
+rundown run myrunbook.runbook.md
 
 # After completing each step, signal the outcome
 rundown pass    # or rundown yes, rundown ok
 rundown fail    # Step failed, apply FAIL transition
 ```
 
-### Task: Check Workflow Status
+### Task: Check Runbook Status
 
 ```bash
 rundown status
 ```
 
 Output shows:
-- Current workflow file
+- Current runbook file
 - State file location
 - Current step and substep
 - Last action taken
@@ -527,7 +527,7 @@ rundown goto 2.1     # Jump to substep 1 of step 2
 
 **Note:** `GOTO NEXT` is only valid in runbook transitions, not via CLI.
 
-### Task: Pause and Resume a Workflow
+### Task: Pause and Resume a Runbook
 
 ```bash
 # Pause (state preserved, enforcement paused)
@@ -539,10 +539,10 @@ rundown stash
 rundown pop
 ```
 
-### Task: List Workflows
+### Task: List Runbooks
 
 ```bash
-# List active/running workflows
+# List active/running runbooks
 rundown ls
 
 # List all available runbook files
@@ -555,18 +555,18 @@ rundown ls --all --tags tdd,review
 ### Task: Validate a Runbook Before Running
 
 ```bash
-rundown check myworkflow.runbook.md
+rundown check myrunbook.runbook.md
 ```
 
 Output: `PASS: N steps` or `FAIL: error details`
 
-### Task: Clean Up Old Workflow State
+### Task: Clean Up Old Runbook State
 
 ```bash
 # Preview what would be removed
 rundown prune --dry-run
 
-# Remove completed workflow state
+# Remove completed runbook state
 rundown prune --completed
 
 # Remove all state
@@ -579,7 +579,7 @@ rundown prune --all
 
 ### Pattern 1: Orchestrator Control
 
-Main agent runs workflow, dispatches subagents for substeps.
+Main agent runs runbook, dispatches subagents for substeps.
 
 **Runbook structure:**
 ```markdown
@@ -593,23 +593,23 @@ Main agent runs workflow, dispatches subagents for substeps.
 
 **Command sequence:**
 ```bash
-# 1. Main agent starts parent workflow
-rd run workflow.runbook.md
+# 1. Main agent starts parent runbook
+rd run runbook.runbook.md
 
-# 2. At substep, main agent queues step with child workflow
+# 2. At substep, main agent queues step with child runbook
 rd run --step 2.1 task.runbook.md
 
-# 3. Subagent binds to queued step (picks up workflow automatically)
+# 3. Subagent binds to queued step (picks up runbook automatically)
 rd run --agent subagent-1
 
-# 4. Subagent works through child workflow...
+# 4. Subagent works through child runbook...
 
 # 5. Subagent reports result
 rd pass --agent subagent-1    # or: rd fail --agent subagent-1
 ```
 
 **Key points:**
-- Child workflow is specified with `--step`, not with `--agent`
+- Child runbook is specified with `--step`, not with `--agent`
 - Subagent uses `--agent` flag on all commands (`run`, `pass`, `fail`)
 - Parent waits for agent result before evaluating transition
 
@@ -643,7 +643,7 @@ Repeat step template until work complete.
 ### {N}.2 Verify results
 ```
 
-`GOTO NEXT` increments instance number (N=1, N=2, ...) until agent signals completion with `FAIL` or workflow reaches COMPLETE.
+`GOTO NEXT` increments instance number (N=1, N=2, ...) until agent signals completion with `FAIL` or runbook reaches COMPLETE.
 
 ---
 
@@ -652,7 +652,7 @@ Repeat step template until work complete.
 ### Standard Output Structure
 
 ```
-File:     workflow.runbook.md
+File:     runbook.runbook.md
 State:    .claude/rundown/runs/wf-xxx.json
 Action:   START
 
@@ -670,6 +670,8 @@ Result:   PASS
 Step:     2/5
 
 Next step description...
+
+Runbook:  COMPLETE
 ```
 
 ### Table Output
@@ -689,13 +691,13 @@ Example (`rd ls --all`):
 ```
 NAME           DESCRIPTION                    TAGS
 retry-success  Tests RETRY before exhaustion  retry, auto-exec
-simple         Basic two-step workflow
+simple         Basic two-step runbook
 ```
 
 Example (`rd scenario ls`):
 ```
 NAME              EXPECTED  DESCRIPTION                   TAGS
-success-first     COMPLETE  Step passes on first attempt
+completed         COMPLETE  Step passes on first attempt
 retry-exhaustion  STOP      Retries exhausted, stops
 ```
 
@@ -711,7 +713,7 @@ Single-item display commands (`rd scenario show`) use aligned key-value format:
 
 Example (`rd scenario show`):
 ```
-Name:        success-first-try
+Name:        completed
 Description: Step passes on first attempt
 Expected:    COMPLETE
 Commands:
@@ -721,19 +723,16 @@ Commands:
 
 ### Command Execution Output
 
-Commands that execute operations (`rd scenario run`) use a Plan/Execute/Result structure:
+Commands that execute operations (`rd scenario run`) use a Scenario/Execution/Result structure:
 
 ```
-[Plan Block]
-Name:     scenario-name
-Expected: COMPLETE
+Scenario: scenario-name
 
-[Execution Block - blank line before/after]
+---
 $ rd run --prompted file.runbook.md
 $ rd pass
 
-[Result Block]
-Result: COMPLETE
+Scenario: COMPLETE
 ```
 
 ### Key Elements
@@ -747,7 +746,8 @@ Result: COMPLETE
 | `Result:` | PASS or FAIL |
 | `Step:` | Current position (n/total or n.m/total) |
 | `$` | Command being executed |
-| `-----` | Separator between transitions |
+| `---` | Separator between scenario commands |
+| `Runbook:` | Runbook terminal state (COMPLETE, STOPPED, STASHED) |
 
 ---
 
@@ -757,8 +757,8 @@ Result: COMPLETE
 
 | Error | Cause | Resolution |
 |-------|-------|------------|
-| "No active workflow" | No workflow in stack | Run `rundown run <file>` |
-| "Workflow file not found" | Missing runbook | Check file path |
+| "No active runbook" | No runbook in stack | Run `rundown run <file>` |
+| "Runbook file not found" | Missing runbook | Check file path |
 | "Step N does not exist" | Invalid GOTO target | Check step numbers |
 | "Invalid step target" | Bad goto format | Use "N" or "N.M" |
 | "GOTO NEXT is only valid as runbook transition" | CLI misuse | Only use in runbook transitions |
@@ -766,8 +766,8 @@ Result: COMPLETE
 ### State Recovery
 
 If state becomes corrupted:
-1. `rundown ls` - Check active workflows
-2. `rundown stop [message]` - Clear active workflow
+1. `rundown ls` - Check active runbooks
+2. `rundown stop [message]` - Clear active runbook
 3. `rundown prune --all` - Remove all state
 4. `rundown run <file>` - Restart fresh
 
@@ -792,8 +792,8 @@ Both runbook state and session tracking survive:
 
 ```bash
 # Lifecycle
-rundown run <file>           # Start workflow
-rundown stop [message]       # Abort workflow with optional message
+rundown run <file>           # Start runbook
+rundown stop [message]       # Abort runbook with optional message
 rundown complete [message]   # Mark complete with optional message
 
 # Transitions
@@ -804,7 +804,7 @@ rundown goto <N.M>           # Jump to substep N.M
 
 # Status
 rundown status               # Show current state
-rundown ls                   # List active workflows
+rundown ls                   # List active runbooks
 rundown ls --all             # List available runbooks
 
 # Enforcement
@@ -816,7 +816,7 @@ rundown check <file>         # Validate runbook
 rundown prune                # Clean up state
 
 # Subagent Dispatch
-rd run --step <id> <runbook>   # Queue step with child workflow
+rd run --step <id> <runbook>   # Queue step with child runbook
 rd run --agent <agentId>       # Subagent binds to queued step
 rd pass --agent <agentId>      # Subagent marks work passed
 rd fail --agent <agentId>      # Subagent marks work failed

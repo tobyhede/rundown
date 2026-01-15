@@ -5,16 +5,16 @@
 <h1 align="center">Rundown</h1>
 
 <p align="center">
-  <strong>Executable Workflows from Markdown Runbooks</strong><br>
+  <strong>Executable Runbooks from Markdown</strong><br>
   Enforce process. Track progress. Resume anytime.
 </p>
 
 ## Features
 
-- **Markdown-based workflows** - Define multi-step processes in readable `.runbook.md` files
-- **State persistence** - Workflow progress survives context clears
-- **XState compilation** - Workflows compile to state machines for reliable execution
-- **CLI control** - Simple commands to run, pass, fail, and navigate workflows
+- **Markdown-based runbooks** - Define multi-step processes in readable `.runbook.md` files
+- **State persistence** - Runbook progress survives context clears
+- **XState compilation** - Runbooks compile to state machines for reliable execution
+- **CLI control** - Simple commands to run, pass, fail, and navigate runbooks
 
 ## Installation
 
@@ -24,11 +24,11 @@ npm install -g @rundown/cli
 
 ## Quick Start
 
-Create a workflow file `deploy.runbook.md`:
+Create a runbook file `deploy.runbook.md`:
 
 ```markdown
 ---
-title: Deploy to Production
+name: Deploy to Production
 ---
 
 ## 1. Run Tests
@@ -56,7 +56,7 @@ npm run deploy
 ```
 ```
 
-Run the workflow:
+Run the runbook:
 
 ```bash
 rundown run deploy.runbook.md
@@ -68,27 +68,27 @@ The `rd` command is an alias for `rundown`.
 
 | Command | Description |
 |---------|-------------|
-| `rundown run <file>` | Start a workflow |
+| `rundown run <file>` | Start a runbook |
 | `rundown pass` | Mark current step as passed (evaluates PASS condition) |
 | `rundown fail` | Mark current step as failed (evaluates FAIL condition) |
 | `rundown goto <n>` | Jump to step number |
 | `rundown status` | Show current state |
-| `rundown stop [message]` | Abort workflow with optional message |
-| `rundown complete [message]` | Mark workflow as complete with optional message |
-| `rundown stash` | Pause enforcement (stash active workflow) |
-| `rundown pop` | Resume enforcement (restore stashed workflow) |
-| `rundown ls` | List active workflows |
-| `rundown ls --all` | List available workflow files |
+| `rundown stop [message]` | Abort runbook with optional message |
+| `rundown complete [message]` | Mark runbook as complete with optional message |
+| `rundown stash` | Pause enforcement (stash active runbook) |
+| `rundown pop` | Resume enforcement (restore stashed runbook) |
+| `rundown ls` | List active runbooks |
+| `rundown ls --all` | List available runbook files |
 | `rundown ls --json` | Output as JSON for programmatic use |
-| `rundown ls --tags <tags>` | Filter workflows by comma-separated tags |
-| `rundown check <file>` | Validate workflow file |
+| `rundown ls --tags <tags>` | Filter runbooks by comma-separated tags |
+| `rundown check <file>` | Validate runbook file |
 
 ## Packages
 
 | Package | Description |
 |---------|-------------|
-| [@rundown/parser](packages/parser) | Markdown workflow parser |
-| [@rundown/core](packages/core) | Workflow state management |
+| [@rundown/parser](packages/parser) | Markdown runbook parser |
+| [@rundown/core](packages/core) | Runbook state management |
 | [@rundown/cli](packages/cli) | Command-line interface |
 
 ## Documentation

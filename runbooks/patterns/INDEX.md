@@ -41,9 +41,9 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 
 ---
 
-## Sequential Workflows
+## Sequential Runbooks
 
-Linear workflows with numbered steps.
+Linear runbooks with numbered steps.
 
 ### standard-sequential.runbook.md
 
@@ -317,7 +317,7 @@ Steps with user prompts.
 
 ### mixed-prompts.runbook.md
 
-Different prompt types in one workflow.
+Different prompt types in one runbook.
 
 - [mixed-prompts.runbook.md](./prompts/mixed-prompts.runbook.md)
 
@@ -337,11 +337,11 @@ Code blocks with `prompt` info string (displayed but not executed).
 
 ## Composition & Agents
 
-Parent workflows, agents, and delegation.
+Parent runbooks, agents, and delegation.
 
 ### workflow-composition.runbook.md
 
-Parent workflow delegating to child workflows.
+Parent runbook delegating to child runbooks.
 
 - [workflow-composition.runbook.md](./composition/workflow-composition.runbook.md)
 
@@ -365,7 +365,7 @@ Handling failure in agent delegation.
 
 ### multi-agent-dynamic.runbook.md
 
-Multiple agents in a dynamic workflow loop.
+Multiple agents in a dynamic runbook loop.
 
 - [multi-agent-dynamic.runbook.md](./composition/multi-agent-dynamic.runbook.md)
 
@@ -401,7 +401,7 @@ STOP and COMPLETE with custom messages.
 
 ### code-blocks.runbook.md
 
-Various code block patterns in workflows.
+Various code block patterns in runbooks.
 
 - [code-blocks.runbook.md](./features/code-blocks.runbook.md)
 
