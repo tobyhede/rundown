@@ -69,6 +69,22 @@ describe('resolveRunbookFile', () => {
     expect(result).toBe(path.join(claudeDir, 'test.runbook.md'));
   });
 
+  describe('resolution precedence', () => {
+    it('prefers project runbook over bundled', async () => {
+      // Create a project-local override of a bundled runbook
+      const claudeDir = path.join(testDir, '.claude', 'rundown', 'runbooks');
+      await fs.mkdir(claudeDir, { recursive: true });
+      await fs.writeFile(
+        path.join(claudeDir, 'retry-success.runbook.md'),
+        '---\nname: override\n---\n# Override\n'
+      );
+
+      const result = await resolveRunbookFile(testDir, 'retry-success.runbook.md');
+
+      expect(result).toBe(path.join(claudeDir, 'retry-success.runbook.md'));
+    });
+  });
+
   describe('bundled runbook resolution', () => {
     it('finds bundled runbook when not found elsewhere', async () => {
       // Clear plugin root to isolate test
