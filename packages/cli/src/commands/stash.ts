@@ -7,7 +7,7 @@ import {
   printWorkflowStashed,
   printNoActiveWorkflow,
 } from '@rundown/core';
-import { getCwd, getStepCount } from '../helpers/context.js';
+import { getCwd, getStepTotal } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
@@ -31,7 +31,7 @@ export function registerStashCommand(program: Command): void {
           return;
         }
 
-        const totalSteps = await getStepCount(cwd, state.workflow);
+        const totalSteps = await getStepTotal(cwd, state.workflow);
 
         // Print metadata
         printMetadata(buildMetadata(state));
