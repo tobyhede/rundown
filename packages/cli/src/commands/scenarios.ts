@@ -21,29 +21,29 @@ const CLI_PATH = join(__dirname, '..', 'cli.js');
  * @param program - The Commander program instance to register the command on
  */
 export function registerScenariosCommand(program: Command): void {
-  const scenarios = program
-    .command('scenarios')
+  const scenario = program
+    .command('scenario')
     .description('List, show, or run scenarios from a runbook');
 
-  // rd scenarios list <file>
-  scenarios
+  // rd scenario list <file>
+  scenario
     .command('list <file>')
     .description('List all scenarios in a runbook')
     .action(async (file: string) => {
       await handleList(file);
     });
 
-  // rd scenarios show <file> <scenario>
-  scenarios
-    .command('show <file> <scenario>')
+  // rd scenario show <file> <name>
+  scenario
+    .command('show <file> <name>')
     .description('Show details for a specific scenario')
     .action(async (file: string, scenarioName: string) => {
       await handleShow(file, scenarioName);
     });
 
-  // rd scenarios run <file> <scenario>
-  scenarios
-    .command('run <file> <scenario>')
+  // rd scenario run <file> <name>
+  scenario
+    .command('run <file> <name>')
     .description('Execute a scenario and verify the result')
     .option('-v, --verbose', 'Show command output')
     .action(async (file: string, scenarioName: string, options: { verbose?: boolean }) => {
