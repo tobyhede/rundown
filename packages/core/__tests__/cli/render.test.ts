@@ -80,12 +80,13 @@ describe('dynamic step rendering', () => {
       name: '{N}',
       description: 'Process Batch',
       isDynamic: true,
-      prompt: 'Process the batch.',
+      prompt: 'Process batch {N}.',
     };
 
     const result = renderStepForCLI(step, '1');
 
     expect(result).toContain('## 1. Process Batch');
+    expect(result).toContain('Process batch 1.');
     expect(result).not.toContain('{N}');
   });
 
@@ -114,5 +115,21 @@ describe('dynamic step rendering', () => {
     const result = renderStepForCLI(step);
 
     expect(result).toContain('## 1. First step');
+  });
+
+  it('substitutes {N} and {n} in command code', () => {
+    const step: Step = {
+      name: '{N}',
+      description: 'Process Batch',
+      isDynamic: true,
+      prompt: 'Process the batch.',
+      command: { code: 'process-batch --instance {N} --item {n}' },
+    };
+
+    const result = renderStepForCLI(step, '2', '5');
+
+    expect(result).toContain('process-batch --instance 2 --item 5');
+    expect(result).not.toContain('{N}');
+    expect(result).not.toContain('{n}');
   });
 });

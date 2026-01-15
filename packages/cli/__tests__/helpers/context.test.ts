@@ -33,6 +33,11 @@ describe('context helpers', () => {
       const result = await isDynamicWorkflow(tempDir, 'static.md');
       expect(result).toBe(false);
     });
+
+    it('returns false when file does not exist', async () => {
+      const result = await isDynamicWorkflow(tempDir, 'nonexistent.md');
+      expect(result).toBe(false);
+    });
   });
 
   describe('getStepTotal', () => {
@@ -52,6 +57,11 @@ describe('context helpers', () => {
 
       const result = await getStepTotal(tempDir, 'static.md');
       expect(result).toBe(2);
+    });
+
+    it('returns 0 when file does not exist', async () => {
+      const result = await getStepTotal(tempDir, 'nonexistent.md');
+      expect(result).toBe(0);
     });
   });
 });
