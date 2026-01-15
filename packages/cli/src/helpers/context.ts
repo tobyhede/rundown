@@ -26,7 +26,7 @@ export async function isDynamicWorkflow(cwd: string, workflowPath: string): Prom
     if (!fullPath) return false;
     const content = await fs.readFile(fullPath, 'utf8');
     const steps = parseWorkflow(content);
-    return steps.length > 0 && steps[0].isDynamic === true;
+    return steps.length > 0 && steps[0].isDynamic;
   } catch {
     return false;
   }

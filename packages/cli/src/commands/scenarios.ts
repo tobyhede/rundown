@@ -97,7 +97,7 @@ async function loadScenarios(file: string): Promise<LoadedRunbook> {
     process.exit(1);
   }
 
-  const name = (frontmatter.name as string) ?? file;
+  const name = (frontmatter.name as string | undefined) ?? file;
   const description = frontmatter.description as string | undefined;
 
   return { filePath, name, description, scenarios };

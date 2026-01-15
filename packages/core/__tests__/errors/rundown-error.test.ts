@@ -201,7 +201,7 @@ describe('Errors factory', () => {
 
 describe('ErrorCodes', () => {
   it('has correct structure for all codes', () => {
-    for (const [key, def] of Object.entries(ErrorCodes)) {
+    for (const [_key, def] of Object.entries(ErrorCodes)) {
       expect(def.code).toMatch(/^RD-\d{3}$/);
       expect(Object.values(ErrorCategory)).toContain(def.category);
       expect(def.title).toBeTruthy();

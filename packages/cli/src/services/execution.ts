@@ -150,7 +150,7 @@ export async function runExecutionLoop(
 
     // Determine what to render: substep if we're at one, otherwise the step
     let itemToRender: Step | Substep = currentStep;
-    if (state!.substep && currentStep.substeps) {
+    if (state.substep && currentStep.substeps) {
       // Find the substep - for dynamic substeps use the template, otherwise match by id
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const substep = currentStep.substeps.find(s => s.isDynamic || s.id === state!.substep);

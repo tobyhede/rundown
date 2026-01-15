@@ -4,7 +4,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { extractRawFrontmatter } from '../../src/helpers/extract-raw-frontmatter.js';
 import { parseScenarios, type Scenario, type Scenarios } from '../../src/schemas/scenarios.js';
-import { copyFileSync, mkdirSync } from 'fs';
+import { copyFileSync, mkdirSync, readdirSync, statSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -24,24 +24,45 @@ describe('scenario runner', () => {
   });
 
   /**
+   * Recursively get all files in a directory.
+   */
+  async function getFiles(dir: string): Promise<string[]> {
+    const dirents = await readdir(dir, { withFileTypes: true });
+    const files = await Promise.all(dirents.map((dirent) => {
+      const res = join(dir, dirent.name);
+      return dirent.isDirectory() ? getFiles(res) : Promise.resolve([res]);
+    }));
+    return Array.prototype.concat(...files);
+  }
+
+  /**
    * Load pattern files that have scenarios defined.
    */
   async function loadPatternsWithScenarios(): Promise<{ file: string; scenarios: Scenarios }[]> {
     const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
-    const files = await readdir(patternsDir);
+    const allFiles = await getFiles(patternsDir);
     const results: { file: string; scenarios: Scenarios }[] = [];
 
-    for (const file of files) {
-      if (!file.endsWith('.runbook.md')) continue;
+    for (const filePath of allFiles) {
+      if (!filePath.endsWith('.runbook.md')) continue;
 
-      const content = await readFile(join(patternsDir, file), 'utf-8');
+      const content = await readFile(filePath, 'utf-8');
       const { frontmatter } = extractRawFrontmatter(content);
       if (!frontmatter) continue;
 
       const { scenarios } = parseScenarios(frontmatter);
 
       if (scenarios && Object.keys(scenarios).length > 0) {
-        results.push({ file, scenarios });
+        // Store relative path from patterns dir to maintain identity, 
+        // but for now we might handle filenames.
+        // let's store the filename for compatibility with existing logic
+        // or store the full path?
+        // The existing logic uses 'file' variable which was filename.
+        // Let's pass the absolute path or relative path.
+        // The copyPatternToWorkspace uses it to find the file.
+        // Let's use relative path from patternsDir.
+        const relativePath = filePath.substring(patternsDir.length + 1);
+        results.push({ file: relativePath, scenarios });
       }
     }
 
@@ -50,13 +71,53 @@ describe('scenario runner', () => {
 
   /**
    * Copy a pattern file to the test workspace.
+   * Handles files in subdirectories by flattening them to the target directory.
    */
-  function copyPatternToWorkspace(filename: string): void {
+  function copyPatternToWorkspace(relativePath: string): void {
     const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
+    const sourcePath = join(patternsDir, relativePath);
     const targetDir = join(workspace.cwd, '.claude', 'rundown', 'runbooks');
+    const filename = relativePath.split('/').pop()!; // Flatten: use basename
+    
     mkdirSync(targetDir, { recursive: true });
-    copyFileSync(join(patternsDir, filename), join(targetDir, filename));
+    
+    // If we are given just a filename (from a reference), we need to find it
+    // because references in runbooks (e.g. "child.runbook.md") don't have paths.
+    // If the file is not found at sourcePath, search for it.
+    try {
+      copyFileSync(sourcePath, join(targetDir, filename));
+    } catch (err) {
+      // Fallback: If strict path failed, try to find the file by name in the patterns dir
+      // This handles the case where a runbook references another runbook by name
+      // but we don't know its subdirectory.
+      // NOTE: This assumes unique filenames across all subdirectories.
+      const foundPath = findFileByName(patternsDir, filename);
+      if (foundPath) {
+        copyFileSync(foundPath, join(targetDir, filename));
+      } else {
+        throw err;
+      }
+    }
   }
+
+  function findFileByName(dir: string, filename: string): string | null {
+    const entries = readdirSync(dir);
+    for (const entry of entries) {
+      const fullPath = join(dir, entry);
+      const stat = statSync(fullPath);
+      if (stat.isDirectory()) {
+        const found = findFileByName(fullPath, filename);
+        if (found) return found;
+      } else if (entry === filename) {
+        return fullPath;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Extract referenced runbook files from scenario commands.
+
 
   /**
    * Extract referenced runbook files from scenario commands.
@@ -94,7 +155,8 @@ describe('scenario runner', () => {
       if (ref !== filename) {
         try {
           copyPatternToWorkspace(ref);
-        } catch {
+        } catch (err) {
+          console.warn(`Failed to copy referenced runbook ${ref}:`, err);
           // File may not exist in patterns dir, which is fine
         }
       }
@@ -115,7 +177,7 @@ describe('scenario runner', () => {
       // Strip 'rd ' prefix and run
       const args = cmd.replace(/^rd\s+/, '');
       const result = runCli(args, workspace);
-
+      
       // Check exit codes:
       // - Non-last commands must succeed
       // - Last command may fail only for STOP scenarios (e.g., rd fail causes stop)
@@ -129,7 +191,13 @@ describe('scenario runner', () => {
 
     // Verify result - use getAllStates since completed workflows have no active state
     const states = await getAllStates(workspace);
-    const state = states.find(s => (s.workflow as string).includes(filename));
+    const state = states.find(s => {
+      const workflowPath = s.workflow as string;
+      // Since we flatten files in the test workspace, check if the filename matches
+      // filename is relative (e.g. composition/foo.md) or just foo.md
+      const expectedName = filename.split('/').pop()!;
+      return workflowPath.endsWith(expectedName);
+    });
 
     if (!state) {
       throw new Error(`No state found for workflow ${filename}`);

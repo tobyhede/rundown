@@ -41,8 +41,8 @@ export interface TableOptions {
  * // ['NAME  DESCRIPTION', 'foo   A foo']
  * ```
  */
-export function formatTable<T extends Record<string, unknown>>(
-  rows: T[],
+export function formatTable(
+  rows: Record<string, string | number | boolean | null | undefined>[],
   columns: Column[],
   options?: TableOptions
 ): string[] {
@@ -89,8 +89,8 @@ export function formatTable<T extends Record<string, unknown>>(
  * @param columns - Column definitions
  * @param options - Formatting options
  */
-export function printTable<T extends Record<string, unknown>>(
-  rows: T[],
+export function printTable(
+  rows: Record<string, string | number | boolean | null | undefined>[],
   columns: Column[],
   options?: TableOptions
 ): void {

@@ -6,8 +6,18 @@ import path from 'node:path';
 
 // Read patterns from runbooks/patterns directory
 const patternsDir = path.resolve('..', 'runbooks', 'patterns');
-const files = await fs.readdir(patternsDir);
-const runbookFiles = files.filter((f) => f.endsWith('.runbook.md'));
+
+async function getFiles(dir: string): Promise<string[]> {
+  const dirents = await fs.readdir(dir, { withFileTypes: true });
+  const files = await Promise.all(dirents.map((dirent) => {
+    const res = path.join(dir, dirent.name);
+    return dirent.isDirectory() ? getFiles(res) : Promise.resolve([res]);
+  }));
+  return Array.prototype.concat(...files);
+}
+
+const allFiles = await getFiles(patternsDir);
+const runbookFiles = allFiles.filter((f) => f.endsWith('.runbook.md'));
 
 interface PatternMeta {
   slug: string;
@@ -18,16 +28,17 @@ interface PatternMeta {
 
 const patterns: PatternMeta[] = [];
 
-for (const file of runbookFiles) {
-  const content = await fs.readFile(path.join(patternsDir, file), 'utf-8');
+for (const filePath of runbookFiles) {
+  const content = await fs.readFile(filePath, 'utf-8');
   const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  const fileName = path.basename(filePath);
 
   if (frontmatterMatch) {
     try {
       const frontmatter = parseYaml(frontmatterMatch[1]);
       patterns.push({
-        slug: file.replace('.runbook.md', ''),
-        name: frontmatter.name || file,
+        slug: fileName.replace('.runbook.md', ''),
+        name: frontmatter.name || fileName,
         description: frontmatter.description || '',
         tags: frontmatter.tags || [],
       });
