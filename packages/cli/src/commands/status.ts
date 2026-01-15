@@ -59,9 +59,15 @@ export function registerStatusCommand(program: Command): void {
         }
         const content = await fs.readFile(workflowPath, 'utf8');
         const steps = parseWorkflow(content);
-        const currentStepIndex = steps.findIndex(s => s.name === state.step);
+        const isDynamic = steps.length > 0 && steps[0].isDynamic;
+        // For dynamic workflows, find step by checking if it's the dynamic template
+        const currentStepIndex = isDynamic ? 0 : steps.findIndex(s => s.name === state.step);
         const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
-        const totalSteps = steps.length;
+        const totalSteps: number | string = isDynamic ? '{N}' : steps.length;
+        // Use state.instance for dynamic workflows, state.step for static
+        const displayStep = isDynamic && state.instance !== undefined
+          ? String(state.instance)
+          : state.step;
 
         // Print metadata
         printMetadata(buildMetadata(state));
