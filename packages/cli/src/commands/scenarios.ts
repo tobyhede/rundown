@@ -13,7 +13,7 @@ import {
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
-import { printTable } from '../helpers/table-formatter.js';
+import { OutputManager } from '../services/output-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -35,16 +35,18 @@ export function registerScenariosCommand(program: Command): void {
   scenario
     .command('ls <file>')
     .description('List all scenarios in a runbook')
-    .action(async (file: string) => {
-      await handleList(file);
+    .option('--json', 'Output as JSON')
+    .action(async (file: string, options: { json?: boolean }) => {
+      await handleList(file, options.json);
     });
 
   // rd scenario show <file> <name>
   scenario
     .command('show <file> <name>')
     .description('Show details for a specific scenario')
-    .action(async (file: string, scenarioName: string) => {
-      await handleShow(file, scenarioName);
+    .option('--json', 'Output as JSON')
+    .action(async (file: string, scenarioName: string, options: { json?: boolean }) => {
+      await handleShow(file, scenarioName, options.json);
     });
 
   // rd scenario run <file> <name>
@@ -112,11 +114,12 @@ async function loadScenarios(file: string): Promise<LoadedRunbook> {
  * List all scenarios in a runbook.
  *
  * @param file - Runbook file path
+ * @param json - Whether to output as JSON
  */
-async function handleList(file: string): Promise<void> {
+async function handleList(file: string, json?: boolean): Promise<void> {
   try {
     const { scenarios } = await loadScenarios(file);
-    listScenarios(scenarios);
+    listScenarios(scenarios, json);
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     process.exit(1);
@@ -128,11 +131,12 @@ async function handleList(file: string): Promise<void> {
  *
  * @param file - Runbook file path
  * @param scenarioName - Name of the scenario to show
+ * @param json - Whether to output as JSON
  */
-async function handleShow(file: string, scenarioName: string): Promise<void> {
+async function handleShow(file: string, scenarioName: string, json?: boolean): Promise<void> {
   try {
     const { scenarios } = await loadScenarios(file);
-    showScenarioDetails(scenarioName, scenarios);
+    showScenarioDetails(scenarioName, scenarios, json);
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     process.exit(1);
@@ -143,8 +147,10 @@ async function handleShow(file: string, scenarioName: string): Promise<void> {
  * Display a list of all scenarios with their metadata.
  *
  * @param scenarios - Map of scenario names to their definitions
+ * @param json - Whether to output as JSON
  */
-function listScenarios(scenarios: Scenarios): void {
+function listScenarios(scenarios: Scenarios, json?: boolean): void {
+  const output = new OutputManager({ json });
   const rows = Object.entries(scenarios).map(([name, scenario]) => {
     const scenarioWithTags = scenario as { tags?: string[] };
     return {
@@ -155,7 +161,7 @@ function listScenarios(scenarios: Scenarios): void {
     };
   });
 
-  printTable(rows, [
+  output.list(rows, [
     { header: 'NAME', key: 'name' },
     { header: 'EXPECTED', key: 'expected' },
     { header: 'DESCRIPTION', key: 'description' },
@@ -168,9 +174,16 @@ function listScenarios(scenarios: Scenarios): void {
  *
  * @param name - The name of the scenario to display
  * @param scenarios - Map of scenario names to their definitions
+ * @param json - Whether to output as JSON
  */
-function showScenarioDetails(name: string, scenarios: Scenarios): void {
+function showScenarioDetails(name: string, scenarios: Scenarios, json?: boolean): void {
+  const output = new OutputManager({ json });
+  const writer = output.getWriter();
+
   if (!(name in scenarios)) {
+    // If output is json, we should probably output an error object or empty? 
+    // But currently the contract is to exit.
+    // Ideally we'd throw or use output.writeError.
     console.error(`Scenario "${name}" not found`);
     console.error(`Available: ${Object.keys(scenarios).join(', ')}`);
     process.exit(1);
@@ -178,15 +191,26 @@ function showScenarioDetails(name: string, scenarios: Scenarios): void {
 
   const scenario = scenarios[name];
 
-  // Aligned keys (12 chars = "Description:")
-  console.log(`Name:        ${name}`);
-  if (scenario.description) {
-    console.log(`Description: ${scenario.description}`);
+  if (output.isJson()) {
+    writer.writeJson({
+      name,
+      description: scenario.description,
+      expected: scenario.result,
+      commands: scenario.commands,
+      tags: (scenario as { tags?: string[] }).tags
+    });
+    return;
   }
-  console.log(`Expected:    ${scenario.result}`);
-  console.log('Commands:');
+
+  // Aligned keys (12 chars = "Description:")
+  writer.writeLine(`Name:        ${name}`);
+  if (scenario.description) {
+    writer.writeLine(`Description: ${scenario.description}`);
+  }
+  writer.writeLine(`Expected:    ${scenario.result}`);
+  writer.writeLine('Commands:');
   for (const cmd of scenario.commands) {
-    console.log(`  $ ${cmd}`);
+    writer.writeLine(`  $ ${cmd}`);
   }
 }
 
