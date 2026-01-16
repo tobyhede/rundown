@@ -262,16 +262,12 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
     console.log();
 
     // 5. Execute commands in sequence
-    const totalCommands = scenario.commands.length;
-    for (let i = 0; i < scenario.commands.length; i++) {
-      const cmd = scenario.commands[i];
-      const cmdNum = i + 1;
-
+    for (const cmd of scenario.commands) {
       if (!quiet) {
         // Clear visual separator between commands
         console.log();
-        console.log(dim(`━━━ [${cmdNum}/${totalCommands}] ${'━'.repeat(40)}`));
-        console.log(`${info('▶')} ${cmd}`);
+        console.log(dim('━'.repeat(50)));
+        console.log(`${info('$')} ${cmd}`);
         console.log();
       }
 
