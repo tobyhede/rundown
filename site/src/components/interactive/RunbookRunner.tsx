@@ -1,4 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import * as xtermPkg from '@xterm/xterm';
+// @ts-ignore
+const Terminal = xtermPkg.Terminal || xtermPkg.default?.Terminal;
+import * as fitPkg from '@xterm/addon-fit';
+// @ts-ignore
+const FitAddon = fitPkg.FitAddon || fitPkg.default?.FitAddon;
+import '@xterm/xterm/css/xterm.css';
 import {
   getWebContainer,
   setupRundown,
@@ -55,7 +62,7 @@ function parseRdArgs(cmd: string): string[] {
 }
 
 /**
- * Strip ANSI escape codes from a string.
+ * Strip ANSI escape codes from a string (helper for state parsing only).
  */
 function stripAnsi(str: string): string {
   // eslint-disable-next-line no-control-regex
@@ -64,9 +71,7 @@ function stripAnsi(str: string): string {
 
 /**
  * Interactive runbook runner component that executes Rundown runbooks in a WebContainer.
- *
- * Boots a WebContainer on mount, loads a pre-built snapshot with @rundown/cli,
- * and executes scenario commands step-by-step with terminal-style output.
+ * Uses Xterm.js for authentic terminal output rendering.
  *
  * @param props - Component props
  * @returns React component for interactive runbook execution
@@ -80,56 +85,125 @@ export function RunbookRunner({
   const [container, setContainer] = useState<WebContainer | null>(null);
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [output, setOutput] = useState<string[]>([]);
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedScenario, setSelectedScenario] = useState<string>(
     Object.keys(scenarios)[0] || ''
   );
 
-  const terminalRef = useRef<HTMLDivElement>(null);
+  // Runbook internal state extracted from CLI output
+  const [runbookStep, setRunbookStep] = useState<string>('—');
+  const [runbookTotal, setRunbookTotal] = useState<string>('—');
+  const [runbookResult, setRunbookResult] = useState<string | null>(null);
 
-  // Auto-scroll to bottom when output changes
+  // Xterm refs
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const xtermInstance = useRef<Terminal | null>(null);
+  const fitAddonInstance = useRef<FitAddon | null>(null);
+
+  // Initialize Xterm on mount
   useEffect(() => {
-    if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-    }
-  }, [output]);
+    if (!terminalRef.current || xtermInstance.current) return;
+
+    const term = new Terminal({
+      theme: {
+        background: '#00000000', // Transparent to let parent BG show through
+        foreground: '#cccccc',
+        cursor: '#00e5ff',
+        selectionBackground: 'rgba(0, 229, 255, 0.3)',
+        black: '#000000',
+        red: '#ef4444',
+        green: '#22c55e',
+        yellow: '#eab308',
+        blue: '#3b82f6',
+        magenta: '#d946ef',
+        cyan: '#06b6d4',
+        white: '#ffffff',
+        brightBlack: '#6b7280',
+        brightRed: '#f87171',
+        brightGreen: '#4ade80',
+        brightYellow: '#fde047',
+        brightBlue: '#60a5fa',
+        brightMagenta: '#e879f9',
+        brightCyan: '#22d3ee',
+        brightWhite: '#ffffff',
+      },
+      fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+      fontSize: 12,
+      lineHeight: 1.4,
+      cursorBlink: true,
+      allowTransparency: true,
+      convertEol: true, // Important for properly handling \n from Node processes
+    });
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    
+    term.open(terminalRef.current);
+    fitAddon.fit();
+
+    xtermInstance.current = term;
+    fitAddonInstance.current = fitAddon;
+
+    // Handle resize
+    const handleResize = () => fitAddon.fit();
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      term.dispose();
+      xtermInstance.current = null;
+    };
+  }, []);
+
+  // Reset internal runbook state when scenario changes
+  const resetInternalState = useCallback(() => {
+    setRunbookStep('—');
+    setRunbookTotal('—');
+    setRunbookResult(null);
+    setCurrentStep(0);
+    xtermInstance.current?.clear();
+  }, []);
 
   // Initialize WebContainer on mount
   useEffect(() => {
-    let cancelled = false;
+    let mounted = true;
 
     async function init() {
       try {
         setStatus('booting');
         const wc = await getWebContainer();
-        if (cancelled) return;
+        if (!mounted) return;
+        setContainer(wc);
 
         setStatus('loading');
         await setupRundown(wc);
-        if (cancelled) return;
-
         await mountRunbook(wc, runbookPath, runbookContent);
-        if (cancelled) return;
 
-        setContainer(wc);
-        setStatus('ready');
+        if (mounted) {
+          setStatus('ready');
+          xtermInstance.current?.writeln('\x1b[2mEnvironment ready.\x1b[0m');
+        }
       } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to initialize');
-        setStatus('error');
+        if (mounted) {
+          console.error(err);
+          setStatus('error');
+          setError(err instanceof Error ? err.message : String(err));
+          xtermInstance.current?.writeln(`\x1b[31mError: ${err instanceof Error ? err.message : String(err)}\x1b[0m`);
+        }
       }
     }
 
     init();
 
     return () => {
-      cancelled = true;
+      mounted = false;
     };
   }, [runbookPath, runbookContent]);
 
   const executeStep = useCallback(async () => {
     if (!container || !selectedScenario || status !== 'ready') return;
+    const term = xtermInstance.current;
+    if (!term) return;
 
     const scenario = scenarios[selectedScenario];
     if (!scenario || currentStep >= scenario.commands.length) return;
@@ -138,23 +212,43 @@ export function RunbookRunner({
     const args = parseRdArgs(command);
 
     setStatus('running');
-    setOutput((prev) => [...prev, `$ ${command}`]);
+    
+    // Write command prompt to terminal
+    term.writeln('');
+    term.writeln(`\x1b[36;1m$ ${command}\x1b[0m`);
+    term.writeln('');
 
     try {
-      const result = await runRdCommand(container, args);
-      const cleanOutput = stripAnsi(result.output || '(no output)');
+      // Process output chunk-by-chunk
+      const processChunk = (chunk: string) => {
+        // 1. Write raw chunk to Xterm (handles ANSI/colors/cursor)
+        term.write(chunk);
+
+        // 2. Parse text for Footer status updates (strip ANSI for parsing)
+        const cleanChunk = stripAnsi(chunk);
+        const lines = cleanChunk.split('\n');
+
+        for (const line of lines) {
+          const stepMatch = line.match(/Step:\s+([0-9.\/\{N\}]+)/);
+          if (stepMatch) {
+            const parts = stepMatch[1].split('/');
+            setRunbookStep(parts[0]);
+            setRunbookTotal(parts[1]);
+          }
+          const resultMatch = line.match(/Runbook:\s+([A-Z]+)/);
+          if (resultMatch) {
+            setRunbookResult(resultMatch[1]);
+          }
+        }
+      };
+
+      await runRdCommand(container, args, processChunk);
       
-      // Split output into lines to correctly detect and badge auto-executed commands
-      const newLines = cleanOutput.split('\n');
-      
-      setOutput((prev) => [...prev, ...newLines]);
       setCurrentStep((prev) => prev + 1);
       setStatus('ready');
     } catch (err) {
-      setOutput((prev) => [
-        ...prev,
-        `Error: ${err instanceof Error ? err.message : 'Command failed'}`,
-      ]);
+      const msg = err instanceof Error ? err.message : 'Command failed';
+      term.writeln(`\x1b[31mError: ${msg}\x1b[0m`);
       setStatus('error');
     }
   }, [container, selectedScenario, scenarios, currentStep, status]);
@@ -169,13 +263,12 @@ export function RunbookRunner({
       }
     }
 
-    setOutput([]);
-    setCurrentStep(0);
+    resetInternalState();
     if (status === 'error') {
       setStatus('ready');
       setError(null);
     }
-  }, [container, status]);
+  }, [container, status, resetInternalState]);
 
   const scenario = scenarios[selectedScenario];
   const isComplete = scenario && currentStep >= scenario.commands.length;
@@ -185,14 +278,22 @@ export function RunbookRunner({
     idle: 'Initializing...',
     booting: 'Starting WebContainer...',
     loading: 'Loading environment...',
-    ready: isComplete ? 'Complete!' : 'Ready',
+    ready: isComplete ? 'Complete' : 'Ready',
     running: 'Running...',
     error: 'Error',
   }[status];
 
+  // Helper to format result color
+  const getResultColor = (res: string | null) => {
+    if (!res) return 'text-gray-500';
+    if (res === 'COMPLETE') return 'text-green-400';
+    if (res === 'STOP' || res === 'STOPPED') return 'text-red-400';
+    return 'text-yellow-400';
+  };
+
   return (
     <div
-      className={`bg-cyber-darker rounded-lg border border-cyber-cyan/30 ${
+      className={`bg-cyber-darker rounded-lg border border-cyber-cyan/30 ${ 
         compact ? 'p-4' : 'p-6'
       }`}
     >
@@ -210,7 +311,7 @@ export function RunbookRunner({
                 setSelectedScenario(key);
                 reset();
               }}
-              className={`px-3 py-1.5 text-xs font-mono rounded border transition-all whitespace-normal text-left ${
+              className={`px-3 py-1.5 text-xs font-mono rounded border transition-all whitespace-normal text-left ${ 
                 selectedScenario === key
                   ? 'bg-cyber-cyan/20 border-cyber-cyan text-cyber-cyan shadow-[0_0_10px_rgba(0,229,255,0.3)]'
                   : 'bg-cyber-dark/50 border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'
@@ -231,7 +332,7 @@ export function RunbookRunner({
       <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pt-4 border-t border-cyber-cyan/10">
         <div className="flex items-center gap-3">
           <span
-            className={`text-xs font-mono uppercase tracking-widest ${
+            className={`text-xs font-mono uppercase tracking-widest ${ 
               status === 'error'
                 ? 'text-red-400'
                 : status === 'ready'
@@ -249,11 +350,12 @@ export function RunbookRunner({
             disabled={!canRun}
             className="px-4 py-1.5 bg-cyber-cyan text-cyber-dark font-bold text-sm rounded disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-neon-cyan transition-shadow"
           >
-            {isComplete ? '✓ Complete' : 'Next Step →'}
+            {isComplete ? 'Complete' : 'Next Step'}
           </button>
           <button
             onClick={reset}
-            disabled={status === 'running' || output.length === 0}
+            // Only disable reset if nothing has happened yet
+            disabled={status === 'running' || (currentStep === 0 && !error)}
             className="px-3 py-1.5 border border-cyber-magenta/50 text-cyber-magenta text-sm rounded hover:bg-cyber-magenta/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Reset
@@ -268,57 +370,64 @@ export function RunbookRunner({
         </div>
       )}
 
-      {/* Terminal Output */}
+      {/* Terminal Output Container */}
       <div
-        ref={terminalRef}
-        className={`bg-black/50 rounded p-4 font-mono text-sm overflow-auto whitespace-pre-wrap break-all scroll-smooth ${
-          compact ? 'min-h-[150px] max-h-[250px]' : 'min-h-[200px] max-h-[600px]'
+        className={`bg-black/10 rounded p-4 border border-white/10 overflow-hidden relative ${ 
+          compact ? 'h-[250px]' : 'h-[400px]'
         }`}
       >
-        {output.length === 0 ? (
-          <span className="text-gray-500">
-            {status === 'ready'
-              ? 'Click "Next Step →" to begin...'
-              : 'Loading environment...'}
-          </span>
-        ) : (
-          output.map((line, i) => {
-            const isCommand = line.startsWith('$');
-            const isError = line.startsWith('Error');
-
-            return (
-              <div
-                key={i}
-                className={`mb-2 last:mb-0 ${
-                  isCommand
-                    ? 'text-cyber-cyan font-bold border-b border-cyber-cyan/10 pb-1 mt-6 first:mt-0 bg-cyber-cyan/5 -mx-4 px-4 py-1'
-                    : isError
-                      ? 'text-red-400 bg-red-900/20 p-2 rounded'
-                      : 'text-green-400/90'
-                }`}
-              >
-                {isCommand ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] bg-cyber-cyan text-cyber-dark px-1 rounded uppercase font-black tracking-tighter">CMD</span>
-                    <span>{line}</span>
-                  </div>
-                ) : (
-                  line
-                )}
-              </div>
-            );
-          })
+        <div ref={terminalRef} className="h-full w-full" />
+        
+        {/* Placeholder/Loading State Overlay */}
+        {(!container || status === 'booting' || status === 'loading') && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-cyber-darker/80 z-10 text-gray-500 font-mono text-xs">
+             <p>{statusText}</p>
+          </div>
         )}
       </div>
 
-      {/* Progress */}
-      <div className="mt-3 flex items-center justify-between text-xs text-gray-500 font-mono">
-        <span>
-          Step {currentStep}/{scenario?.commands.length || 0}
-        </span>
-        <span>
-          Expected: <span className="text-cyber-cyan">{scenario?.result}</span>
-        </span>
+      {/* Footer Progress & Status */}
+      <div className="mt-4 flex items-center justify-between text-[10px] font-mono border-t border-white/5 pt-4">
+        <div className="flex items-center gap-2">
+          <span className="text-gray-500 uppercase tracking-tighter">Step</span>
+          <span className="text-white font-bold">
+            {runbookStep}/{runbookTotal}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-6">
+          {runbookResult && (
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 uppercase tracking-tighter">Result</span>
+              <span className={`font-bold ${getResultColor(runbookResult)}`}>
+                {runbookResult}
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500 uppercase tracking-tighter">Expected</span>
+            <span className="text-cyber-cyan font-bold">{scenario?.result}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Env Status Dot */}
+      <div className="mt-4 flex justify-end">
+        <div className="flex items-center gap-2 opacity-40 hover:opacity-100 transition-opacity">
+          <div
+            className={`w-1.5 h-1.5 rounded-full ${ 
+              status === 'ready'
+                ? 'bg-green-500 animate-pulse'
+                : status === 'running'
+                  ? 'bg-yellow-500'
+                  : 'bg-red-500'
+            }`}
+          />
+          <span className="text-[9px] text-gray-500 uppercase tracking-widest font-bold">
+            Env {status}
+          </span>
+        </div>
       </div>
     </div>
   );

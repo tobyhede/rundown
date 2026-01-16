@@ -25,3 +25,5 @@ pnpm-debug.log*
 
 # Generated WebContainer snapshot (large binary)
 public/rundown-snapshot.bin
+playwright-report/
+test-results/

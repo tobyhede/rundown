@@ -90,13 +90,15 @@ export async function cleanRundownState(container: WebContainer): Promise<void> 
  * @param command - The command to execute
  * @param args - Arguments to pass to the command
  * @param timeoutMs - Timeout in milliseconds (default: 10000)
+ * @param onOutput - Optional callback for streaming output
  * @returns Object containing command output and exit code
  */
 export async function runCommand(
   container: WebContainer,
   command: string,
   args: string[],
-  timeoutMs = 10000
+  timeoutMs = 10000,
+  onOutput?: (chunk: string) => void
 ): Promise<{ output: string; exitCode: number }> {
   console.log(`[WebContainer] Running: ${command} ${args.join(' ')}`);
   const process = await container.spawn(command, args);
@@ -124,6 +126,7 @@ export async function runCommand(
           const { done, value } = await reader.read();
           if (done) break;
           output += value;
+          if (onOutput) onOutput(value);
           console.log(`[WebContainer] Output chunk:`, value);
         }
       } catch (err) {
@@ -161,14 +164,16 @@ export async function runCommand(
  *
  * @param container - The WebContainer instance to run the command in
  * @param args - Arguments to pass to the rd command
+ * @param onOutput - Optional callback for streaming output
  * @returns Object containing command output and exit code
  */
 export async function runRdCommand(
   container: WebContainer,
-  args: string[]
+  args: string[],
+  onOutput?: (chunk: string) => void
 ): Promise<{ output: string; exitCode: number }> {
   // Use node to run the CLI script directly (avoids execute permission issues)
   const cliPath = './node_modules/@rundown/cli/dist/cli.js';
   console.log(`[WebContainer] Running rd via node: ${cliPath} ${args.join(' ')}`);
-  return runCommand(container, 'node', [cliPath, ...args]);
+  return runCommand(container, 'node', [cliPath, ...args], 10000, onOutput);
 }
