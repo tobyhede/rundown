@@ -293,5 +293,5 @@ describe('scenario runner', () => {
         }
       }
     }
-  }, 60000); // Extended timeout for running 60+ pattern scenarios
+  }, 180000); // Extended timeout for running 60+ pattern scenarios (3 min for CI)
 });
