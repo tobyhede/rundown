@@ -239,8 +239,8 @@ export async function runExecutionLoop(
       const completionMessage = lastResult === 'pass'
         ? evaluatePassCondition(currentStep).message
         : evaluateFailCondition(currentStep, prevRetryCount).message;
-      
-      const currentVars = updatedState.variables || {};
+
+      const currentVars = updatedState.variables;
       await manager.update(workflowId, { 
         variables: { ...currentVars, completed: true } 
       });
@@ -266,8 +266,8 @@ export async function runExecutionLoop(
       const stopMessage = lastResult === 'pass'
         ? evaluatePassCondition(currentStep).message
         : evaluateFailCondition(currentStep, prevRetryCount).message;
-      
-      const currentVars = updatedState.variables || {};
+
+      const currentVars = updatedState.variables;
       await manager.update(workflowId, { 
         variables: { ...currentVars, stopped: true } 
       });
