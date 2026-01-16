@@ -1,29 +1,32 @@
 ---
 const githubUrl = 'https://github.com/tobyhede/rundown';
+const quickstartUrl = 'https://github.com/tobyhede/rundown#quick-start';
 ---
 
-<section class="min-h-[80vh] flex flex-col items-center justify-center text-center px-4">
-  <div class="mb-8">
+<section class="flex flex-col items-center justify-center text-center px-4 py-12">
+  <div class="mb-6">
     <img
       src="/logo.png"
       alt="Rundown Logo"
-      class="w-80 h-80 md:w-96 md:h-96 lg:w-[460px] lg:h-[460px] rounded-2xl shadow-neon-purple"
+      class="w-48 h-48 md:w-64 md:h-64 lg:w-72 lg:h-72 rounded-2xl shadow-neon-purple"
     />
   </div>
 
   <h1 class="sr-only">Rundown</h1>
 
-  <p class="text-2xl md:text-3xl text-gray-200 mb-4 max-w-3xl">
+  <p class="text-2xl md:text-3xl text-gray-200 mb-3 max-w-3xl">
     Executable Runbooks from Markdown
   </p>
 
-  <p class="text-lg text-gray-400 mb-12 max-w-2xl">
+  <p class="text-lg text-gray-400 mb-8 max-w-2xl">
     Enforce process. Track progress. Resume anytime.
   </p>
 
   <div class="flex flex-col sm:flex-row gap-4">
     <a
-      href="#quickstart"
+      href={quickstartUrl}
+      target="_blank"
+      rel="noopener noreferrer"
       class="px-8 py-3 bg-cyber-cyan text-cyber-dark font-bold rounded-lg hover:shadow-neon-cyan transition-shadow"
     >
       Get Started
@@ -40,7 +43,7 @@ const githubUrl = 'https://github.com/tobyhede/rundown';
       href="/patterns"
       class="px-8 py-3 border border-cyber-magenta text-cyber-magenta font-bold rounded-lg hover:shadow-neon-magenta transition-shadow"
     >
-      View Patterns →
+      View Patterns
     </a>
   </div>
 </section>

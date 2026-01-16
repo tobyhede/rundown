@@ -1,0 +1,42 @@
+---
+import { RunbookRunner } from './interactive/RunbookRunner';
+import { promises as fs } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
+import path from 'node:path';
+
+// Load the discover runbook at build time
+const runbookPath = path.resolve('public', 'discover-rundown.runbook.md');
+const rawContent = await fs.readFile(runbookPath, 'utf-8');
+
+// Parse frontmatter
+const frontmatterMatch = rawContent.match(/^---\n([\s\S]*?)\n---/);
+const frontmatter = frontmatterMatch ? parseYaml(frontmatterMatch[1]) : {};
+const bodyContent = rawContent.replace(/^---\n[\s\S]*?\n---\n?/, '');
+
+const filename = 'discover-rundown.runbook.md';
+const scenarios = frontmatter.scenarios || {};
+---
+
+<section class="container mx-auto px-4 py-8 max-w-7xl">
+  <!-- Two-column layout -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <!-- Left: Source -->
+    <div>
+      <h2 class="text-lg font-semibold text-white mb-4">Source</h2>
+      <pre
+        class="bg-cyber-darker border border-cyber-cyan/20 rounded-lg p-4 overflow-auto max-h-[600px] text-sm font-mono text-gray-300 whitespace-pre-wrap"><code set:text={bodyContent} /></pre>
+    </div>
+
+    <!-- Right: Interactive Runner -->
+    <div>
+      <h2 class="text-lg font-semibold text-white mb-4">Try It</h2>
+      <RunbookRunner
+        client:load
+        runbookPath={filename}
+        runbookContent={rawContent}
+        scenarios={scenarios}
+        compact={false}
+      />
+    </div>
+  </div>
+</section>
