@@ -1,4 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
+import path from 'path';
 import { getBundledRunbooksPath } from '../../src/helpers/bundled-runbooks.js';
 
 describe('getBundledRunbooksPath', () => {
@@ -9,7 +10,7 @@ describe('getBundledRunbooksPath', () => {
 
   it('returns absolute path', () => {
     const bundledPath = getBundledRunbooksPath();
-    expect(bundledPath.startsWith('/')).toBe(true);
+    expect(path.isAbsolute(bundledPath)).toBe(true);
   });
 
   describe('environment variable override', () => {

@@ -14,6 +14,12 @@ const __dirname = dirname(__filename);
 const sourceDir = join(__dirname, '..', '..', '..', 'runbooks', 'patterns');
 const destDir = join(__dirname, '..', 'dist', 'runbooks');
 
+// Check if source directory exists
+if (!existsSync(sourceDir)) {
+  console.log('No source runbooks directory found, skipping copy.');
+  process.exit(0);
+}
+
 // Ensure destination exists
 mkdirSync(destDir, { recursive: true });
 
