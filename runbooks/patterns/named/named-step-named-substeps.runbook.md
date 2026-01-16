@@ -4,13 +4,13 @@ description: Demonstrates named steps containing named substeps with explicit st
 
 scenarios:
   success-completes:
-    description: Setup passes, workflow completes (skips ErrorHandler)
+    description: Setup passes, runbook completes (skips ErrorHandler)
     commands:
       - rd run --prompted named-step-named-substeps.runbook.md
       - rd pass
     result: COMPLETE
   error-handler-failure-at-prepare:
-    description: Tests error handler failing at prepare stage and stopping workflow
+    description: Tests error handler failing at prepare stage and stopping runbook
     commands:
       - rd run --prompted named-step-named-substeps.runbook.md
       - rd fail

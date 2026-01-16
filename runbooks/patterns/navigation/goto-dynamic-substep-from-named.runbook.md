@@ -4,7 +4,7 @@ description: Demonstrates GOTO {N}.Name - jumping to a named substep within a dy
 
 scenarios:
   cleanup-failure:
-    description: Cleanup substep fails causing workflow to stop
+    description: Cleanup substep fails causing runbook to stop
     commands:
       - rd run --prompted goto-dynamic-substep-from-named.runbook.md
       - rd pass

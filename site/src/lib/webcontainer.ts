@@ -69,7 +69,7 @@ export async function mountRunbook(
 }
 
 /**
- * Clean up workflow state between scenario runs.
+ * Clean up runbook state between scenario runs.
  *
  * @param container - The WebContainer instance to clean up
  */

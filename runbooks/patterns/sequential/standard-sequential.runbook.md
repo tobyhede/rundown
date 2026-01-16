@@ -1,6 +1,6 @@
 ---
 name: standard-sequential
-description: Sequential workflow with CONTINUE and RETRY transitions
+description: Sequential runbook with CONTINUE and RETRY transitions
 tags:
   - sequential
 

@@ -4,13 +4,13 @@ description: Demonstrates named steps containing static numbered substeps (Error
 
 scenarios:
   success-completes:
-    description: Setup passes, workflow completes (skips ErrorHandler)
+    description: Setup passes, runbook completes (skips ErrorHandler)
     commands:
       - rd run --prompted named-step-static-substeps.runbook.md
       - rd pass
     result: COMPLETE
   error-handler-failure-at-prepare:
-    description: Tests error handler failing at first prepare step and stopping workflow
+    description: Tests error handler failing at first prepare step and stopping runbook
     commands:
       - rd run --prompted named-step-static-substeps.runbook.md
       - rd fail

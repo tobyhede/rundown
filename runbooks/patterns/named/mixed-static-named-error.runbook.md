@@ -25,7 +25,7 @@ scenarios:
     result: COMPLETE
 
   unrecoverable-error:
-    description: Tests unrecoverable error that stops the workflow
+    description: Tests unrecoverable error that stops the runbook
     commands:
       - rd run --prompted mixed-static-named-error.runbook.md
       - rd pass

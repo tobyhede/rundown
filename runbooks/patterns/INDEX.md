@@ -339,11 +339,11 @@ Code blocks with `prompt` info string (displayed but not executed).
 
 Parent runbooks, agents, and delegation.
 
-### workflow-composition.runbook.md
+### runbook-composition.runbook.md
 
 Parent runbook delegating to child runbooks.
 
-- [workflow-composition.runbook.md](./composition/workflow-composition.runbook.md)
+- [runbook-composition.runbook.md](./composition/runbook-composition.runbook.md)
 
 ### substep-runbooks.runbook.md
 

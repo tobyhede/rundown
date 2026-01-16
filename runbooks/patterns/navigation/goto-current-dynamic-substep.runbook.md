@@ -4,7 +4,7 @@ description: Demonstrates GOTO X.{n} - jumping to the current instance of a dyna
 
 scenarios:
   error-handler-fails:
-    description: Error handler fails and workflow stops
+    description: Error handler fails and runbook stops
     commands:
       - rd run --prompted goto-current-dynamic-substep.runbook.md
       - rd fail

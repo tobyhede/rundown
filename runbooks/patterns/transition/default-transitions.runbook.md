@@ -13,7 +13,7 @@ scenarios:
       - rd pass
     result: COMPLETE
   stopped:
-    description: First step fails, workflow stops due to implicit FAIL to STOP
+    description: First step fails, runbook stops due to implicit FAIL to STOP
     commands:
       - rd run --prompted default-transitions.runbook.md
       - rd fail

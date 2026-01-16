@@ -21,7 +21,7 @@ tags:
   - dynamic
 ---
 
-# Multi-Agent Dynamic Workflow
+# Multi-Agent Dynamic Runbook
 
 Demonstrates multiple agents working on different runbooks with dynamic iteration.
 

@@ -4,7 +4,7 @@ description: Tests navigation transitions in dynamic substeps with GOTO NEXT and
 
 scenarios:
   fail-with-stop:
-    description: Fail task to stop workflow with error message
+    description: Fail task to stop runbook with error message
     commands:
       - rd run --prompted dynamic-substep-transitions.runbook.md
       - rd fail

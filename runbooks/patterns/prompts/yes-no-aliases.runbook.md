@@ -4,13 +4,13 @@ description: Tests that YES/NO work as aliases for PASS/FAIL
 
 scenarios:
   completed:
-    description: User confirms with YES, workflow continues
+    description: User confirms with YES, runbook continues
     commands:
       - rd run --prompted yes-no-aliases.runbook.md
       - rd pass
     result: COMPLETE
   stopped:
-    description: User declines with NO, workflow stops
+    description: User declines with NO, runbook stops
     commands:
       - rd run --prompted yes-no-aliases.runbook.md
       - rd fail

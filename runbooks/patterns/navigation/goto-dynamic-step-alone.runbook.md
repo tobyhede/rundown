@@ -1,6 +1,6 @@
 ---
 name: goto-dynamic-step-alone
-description: Demonstrates infinite retry pattern where FAIL causes step to restart (GOTO {N}) and only PASS exits the workflow
+description: Demonstrates infinite retry pattern where FAIL causes step to restart (GOTO {N}) and only PASS exits the runbook
 
 scenarios:
   retry-until-pass:

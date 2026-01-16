@@ -1,10 +1,10 @@
 ---
 name: child-task
-description: Simple child workflow for subworkflow patterns
+description: Simple child runbook for sub-runbook patterns
 
 scenarios:
   basic:
-    description: Basic child workflow execution
+    description: Basic child runbook execution
     commands:
       - rd run --prompted child-task.runbook.md
       - rd pass
@@ -20,4 +20,4 @@ tags:
 - PASS: COMPLETE
 - FAIL: STOP
 
-Execute child workflow task.
+Execute child runbook task.

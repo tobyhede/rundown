@@ -14,7 +14,7 @@ scenarios:
     result: STOP
 
   recovery-fails:
-    description: Process fails, recovery fails, workflow stops
+    description: Process fails, recovery fails, runbook stops
     commands:
       - rd run --prompted mixed-dynamic-named-recovery.runbook.md
       - rd fail

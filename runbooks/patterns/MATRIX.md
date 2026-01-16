@@ -1,6 +1,6 @@
 # Pattern Coverage Matrix
 
-Comprehensive coverage matrix for Rundown workflow patterns.
+Comprehensive coverage matrix for Rundown runbook patterns.
 
 ---
 
@@ -71,7 +71,7 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 | Dynamic substep transitions | Transitions in dynamic substeps | [dynamic-substep-transitions](transition/dynamic-substep-transitions.runbook.md) |
 | PASS → STOP | Explicit stop on success | [transition-actions](transition/transition-actions.runbook.md) |
 | FAIL → CONTINUE | Continue despite failure | [transition-actions](transition/transition-actions.runbook.md) |
-| FAIL → COMPLETE | Complete workflow on failure | [transition-actions](transition/transition-actions.runbook.md) |
+| FAIL → COMPLETE | Complete runbook on failure | [transition-actions](transition/transition-actions.runbook.md) |
 
 ---
 
@@ -84,9 +84,9 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 | Retry until success | N/A (always succeeds) | [retry-success](retries/retry-success.runbook.md) |
 | Retry counter reset | Counter resets on success | [retry-counter-reset](retries/retry-counter-reset.runbook.md) |
 | Exhaustion → CONTINUE | Move to next step | [retry-exhaustion](retries/retry-exhaustion.runbook.md) |
-| Exhaustion → STOP | Halt workflow | [retry-exhaustion](retries/retry-exhaustion.runbook.md) |
+| Exhaustion → STOP | Halt runbook | [retry-exhaustion](retries/retry-exhaustion.runbook.md) |
 | Exhaustion → GOTO | Jump to recovery step | [retry-exhaustion](retries/retry-exhaustion.runbook.md) |
-| Exhaustion → COMPLETE | Complete workflow | [retry-exhaustion](retries/retry-exhaustion.runbook.md) |
+| Exhaustion → COMPLETE | Complete runbook | [retry-exhaustion](retries/retry-exhaustion.runbook.md) |
 
 ---
 
@@ -98,7 +98,7 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 |---------|------------|------|
 | Static + Named | Numbered steps with named step | [mixed-named-static](named/mixed-named-static.runbook.md) |
 | Dynamic + Named | Dynamic iteration with named step | [mixed-named-dynamic](named/mixed-named-dynamic.runbook.md) |
-| Static + Named + Error | Static workflow with error handler | [mixed-static-named-error](named/mixed-static-named-error.runbook.md) |
+| Static + Named + Error | Static runbook with error handler | [mixed-static-named-error](named/mixed-static-named-error.runbook.md) |
 | Dynamic + Named + Recovery | Dynamic iteration with recovery | [mixed-dynamic-named-recovery](named/mixed-dynamic-named-recovery.runbook.md) |
 
 ---
@@ -113,16 +113,16 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 | Mixed prompts | Multiple prompt types | [mixed-prompts](prompts/mixed-prompts.runbook.md) |
 | Metadata header | YAML frontmatter | [metadata-header](features/metadata-header.runbook.md) |
 | List instructions | Bulleted instruction lists | [list-instructions](features/list-instructions.runbook.md) |
-| Workflow composition | Including other workflows | [workflow-composition](composition/workflow-composition.runbook.md) |
+| Runbook composition | Including other runbooks | [runbook-composition](composition/runbook-composition.runbook.md) |
 | Code blocks | Multiple code block types | [code-blocks](features/code-blocks.runbook.md) |
 
 ---
 
-## Subworkflow Patterns
+## Subrunbook Patterns
 
 | Pattern | Description | File |
 |---------|-------------|------|
-| agent-binding-simple | Parent delegates step to agent with child workflow | [agent-binding-simple](composition/agent-binding-simple.runbook.md) |
+| agent-binding-simple | Parent delegates step to agent with child runbook | [agent-binding-simple](composition/agent-binding-simple.runbook.md) |
 | agent-binding-failure | Parent handles agent failure gracefully | [agent-binding-failure](composition/agent-binding-failure.runbook.md) |
 | multi-agent-dynamic | Multiple agents with different runbooks and dynamic iteration | [multi-agent-dynamic](composition/multi-agent-dynamic.runbook.md) |
 | substep-runbooks | Runbook references within substeps | [substep-runbooks](composition/substep-runbooks.runbook.md) |
@@ -147,6 +147,6 @@ Comprehensive coverage matrix for Rundown workflow patterns.
 | Retry | 6 |
 | Mixed Steps | 4 |
 | Other | 6 |
-| Subworkflow Patterns | 4 |
+| Subrunbook Patterns | 4 |
 | Message Patterns | 1 |
 | **Total** | **59** |

@@ -13,7 +13,7 @@ scenarios:
     result: COMPLETE
 
   cleanup-failure-stops:
-    description: Test error in cleanup substep stops workflow
+    description: Test error in cleanup substep stops runbook
     commands:
       - rd run --prompted static-step-mixed-substeps.runbook.md
       - rd pass

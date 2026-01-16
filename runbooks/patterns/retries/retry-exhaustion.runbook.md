@@ -15,7 +15,7 @@ scenarios:
     result: COMPLETE
 
   stop:
-    description: Exhaustion triggers STOP (default or explicit), workflow halts
+    description: Exhaustion triggers STOP (default or explicit), runbook halts
     commands:
       - rd run --prompted retry-exhaustion.runbook.md
       - rd goto 2
@@ -35,7 +35,7 @@ scenarios:
     result: COMPLETE
 
   complete:
-    description: Exhaustion triggers COMPLETE, workflow finishes immediately
+    description: Exhaustion triggers COMPLETE, runbook finishes immediately
     commands:
       - rd run --prompted retry-exhaustion.runbook.md
       - rd goto 5
@@ -66,7 +66,7 @@ rd echo --result fail --result fail
 - PASS: COMPLETE
 - FAIL: RETRY 1 STOP
 
-Fails initially, retries once. If it fails again, it STOPS the workflow.
+Fails initially, retries once. If it fails again, it STOPS the runbook.
 This is for critical steps that must succeed eventually.
 
 ```bash
@@ -96,7 +96,7 @@ rd echo "recovered"
 - PASS: CONTINUE
 - FAIL: RETRY 3 COMPLETE "Max retries reached, completing anyway"
 
-Retries up to 3 times. If it still fails, it COMPLETES the workflow (success state).
+Retries up to 3 times. If it still fails, it COMPLETES the runbook (success state).
 Useful if the failure is acceptable as a final state.
 
 ```bash

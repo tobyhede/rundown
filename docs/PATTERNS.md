@@ -59,7 +59,7 @@ Basic numbered steps executing in order.
 ```rundown
 ---
 name: standard-sequential
-description: Sequential workflow with CONTINUE and RETRY transitions
+description: Sequential runbook with CONTINUE and RETRY transitions
 tags:
   - sequential
 
@@ -168,11 +168,11 @@ Dynamic step with GOTO NEXT for iteration.
 ```rundown
 ---
 name: dynamic-step-next
-description: Tests GOTO NEXT navigation which advances to the next step in dynamic workflow
+description: Tests GOTO NEXT navigation which advances to the next step in dynamic runbook
 
 scenarios:
   stopped:
-    description: Pass to advance, then fail to stop workflow
+    description: Pass to advance, then fail to stop runbook
     commands:
       - rd run --prompted dynamic-step-next.runbook.md
       - rd pass
@@ -329,7 +329,7 @@ description: Demonstrates dynamic steps with both static and named substeps
 
 scenarios:
   recovery-fails:
-    description: Recovery step fails and workflow stops
+    description: Recovery step fails and runbook stops
     commands:
       - rd run --prompted dynamic-step-mixed-substeps.runbook.md
       - rd fail
@@ -401,13 +401,13 @@ description: Demonstrates mixing numbered and named steps with GOTO error handli
 
 scenarios:
   completed:
-    description: Main workflow passes, completes successfully
+    description: Main runbook passes, completes successfully
     commands:
       - rd run --prompted named-steps.runbook.md
       - rd pass
     result: COMPLETE
   recovered:
-    description: Main workflow fails, ErrorHandler recovers
+    description: Main runbook fails, ErrorHandler recovers
     commands:
       - rd run --prompted named-steps.runbook.md
       - rd fail
@@ -419,7 +419,7 @@ tags:
 
 # Named Steps Example
 
-## 1. Main workflow
+## 1. Main runbook
 - FAIL: GOTO ErrorHandler
 - PASS: COMPLETE SUCCESS
 
@@ -581,7 +581,7 @@ scenarios:
     result: COMPLETE
 
   unrecoverable-error:
-    description: Tests unrecoverable error that stops the workflow
+    description: Tests unrecoverable error that stops the runbook
     commands:
       - rd run --prompted mixed-static-named-error.runbook.md
       - rd pass
@@ -667,7 +667,7 @@ scenarios:
     result: STOP
 
   recovery-fails:
-    description: Process fails, recovery fails, workflow stops
+    description: Process fails, recovery fails, runbook stops
     commands:
       - rd run --prompted mixed-dynamic-named-recovery.runbook.md
       - rd fail
@@ -771,13 +771,13 @@ description: Demonstrates named steps containing static numbered substeps (Error
 
 scenarios:
   success-completes:
-    description: Setup passes, workflow completes (skips ErrorHandler)
+    description: Setup passes, runbook completes (skips ErrorHandler)
     commands:
       - rd run --prompted named-step-static-substeps.runbook.md
       - rd pass
     result: COMPLETE
   error-handler-failure-at-prepare:
-    description: Tests error handler failing at first prepare step and stopping workflow
+    description: Tests error handler failing at first prepare step and stopping runbook
     commands:
       - rd run --prompted named-step-static-substeps.runbook.md
       - rd fail
@@ -853,13 +853,13 @@ description: Demonstrates named steps containing named substeps with explicit st
 
 scenarios:
   success-completes:
-    description: Setup passes, workflow completes (skips ErrorHandler)
+    description: Setup passes, runbook completes (skips ErrorHandler)
     commands:
       - rd run --prompted named-step-named-substeps.runbook.md
       - rd pass
     result: COMPLETE
   error-handler-failure-at-prepare:
-    description: Tests error handler failing at prepare stage and stopping workflow
+    description: Tests error handler failing at prepare stage and stopping runbook
     commands:
       - rd run --prompted named-step-named-substeps.runbook.md
       - rd fail
@@ -935,13 +935,13 @@ description: Demonstrates named steps with both numbered substeps (ErrorHandler.
 
 scenarios:
   success-completes:
-    description: Setup passes, workflow completes (skips ErrorHandler)
+    description: Setup passes, runbook completes (skips ErrorHandler)
     commands:
       - rd run --prompted named-step-mixed-substeps.runbook.md
       - rd pass
     result: COMPLETE
   error-handler-failure:
-    description: Tests error handler preparation step failing and stopping workflow
+    description: Tests error handler preparation step failing and stopping runbook
     commands:
       - rd run --prompted named-step-mixed-substeps.runbook.md
       - rd fail
@@ -1056,7 +1056,7 @@ scenarios:
     result: COMPLETE
 
   cleanup-failure-stops:
-    description: Test error in cleanup substep stops workflow
+    description: Test error in cleanup substep stops runbook
     commands:
       - rd run --prompted static-step-mixed-substeps.runbook.md
       - rd pass
@@ -1407,7 +1407,7 @@ description: Demonstrates GOTO {N}.Name - jumping to a named substep within a dy
 
 scenarios:
   cleanup-failure:
-    description: Cleanup substep fails causing workflow to stop
+    description: Cleanup substep fails causing runbook to stop
     commands:
       - rd run --prompted goto-dynamic-substep-from-named.runbook.md
       - rd pass
@@ -1512,7 +1512,7 @@ description: Demonstrates GOTO X.{n} - jumping to the current instance of a dyna
 
 scenarios:
   error-handler-fails:
-    description: Error handler fails and workflow stops
+    description: Error handler fails and runbook stops
     commands:
       - rd run --prompted goto-current-dynamic-substep.runbook.md
       - rd fail
@@ -1554,7 +1554,7 @@ GOTO {N} self-loop or infinite retry pattern.
 ```rundown
 ---
 name: goto-dynamic-step-alone
-description: Demonstrates infinite retry pattern where FAIL causes step to restart (GOTO {N}) and only PASS exits the workflow
+description: Demonstrates infinite retry pattern where FAIL causes step to restart (GOTO {N}) and only PASS exits the runbook
 
 scenarios:
   retry-until-pass:
@@ -1598,7 +1598,7 @@ description: Demonstrates explicitly advancing to the next step instance using G
 
 scenarios:
   error-handler-failure:
-    description: Error handler fails to recover, workflow stops
+    description: Error handler fails to recover, runbook stops
     commands:
       - rd run --prompted goto-next-qualified-step.runbook.md
       - rd fail
@@ -1647,7 +1647,7 @@ description: Demonstrates explicitly advancing to the next dynamic substep using
 
 scenarios:
   item-failure:
-    description: Processing item fails and stops workflow
+    description: Processing item fails and stops runbook
     commands:
       - rd run --prompted goto-next-qualified-substep.runbook.md
       - rd fail
@@ -1804,7 +1804,7 @@ scenarios:
       - rd pass
     result: COMPLETE
   stopped:
-    description: First step fails, workflow stops due to implicit FAIL to STOP
+    description: First step fails, runbook stops due to implicit FAIL to STOP
     commands:
       - rd run --prompted default-transitions.runbook.md
       - rd fail
@@ -1919,14 +1919,14 @@ tags:
 
 scenarios:
   pass-stop:
-    description: PASS triggers STOP, workflow halts successfully
+    description: PASS triggers STOP, runbook halts successfully
     commands:
       - rd run --prompted transition-actions.runbook.md
       - rd pass
     result: STOP
 
   fail-continue:
-    description: FAIL triggers CONTINUE, workflow proceeds to next step
+    description: FAIL triggers CONTINUE, runbook proceeds to next step
     commands:
       - rd run --prompted transition-actions.runbook.md
       - rd goto 2
@@ -1935,7 +1935,7 @@ scenarios:
     result: COMPLETE
 
   fail-complete:
-    description: FAIL triggers COMPLETE, workflow finishes successfully
+    description: FAIL triggers COMPLETE, runbook finishes successfully
     commands:
       - rd run --prompted transition-actions.runbook.md
       - rd goto 4
@@ -1948,10 +1948,10 @@ scenarios:
 Demonstrates explicit actions for PASS and FAIL transitions.
 
 ## 1. PASS STOP
-- PASS: STOP "Workflow halted on success"
+- PASS: STOP "Runbook halted on success"
 - FAIL: CONTINUE
 
-Stops the workflow immediately if the step passes.
+Stops the runbook immediately if the step passes.
 
 ```bash
 rd echo "critical check"
@@ -1981,7 +1981,7 @@ rd echo "cleanup"
 - PASS: CONTINUE
 - FAIL: COMPLETE "Completed with warnings"
 
-Completes the workflow if the step fails.
+Completes the runbook if the step fails.
 Useful for "early exit success" or "handled failure".
 
 ```bash
@@ -2091,7 +2091,7 @@ description: Tests navigation transitions in dynamic substeps with GOTO NEXT and
 
 scenarios:
   fail-with-stop:
-    description: Fail task to stop workflow with error message
+    description: Fail task to stop runbook with error message
     commands:
       - rd run --prompted dynamic-substep-transitions.runbook.md
       - rd fail
@@ -2249,7 +2249,7 @@ scenarios:
     result: COMPLETE
 
   stop:
-    description: Exhaustion triggers STOP (default or explicit), workflow halts
+    description: Exhaustion triggers STOP (default or explicit), runbook halts
     commands:
       - rd run --prompted retry-exhaustion.runbook.md
       - rd goto 2
@@ -2269,7 +2269,7 @@ scenarios:
     result: COMPLETE
 
   complete:
-    description: Exhaustion triggers COMPLETE, workflow finishes immediately
+    description: Exhaustion triggers COMPLETE, runbook finishes immediately
     commands:
       - rd run --prompted retry-exhaustion.runbook.md
       - rd goto 5
@@ -2300,7 +2300,7 @@ rd echo --result fail --result fail
 - PASS: COMPLETE
 - FAIL: RETRY 1 STOP
 
-Fails initially, retries once. If it fails again, it STOPS the workflow.
+Fails initially, retries once. If it fails again, it STOPS the runbook.
 This is for critical steps that must succeed eventually.
 
 ```bash
@@ -2330,7 +2330,7 @@ rd echo "recovered"
 - PASS: CONTINUE
 - FAIL: RETRY 3 COMPLETE "Max retries reached, completing anyway"
 
-Retries up to 3 times. If it still fails, it COMPLETES the workflow (success state).
+Retries up to 3 times. If it still fails, it COMPLETES the runbook (success state).
 Useful if the failure is acceptable as a final state.
 
 ```bash
@@ -2431,13 +2431,13 @@ description: Tests that YES/NO work as aliases for PASS/FAIL
 
 scenarios:
   completed:
-    description: User confirms with YES, workflow continues
+    description: User confirms with YES, runbook continues
     commands:
       - rd run --prompted yes-no-aliases.runbook.md
       - rd pass
     result: COMPLETE
   stopped:
-    description: User declines with NO, workflow stops
+    description: User declines with NO, runbook stops
     commands:
       - rd run --prompted yes-no-aliases.runbook.md
       - rd fail
@@ -2517,45 +2517,11 @@ curl -X POST https://api.example.com/webhook \
 
 Parent runbooks, agents, and delegation.
 
-### workflow-composition.runbook.md
+### runbook-composition.runbook.md
 
 Parent runbook delegating to child runbooks.
 
-
-**workflow-composition.runbook.md:**
-
-```rundown
----
-name: workflow-composition
-description: Demonstrates composing multiple child workflows to verify lint, types, and tests all pass
-
-scenarios:
-  completed:
-    description: Tests successful completion when all child workflows pass
-    commands:
-      - rd run --prompted workflow-composition.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
-    result: COMPLETE
-
-  child-fails:
-    description: Tests failure when a child workflow fails
-    commands:
-      - rd run --prompted workflow-composition.runbook.md
-      - rd fail
-    result: STOP
-tags:
-  - composition
----
-
-## 1. Verify
-- FAIL ANY: STOP "Verification failed"
-- lint.runbook.md
-- types.runbook.md
-- tests.runbook.md
-```
-
+- [runbook-composition.runbook.md](./composition/runbook-composition.runbook.md)
 
 ### substep-runbooks.runbook.md
 
@@ -2610,13 +2576,13 @@ Basic agent delegation.
 ```rundown
 ---
 name: agent-binding-simple
-description: Parent workflow delegates step to agent with child workflow
+description: Parent runbook delegates step to agent with child runbook
 tags:
   - composition
 
 scenarios:
   completed:
-    description: Agent binds and completes child workflow
+    description: Agent binds and completes child runbook
     commands:
       - rd run --prompted agent-binding-simple.runbook.md
       - rd run --step 1 agent-binding-simple.runbook.md
@@ -2628,7 +2594,7 @@ scenarios:
 
 # Agent Binding - Simple
 
-Demonstrates parent workflow delegating to an agent.
+Demonstrates parent runbook delegating to an agent.
 
 ## 1. Delegate to Agent
 - PASS: COMPLETE
@@ -2717,7 +2683,7 @@ tags:
   - dynamic
 ---
 
-# Multi-Agent Dynamic Workflow
+# Multi-Agent Dynamic Runbook
 
 Demonstrates multiple agents working on different runbooks with dynamic iteration.
 
@@ -2764,7 +2730,7 @@ scenarios:
   completed:
     description: Lint passes
     commands:
-      - rd run --rd run --prompted agent-task-lint.runbook.md
+      - rd run --prompted agent-task-lint.runbook.md
       - rd pass
     result: COMPLETE
   failure:
@@ -2837,11 +2803,11 @@ Helper child runbook (used in composition tests).
 ```rundown
 ---
 name: child-task
-description: Simple child workflow for subworkflow patterns
+description: Simple child runbook for sub-runbook patterns
 
 scenarios:
   basic:
-    description: Basic child workflow execution
+    description: Basic child runbook execution
     commands:
       - rd run --prompted child-task.runbook.md
       - rd pass
@@ -2857,7 +2823,7 @@ tags:
 - PASS: COMPLETE
 - FAIL: STOP
 
-Execute child workflow task.
+Execute child runbook task.
 ```
 
 
@@ -2912,7 +2878,7 @@ Various code block patterns in runbooks.
 ```rundown
 ---
 name: code-blocks
-description: Demonstrates various code block patterns in workflows
+description: Demonstrates various code block patterns in runbooks
 tags:
   - features
 
@@ -2921,6 +2887,8 @@ scenarios:
     description: Multiple code blocks are rendered correctly
     commands:
       - rd run --prompted code-blocks.runbook.md
+      - rd pass
+      - rd pass
       - rd pass
     result: COMPLETE
   auto-execution:
@@ -2932,7 +2900,7 @@ scenarios:
 
 # Code Blocks
 
-Demonstrates various code block patterns in workflows.
+Demonstrates various code block patterns in runbooks.
 
 ## 1. Setup
 - PASS: CONTINUE
@@ -3015,7 +2983,7 @@ YAML frontmatter metadata.
 ```rundown
 ---
 name: metadata-header
-description: Workflow with H1 title and description text
+description: Runbook with H1 title and description text
 
 scenarios:
   completed:
@@ -3028,8 +2996,8 @@ tags:
   - features
 ---
 
-# Workflow Title
-This is a description of the workflow.
+# Runbook Title
+This is a description of the runbook.
 
 ## 1. First Step
 Execute.

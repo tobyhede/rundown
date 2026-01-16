@@ -55,7 +55,7 @@ function parseRdArgs(cmd: string): string[] {
 }
 
 /**
- * Interactive runbook runner component that executes Rundown workflows in a WebContainer.
+ * Interactive runbook runner component that executes Rundown runbooks in a WebContainer.
  *
  * Boots a WebContainer on mount, loads a pre-built snapshot with @rundown/cli,
  * and executes scenario commands step-by-step with terminal-style output.
@@ -138,7 +138,7 @@ export function RunbookRunner({
   }, [container, selectedScenario, scenarios, currentStep, status]);
 
   const reset = useCallback(async () => {
-    // Clean up workflow state in container to avoid stale state
+    // Clean up runbook state in container to avoid stale state
     if (container) {
       try {
         await cleanRundownState(container);

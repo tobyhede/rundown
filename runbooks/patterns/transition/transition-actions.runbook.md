@@ -6,14 +6,14 @@ tags:
 
 scenarios:
   pass-stop:
-    description: PASS triggers STOP, workflow halts successfully
+    description: PASS triggers STOP, runbook halts successfully
     commands:
       - rd run --prompted transition-actions.runbook.md
       - rd pass
     result: STOP
 
   fail-continue:
-    description: FAIL triggers CONTINUE, workflow proceeds to next step
+    description: FAIL triggers CONTINUE, runbook proceeds to next step
     commands:
       - rd run --prompted transition-actions.runbook.md
       - rd goto 2
@@ -22,7 +22,7 @@ scenarios:
     result: COMPLETE
 
   fail-complete:
-    description: FAIL triggers COMPLETE, workflow finishes successfully
+    description: FAIL triggers COMPLETE, runbook finishes successfully
     commands:
       - rd run --prompted transition-actions.runbook.md
       - rd goto 4
@@ -35,10 +35,10 @@ scenarios:
 Demonstrates explicit actions for PASS and FAIL transitions.
 
 ## 1. PASS STOP
-- PASS: STOP "Workflow halted on success"
+- PASS: STOP "Runbook halted on success"
 - FAIL: CONTINUE
 
-Stops the workflow immediately if the step passes.
+Stops the runbook immediately if the step passes.
 
 ```bash
 rd echo "critical check"
@@ -68,7 +68,7 @@ rd echo "cleanup"
 - PASS: CONTINUE
 - FAIL: COMPLETE "Completed with warnings"
 
-Completes the workflow if the step fails.
+Completes the runbook if the step fails.
 Useful for "early exit success" or "handled failure".
 
 ```bash

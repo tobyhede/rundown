@@ -1,12 +1,12 @@
 ---
 name: agent-binding-simple
-description: Parent workflow delegates step to agent with child workflow
+description: Parent runbook delegates step to agent with child runbook
 tags:
   - composition
 
 scenarios:
   completed:
-    description: Agent binds and completes child workflow
+    description: Agent binds and completes child runbook
     commands:
       - rd run --prompted agent-binding-simple.runbook.md
       - rd run --step 1 agent-binding-simple.runbook.md
@@ -18,7 +18,7 @@ scenarios:
 
 # Agent Binding - Simple
 
-Demonstrates parent workflow delegating to an agent.
+Demonstrates parent runbook delegating to an agent.
 
 ## 1. Delegate to Agent
 - PASS: COMPLETE

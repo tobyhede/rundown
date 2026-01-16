@@ -4,7 +4,7 @@ description: Demonstrates explicitly advancing to the next step instance using G
 
 scenarios:
   error-handler-failure:
-    description: Error handler fails to recover, workflow stops
+    description: Error handler fails to recover, runbook stops
     commands:
       - rd run --prompted goto-next-qualified-step.runbook.md
       - rd fail

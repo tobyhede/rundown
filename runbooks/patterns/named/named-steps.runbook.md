@@ -4,13 +4,13 @@ description: Demonstrates mixing numbered and named steps with GOTO error handli
 
 scenarios:
   completed:
-    description: Main workflow passes, completes successfully
+    description: Main runbook passes, completes successfully
     commands:
       - rd run --prompted named-steps.runbook.md
       - rd pass
     result: COMPLETE
   recovered:
-    description: Main workflow fails, ErrorHandler recovers
+    description: Main runbook fails, ErrorHandler recovers
     commands:
       - rd run --prompted named-steps.runbook.md
       - rd fail
@@ -22,7 +22,7 @@ tags:
 
 # Named Steps Example
 
-## 1. Main workflow
+## 1. Main runbook
 - FAIL: GOTO ErrorHandler
 - PASS: COMPLETE SUCCESS
 

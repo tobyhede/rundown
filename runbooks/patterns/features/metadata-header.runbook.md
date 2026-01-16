@@ -1,6 +1,6 @@
 ---
 name: metadata-header
-description: Workflow with H1 title and description text
+description: Runbook with H1 title and description text
 
 scenarios:
   completed:
@@ -13,8 +13,8 @@ tags:
   - features
 ---
 
-# Workflow Title
-This is a description of the workflow.
+# Runbook Title
+This is a description of the runbook.
 
 ## 1. First Step
 Execute.

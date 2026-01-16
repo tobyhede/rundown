@@ -1,10 +1,10 @@
 ---
 name: dynamic-step-next
-description: Tests GOTO NEXT navigation which advances to the next step in dynamic workflow
+description: Tests GOTO NEXT navigation which advances to the next step in dynamic runbook
 
 scenarios:
   stopped:
-    description: Pass to advance, then fail to stop workflow
+    description: Pass to advance, then fail to stop runbook
     commands:
       - rd run --prompted dynamic-step-next.runbook.md
       - rd pass

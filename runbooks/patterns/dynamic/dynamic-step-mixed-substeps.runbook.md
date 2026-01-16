@@ -4,7 +4,7 @@ description: Demonstrates dynamic steps with both static and named substeps
 
 scenarios:
   recovery-fails:
-    description: Recovery step fails and workflow stops
+    description: Recovery step fails and runbook stops
     commands:
       - rd run --prompted dynamic-step-mixed-substeps.runbook.md
       - rd fail

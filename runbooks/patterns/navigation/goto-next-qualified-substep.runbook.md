@@ -4,7 +4,7 @@ description: Demonstrates explicitly advancing to the next dynamic substep using
 
 scenarios:
   item-failure:
-    description: Processing item fails and stops workflow
+    description: Processing item fails and stops runbook
     commands:
       - rd run --prompted goto-next-qualified-substep.runbook.md
       - rd fail
