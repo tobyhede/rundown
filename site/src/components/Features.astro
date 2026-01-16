@@ -1,25 +1,32 @@
 ---
 const features = [
+  {
+    title: 'Markdown Runbooks',
+    icon: '📄',
+    color: 'cyan',
     description: 'Human-readable runbook definitions in familiar .runbook.md files',
   },
   {
     title: 'State Persistence',
-    icon: 'save',
+    icon: '💾',
+    color: 'magenta',
     description: 'Runbook progress survives context clears and session restarts',
   },
   {
     title: 'XState Compilation',
-    icon: 'cpu',
+    icon: '⚙️',
+    color: 'purple',
     description: 'Runbooks compile to state machines for reliable execution',
   },
   {
     title: 'CLI Control',
-    icon: 'terminal',
+    icon: '💻',
+    color: 'cyan',
     description: 'Simple commands to run, pass, fail, and navigate runbooks',
-  },,
+  },
 ];
 
-const colorClasses = {
+const colorClasses: Record<string, string> = {
   cyan: 'border-cyber-cyan/30 hover:border-cyber-cyan hover:shadow-neon-cyan',
   magenta: 'border-cyber-magenta/30 hover:border-cyber-magenta hover:shadow-neon-magenta',
   purple: 'border-cyber-purple/30 hover:border-cyber-purple hover:shadow-neon-purple',
