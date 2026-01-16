@@ -154,11 +154,19 @@ export function registerFailCommand(program: Command): void {
 
         // Derive action
         const retryMax = getStepRetryMax(currentStep);
+        // Compute substep instance for {n} resolution
+        const substepInstance = updatedState.substep
+          ? (updatedState.substep === '{n}'
+              ? (updatedState.substepStates?.length ?? 1)
+              : parseInt(updatedState.substep, 10) || undefined)
+          : undefined;
         const action = deriveAction(
           prevStep, updatedState.step,
           prevSubstep, updatedState.substep,
           prevRetryCount, updatedState.retryCount,
-          retryMax, isComplete, isStopped
+          retryMax, isComplete, isStopped,
+          updatedState.instance,
+          substepInstance
         );
 
         // Update lastAction
@@ -172,11 +180,17 @@ export function registerFailCommand(program: Command): void {
         }
         await manager.update(state.id, { lastAction: actionType });
 
+        // Resolve {n} in prev substep for display
+        const prevSubstepStatesLen = state.substepStates?.length ?? 1;
+        const prevDisplaySubstep = prevSubstep === '{n}'
+          ? String(prevSubstepStatesLen)
+          : prevSubstep;
+
         // Print separator and action block
         printSeparator();
         printActionBlock({
           action,
-          from: { current: displayStep, total: totalSteps, substep: prevSubstep },
+          from: { current: displayStep, total: totalSteps, substep: prevDisplaySubstep },
           result: 'FAIL',
         });
 
@@ -186,7 +200,7 @@ export function registerFailCommand(program: Command): void {
         // Handle stopped
         if (isStopped) {
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
-          printWorkflowStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevSubstep }, failResult.message);
+          printWorkflowStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevDisplaySubstep }, failResult.message);
 
           // If this was a child workflow with agent, update parent's agent binding
           if (options.agent && state.parentWorkflowId) {

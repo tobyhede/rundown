@@ -138,23 +138,23 @@ describe('integration: GOTO patterns', () => {
 
   
 
-        // First instance: {N}.1 → GOTO {N}.3 (dynamic steps use {N} template)
+        // First instance: {N}.1 → GOTO {N}.3 (now resolved as GOTO 1.3)
 
         const result1 = runCli('pass', workspace);
 
-        expect(result1.stdout).toContain('GOTO {N}.3');
+        expect(result1.stdout).toContain('GOTO 1.3');
 
-        expect(result1.stdout).toContain('Step:     1.3/{N}');
+        expect(result1.stdout).toContain('Step:     1.3/1*');
 
-  
+
 
         // {N}.3 passes → GOTO NEXT advances the dynamic instance
 
         const result2 = runCli('pass', workspace);
 
-        // Dynamic step advancement is indicated by step counter reset
+        // Dynamic step advancement shows asterisk for unbounded total
 
-        expect(result2.stdout).toContain('{N}');
+        expect(result2.stdout).toMatch(/\/\d+\*/);
 
       });
 
@@ -176,15 +176,15 @@ describe('integration: GOTO patterns', () => {
 
         const result = runCli('pass', workspace);
 
-        // Dynamic steps show {N} template in output
+        // Dynamic steps show asterisk for unbounded total
 
-        expect(result.stdout).toContain('{N}');
+        expect(result.stdout).toMatch(/\/\d+\*/);
 
-  
+
 
         // Check for iteration (next instance)
 
-        expect(result.stdout).toContain('1/{N}');
+        expect(result.stdout).toMatch(/\/\d+\*/);
 
       });
 

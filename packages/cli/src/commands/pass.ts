@@ -138,11 +138,19 @@ export function registerPassCommand(program: Command): void {
         const prevStepIndex = steps.findIndex(s => s.name === prevStep);
         const currentStep = prevStepIndex >= 0 ? steps[prevStepIndex] : steps[0];
         const retryMax = getStepRetryMax(currentStep);
+        // Compute substep instance for {n} resolution
+        const substepInstance = updatedState.substep
+          ? (updatedState.substep === '{n}'
+              ? (updatedState.substepStates?.length ?? 1)
+              : parseInt(updatedState.substep, 10) || undefined)
+          : undefined;
         const action = deriveAction(
           prevStep, updatedState.step,
           prevSubstep, updatedState.substep,
           prevRetryCount, updatedState.retryCount,
-          retryMax, isComplete, isStopped
+          retryMax, isComplete, isStopped,
+          updatedState.instance,
+          substepInstance
         );
 
         // Update lastAction
@@ -156,11 +164,17 @@ export function registerPassCommand(program: Command): void {
         }
         await manager.update(state.id, { lastAction: actionType });
 
+        // Resolve {n} in prev substep for display
+        const prevSubstepStatesLen = state.substepStates?.length ?? 1;
+        const prevDisplaySubstep = prevSubstep === '{n}'
+          ? String(prevSubstepStatesLen)
+          : prevSubstep;
+
         // Print separator and action block
         printSeparator();
         printActionBlock({
           action,
-          from: { current: displayStep, total: totalSteps, substep: prevSubstep },
+          from: { current: displayStep, total: totalSteps, substep: prevDisplaySubstep },
           result: 'PASS',
         });
 
@@ -190,7 +204,7 @@ export function registerPassCommand(program: Command): void {
 
         if (isStopped) {
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
-          printWorkflowStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevSubstep }, passResult.message);
+          printWorkflowStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevDisplaySubstep }, passResult.message);
           process.exit(1);
         }
 

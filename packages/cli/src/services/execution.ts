@@ -84,13 +84,11 @@ export async function handleNextInstanceFlags(
     const hasDynamicSubstep = currentStepDef?.substeps?.some(s => s.isDynamic);
 
     if (hasDynamicSubstep) {
-      const currentSubstep = state.substep;
       // Use addDynamicSubstep to properly track substep states and get new ID
       const nextSubstepId = await manager.addDynamicSubstep(workflowId);
       state = await manager.update(workflowId, {
         substep: nextSubstepId
       });
-      console.log(`Substep ${currentSubstep ?? '?'} complete. Starting substep ${nextSubstepId}...`);
     }
   }
 
@@ -159,8 +157,14 @@ export async function runExecutionLoop(
       }
     }
 
+    // Resolve {n} in substep for display
+    // If substep is {n}, use substepStates count; otherwise use as-is
+    const displaySubstep = state.substep === '{n}'
+      ? String(state.substepStates?.length ?? 1)
+      : state.substep;
+
     // Print step/substep block with resolved instance number
-    printStepBlock({ current: displayStep, total: totalSteps, substep: state.substep }, itemToRender);
+    printStepBlock({ current: displayStep, total: totalSteps, substep: displaySubstep }, itemToRender);
 
     // If CLI prompted mode, OR no command
     if (prompted || !currentStep.command) {
@@ -202,6 +206,13 @@ export async function runExecutionLoop(
 
     // Derive action string
     const retryMax = getStepRetryMax(currentStep);
+    // Compute substep instance for {n} resolution
+    // If substep is numeric, use it; if {n}, use substepStates count
+    const substepInstance = updatedState.substep
+      ? (updatedState.substep === '{n}'
+          ? (updatedState.substepStates?.length ?? 1)
+          : parseInt(updatedState.substep, 10) || undefined)
+      : undefined;
     const action = deriveAction(
       prevStep,
       updatedState.step,
@@ -211,7 +222,9 @@ export async function runExecutionLoop(
       updatedState.retryCount,
       retryMax,
       isComplete,
-      isStopped
+      isStopped,
+      updatedState.instance,
+      substepInstance
     );
 
     // Update lastAction in state
@@ -225,11 +238,18 @@ export async function runExecutionLoop(
       ? String(prevInstance)   // Use instance field: 1, 2, 3, ...
       : prevStep;              // Use step name: "1", "ErrorHandler", etc.
 
+    // Resolve {n} in prev substep for display
+    // Use prev substep states count since this is the state before transition
+    const prevSubstepStatesLen = state.substepStates?.length ?? 1;
+    const prevDisplaySubstep = prevSubstep === '{n}'
+      ? String(prevSubstepStatesLen)
+      : prevSubstep;
+
     // Print separator and action block
     printSeparator();
     printActionBlock({
       action,
-      from: { current: prevDisplayStep, total: totalSteps, substep: prevSubstep },
+      from: { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep },
       result: execResult.success ? 'PASS' : 'FAIL',
     });
 
@@ -271,7 +291,7 @@ export async function runExecutionLoop(
       await manager.update(workflowId, { 
         variables: { ...currentVars, stopped: true } 
       });
-      printWorkflowStoppedAtStep({ current: prevDisplayStep, total: totalSteps, substep: prevSubstep }, stopMessage);
+      printWorkflowStoppedAtStep({ current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep }, stopMessage);
 
       // If this was a child workflow with agent, update parent's agent binding
        
@@ -344,6 +364,8 @@ export function buildMetadata(state: WorkflowState): WorkflowMetadata {
  * @param retryMax - Maximum retries allowed for the step
  * @param isComplete - Whether the workflow is complete
  * @param isStopped - Whether the workflow is stopped
+ * @param instance - Instance number for dynamic runbooks (to resolve {N} placeholders)
+ * @param substepInstance - Substep instance number for dynamic substeps (to resolve {n} placeholders)
  * @returns Action string describing the transition (e.g., 'CONTINUE', 'GOTO 3', 'RETRY (1/3)')
  */
 export function deriveAction(
@@ -355,7 +377,9 @@ export function deriveAction(
   newRetryCount: number,
   retryMax: number,
   isComplete: boolean,
-  isStopped: boolean
+  isStopped: boolean,
+  instance?: number,
+  substepInstance?: number
 ): string {
   if (isComplete) return 'COMPLETE';
   if (isStopped) return 'STOP';
@@ -363,11 +387,26 @@ export function deriveAction(
     return `RETRY (${String(newRetryCount)}/${String(retryMax)})`;
   }
 
+  /**
+   * Resolve {N} and {n} placeholders with actual instance numbers.
+   */
+  const resolvePlaceholders = (s: string): string => {
+    let result = s;
+    if (instance !== undefined && result.includes('{N}')) {
+      result = result.replace(/\{N\}/g, String(instance));
+    }
+    if (substepInstance !== undefined && result.includes('{n}')) {
+      result = result.replace(/\{n\}/g, String(substepInstance));
+    }
+    return result;
+  };
+
   // CRITICAL FIX: Any transition with a substep target is a GOTO
   // Even "sequential" step changes are GOTO if substep is specified
   // Because GOTO step_2.1 is meaningfully different from CONTINUE to step_2
   if (newSubstep) {
-    return `GOTO ${newStep}.${newSubstep}`;
+    const resolvedSubstep = resolvePlaceholders(newSubstep);
+    return `GOTO ${resolvePlaceholders(newStep)}.${resolvedSubstep}`;
   }
 
   // Check if step change is sequential (e.g., "1" → "2")
@@ -377,7 +416,7 @@ export function deriveAction(
     const newNum = parseInt(newStep, 10);
     const isSequential = !isNaN(prevNum) && !isNaN(newNum) && newNum === prevNum + 1;
     if (!isSequential) {
-      return `GOTO ${newStep}`;
+      return `GOTO ${resolvePlaceholders(newStep)}`;
     }
   }
 
