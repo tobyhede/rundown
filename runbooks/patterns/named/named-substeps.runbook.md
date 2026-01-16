@@ -9,6 +9,7 @@ scenarios:
       - rd run --prompted named-substeps.runbook.md
       - rd pass
       - rd pass
+      - rd pass
     result: COMPLETE
 tags:
   - named

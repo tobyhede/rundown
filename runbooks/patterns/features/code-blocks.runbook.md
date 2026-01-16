@@ -10,6 +10,8 @@ scenarios:
     commands:
       - rd run --prompted code-blocks.runbook.md
       - rd pass
+      - rd pass
+      - rd pass
     result: COMPLETE
   auto-execution:
     description: All three steps with bash code blocks pass immediately
