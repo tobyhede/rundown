@@ -182,23 +182,42 @@ export function RunbookRunner({
         compact ? 'p-4' : 'p-6'
       }`}
     >
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+      {/* Scenario Selection */}
+      <div className="mb-6">
+        <label className="text-[10px] uppercase tracking-wider text-cyber-magenta font-bold mb-2 block opacity-80">
+          Select Scenario
+        </label>
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(scenarios).map(([key, s]) => (
+            <button
+              key={key}
+              disabled={status === 'running'}
+              onClick={() => {
+                setSelectedScenario(key);
+                reset();
+              }}
+              className={`px-3 py-1.5 text-xs font-mono rounded border transition-all whitespace-normal text-left ${
+                selectedScenario === key
+                  ? 'bg-cyber-cyan/20 border-cyber-cyan text-cyber-cyan shadow-[0_0_10px_rgba(0,229,255,0.3)]'
+                  : 'bg-cyber-dark/50 border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'
+              }`}
+            >
+              {key}
+            </button>
+          ))}
+        </div>
+        {scenario?.description && (
+          <p className="mt-2 text-xs text-gray-400 italic leading-relaxed">
+            {scenario.description}
+          </p>
+        )}
+      </div>
+
+      {/* Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pt-4 border-t border-cyber-cyan/10">
         <div className="flex items-center gap-3">
-          <select
-            value={selectedScenario}
-            onChange={handleScenarioChange}
-            disabled={status === 'running'}
-            className="bg-cyber-dark text-cyber-cyan border border-cyber-cyan/50 rounded px-3 py-1.5 font-mono text-sm focus:outline-none focus:border-cyber-cyan"
-          >
-            {Object.entries(scenarios).map(([key, s]) => (
-              <option key={key} value={key}>
-                {s.description || key}
-              </option>
-            ))}
-          </select>
           <span
-            className={`text-xs font-mono ${
+            className={`text-xs font-mono uppercase tracking-widest ${
               status === 'error'
                 ? 'text-red-400'
                 : status === 'ready'
