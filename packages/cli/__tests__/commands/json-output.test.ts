@@ -190,7 +190,7 @@ echo hello
       });
     });
 
-    it('show outputs scenario details', () => {
+    it('show outputs structured error for non-existent scenario', () => {
       const runbookPath = path.join(workspace.cwd, 'scenarios.runbook.md');
       fs.writeFileSync(runbookPath, `---
 name: scenarios-test
@@ -205,16 +205,14 @@ scenarios:
 echo hello
 `);
 
-      const result = runCli(`scenario show ${runbookPath} test-scenario --json`, workspace);
-      expect(result.exitCode).toBe(0);
+      const result = runCli(`scenario show ${runbookPath} non-existent --json`, workspace);
+      expect(result.exitCode).toBe(1);
       const output = JSON.parse(result.stdout);
 
       expect(output).toEqual({
-        name: 'test-scenario',
-        description: 'A test scenario',
-        expected: 'COMPLETE',
-        commands: ['echo hello'],
-        tags: undefined
+        error: true,
+        message: 'Scenario "non-existent" not found',
+        available: ['test-scenario']
       });
     });
   });
