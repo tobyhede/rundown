@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
-import { type Step, type Workflow } from '../../src/runbook/types.js';
+import { type Step, type Runbook } from '../../src/runbook/types.js';
 
 describe('RunbookStateManager', () => {
   let testDir: string;
@@ -13,8 +13,8 @@ describe('RunbookStateManager', () => {
     description: 'Initial step',
     isDynamic: false
   }];
-  const mockWorkflow: Workflow = {
-    title: 'Test Workflow',
+  const mockRunbook: Runbook = {
+    title: 'Test Runbook',
     description: 'A test',
     steps: mockSteps
   };
@@ -30,7 +30,7 @@ describe('RunbookStateManager', () => {
 
   describe('getChildRunbookResult', () => {
     it('should return pass when child has completed=true', async () => {
-      const child = await manager.create('child.runbook.md', mockWorkflow);
+      const child = await manager.create('child.runbook.md', mockRunbook);
       await manager.update(child.id, { variables: { completed: true } });
 
       const result = await manager.getChildRunbookResult(child.id);
@@ -38,7 +38,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('should return fail when child has stopped=true', async () => {
-      const child = await manager.create('child.runbook.md', mockWorkflow);
+      const child = await manager.create('child.runbook.md', mockRunbook);
       await manager.update(child.id, { variables: { stopped: true } });
 
       const result = await manager.getChildRunbookResult(child.id);
@@ -46,7 +46,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('should return null when child is still active', async () => {
-      const child = await manager.create('child.runbook.md', mockWorkflow);
+      const child = await manager.create('child.runbook.md', mockRunbook);
       // eslint-disable-next-line @typescript-eslint/no-deprecated
       await manager.setActive(child.id);
 
@@ -60,7 +60,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('should return null when child is stashed', async () => {
-      const child = await manager.create('child.runbook.md', mockWorkflow);
+      const child = await manager.create('child.runbook.md', mockRunbook);
       // eslint-disable-next-line @typescript-eslint/no-deprecated
       await manager.setActive(child.id);
       await manager.stash();
@@ -77,7 +77,7 @@ describe('RunbookStateManager', () => {
         { id: '2', description: 'Second reviewer', isDynamic: false, prompts: [] }
       ];
 
-      const state = await manager.create('test.runbook.md', mockWorkflow);
+      const state = await manager.create('test.runbook.md', mockRunbook);
       await manager.initializeSubsteps(state.id, substeps);
 
       const updated = await manager.load(state.id);
@@ -95,7 +95,7 @@ describe('RunbookStateManager', () => {
         { id: '{n}', description: 'Dynamic step', isDynamic: true, prompts: [] }
       ];
 
-      const state = await manager.create('test.runbook.md', mockWorkflow);
+      const state = await manager.create('test.runbook.md', mockRunbook);
       await manager.initializeSubsteps(state.id, substeps);
 
       const updated = await manager.load(state.id);
@@ -105,7 +105,7 @@ describe('RunbookStateManager', () => {
 
   describe('RunbookStateManager dynamic substeps', () => {
     it('adds dynamic substep with incrementing ID', async () => {
-      const state = await manager.create('test.runbook.md', mockWorkflow);
+      const state = await manager.create('test.runbook.md', mockRunbook);
       await manager.update(state.id, { substepStates: [] });
 
       const id1 = await manager.addDynamicSubstep(state.id);
@@ -123,7 +123,7 @@ describe('RunbookStateManager', () => {
 
   describe('RunbookStateManager substep lifecycle', () => {
     it('binds agent to substep', async () => {
-      const state = await manager.create('test.runbook.md', mockWorkflow);
+      const state = await manager.create('test.runbook.md', mockRunbook);
       await manager.update(state.id, {
         substepStates: [{ id: '1', status: 'pending' }]
       });
@@ -140,7 +140,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('completes substep with result', async () => {
-      const state = await manager.create('test.runbook.md', mockWorkflow);
+      const state = await manager.create('test.runbook.md', mockRunbook);
       await manager.update(state.id, {
         substepStates: [{ id: '1', status: 'running', agentId: 'agent-123' }]
       });
@@ -159,7 +159,7 @@ describe('RunbookStateManager', () => {
 
   describe('updateFromActor flattened states', () => {
     it('extracts substep ID from flattened machine state (step_N_M)', async () => {
-      const state = await manager.create('test.md', mockWorkflow);
+      const state = await manager.create('test.md', mockRunbook);
       const actor = {
         getPersistedSnapshot: () => ({
           value: 'step_1_2',
@@ -173,7 +173,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('extracts step number from simple machine state (step_N)', async () => {
-      const state = await manager.create('test.md', mockWorkflow);
+      const state = await manager.create('test.md', mockRunbook);
       const actor = {
         getPersistedSnapshot: () => ({
           value: 'step_3',
@@ -195,19 +195,19 @@ describe('RunbookStateManager', () => {
 
   describe('create with prompted flag', () => {
     it('defaults to auto mode (prompted undefined)', async () => {
-      const state = await manager.create('test.md', mockWorkflow);
+      const state = await manager.create('test.md', mockRunbook);
       expect(state.prompted).toBeUndefined();
     });
 
     it('accepts prompted option', async () => {
-      const state = await manager.create('test.md', mockWorkflow, { prompted: true });
+      const state = await manager.create('test.md', mockRunbook, { prompted: true });
       expect(state.prompted).toBe(true);
     });
   });
 
-  describe('dynamic workflow initialization', () => {
-    it('initializes dynamic workflow with instance=1 and step={N}', async () => {
-      const dynamicWorkflow: Workflow = {
+  describe('dynamic runbook initialization', () => {
+    it('initializes dynamic runbook with instance=1 and step={N}', async () => {
+      const dynamicRunbook: Runbook = {
         title: 'Dynamic Test',
         steps: [{
           name: '{N}',
@@ -216,15 +216,15 @@ describe('RunbookStateManager', () => {
         }],
       };
 
-      const state = await manager.create('dynamic.runbook.md', dynamicWorkflow);
+      const state = await manager.create('dynamic.runbook.md', dynamicRunbook);
 
       expect(state.step).toBe('{N}');        // Keep {N} for machine integrity
       expect(state.instance).toBe(1);         // Use instance field for display
       expect(state.stepName).toBe('Process Batch');
     });
 
-    it('does not set instance for non-dynamic workflows', async () => {
-      const staticWorkflow: Workflow = {
+    it('does not set instance for non-dynamic runbooks', async () => {
+      const staticRunbook: Runbook = {
         title: 'Static Test',
         steps: [{
           name: 'Setup',
@@ -233,16 +233,16 @@ describe('RunbookStateManager', () => {
         }],
       };
 
-      const state = await manager.create('static.runbook.md', staticWorkflow);
+      const state = await manager.create('static.runbook.md', staticRunbook);
 
       expect(state.step).toBe('Setup');
       expect(state.instance).toBeUndefined();
     });
   });
 
-  describe('Per-agent workflow stacks', () => {
+  describe('Per-agent runbook stacks', () => {
     it('pushRunbook adds to default stack when no agentId', async () => {
-      const state = await manager.create('test.md', mockWorkflow);
+      const state = await manager.create('test.md', mockRunbook);
       await manager.pushRunbook(state.id);
 
       const active = await manager.getActive();
@@ -250,7 +250,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('pushRunbook adds to agent-specific stack', async () => {
-      const state = await manager.create('test.md', mockWorkflow);
+      const state = await manager.create('test.md', mockRunbook);
       await manager.pushRunbook(state.id, 'agent-001');
 
       const active = await manager.getActive('agent-001');
@@ -262,8 +262,8 @@ describe('RunbookStateManager', () => {
     });
 
     it('popRunbook removes from stack and returns new top', async () => {
-      const parent = await manager.create('parent.md', mockWorkflow);
-      const child = await manager.create('child.md', mockWorkflow);
+      const parent = await manager.create('parent.md', mockRunbook);
+      const child = await manager.create('child.md', mockRunbook);
 
       await manager.pushRunbook(parent.id);
       await manager.pushRunbook(child.id);
@@ -276,10 +276,10 @@ describe('RunbookStateManager', () => {
     });
 
     it('supports arbitrary nesting depth', async () => {
-      const wf1 = await manager.create('level1.md', mockWorkflow);
-      const wf2 = await manager.create('level2.md', mockWorkflow);
-      const wf3 = await manager.create('level3.md', mockWorkflow);
-      const wf4 = await manager.create('level4.md', mockWorkflow);
+      const wf1 = await manager.create('level1.md', mockRunbook);
+      const wf2 = await manager.create('level2.md', mockRunbook);
+      const wf3 = await manager.create('level3.md', mockRunbook);
+      const wf4 = await manager.create('level4.md', mockRunbook);
 
       await manager.pushRunbook(wf1.id);
       await manager.pushRunbook(wf2.id);
@@ -302,15 +302,15 @@ describe('RunbookStateManager', () => {
     });
 
     it('parallel agents have independent stacks', async () => {
-      const main = await manager.create('main.md', mockWorkflow);
-      const child1 = await manager.create('child1.md', mockWorkflow);
-      const child2 = await manager.create('child2.md', mockWorkflow);
+      const main = await manager.create('main.md', mockRunbook);
+      const child1 = await manager.create('child1.md', mockRunbook);
+      const child2 = await manager.create('child2.md', mockRunbook);
 
       await manager.pushRunbook(main.id);
       await manager.pushRunbook(child1.id, 'agent-001');
       await manager.pushRunbook(child2.id, 'agent-002');
 
-      // Each agent sees their own workflow
+      // Each agent sees their own runbook
       expect((await manager.getActive())?.id).toBe(main.id);
       expect((await manager.getActive('agent-001'))?.id).toBe(child1.id);
       expect((await manager.getActive('agent-002'))?.id).toBe(child2.id);

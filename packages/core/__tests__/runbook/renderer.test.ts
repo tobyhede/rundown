@@ -1,4 +1,4 @@
-// __tests__/workflow/renderer.test.ts
+// __tests__/runbook/renderer.test.ts
 import { describe, it, expect } from '@jest/globals';
 import {
   renderAction,
@@ -78,9 +78,9 @@ describe('renderSubstep', () => {
     expect(renderSubstep(substep, 2)).toBe('### 2.{n} Execute step');
   });
 
-  it('renders substep with workflows', () => {
-    const substep: Substep = { id: '1', description: 'With workflow', isDynamic: false, workflows: ['task.runbook.md'] };
-    expect(renderSubstep(substep, 1)).toBe('### 1.1 With workflow [@task.runbook.md]');
+  it('renders substep with child runbooks', () => {
+    const substep: Substep = { id: '1', description: 'With child runbook', isDynamic: false, workflows: ['task.runbook.md'] };
+    expect(renderSubstep(substep, 1)).toBe('### 1.1 With child runbook [@task.runbook.md]');
   });
 });
 
@@ -289,7 +289,7 @@ FAIL ANY: STOP`;
     expect(parsed2[0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
   });
 
-  it('validates substep workflows parsing', () => {
+  it('validates substep child runbooks parsing', () => {
     const markdown = `## 1. Setup
 
 ### 1.1 Initialize

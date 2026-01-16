@@ -187,7 +187,7 @@ export class RunbookStateManager {
   ): Promise<RunbookState> {
     const existing = await this.load(id);
     if (!existing) {
-      throw new Error(`Workflow ${id} not found`);
+      throw new Error(`Runbook ${id} not found`);
     }
 
     const updated: RunbookState = {
@@ -215,11 +215,11 @@ export class RunbookStateManager {
   /**
    * Check if a parent runbook was started in prompted mode.
    *
-   * @param parentWorkflowId - The parent runbook state ID
+   * @param parentRunbookId - The parent runbook state ID
    * @returns True if the parent runbook has prompted flag set, false otherwise
    */
-  async isParentPrompted(parentWorkflowId: string): Promise<boolean> {
-    const parent = await this.load(parentWorkflowId);
+  async isParentPrompted(parentRunbookId: string): Promise<boolean> {
+    const parent = await this.load(parentRunbookId);
     return parent?.prompted ?? false;
   }
 
@@ -461,7 +461,7 @@ export class RunbookStateManager {
    */
   async pushPendingStep(id: string, pending: PendingStep): Promise<void> {
     const state = await this.load(id);
-    if (!state) throw new Error(`Workflow ${id} not found`);
+    if (!state) throw new Error(`Runbook ${id} not found`);
 
     await this.update(id, {
       pendingSteps: [...state.pendingSteps, pending]
@@ -496,7 +496,7 @@ export class RunbookStateManager {
    */
   async bindAgent(id: string, agentId: string, stepId: StepId): Promise<void> {
     const state = await this.load(id);
-    if (!state) throw new Error(`Workflow ${id} not found`);
+    if (!state) throw new Error(`Runbook ${id} not found`);
 
     const binding: AgentBinding = {
       stepId,
@@ -521,7 +521,7 @@ export class RunbookStateManager {
    */
   async getAgentBinding(id: string, agentId: string): Promise<AgentBinding | null> {
     const state = await this.load(id);
-    if (!state) throw new Error(`Workflow ${id} not found`);
+    if (!state) throw new Error(`Runbook ${id} not found`);
     return state.agentBindings[agentId] ?? null;
   }
 
@@ -540,7 +540,7 @@ export class RunbookStateManager {
     updates: Partial<Pick<AgentBinding, 'status' | 'result' | 'childRunbookId'>>
   ): Promise<void> {
     const state = await this.load(id);
-    if (!state) throw new Error(`Workflow ${id} not found`);
+    if (!state) throw new Error(`Runbook ${id} not found`);
 
     const existing = state.agentBindings[agentId];
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -717,7 +717,7 @@ export class RunbookStateManager {
    */
   async initializeSubsteps(id: string, substeps: readonly Substep[]): Promise<void> {
     const state = await this.load(id);
-    if (!state) throw new Error(`Workflow ${id} not found`);
+    if (!state) throw new Error(`Runbook ${id} not found`);
 
     const staticSubsteps = substeps.filter(s => !s.isDynamic);
 
@@ -743,7 +743,7 @@ export class RunbookStateManager {
    */
   async addDynamicSubstep(id: string): Promise<string> {
     const state = await this.load(id);
-    if (!state) throw new Error(`Workflow ${id} not found`);
+    if (!state) throw new Error(`Runbook ${id} not found`);
 
     const existing = state.substepStates ?? [];
     const nextId = String(existing.length + 1);
@@ -774,7 +774,7 @@ export class RunbookStateManager {
    */
   async bindSubstepAgent(runbookId: string, substepId: string, agentId: string): Promise<void> {
     const state = await this.load(runbookId);
-    if (!state) throw new Error(`Workflow ${runbookId} not found`);
+    if (!state) throw new Error(`Runbook ${runbookId} not found`);
 
     const substepStates = state.substepStates ?? [];
     const updated = substepStates.map(s =>
@@ -802,7 +802,7 @@ export class RunbookStateManager {
     result: 'pass' | 'fail'
   ): Promise<void> {
     const state = await this.load(runbookId);
-    if (!state) throw new Error(`Workflow ${runbookId} not found`);
+    if (!state) throw new Error(`Runbook ${runbookId} not found`);
 
     const substepStates = state.substepStates ?? [];
     const updated = substepStates.map(s =>

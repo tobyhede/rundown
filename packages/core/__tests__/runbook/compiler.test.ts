@@ -3,7 +3,7 @@ import { createActor } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import type { Step } from '../../src/runbook/types.js';
 
-describe('workflow compiler', () => {
+describe('runbook compiler', () => {
   describe('dynamic step compilation', () => {
     it('compiles GOTO {N}.1 to target step_1 with substep', () => {
       const steps: Step[] = [

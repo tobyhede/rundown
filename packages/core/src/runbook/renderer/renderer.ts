@@ -59,15 +59,15 @@ export function renderTransitions(transitions: Transitions): string {
  */
 export function renderSubstep(substep: Substep, parentStepName: string): string {
   const agentSuffix = substep.agentType ? ` (${substep.agentType})` : '';
-  const workflowSuffix = substep.workflows?.length ? ` [@${substep.workflows.join(', ')}]` : '';
-  return `### ${parentStepName}.${substep.id} ${substep.description}${agentSuffix}${workflowSuffix}`;
+  const runbooksSuffix = substep.workflows?.length ? ` [@${substep.workflows.join(', ')}]` : '';
+  return `### ${parentStepName}.${substep.id} ${substep.description}${agentSuffix}${runbooksSuffix}`;
 }
 
 /**
  * Render a Step to its Markdown representation.
  *
- * Generates complete Markdown for a step including header, workflows,
- * command block, prompt, transitions, substeps, and nested workflows.
+ * Generates complete Markdown for a step including header, child runbooks,
+ * command block, prompt, transitions, substeps, and nested child runbooks.
  *
  * @param step - The Step to render
  * @returns Complete Markdown string for the step
@@ -80,7 +80,7 @@ export function renderStep(step: Step): string {
   lines.push(`## ${stepId}. ${step.description}`);
   lines.push('');
 
-  // Workflows (step-level)
+  // Child runbooks (step-level)
   if (step.workflows?.length) {
     for (const wf of step.workflows) {
       lines.push(` - ${wf}`);
