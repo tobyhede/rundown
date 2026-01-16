@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from '@jest/globals';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import {
@@ -6,11 +6,18 @@ import {
   runCli,
   getActiveState,
   readSession,
+  verifyRdCommand,
+  getBinPath,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
 describe('start --prompted', () => {
   let workspace: TestWorkspace;
+
+  // Verify rd command exists before running tests
+  beforeAll(async () => {
+    await verifyRdCommand();
+  });
 
   beforeEach(async () => {
     workspace = await createTestWorkspace();
@@ -96,6 +103,13 @@ describe('start --prompted', () => {
       // Without --prompted, commands execute automatically
       expect(result.stdout).toContain('Execute command');
       expect(result.stdout).toContain('$ rd echo --result pass');
+      // Include stderr in error message for CI debugging
+      if (!result.stdout.includes('Action:   CONTINUE')) {
+        console.error('Test failure debug info:');
+        console.error('stdout:', result.stdout);
+        console.error('stderr:', result.stderr);
+        console.error('exitCode:', result.exitCode);
+      }
       expect(result.stdout).toContain('Action:   CONTINUE');
     });
 

@@ -33,7 +33,8 @@ export function executeCommand(command: string, cwd: string): Promise<ExecutionR
 
     const child = spawn(shell, shellArgs, {
       cwd,
-      stdio: 'inherit'
+      stdio: 'inherit',
+      env: process.env  // Explicitly pass environment for cross-platform consistency
     });
 
     child.on('close', (code) => {

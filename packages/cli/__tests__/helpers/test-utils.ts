@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, cp, readFile, writeFile, readdir } from 'fs/promises';
+import { mkdir, mkdtemp, rm, cp, readFile, writeFile, readdir, access } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { spawnSync } from 'child_process';
@@ -6,6 +6,32 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+/**
+ * Get the path to node_modules/.bin directory.
+ * Used for PATH configuration in test subprocess execution.
+ */
+export function getBinPath(): string {
+  return join(__dirname, '..', '..', '..', '..', 'node_modules', '.bin');
+}
+
+/**
+ * Verify that the rd command exists at the expected path.
+ * Throws if not found, helping diagnose CI issues.
+ */
+export async function verifyRdCommand(): Promise<void> {
+  const binPath = getBinPath();
+  const rdPath = join(binPath, 'rd');
+  try {
+    await access(rdPath);
+  } catch {
+    throw new Error(
+      `rd command not found at expected path: ${rdPath}\n` +
+      `__dirname: ${__dirname}\n` +
+      `binPath: ${binPath}`
+    );
+  }
+}
 
 export interface TestWorkspace {
   cwd: string;
@@ -65,7 +91,7 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
   const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
 
   // Add node_modules/.bin to PATH for rd echo commands in fixtures
-  const binPath = join(__dirname, '..', '..', '..', '..', 'node_modules', '.bin');
+  const binPath = getBinPath();
   
   // Plugin root for discovery tests
   const pluginDir = join(workspace.cwd, 'plugin');
