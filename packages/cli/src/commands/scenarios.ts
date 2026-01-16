@@ -321,11 +321,7 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
     // 7. Report result
     const matches = actualResult === scenario.result;
 
-    if (!quiet) {
-      console.log();
-      console.log(dim('━'.repeat(50)));
-    }
-    console.log(`${dim('Result:')}    ${colorizeStatus(actualResult)}`);
+    console.log(`Scenario: ${colorizeStatus(actualResult)}`);
 
     if (!matches) {
       process.exit(1);

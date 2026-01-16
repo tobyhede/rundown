@@ -54,7 +54,7 @@ describe('fail command', () => {
     it('outputs error message', async () => {
       const result = runCli('fail', workspace);
 
-      expect(result.stdout).toContain('STOPPED');
+      expect(result.stdout).toContain('STOP');
     });
 
     it('should set variables.stopped=true when STOP action triggered', async () => {

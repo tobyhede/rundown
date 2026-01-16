@@ -129,8 +129,8 @@ describe('colors', () => {
       expect(colorizeStatus('stashed')).toContain('\x1b[33m');
     });
 
-    it('colors complete status cyan', () => {
-      expect(colorizeStatus('complete')).toContain('\x1b[36m');
+    it('colors complete status green', () => {
+      expect(colorizeStatus('complete')).toContain('\x1b[32m');
     });
 
     it('colors stopped status red', () => {

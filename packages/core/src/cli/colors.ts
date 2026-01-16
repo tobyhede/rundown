@@ -143,7 +143,7 @@ export function colorizeStatus(status: string): string {
       return warning(status);
     case 'complete':
     case 'completed':
-      return info(status);
+      return success(status);
     case 'stopped':
     case 'failed':
       return failure(status);

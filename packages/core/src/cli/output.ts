@@ -16,15 +16,20 @@ import {
 const SEPARATOR = '-----';
 
 /**
- * Format step position as n/N.
+ * Format step position as n/N or n/* for dynamic runbooks.
  *
  * Formats a StepPosition into a human-readable string like "1/5" or "2.1/5".
+ * For dynamic runbooks (total is '{N}'), shows asterisk to indicate unbounded.
  *
  * @param pos - The StepPosition to format
- * @returns Formatted position string (e.g., "1/5", "2.1/5")
+ * @returns Formatted position string (e.g., "1/5", "2.1/5", "1.2/*")
  */
 export function formatPosition(pos: StepPosition): string {
   const stepPart = pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
+  // For dynamic runbooks, show instance number + asterisk to indicate unbounded
+  if (pos.total === '{N}') {
+    return `${stepPart}/${pos.current}*`;
+  }
   return `${stepPart}/${String(pos.total)}`;
 }
 
@@ -129,12 +134,7 @@ export function printWorkflowComplete(
   message?: string,
   writer: OutputWriter = getWriter()
 ): void {
-  writer.writeLine('');
-  if (message) {
-    writer.writeLine(`${success('Runbook:')}  ${success('COMPLETE')} (${message})`);
-  } else {
-    writer.writeLine(`${success('Runbook:')}  ${success('COMPLETE')}`);
-  }
+  writer.writeLine(`Runbook:  ${success('COMPLETE')}`);
 }
 
 /**
@@ -149,12 +149,7 @@ export function printWorkflowStopped(
   message?: string,
   writer: OutputWriter = getWriter()
 ): void {
-  writer.writeLine('');
-  if (message) {
-    writer.writeLine(`${failure('Runbook:')}  ${failure('STOPPED')} (${message})`);
-  } else {
-    writer.writeLine(`${failure('Runbook:')}  ${failure('STOPPED')}`);
-  }
+  writer.writeLine(`Runbook:  ${failure('STOP')}`);
 }
 
 /**
@@ -171,13 +166,7 @@ export function printWorkflowStoppedAtStep(
   message?: string,
   writer: OutputWriter = getWriter()
 ): void {
-  writer.writeLine('');
-  const stepStr = pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
-  if (message) {
-    writer.writeLine(`${failure('Runbook:')}  ${failure('STOPPED')} (step ${stepStr}: ${message})`);
-  } else {
-    writer.writeLine(`${failure('Runbook:')}  ${failure('STOPPED')} (step ${stepStr})`);
-  }
+  writer.writeLine(`Runbook:  ${failure('STOP')}`);
 }
 
 /**
@@ -195,7 +184,7 @@ export function printWorkflowStashed(
   writer.writeLine('');
   writer.writeLine(`Step:     ${info(formatPosition(pos))}`);
   writer.writeLine('');
-  writer.writeLine(`${warning('Runbook:')}  ${warning('STASHED')}`);
+  writer.writeLine(`Runbook:  ${warning('STASHED')}`);
 }
 
 /**

@@ -38,12 +38,12 @@ describe('output formatter', () => {
     });
 
     it('formats position with string total for dynamic workflows', () => {
-      expect(formatPosition({ current: '1', total: '{N}' })).toBe('1/{N}');
+      expect(formatPosition({ current: '1', total: '{N}' })).toBe('1/1*');
     });
 
     it('formats position with substep and string total', () => {
       expect(formatPosition({ current: '1', total: '{N}', substep: '2' })).toBe(
-        '1.2/{N}'
+        '1.2/1*'
       );
     });
   });
@@ -170,7 +170,7 @@ describe('output formatter', () => {
       printStepBlock({ current: '1', total: '{N}' }, step, writer);
 
       const output = writer.getOutput();
-      expect(output).toContain('Step:     1/{N}');
+      expect(output).toContain('Step:     1/1*');
       expect(output).toContain('## 1. Process Batch');
       expect(output).not.toContain('## {N}.');
     });
@@ -185,7 +185,7 @@ describe('output formatter', () => {
       printStepBlock({ current: '2', total: '{N}', substep: '3' }, step, writer);
 
       const output = writer.getOutput();
-      expect(output).toContain('Step:     2.3/{N}');
+      expect(output).toContain('Step:     2.3/2*');
       expect(output).toContain('Process item 3.');
     });
   });
@@ -198,53 +198,23 @@ describe('output formatter', () => {
   });
 
   describe('printWorkflowComplete', () => {
-    it('prints workflow complete message without custom message', () => {
+    it('prints workflow complete message', () => {
       printWorkflowComplete(undefined, writer);
       expect(writer.getOutput()).toContain('Runbook:  COMPLETE');
-    });
-
-    it('prints custom completion message when provided', () => {
-      printWorkflowComplete('All tasks finished', writer);
-      expect(writer.getOutput()).toContain('Runbook:  COMPLETE (All tasks finished)');
     });
   });
 
   describe('printWorkflowStopped', () => {
     it('prints stopped message', () => {
       printWorkflowStopped(undefined, writer);
-      expect(writer.getOutput()).toContain('Runbook:  STOPPED');
-    });
-
-    it('prints stopped message with details', () => {
-      printWorkflowStopped('User cancelled', writer);
-      expect(writer.getOutput()).toContain('Runbook:  STOPPED (User cancelled)');
+      expect(writer.getOutput()).toContain('Runbook:  STOP');
     });
   });
 
   describe('printWorkflowStoppedAtStep', () => {
-    it('prints stop message with step position without custom message', () => {
+    it('prints stop message', () => {
       printWorkflowStoppedAtStep({ current: '2', total: 5 }, undefined, writer);
-      expect(writer.getOutput()).toContain('Runbook:  STOPPED (step 2)');
-    });
-
-    it('prints stopped message with substep', () => {
-      printWorkflowStoppedAtStep(
-        { current: '2', total: 5, substep: '1' },
-        undefined,
-        writer
-      );
-      expect(writer.getOutput()).toContain('Runbook:  STOPPED (step 2.1)');
-    });
-
-    it('prints stop message with step and custom message', () => {
-      printWorkflowStoppedAtStep(
-        { current: '2', total: 5 },
-        'Validation failed',
-        writer
-      );
-      expect(writer.getOutput()).toContain(
-        'Runbook:  STOPPED (step 2: Validation failed)'
-      );
+      expect(writer.getOutput()).toContain('Runbook:  STOP');
     });
   });
 

@@ -193,7 +193,7 @@ describe('stop command', () => {
 
     const result = runCli('stop', workspace);
 
-    expect(result.stdout).toContain('STOPPED');
+    expect(result.stdout).toContain('STOP');
   });
 
   it('handles no active runbook gracefully', async () => {

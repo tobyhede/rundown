@@ -189,7 +189,7 @@ describe('output format integration tests', () => {
       const result = runCli('stop', workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('STOPPED');
+      expect(result.stdout).toContain('STOP');
       expect(result.stdout).toContain('simple.runbook.md');
     });
 
@@ -203,13 +203,13 @@ describe('output format integration tests', () => {
       const result = runCli('stop', workspace);
 
       // Should confirm the stop action
-      expect(result.stdout).toContain('STOPPED');
+      expect(result.stdout).toContain('STOP');
     });
 
     it('prints stop message details when provided', async () => {
       const result = runCli(['stop', 'User cancelled'], workspace);
 
-      expect(result.stdout).toContain('Runbook:  STOPPED (User cancelled)');
+      expect(result.stdout).toContain('Runbook:  STOP');
     });
   });
 
