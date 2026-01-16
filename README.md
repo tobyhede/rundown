@@ -1,9 +1,6 @@
 <p align="center">
-  <img src="logo.png" alt="Rundown Logo" width="200">
+  <img src="logo.png" alt="Rundown Logo" width="400">
 </p>
-
-<h1 align="center">Rundown</h1>
-
 <p align="center">
   <strong>Executable Runbooks from Markdown</strong><br>
   Enforce process. Track progress. Resume anytime.
