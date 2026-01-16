@@ -1,7 +1,7 @@
 {
   "name": "@rundown/cli",
   "version": "1.0.0",
-  "description": "Workflow orchestration CLI",
+  "description": "Runbook orchestration CLI",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
@@ -19,7 +19,7 @@
   },
   "keywords": [
     "rundown",
-    "workflow",
+    "runbook",
     "cli",
     "markdown"
   ],

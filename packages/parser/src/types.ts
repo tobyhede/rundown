@@ -6,16 +6,16 @@ export { MAX_STEP_NUMBER };
 export type AggregationModifier = 'ALL' | 'ANY' | null;
 
 /**
- * Error thrown when parsing encounters invalid workflow syntax.
+ * Error thrown when parsing encounters invalid runbook syntax.
  *
- * This error indicates structural problems in the workflow markdown,
+ * This error indicates structural problems in the runbook markdown,
  * such as invalid step numbering, duplicate IDs, unsupported header levels,
  * or malformed transitions.
  */
-export class WorkflowSyntaxError extends Error {
+export class RunbookSyntaxError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'WorkflowSyntaxError';
+    this.name = 'RunbookSyntaxError';
   }
 }
 
@@ -23,7 +23,7 @@ export class WorkflowSyntaxError extends Error {
  * Parsed representation of a conditional transition line.
  *
  * Represents PASS/FAIL or YES/NO conditional transitions extracted
- * from workflow content, with optional aggregation modifiers.
+ * from runbook content, with optional aggregation modifiers.
  */
 export interface ParsedConditional {
   /** Transition type: preserves original keyword (pass, fail, yes, no) */

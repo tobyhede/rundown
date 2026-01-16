@@ -1,6 +1,6 @@
 # Simple Runbook with Commands
 
-Simple sequential build & deploy workflow
+Simple sequential build & deploy runbook
 
 ## 1. Install project dependencies
 

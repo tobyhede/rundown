@@ -128,7 +128,7 @@ Named steps (and named substeps) are identified by a name instead of a number. T
 
 **Example:**
 ```markdown
-## 1 Main workflow
+## 1 Main runbook
 - FAIL: GOTO ErrorHandler
 - PASS: COMPLETE
 
@@ -220,7 +220,7 @@ When a Step contains Substeps, the parent step's final outcome is derived from t
 
 ### Runbooks
 
-Runbooks enable nested workflows.
+Runbooks enable nested runbooks.
 
 Example:
 ```markdown

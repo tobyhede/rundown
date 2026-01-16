@@ -1,5 +1,5 @@
-import type { Step, Substep } from '../workflow/types.js';
-import type { WorkflowMetadata, StepPosition, ActionBlockData } from './types.js';
+import type { Step, Substep } from '../runbook/types.js';
+import type { RunbookMetadata, StepPosition, ActionBlockData } from './types.js';
 import type { OutputWriter } from './writer.js';
 import { getWriter } from './context.js';
 import { renderStepForCLI } from './render.js';
@@ -47,13 +47,13 @@ export function printSeparator(writer: OutputWriter = getWriter()): void {
 /**
  * Print metadata block to stdout.
  *
- * Outputs workflow metadata including file path, state, and optional prompt status.
+ * Outputs runbook metadata including file path, state, and optional prompt status.
  *
- * @param meta - The WorkflowMetadata to display
+ * @param meta - The RunbookMetadata to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printMetadata(
-  meta: WorkflowMetadata,
+  meta: RunbookMetadata,
   writer: OutputWriter = getWriter()
 ): void {
   writer.writeLine(`File:     ${meta.file}`);
@@ -123,14 +123,14 @@ export function printCommandExec(
 }
 
 /**
- * Print workflow complete message to stdout.
+ * Print runbook complete message to stdout.
  *
- * Outputs a message indicating the workflow has completed successfully.
+ * Outputs a message indicating the runbook has completed successfully.
  *
  * @param message - Optional completion message to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowComplete(
+export function printRunbookComplete(
   message?: string,
   writer: OutputWriter = getWriter()
 ): void {
@@ -138,14 +138,14 @@ export function printWorkflowComplete(
 }
 
 /**
- * Print workflow stopped message to stdout.
+ * Print runbook stopped message to stdout.
  *
- * Outputs a message indicating the workflow has been stopped.
+ * Outputs a message indicating the runbook has been stopped.
  *
  * @param message - Optional stop message to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowStopped(
+export function printRunbookStopped(
   message?: string,
   writer: OutputWriter = getWriter()
 ): void {
@@ -153,15 +153,15 @@ export function printWorkflowStopped(
 }
 
 /**
- * Print workflow stopped message with step position to stdout.
+ * Print runbook stopped message with step position to stdout.
  *
- * Outputs a message indicating the workflow was stopped at a specific step.
+ * Outputs a message indicating the runbook was stopped at a specific step.
  *
- * @param pos - The step position where the workflow was stopped
+ * @param pos - The step position where the runbook was stopped
  * @param message - Optional stop message to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowStoppedAtStep(
+export function printRunbookStoppedAtStep(
   pos: StepPosition,
   message?: string,
   writer: OutputWriter = getWriter()
@@ -170,14 +170,14 @@ export function printWorkflowStoppedAtStep(
 }
 
 /**
- * Print workflow stashed message to stdout.
+ * Print runbook stashed message to stdout.
  *
- * Outputs a message indicating the workflow has been stashed at the given position.
+ * Outputs a message indicating the runbook has been stashed at the given position.
  *
- * @param pos - The step position where the workflow was stashed
+ * @param pos - The step position where the runbook was stashed
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowStashed(
+export function printRunbookStashed(
   pos: StepPosition,
   writer: OutputWriter = getWriter()
 ): void {
@@ -194,36 +194,36 @@ export function printWorkflowStashed(
  *
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printNoActiveWorkflow(
+export function printNoActiveRunbook(
   writer: OutputWriter = getWriter()
 ): void {
   writer.writeLine(dim('No active runbook.'));
 }
 
 /**
- * Print no workflows message to stdout.
+ * Print no runbooks message to stdout.
  *
- * Outputs a message indicating there are no workflows available.
+ * Outputs a message indicating there are no runbooks available.
  *
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printNoWorkflows(writer: OutputWriter = getWriter()): void {
+export function printNoRunbooks(writer: OutputWriter = getWriter()): void {
   writer.writeLine(dim('No runbooks.'));
 }
 
 /**
- * Print workflow list entry to stdout.
+ * Print runbook list entry to stdout.
  *
- * Outputs a single line for a workflow in the list format.
+ * Outputs a single line for a runbook in the list format.
  *
- * @param id - The workflow state ID
+ * @param id - The runbook state ID
  * @param status - The current status (e.g., 'running', 'stopped')
  * @param step - The current step position
- * @param file - The workflow source file path
- * @param title - Optional workflow title
+ * @param file - The runbook source file path
+ * @param title - Optional runbook title
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowListEntry(
+export function printRunbookListEntry(
   id: string,
   status: string,
   step: string,

@@ -5,10 +5,10 @@ import type { Step, SubstepState, Action, NonRetryAction, StepId, Transitions } 
  *
  * Indicates what action should be taken based on the condition evaluation:
  * - retry: Increment retry count and re-attempt the step
- * - stopped: Halt the workflow (with optional message)
+ * - stopped: Halt the runbook (with optional message)
  * - goto: Jump to a specific step
  * - continue: Proceed to the next step
- * - complete: Mark the workflow as complete
+ * - complete: Mark the runbook as complete
  */
 export interface ConditionResult {
   /** The action to take based on the condition evaluation */

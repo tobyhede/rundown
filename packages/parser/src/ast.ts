@@ -35,14 +35,14 @@ export interface Substep {
   readonly prompt?: string;
   /** Pass/fail transition handlers */
   readonly transitions?: Transitions;
-  /** Referenced workflow files (.runbook.md) */
+  /** Referenced runbook files (.runbook.md) */
   readonly workflows?: readonly string[];
   /** Source line number for error reporting */
   readonly line?: number;
 }
 
 /**
- * A single step in a workflow
+ * A single step in a runbook
  *
  * UNIFIED NAMING: All steps have a name.
  * - Numeric steps: name = "1", "2", etc.
@@ -64,23 +64,23 @@ export interface Step {
   readonly transitions?: Transitions;
   /** Child substeps (H3 headers) */
   readonly substeps?: readonly Substep[];
-  /** Referenced workflow files (.runbook.md) */
+  /** Referenced runbook files (.runbook.md) */
   readonly workflows?: readonly string[];
   /** Source line number for error reporting */
   readonly line?: number;
   /** @deprecated Use workflows instead */
-  readonly nestedWorkflow?: string;
+  readonly nestedRunbook?: string;
 }
 
 /**
- * Parsed workflow definition
+ * Parsed runbook definition
  */
-export interface Workflow {
-  /** Workflow title from H1 header (# Title) */
+export interface Runbook {
+  /** Runbook title from H1 header (# Title) */
   readonly title?: string;
   /** Description from preamble prose before first step */
   readonly description?: string;
-  /** Workflow name from frontmatter or derived from filename */
+  /** Runbook name from frontmatter or derived from filename */
   readonly name?: string;
   /** Semantic version from frontmatter */
   readonly version?: string;
@@ -88,6 +88,6 @@ export interface Workflow {
   readonly author?: string;
   /** Categorization tags from frontmatter (readonly for immutability) */
   readonly tags?: readonly string[];
-  /** Ordered list of workflow steps */
+  /** Ordered list of runbook steps */
   readonly steps: readonly Step[];
 }

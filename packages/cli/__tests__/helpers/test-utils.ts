@@ -10,7 +10,7 @@ const __dirname = dirname(__filename);
 export interface TestWorkspace {
   cwd: string;
   cleanup: () => Promise<void>;
-  workflowPath: (name: string) => string;
+  runbookPath: (name: string) => string;
   statePath: () => string;
   sessionPath: () => string;
 }
@@ -46,7 +46,7 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
   return {
     cwd: tempDir,
     cleanup: () => rm(tempDir, { recursive: true, force: true }),
-    workflowPath: (name: string) => join(rootRunbooksDir, name),
+    runbookPath: (name: string) => join(rootRunbooksDir, name),
     statePath: () => join(tempDir, '.claude', 'rundown', 'runs'),
     sessionPath: () => join(tempDir, '.claude', 'rundown', 'session.json'),
   };
@@ -57,8 +57,8 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
  *
  * @param args - Command arguments as string or array. Use array for paths with spaces.
  * @example
- * runCli('run workflow.md', workspace)           // Simple args
- * runCli(['run', 'my workflow.md'], workspace)    // Path with spaces
+ * runCli('run runbook.md', workspace)           // Simple args
+ * runCli(['run', 'my runbook.md'], workspace)    // Path with spaces
  */
 export function runCli(args: string | string[], workspace: TestWorkspace): CliResult {
   const cliPath = join(__dirname, '..', '..', 'dist', 'cli.js');
@@ -90,13 +90,13 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
 }
 
 /**
- * Read session.json for active/stashed workflow verification.
+ * Read session.json for active/stashed runbook verification.
  *
  * Maps internal session fields to test-friendly names:
- * - `activeWorkflow` (from WorkflowStateManager) → `active`
- * - `stashedWorkflowId` (from WorkflowStateManager) → `stashed`
- * - `stacks` (for multi-agent workflows) → `stacks`
- * - `defaultStack` (default stack for workflows) → `defaultStack`
+ * - `activeWorkflow` (from RunbookStateManager) → `active`
+ * - `stashedWorkflowId` (from RunbookStateManager) → `stashed`
+ * - `stacks` (for multi-agent runbooks) → `stacks`
+ * - `defaultStack` (default stack for runbooks) → `defaultStack`
  */
 export async function readSession(workspace: TestWorkspace): Promise<{
   active: string | null;
@@ -130,7 +130,7 @@ export async function readSession(workspace: TestWorkspace): Promise<{
 
     return {
       active,
-      stashed: typeof session.stashedWorkflowId === 'string' ? session.stashedWorkflowId : null,
+      stashed: typeof session.stashedRunbookId === 'string' ? session.stashedRunbookId : null,
       stacks,
       defaultStack,
     };
@@ -140,7 +140,7 @@ export async function readSession(workspace: TestWorkspace): Promise<{
 }
 
 /**
- * Write session.json to set active/stashed workflow.
+ * Write session.json to set active/stashed runbook.
  */
 export async function writeSession(
   workspace: TestWorkspace,
@@ -173,9 +173,9 @@ export async function writeSession(
 }
 
 /**
- * List all workflow state files.
+ * List all runbook state files.
  */
-export async function listWorkflowStates(workspace: TestWorkspace): Promise<string[]> {
+export async function listRunbookStates(workspace: TestWorkspace): Promise<string[]> {
   try {
     const files = await readdir(workspace.statePath());
     return files.filter((f) => f.endsWith('.json'));
@@ -185,9 +185,9 @@ export async function listWorkflowStates(workspace: TestWorkspace): Promise<stri
 }
 
 /**
- * Read a specific workflow state by ID.
+ * Read a specific runbook state by ID.
  */
-export async function readWorkflowState(
+export async function readRunbookState(
   workspace: TestWorkspace,
   id: string
 ): Promise<Record<string, unknown> | null> {
@@ -200,19 +200,19 @@ export async function readWorkflowState(
 }
 
 /**
- * Get the active workflow state.
+ * Get the active runbook state.
  */
 export async function getActiveState(
   workspace: TestWorkspace
 ): Promise<Record<string, unknown> | null> {
   const session = await readSession(workspace);
   if (!session.active) return null;
-  return readWorkflowState(workspace, session.active);
+  return readRunbookState(workspace, session.active);
 }
 
 /**
  * Get agent stack active state.
- * Returns the workflow state for the top of the given agent's stack.
+ * Returns the runbook state for the top of the given agent's stack.
  */
 export async function getAgentActiveState(
   workspace: TestWorkspace,
@@ -222,11 +222,11 @@ export async function getAgentActiveState(
   const stack = session.stacks[agentId] ?? [];
   const topId = stack[stack.length - 1];
   if (!topId) return null;
-  return readWorkflowState(workspace, topId);
+  return readRunbookState(workspace, topId);
 }
 
 /**
- * Get all workflow states.
+ * Get all runbook states.
  */
 export async function getAllStates(
   workspace: TestWorkspace
@@ -238,7 +238,7 @@ export async function getAllStates(
     for (const file of files) {
       if (file.endsWith('.json')) {
         const id = file.replace('.json', '');
-        const state = await readWorkflowState(workspace, id);
+        const state = await readRunbookState(workspace, id);
         if (state) {
           states.push(state);
         }

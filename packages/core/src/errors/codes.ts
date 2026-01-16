@@ -57,12 +57,12 @@ export const ErrorCodes = {
   },
 
   // Parse/Syntax Errors (2xx)
-  EMPTY_WORKFLOW: {
+  EMPTY_RUNBOOK: {
     code: 'RD-201',
     category: ErrorCategory.PARSE_SYNTAX,
     title: 'Empty runbook file',
     description: 'The runbook file contains no content.',
-    docSlug: 'empty-workflow',
+    docSlug: 'empty-runbook',
   },
   NO_STEPS_FOUND: {
     code: 'RD-202',
@@ -89,13 +89,13 @@ export const ErrorCodes = {
   },
 
   // State Errors (3xx)
-  NO_ACTIVE_WORKFLOW: {
+  NO_ACTIVE_RUNBOOK: {
     code: 'RD-301',
     category: ErrorCategory.STATE,
     title: 'No active runbook',
     description:
       'No runbook is currently running. Start a runbook with "rd run <file>".',
-    docSlug: 'no-active-workflow',
+    docSlug: 'no-active-runbook',
   },
   STATE_PARSE_ERROR: {
     code: 'RD-302',
@@ -105,21 +105,21 @@ export const ErrorCodes = {
       'The runbook state file contains invalid JSON. Try running "rd prune" to clean up.',
     docSlug: 'state-parse-error',
   },
-  WORKFLOW_COMPLETED: {
+  RUNBOOK_COMPLETED: {
     code: 'RD-303',
     category: ErrorCategory.STATE,
     title: 'Runbook already completed',
     description:
       'This runbook has already been marked as complete. Start a new run.',
-    docSlug: 'workflow-completed',
+    docSlug: 'runbook-completed',
   },
-  WORKFLOW_STOPPED: {
+  RUNBOOK_STOPPED: {
     code: 'RD-304',
     category: ErrorCategory.STATE,
     title: 'Runbook stopped',
     description:
       'This runbook was stopped. Start a new run or use "rd pop" to resume if stashed.',
-    docSlug: 'workflow-stopped',
+    docSlug: 'runbook-stopped',
   },
 
   // Validation Errors (4xx)
@@ -154,21 +154,21 @@ export const ErrorCodes = {
     description: 'The XState runbook engine could not be initialized.',
     docSlug: 'engine-init-failed',
   },
-  WORKFLOW_HAS_NO_STEPS: {
+  RUNBOOK_HAS_NO_STEPS: {
     code: 'RD-502',
     category: ErrorCategory.EXECUTION,
     title: 'Runbook has no steps',
     description:
       'The runbook file does not contain any executable steps.',
-    docSlug: 'workflow-has-no-steps',
+    docSlug: 'runbook-has-no-steps',
   },
-  CHILD_WORKFLOW_ACTIVE: {
+  CHILD_RUNBOOK_ACTIVE: {
     code: 'RD-503',
     category: ErrorCategory.EXECUTION,
     title: 'Child runbook still active',
     description:
       'A child runbook is still running. Complete or stop it first.',
-    docSlug: 'child-workflow-active',
+    docSlug: 'child-runbook-active',
   },
 
   // Command Errors (6xx)

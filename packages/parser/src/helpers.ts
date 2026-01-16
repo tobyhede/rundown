@@ -1,5 +1,5 @@
 import {
-  WorkflowSyntaxError,
+  RunbookSyntaxError,
   type ParsedConditional,
   type AggregationModifier,
 } from './types.js';
@@ -259,8 +259,8 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
  *
  * Recognizes these action formats:
  * - CONTINUE - Proceed to next step
- * - COMPLETE / COMPLETE "message" - Mark workflow complete
- * - STOP / STOP "message" - Abort workflow
+ * - COMPLETE / COMPLETE "message" - Mark runbook complete
+ * - STOP / STOP "message" - Abort runbook
  * - GOTO target - Jump to specified step/substep
  * - NEXT - Shorthand for GOTO NEXT (dynamic steps only)
  * - RETRY / RETRY n / RETRY n action - Retry with optional max count and fallback
@@ -369,7 +369,7 @@ function parseNonRetryAction(input: string): NonRetryAction | null {
   const trimmed = input.trim();
 
   if (trimmed.startsWith('RETRY')) {
-    throw new WorkflowSyntaxError('Recursion error: RETRY actions cannot contain another RETRY (Rule 5)');
+    throw new RunbookSyntaxError('Recursion error: RETRY actions cannot contain another RETRY (Rule 5)');
   }
 
   if (trimmed === 'CONTINUE') {
@@ -442,7 +442,7 @@ function parseConditionalPrefix(rest: string, type: 'pass' | 'fail' | 'yes' | 'n
  *
  * @param text - The conditional line to parse
  * @returns Parsed conditional with type, action, and optional modifier, or null if not a conditional
- * @throws {WorkflowSyntaxError} If the line starts with PASS/FAIL/YES/NO but has invalid action
+ * @throws {RunbookSyntaxError} If the line starts with PASS/FAIL/YES/NO but has invalid action
  */
 export function parseConditional(text: string): ParsedConditional | null {
   const trimmed = text.trim();
@@ -450,7 +450,7 @@ export function parseConditional(text: string): ParsedConditional | null {
   if (trimmed.startsWith('PASS')) {
     const result = parseConditionalPrefix(trimmed.slice(4), 'pass');
     if (!result) {
-      throw new WorkflowSyntaxError(`Invalid PASS transition: ${trimmed}`);
+      throw new RunbookSyntaxError(`Invalid PASS transition: ${trimmed}`);
     }
     return result;
   }
@@ -458,7 +458,7 @@ export function parseConditional(text: string): ParsedConditional | null {
   if (trimmed.startsWith('YES')) {
     const result = parseConditionalPrefix(trimmed.slice(3), 'yes');
     if (!result) {
-      throw new WorkflowSyntaxError(`Invalid YES transition: ${trimmed}`);
+      throw new RunbookSyntaxError(`Invalid YES transition: ${trimmed}`);
     }
     return result;
   }
@@ -466,7 +466,7 @@ export function parseConditional(text: string): ParsedConditional | null {
   if (trimmed.startsWith('FAIL')) {
     const result = parseConditionalPrefix(trimmed.slice(4), 'fail');
     if (!result) {
-      throw new WorkflowSyntaxError(`Invalid FAIL transition: ${trimmed}`);
+      throw new RunbookSyntaxError(`Invalid FAIL transition: ${trimmed}`);
     }
     return result;
   }
@@ -474,7 +474,7 @@ export function parseConditional(text: string): ParsedConditional | null {
   if (trimmed.startsWith('NO')) {
     const result = parseConditionalPrefix(trimmed.slice(2), 'no');
     if (!result) {
-      throw new WorkflowSyntaxError(`Invalid NO transition: ${trimmed}`);
+      throw new RunbookSyntaxError(`Invalid NO transition: ${trimmed}`);
     }
     return result;
   }
@@ -489,7 +489,7 @@ function resolveAggregationMode(
   if (passModifier && failModifier) {
     if (passModifier === 'ALL' && failModifier === 'ANY') return true;
     if (passModifier === 'ANY' && failModifier === 'ALL') return false;
-    throw new WorkflowSyntaxError(
+    throw new RunbookSyntaxError(
       `Invalid aggregation combination: PASS ${passModifier} + FAIL ${failModifier}. ` +
         `Valid: PASS ALL + FAIL ANY (pessimistic) or PASS ANY + FAIL ALL (optimistic)`
     );
@@ -528,7 +528,7 @@ function containsNEXT(action: Action | NonRetryAction): boolean {
  * @param conditionals - Array of parsed conditionals to check for NEXT usage
  * @param isDynamicStep - Whether the current step uses dynamic {N} prefix
  * @param isDynamicSubstep - Whether the current substep uses dynamic {n} suffix
- * @throws {WorkflowSyntaxError} When NEXT is used outside a dynamic context
+ * @throws {RunbookSyntaxError} When NEXT is used outside a dynamic context
  */
 export function validateNEXTUsage(
   conditionals: ParsedConditional[],
@@ -542,7 +542,7 @@ export function validateNEXTUsage(
 
   for (const conditional of conditionals) {
     if (containsNEXT(conditional.action)) {
-      throw new WorkflowSyntaxError(
+      throw new RunbookSyntaxError(
         `NEXT action is only allowed in dynamic contexts (steps with {N} prefix or substeps with {n} suffix)`
       );
     }
@@ -615,26 +615,26 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
 }
 
 /**
- * Extract workflow references from step/substep content.
+ * Extract runbook references from step/substep content.
  *
  * Scans content for list items referencing runbook files (*.runbook.md)
  * and returns an array of the referenced filenames.
  *
- * @param content - The raw content text to scan for workflow references
+ * @param content - The raw content text to scan for runbook references
  * @returns Array of runbook filenames (e.g., ["setup.runbook.md", "cleanup.runbook.md"])
  */
-export function extractWorkflowList(content: string): string[] {
-  const workflows: string[] = [];
+export function extractRunbookList(content: string): string[] {
+  const runbooks: string[] = [];
   const lines = content.split('\n');
 
   for (const line of lines) {
     const match = /^\s*-\s+(\S+\.runbook\.md)\s*$/.exec(line);
     if (match) {
-      workflows.push(match[1]);
+      runbooks.push(match[1]);
     }
   }
 
-  return workflows;
+  return runbooks;
 }
 
 const EXECUTABLE_TAGS = ['bash', 'sh', 'shell'];

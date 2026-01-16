@@ -1,19 +1,19 @@
-// src/workflow/state.ts
+// src/runbook/state.ts
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createActor, type AnyActorRef } from 'xstate';
 import {
-  type WorkflowState,
+  type RunbookState,
   type AgentBinding,
   type PendingStep,
   type Substep,
   type SubstepState,
   type Step,
-  type Workflow
+  type Runbook
 } from './types.js';
 import type { StepId } from './step-id.js';
-import { WorkflowStateSchema } from '../schemas.js';
-import { compileWorkflowToMachine } from './compiler.js';
+import { RunbookStateSchema } from '../schemas.js';
+import { compileRunbookToMachine } from './compiler.js';
 
 const STATE_DIR = '.claude/rundown/runs';
 const SESSION_FILE = '.claude/rundown/session.json';
@@ -29,29 +29,29 @@ interface SessionData {
   stacks: Record<string, string[]>;  // agentId → [wf1, wf2, ...]
   defaultStack: string[];            // main agent stack (no agentId)
   // Keep for backwards compatibility during migration
-  activeWorkflow?: string | null;
-  stashedWorkflowId?: string;
+  activeRunbook?: string | null;
+  stashedRunbookId?: string;
 }
 
 interface CreateOptions {
   readonly agentId?: string;
-  readonly parentWorkflowId?: string;
+  readonly parentRunbookId?: string;
   readonly parentStepId?: StepId;
   readonly prompted?: boolean;
 }
 
 /**
- * Manager for workflow state persistence and lifecycle.
+ * Manager for runbook state persistence and lifecycle.
  *
- * Handles creating, loading, saving, and updating workflow state.
+ * Handles creating, loading, saving, and updating runbook state.
  * State is persisted to `.claude/rundown/runs/` as JSON files.
- * Supports workflow stacks for per-agent isolation and nested workflows.
+ * Supports runbook stacks for per-agent isolation and nested runbooks.
  */
-export class WorkflowStateManager {
+export class RunbookStateManager {
   private readonly cwd: string;
 
   /**
-   * Create a new WorkflowStateManager.
+   * Create a new RunbookStateManager.
    *
    * @param cwd - The working directory (project root) for state file paths
    */
@@ -72,26 +72,26 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Create a new workflow state and persist it to disk.
+   * Create a new runbook state and persist it to disk.
    *
-   * @param workflowFile - Path to the workflow source file
-   * @param workflow - The parsed workflow definition
-   * @param options - Optional configuration including agentId, parent workflow info, and prompted flag
-   * @returns The newly created WorkflowState
+   * @param runbookFile - Path to the runbook source file
+   * @param runbook - The parsed runbook definition
+   * @param options - Optional configuration including agentId, parent runbook info, and prompted flag
+   * @returns The newly created RunbookState
    */
-  async create(workflowFile: string, workflow: Workflow, options?: CreateOptions): Promise<WorkflowState> {
+  async create(runbookFile: string, runbook: Runbook, options?: CreateOptions): Promise<RunbookState> {
     const id = generateId();
     const now = new Date().toISOString();
 
-    const initialStep = workflow.steps[0];
-    // For dynamic workflows, initialize instance counter to 1
+    const initialStep = runbook.steps[0];
+    // For dynamic runbooks, initialize instance counter to 1
     const instance = initialStep.isDynamic ? 1 : undefined;
 
-    const state: WorkflowState = {
+    const state: RunbookState = {
       id,
-      workflow: workflowFile,
-      title: workflow.title,
-      description: workflow.description,
+      runbook: runbookFile,
+      title: runbook.title,
+      description: runbook.description,
       step: initialStep.name,    // Keep as '{N}' for dynamic, original name for static
       instance,                   // 1 for dynamic, undefined for static
       stepName: initialStep.description,
@@ -101,7 +101,7 @@ export class WorkflowStateManager {
       pendingSteps: [],
       agentBindings: {},
       agentId: options?.agentId,
-      parentWorkflowId: options?.parentWorkflowId,
+      parentRunbookId: options?.parentRunbookId,
       parentStepId: options?.parentStepId,
       startedAt: now,
       updatedAt: now,
@@ -113,16 +113,16 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Load a workflow state from disk by ID.
+   * Load a runbook state from disk by ID.
    *
-   * @param id - The workflow state ID (e.g., 'wf-2025-01-12-abc123')
-   * @returns The loaded WorkflowState, or null if not found or invalid
+   * @param id - The runbook state ID (e.g., 'wf-2025-01-12-abc123')
+   * @returns The loaded RunbookState, or null if not found or invalid
    */
-  async load(id: string): Promise<WorkflowState | null> {
+  async load(id: string): Promise<RunbookState | null> {
     try {
       const content = await fs.readFile(this.statePath(id), 'utf8');
       const parsed = JSON.parse(content) as unknown;
-      const result = WorkflowStateSchema.safeParse(parsed);
+      const result = RunbookStateSchema.safeParse(parsed);
       if (!result.success) return null;
       return result.data;
     } catch {
@@ -131,20 +131,20 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Initialize an XState actor for a workflow.
+   * Initialize an XState actor for a runbook.
    *
-   * Loads the workflow state and creates an XState actor with the
+   * Loads the runbook state and creates an XState actor with the
    * compiled state machine, restoring from any persisted snapshot.
    *
-   * @param id - The workflow state ID
-   * @param steps - The workflow steps to compile into a state machine
-   * @returns The started XState actor, or null if the workflow state is not found
+   * @param id - The runbook state ID
+   * @param steps - The runbook steps to compile into a state machine
+   * @returns The started XState actor, or null if the runbook state is not found
    */
   async createActor(id: string, steps: Step[]): Promise<AnyActorRef | null> {
     const state = await this.load(id);
     if (!state) return null;
 
-    const machine = compileWorkflowToMachine(steps);
+    const machine = compileRunbookToMachine(steps);
     const actor = createActor(machine, {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
       snapshot: state.snapshot as any
@@ -154,16 +154,16 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Save a workflow state to disk.
+   * Save a runbook state to disk.
    *
    * Creates the state directory if it does not exist and writes the state
    * as a JSON file, automatically updating the `updatedAt` timestamp.
    *
-   * @param state - The workflow state to persist
+   * @param state - The runbook state to persist
    */
-  async save(state: WorkflowState): Promise<void> {
+  async save(state: RunbookState): Promise<void> {
     await fs.mkdir(this.stateDir, { recursive: true });
-    const updated: WorkflowState = {
+    const updated: RunbookState = {
       ...state,
       updatedAt: new Date().toISOString()
     };
@@ -171,26 +171,26 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Update an existing workflow state with partial changes.
+   * Update an existing runbook state with partial changes.
    *
    * Merges the provided updates with the existing state. Variables are
    * shallow-merged rather than replaced entirely.
    *
-   * @param id - The workflow state ID to update
+   * @param id - The runbook state ID to update
    * @param updates - Partial state updates to apply (id and startedAt cannot be changed)
-   * @returns The updated workflow state
-   * @throws Error if the workflow with the given ID is not found
+   * @returns The updated runbook state
+   * @throws Error if the runbook with the given ID is not found
    */
   async update(
     id: string,
-    updates: Partial<Omit<WorkflowState, 'id' | 'startedAt'>>
-  ): Promise<WorkflowState> {
+    updates: Partial<Omit<RunbookState, 'id' | 'startedAt'>>
+  ): Promise<RunbookState> {
     const existing = await this.load(id);
     if (!existing) {
       throw new Error(`Workflow ${id} not found`);
     }
 
-    const updated: WorkflowState = {
+    const updated: RunbookState = {
       ...existing,
       ...updates,
       variables: { ...existing.variables, ...(updates.variables ?? {}) },
@@ -202,21 +202,21 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Set the last result (pass/fail) for a workflow step.
+   * Set the last result (pass/fail) for a runbook step.
    *
-   * @param id - The workflow state ID
+   * @param id - The runbook state ID
    * @param result - The result to record ('pass' or 'fail')
-   * @throws Error if the workflow with the given ID is not found
+   * @throws Error if the runbook with the given ID is not found
    */
   async setLastResult(id: string, result: 'pass' | 'fail'): Promise<void> {
     await this.update(id, { lastResult: result });
   }
 
   /**
-   * Check if a parent workflow was started in prompted mode.
+   * Check if a parent runbook was started in prompted mode.
    *
-   * @param parentWorkflowId - The parent workflow state ID
-   * @returns True if the parent workflow has prompted flag set, false otherwise
+   * @param parentWorkflowId - The parent runbook state ID
+   * @returns True if the parent runbook has prompted flag set, false otherwise
    */
   async isParentPrompted(parentWorkflowId: string): Promise<boolean> {
     const parent = await this.load(parentWorkflowId);
@@ -224,25 +224,25 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Update workflow state from an XState actor snapshot.
+   * Update runbook state from an XState actor snapshot.
    *
    * Extracts the current step, substep, retry count, and variables from the
-   * actor's persisted snapshot and updates the workflow state. Handles final
+   * actor's persisted snapshot and updates the runbook state. Handles final
    * states (COMPLETE, STOPPED) by preserving the last step information.
    *
-   * @param id - The workflow state ID
+   * @param id - The runbook state ID
    * @param actor - The XState actor to extract state from
-   * @param steps - The workflow step definitions for name resolution
-   * @returns The updated workflow state
-   * @throws Error if the workflow with the given ID is not found
+   * @param steps - The runbook step definitions for name resolution
+   * @returns The updated runbook state
+   * @throws Error if the runbook with the given ID is not found
    */
-  async updateFromActor(id: string, actor: AnyActorRef, steps: Step[]): Promise<WorkflowState> {
+  async updateFromActor(id: string, actor: AnyActorRef, steps: Step[]): Promise<RunbookState> {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
     const snapshot = actor.getPersistedSnapshot() as any;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const stateValue = snapshot.value as string;
 
-    // If the workflow is in a final state, don't try to parse a step number.
+    // If the runbook is in a final state, don't try to parse a step number.
     // Just update the snapshot and variables, preserving the last step number.
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -280,11 +280,11 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Delete a workflow state file from disk.
+   * Delete a runbook state file from disk.
    *
    * Silently ignores errors if the file does not exist.
    *
-   * @param id - The workflow state ID to delete
+   * @param id - The runbook state ID to delete
    */
   async delete(id: string): Promise<void> {
     try {
@@ -295,22 +295,22 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Get the currently active workflow for an agent.
+   * Get the currently active runbook for an agent.
    *
-   * Returns the top workflow from the agent's stack. Supports both the new
-   * stack-based format and the legacy activeWorkflow format for backwards
+   * Returns the top runbook from the agent's stack. Supports both the new
+   * stack-based format and the legacy activeRunbook format for backwards
    * compatibility during migration.
    *
    * @param agentId - Optional agent ID; if omitted, uses the default stack
-   * @returns The active workflow state, or null if no workflow is active
+   * @returns The active runbook state, or null if no runbook is active
    */
-  async getActive(agentId?: string): Promise<WorkflowState | null> {
+  async getActive(agentId?: string): Promise<RunbookState | null> {
     const session = await this.loadSession();
 
     // Migration: handle old format
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (session.activeWorkflow && !session.stacks && !session.defaultStack) {
-      return await this.load(session.activeWorkflow);
+    if (session.activeRunbook && !session.stacks && !session.defaultStack) {
+      return await this.load(session.activeRunbook);
     }
 
     let stack: string[];
@@ -327,18 +327,18 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Set the active workflow ID directly in the session.
+   * Set the active runbook ID directly in the session.
    *
-   * @deprecated Use pushWorkflow() and popWorkflow() instead.
-   * This method only sets activeWorkflow for backwards compatibility.
+   * @deprecated Use pushRunbook() and popRunbook() instead.
+   * This method only sets activeRunbook for backwards compatibility.
    * New code should use the stack-based methods for proper per-agent isolation.
    *
-   * @param id - The workflow state ID to set as active, or null to clear
+   * @param id - The runbook state ID to set as active, or null to clear
    */
   async setActive(id: string | null): Promise<void> {
     await fs.mkdir(path.dirname(this.sessionPath), { recursive: true });
 
-    let session: SessionData = { activeWorkflow: null, stacks: {}, defaultStack: [] };
+    let session: SessionData = { activeRunbook: null, stacks: {}, defaultStack: [] };
     try {
       const content = await fs.readFile(this.sessionPath, 'utf8');
       session = JSON.parse(content) as SessionData;
@@ -346,20 +346,20 @@ export class WorkflowStateManager {
       /* use default */
     }
 
-    session.activeWorkflow = id;
+    session.activeRunbook = id;
     await fs.writeFile(this.sessionPath, JSON.stringify(session, null, 2));
   }
 
   /**
-   * Push a workflow onto an agent's workflow stack.
+   * Push a runbook onto an agent's runbook stack.
    *
-   * Used when starting a new workflow or entering a nested/child workflow.
-   * The pushed workflow becomes the active workflow for the agent.
+   * Used when starting a new runbook or entering a nested/child runbook.
+   * The pushed runbook becomes the active runbook for the agent.
    *
-   * @param id - The workflow state ID to push
+   * @param id - The runbook state ID to push
    * @param agentId - Optional agent ID; if omitted, uses the default stack
    */
-  async pushWorkflow(id: string, agentId?: string): Promise<void> {
+  async pushRunbook(id: string, agentId?: string): Promise<void> {
     const session = await this.loadSession();
 
     // Initialize stacks if not present (migration)
@@ -386,15 +386,15 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Pop a workflow from an agent's workflow stack.
+   * Pop a runbook from an agent's runbook stack.
    *
-   * Used when completing or stopping a workflow. Removes the top workflow
-   * and returns the new top (parent workflow) ID if one exists.
+   * Used when completing or stopping a runbook. Removes the top runbook
+   * and returns the new top (parent runbook) ID if one exists.
    *
    * @param agentId - Optional agent ID; if omitted, uses the default stack
-   * @returns The new active workflow ID (parent), or null if the stack is empty
+   * @returns The new active runbook ID (parent), or null if the stack is empty
    */
-  async popWorkflow(agentId?: string): Promise<string | null> {
+  async popRunbook(agentId?: string): Promise<string | null> {
     const session = await this.loadSession();
 
     // Initialize if not present
@@ -420,21 +420,21 @@ export class WorkflowStateManager {
 
     await this.saveSession(session);
 
-    // Return new top (parent workflow)
+    // Return new top (parent runbook)
     return stack[stack.length - 1] ?? null;
   }
 
   /**
-   * List all persisted workflow states.
+   * List all persisted runbook states.
    *
-   * Reads all workflow state JSON files from the state directory.
+   * Reads all runbook state JSON files from the state directory.
    *
-   * @returns An array of all workflow states, or an empty array if none exist
+   * @returns An array of all runbook states, or an empty array if none exist
    */
-  async list(): Promise<WorkflowState[]> {
+  async list(): Promise<RunbookState[]> {
     try {
       const files = await fs.readdir(this.stateDir);
-      const states: WorkflowState[] = [];
+      const states: RunbookState[] = [];
 
       for (const file of files) {
         if (file.endsWith('.json')) {
@@ -450,14 +450,14 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Push a pending step onto the workflow's pending step queue.
+   * Push a pending step onto the runbook's pending step queue.
    *
    * Pending steps are used to correlate Step tool dispatch with SubagentStart
    * events in orchestration scenarios.
    *
-   * @param id - The workflow state ID
-   * @param pending - The pending step to push (includes stepId and optional child workflow path)
-   * @throws Error if the workflow with the given ID is not found
+   * @param id - The runbook state ID
+   * @param pending - The pending step to push (includes stepId and optional child runbook path)
+   * @throws Error if the runbook with the given ID is not found
    */
   async pushPendingStep(id: string, pending: PendingStep): Promise<void> {
     const state = await this.load(id);
@@ -469,10 +469,10 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Pop the first pending step from the workflow's pending step queue.
+   * Pop the first pending step from the runbook's pending step queue.
    *
-   * @param id - The workflow state ID
-   * @returns The first pending step, or null if the queue is empty or workflow not found
+   * @param id - The runbook state ID
+   * @returns The first pending step, or null if the queue is empty or runbook not found
    */
   async popPendingStep(id: string): Promise<PendingStep | null> {
     const state = await this.load(id);
@@ -484,15 +484,15 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Bind an agent to a specific step in the workflow.
+   * Bind an agent to a specific step in the runbook.
    *
    * Creates a new agent binding with 'running' status. Used when a subagent
    * starts working on a step.
    *
-   * @param id - The workflow state ID
+   * @param id - The runbook state ID
    * @param agentId - The agent ID to bind
    * @param stepId - The step ID the agent is working on
-   * @throws Error if the workflow with the given ID is not found
+   * @throws Error if the runbook with the given ID is not found
    */
   async bindAgent(id: string, agentId: string, stepId: StepId): Promise<void> {
     const state = await this.load(id);
@@ -512,12 +512,12 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Get the agent binding for a specific agent in a workflow.
+   * Get the agent binding for a specific agent in a runbook.
    *
-   * @param id - The workflow state ID
+   * @param id - The runbook state ID
    * @param agentId - The agent ID to look up
    * @returns The agent binding, or null if the agent is not bound
-   * @throws Error if the workflow with the given ID is not found
+   * @throws Error if the runbook with the given ID is not found
    */
   async getAgentBinding(id: string, agentId: string): Promise<AgentBinding | null> {
     const state = await this.load(id);
@@ -528,16 +528,16 @@ export class WorkflowStateManager {
   /**
    * Update an existing agent binding with partial changes.
    *
-   * @param id - The workflow state ID
+   * @param id - The runbook state ID
    * @param agentId - The agent ID whose binding to update
-   * @param updates - Partial binding updates (status, result, childWorkflowId)
-   * @throws Error if the workflow with the given ID is not found
+   * @param updates - Partial binding updates (status, result, childRunbookId)
+   * @throws Error if the runbook with the given ID is not found
    * @throws Error if the agent has no existing binding
    */
   async updateAgentBinding(
     id: string,
     agentId: string,
-    updates: Partial<Pick<AgentBinding, 'status' | 'result' | 'childWorkflowId'>>
+    updates: Partial<Pick<AgentBinding, 'status' | 'result' | 'childRunbookId'>>
   ): Promise<void> {
     const state = await this.load(id);
     if (!state) throw new Error(`Workflow ${id} not found`);
@@ -555,19 +555,19 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Stash the currently active workflow to allow temporarily switching contexts.
+   * Stash the currently active runbook to allow temporarily switching contexts.
    *
-   * Removes the active workflow from the agent's stack and stores its ID
-   * in the session's stashed slot. Only one workflow can be stashed at a time.
-   * Supports both the new stack-based format and legacy activeWorkflow format.
+   * Removes the active runbook from the agent's stack and stores its ID
+   * in the session's stashed slot. Only one runbook can be stashed at a time.
+   * Supports both the new stack-based format and legacy activeRunbook format.
    *
    * @param agentId - Optional agent ID; if omitted, uses the default stack
-   * @returns The stashed workflow ID, or null if no workflow was active
+   * @returns The stashed runbook ID, or null if no runbook was active
    */
   async stash(agentId?: string): Promise<string | null> {
     const session = await this.loadSession();
 
-    // Get the active workflow ID - check stacks first, then fall back to activeWorkflow
+    // Get the active runbook ID - check stacks first, then fall back to activeRunbook
     let activeId: string | null | undefined = null;
 
     if (agentId) {
@@ -577,10 +577,10 @@ export class WorkflowStateManager {
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       activeId = stack?.[stack.length - 1];
     } else {
-      // Check defaultStack first (new format), then activeWorkflow (old format)
+      // Check defaultStack first (new format), then activeRunbook (old format)
       const stack = session.defaultStack;
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      activeId = stack && stack.length > 0 ? stack[stack.length - 1] : session.activeWorkflow;
+      activeId = stack && stack.length > 0 ? stack[stack.length - 1] : session.activeRunbook;
     }
 
     if (!activeId) return null;
@@ -595,39 +595,39 @@ export class WorkflowStateManager {
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (session.defaultStack && session.defaultStack.length > 0) {
         session.defaultStack.pop();
-      } else if (session.activeWorkflow) {
-        // Migration: clear activeWorkflow for old format
-        session.activeWorkflow = null;
+      } else if (session.activeRunbook) {
+        // Migration: clear activeRunbook for old format
+        session.activeRunbook = null;
       }
     }
 
     // Store stashed ID (one per agent would need more complex structure)
     // For now, keep single stash for backwards compat
-    session.stashedWorkflowId = activeId;
+    session.stashedRunbookId = activeId;
     await this.saveSession(session);
 
     return activeId;
   }
 
   /**
-   * Restore a previously stashed workflow to the active stack.
+   * Restore a previously stashed runbook to the active stack.
    *
-   * Retrieves the stashed workflow ID and pushes it back onto the agent's
-   * stack, making it the active workflow again. Clears the stashed slot.
-   * Supports both the new stack-based format and legacy activeWorkflow format.
+   * Retrieves the stashed runbook ID and pushes it back onto the agent's
+   * stack, making it the active runbook again. Clears the stashed slot.
+   * Supports both the new stack-based format and legacy activeRunbook format.
    *
    * @param agentId - Optional agent ID; if omitted, uses the default stack
-   * @returns The restored workflow state, or null if nothing was stashed or workflow not found
+   * @returns The restored runbook state, or null if nothing was stashed or runbook not found
    */
-  async pop(agentId?: string): Promise<WorkflowState | null> {
+  async pop(agentId?: string): Promise<RunbookState | null> {
     const session = await this.loadSession();
-    const stashedId = session.stashedWorkflowId;
+    const stashedId = session.stashedRunbookId;
 
     if (!stashedId) return null;
 
     const state = await this.load(stashedId);
     if (!state) {
-      session.stashedWorkflowId = undefined;
+      session.stashedRunbookId = undefined;
       await this.saveSession(session);
       return null;
     }
@@ -641,7 +641,7 @@ export class WorkflowStateManager {
       if (!session.stacks[agentId]) session.stacks[agentId] = [];
       session.stacks[agentId].push(stashedId);
     } else {
-      // Default stack (new format) or activeWorkflow (old format for compat)
+      // Default stack (new format) or activeRunbook (old format for compat)
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (session.defaultStack !== undefined || session.stacks !== undefined) {
         // New format: use defaultStack
@@ -649,25 +649,25 @@ export class WorkflowStateManager {
         if (!session.defaultStack) session.defaultStack = [];
         session.defaultStack.push(stashedId);
       } else {
-        // Old format: restore to activeWorkflow
-        session.activeWorkflow = stashedId;
+        // Old format: restore to activeRunbook
+        session.activeRunbook = stashedId;
       }
     }
 
-    session.stashedWorkflowId = undefined;
+    session.stashedRunbookId = undefined;
     await this.saveSession(session);
 
     return state;
   }
 
   /**
-   * Get the ID of the currently stashed workflow, if any.
+   * Get the ID of the currently stashed runbook, if any.
    *
-   * @returns The stashed workflow ID, or null if nothing is stashed
+   * @returns The stashed runbook ID, or null if nothing is stashed
    */
-  async getStashedWorkflowId(): Promise<string | null> {
+  async getStashedRunbookId(): Promise<string | null> {
     const session = await this.loadSession();
-    return session.stashedWorkflowId ?? null;
+    return session.stashedRunbookId ?? null;
   }
 
   private async loadSession(): Promise<SessionData> {
@@ -675,7 +675,7 @@ export class WorkflowStateManager {
       const content = await fs.readFile(this.sessionPath, 'utf8');
       return JSON.parse(content) as SessionData;
     } catch {
-      return { activeWorkflow: null, stacks: {}, defaultStack: [] };
+      return { activeRunbook: null, stacks: {}, defaultStack: [] };
     }
   }
 
@@ -685,17 +685,17 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Get the result of a child workflow execution.
+   * Get the result of a child runbook execution.
    *
-   * Determines the result based on the child workflow's variables:
+   * Determines the result based on the child runbook's variables:
    * - Returns 'fail' if stopped is true
-   * - Returns 'pass' if completed is true or workflow not found
-   * - Returns null if the workflow is still in progress
+   * - Returns 'pass' if completed is true or runbook not found
+   * - Returns null if the runbook is still in progress
    *
-   * @param childId - The child workflow state ID
+   * @param childId - The child runbook state ID
    * @returns 'pass', 'fail', or null if still in progress
    */
-  async getChildWorkflowResult(childId: string): Promise<'pass' | 'fail' | null> {
+  async getChildRunbookResult(childId: string): Promise<'pass' | 'fail' | null> {
     const child = await this.load(childId);
     if (!child) return 'pass';
 
@@ -706,14 +706,14 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Initialize substep tracking state for a workflow step.
+   * Initialize substep tracking state for a runbook step.
    *
    * Creates SubstepState entries for all non-dynamic substeps with 'pending' status.
    * Dynamic substeps are added later via addDynamicSubstep.
    *
-   * @param id - The workflow state ID
+   * @param id - The runbook state ID
    * @param substeps - The substep definitions from the step
-   * @throws Error if the workflow with the given ID is not found
+   * @throws Error if the runbook with the given ID is not found
    */
   async initializeSubsteps(id: string, substeps: readonly Substep[]): Promise<void> {
     const state = await this.load(id);
@@ -732,14 +732,14 @@ export class WorkflowStateManager {
   }
 
   /**
-   * Add a new dynamic substep to the workflow's substep tracking.
+   * Add a new dynamic substep to the runbook's substep tracking.
    *
    * Creates a new SubstepState with a sequential ID based on the current
    * count of substeps. Used for steps that support dynamic substep creation.
    *
-   * @param id - The workflow state ID
+   * @param id - The runbook state ID
    * @returns The ID of the newly created substep
-   * @throws Error if the workflow with the given ID is not found
+   * @throws Error if the runbook with the given ID is not found
    */
   async addDynamicSubstep(id: string): Promise<string> {
     const state = await this.load(id);
@@ -767,14 +767,14 @@ export class WorkflowStateManager {
    *
    * Updates the substep's status to 'running' and records the agent ID.
    *
-   * @param workflowId - The workflow state ID
+   * @param runbookId - The runbook state ID
    * @param substepId - The substep ID to bind to
    * @param agentId - The agent ID to bind
-   * @throws Error if the workflow with the given ID is not found
+   * @throws Error if the runbook with the given ID is not found
    */
-  async bindSubstepAgent(workflowId: string, substepId: string, agentId: string): Promise<void> {
-    const state = await this.load(workflowId);
-    if (!state) throw new Error(`Workflow ${workflowId} not found`);
+  async bindSubstepAgent(runbookId: string, substepId: string, agentId: string): Promise<void> {
+    const state = await this.load(runbookId);
+    if (!state) throw new Error(`Workflow ${runbookId} not found`);
 
     const substepStates = state.substepStates ?? [];
     const updated = substepStates.map(s =>
@@ -783,7 +783,7 @@ export class WorkflowStateManager {
         : s
     );
 
-    await this.update(workflowId, { substepStates: updated });
+    await this.update(runbookId, { substepStates: updated });
   }
 
   /**
@@ -791,18 +791,18 @@ export class WorkflowStateManager {
    *
    * Updates the substep's status to 'done' and records the pass/fail result.
    *
-   * @param workflowId - The workflow state ID
+   * @param runbookId - The runbook state ID
    * @param substepId - The substep ID to complete
    * @param result - The substep result ('pass' or 'fail')
-   * @throws Error if the workflow with the given ID is not found
+   * @throws Error if the runbook with the given ID is not found
    */
   async completeSubstep(
-    workflowId: string,
+    runbookId: string,
     substepId: string,
     result: 'pass' | 'fail'
   ): Promise<void> {
-    const state = await this.load(workflowId);
-    if (!state) throw new Error(`Workflow ${workflowId} not found`);
+    const state = await this.load(runbookId);
+    if (!state) throw new Error(`Workflow ${runbookId} not found`);
 
     const substepStates = state.substepStates ?? [];
     const updated = substepStates.map(s =>
@@ -811,6 +811,6 @@ export class WorkflowStateManager {
         : s
     );
 
-    await this.update(workflowId, { substepStates: updated });
+    await this.update(runbookId, { substepStates: updated });
   }
 }

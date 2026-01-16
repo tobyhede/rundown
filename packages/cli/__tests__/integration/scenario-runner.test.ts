@@ -142,13 +142,13 @@ describe('scenario runner', () => {
   }
 
   /**
-   * Copy a pattern file and all its referenced child workflows to the test workspace.
+   * Copy a pattern file and all its referenced child runbooks to the test workspace.
    */
   function copyPatternWithDependencies(filename: string, scenario: Scenario): void {
     // Copy main pattern file
     copyPatternToWorkspace(filename);
 
-    // Copy any referenced child workflows
+    // Copy any referenced child runbooks
     const referenced = extractReferencedRunbooks(scenario);
     for (const ref of referenced) {
       // Skip the main file if it appears in commands
@@ -193,7 +193,7 @@ describe('scenario runner', () => {
 
               // - Last command may fail only for STOP scenarios (e.g., rd fail causes stop)
 
-              // - Agent fail commands may exit with 1 if child workflow stops (expected behavior)
+              // - Agent fail commands may exit with 1 if child runbook stops (expected behavior)
 
               const isAgentFail = cmd.includes('fail') && cmd.includes('--agent');
 
@@ -207,30 +207,30 @@ describe('scenario runner', () => {
 
             }
 
-        
 
-            // Verify result - use getAllStates since completed workflows have no active state
+
+            // Verify result - use getAllStates since completed runbooks have no active state
 
             const states = await getAllStates(workspace);
 
             const expectedName = filename.split('/').pop()!;
 
 
-            // Find state that matches both the workflow filename AND the expected result
-            // This handles agent binding scenarios where multiple states exist for the same workflow
+            // Find state that matches both the runbook filename AND the expected result
+            // This handles agent binding scenarios where multiple states exist for the same runbook
             const matchingStates = states.filter(s => {
 
-              const workflowPath = s.workflow as string;
+              const runbookPath = s.runbook as string;
 
-              return workflowPath.endsWith(expectedName);
+              return runbookPath.endsWith(expectedName);
 
             });
 
 
 
             if (matchingStates.length === 0) {
-              const allWorkflowPaths = states.map(s => s.workflow).join(', ');
-              throw new Error(`No state found for runbook ${filename}. Found paths: [${allWorkflowPaths}]`);
+              const allRunbookPaths = states.map(s => s.runbook).join(', ');
+              throw new Error(`No state found for runbook ${filename}. Found paths: [${allRunbookPaths}]`);
             }
 
 

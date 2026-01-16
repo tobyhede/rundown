@@ -20,9 +20,9 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
 - [State Persistence](#state-persistence)
   - [File Locations](#file-locations)
   - [Session Structure](#session-structure)
-  - [Runbook State Structure](#workflow-state-structure)
+  - [Runbook State Structure](#runbook-state-structure)
 - [CLI Commands](#cli-commands)
-  - [Runbook Lifecycle](#workflow-lifecycle)
+  - [Runbook Lifecycle](#runbook-lifecycle)
   - [State Transitions](#state-transitions)
   - [Status Commands](#status-commands)
   - [Enforcement Control](#enforcement-control)
@@ -212,13 +212,13 @@ The session tracks which runbooks are active using a **stack-based model**:
     "agent-123": ["wf-2024-01-07-abc123"]
   },
   "defaultStack": ["wf-2024-01-07-xyz789"],
-  "stashedWorkflowId": null
+  "stashedRunbookId": null
 }
 ```
 
 - **defaultStack**: Main runbook stack (no agent ID)
 - **stacks**: Per-agent runbook stacks
-- **stashedWorkflowId**: Temporarily paused runbook (for `rundown stash`/`rundown pop`)
+- **stashedRunbookId**: Temporarily paused runbook (for `rundown stash`/`rundown pop`)
 
 ### Runbook State Structure
 
@@ -227,7 +227,7 @@ Each runbook state file contains:
 ```json
 {
   "id": "wf-2024-01-07-abc123",
-  "workflow": "my-runbook.runbook.md",
+  "runbook": "my-runbook.runbook.md",
   "name": "My Runbook",
   "description": "Runbook description",
   "step": "2",

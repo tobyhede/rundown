@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { renderStepForCLI } from '../../src/cli/render.js';
-import type { Step, Substep } from '../../src/workflow/types.js';
+import type { Step, Substep } from '../../src/runbook/types.js';
 
 describe('renderStepForCLI', () => {
   it('renders step with prompts before command', () => {

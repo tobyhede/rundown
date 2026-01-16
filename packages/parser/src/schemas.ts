@@ -5,7 +5,7 @@ import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
  * Maximum valid step number.
  *
  * Set to 999999 to prevent integer overflow issues while allowing
- * workflows with a very large number of steps. This limit ensures
+ * runbooks with a very large number of steps. This limit ensures
  * step IDs remain reasonable for display and storage purposes.
  */
 export const MAX_STEP_NUMBER = 999999;
@@ -162,9 +162,9 @@ export const StepSchema = z.object({
 });
 
 /**
- * Zod schema for Workflow
+ * Zod schema for Runbook
  */
-export const WorkflowSchema = z.object({
+export const RunbookSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
   steps: z.array(StepSchema),

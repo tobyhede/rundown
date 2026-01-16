@@ -28,7 +28,7 @@ export interface ErrorContext {
   argName?: string;
   /** Scenario name */
   scenario?: string;
-  /** Child workflow ID */
+  /** Child runbook ID */
   childId?: string;
   /** Agent ID */
   agentId?: string;
@@ -41,8 +41,8 @@ export interface ErrorContext {
  *
  * @example
  * ```ts
- * throw new RundownError('FILE_NOT_FOUND', { file: 'workflow.md' });
- * // Error RD-101: Workflow file not found: workflow.md
+ * throw new RundownError('FILE_NOT_FOUND', { file: 'runbook.md' });
+ * // Error RD-101: Runbook file not found: runbook.md
  * ```
  */
 export class RundownError extends Error {

@@ -7,7 +7,7 @@ import {
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
-describe('Nested Workflow Integration', () => {
+describe('Nested Runbook Integration', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
@@ -18,27 +18,27 @@ describe('Nested Workflow Integration', () => {
     await workspace.cleanup();
   });
 
-  it('should complete full parent-child workflow cycle', async () => {
-    // 1. Create parent and child workflows
-    const parentWorkflow = `## 1. Dispatch agent
+  it('should complete full parent-child runbook cycle', async () => {
+    // 1. Create parent and child runbooks
+    const parentRunbook = `## 1. Dispatch agent
 - PASS: COMPLETE
 
 Parent step that dispatches work.
 `;
 
-    const childWorkflow = `## 1. Do work
+    const childRunbook = `## 1. Do work
 - PASS: COMPLETE
 
 Complete the work.
 `;
 
-    // Write workflows to workspace
-    const workflowsDir = join(workspace.cwd, 'runbooks');
-    await mkdir(workflowsDir, { recursive: true });
-    await writeFile(join(workflowsDir, 'parent.runbook.md'), parentWorkflow);
-    await writeFile(join(workflowsDir, 'child.runbook.md'), childWorkflow);
+    // Write runbooks to workspace
+    const runbooksDir = join(workspace.cwd, 'runbooks');
+    await mkdir(runbooksDir, { recursive: true });
+    await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+    await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
 
-    // 2. Start parent workflow (prompted to keep it active)
+    // 2. Start parent runbook (prompted to keep it active)
     let result = runCli('run --prompted runbooks/parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('Action:   START');
@@ -47,7 +47,7 @@ Complete the work.
     result = runCli(['run', '--step', '1'], workspace);
     expect(result.stdout).toContain('Step 1 queued');
 
-    // 4. Bind agent (no child workflow in this simple case)
+    // 4. Bind agent (no child runbook in this simple case)
     result = runCli(['run', '--agent', 'test-agent'], workspace);
     expect(result.stdout).toContain('bound');
 

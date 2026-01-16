@@ -1,7 +1,7 @@
 {
   "name": "@rundown/core",
   "version": "1.0.0",
-  "description": "Core workflow state management and execution for Rundown",
+  "description": "Core runbook state management and execution for Rundown",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,7 +21,7 @@
   },
   "keywords": [
     "rundown",
-    "workflow",
+    "runbook",
     "state-machine",
     "xstate"
   ],

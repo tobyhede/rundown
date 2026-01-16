@@ -1,4 +1,4 @@
-import { type Step, type Action, type Transitions, type Substep, type Workflow, type NonRetryAction } from '../types.js';
+import { type Step, type Action, type Transitions, type Substep, type Runbook, type NonRetryAction } from '../types.js';
 import { stepIdToString } from '../step-id.js';
 
 /**
@@ -51,7 +51,7 @@ export function renderTransitions(transitions: Transitions): string {
  * Render a Substep to Markdown.
  *
  * Generates an H3 header with the substep ID, description, optional
- * agent type suffix, and workflow references.
+ * agent type suffix, and runbook references.
  *
  * @param substep - The Substep to render
  * @param parentStepName - The parent step name (e.g., "1", "ErrorHandler", "{N}")
@@ -116,11 +116,11 @@ export function renderStep(step: Step): string {
     }
   }
 
-  // Nested Workflow (deprecated but kept for backwards compatibility)
+  // Nested Runbook (deprecated but kept for backwards compatibility)
   // eslint-disable-next-line @typescript-eslint/no-deprecated
-  if (step.nestedWorkflow) {
+  if (step.nestedRunbook) {
     // eslint-disable-next-line @typescript-eslint/no-deprecated
-    lines.push(`@${step.nestedWorkflow}`);
+    lines.push(`@${step.nestedRunbook}`);
     lines.push('');
   }
 
@@ -128,28 +128,28 @@ export function renderStep(step: Step): string {
 }
 
 /**
- * Render a full Workflow object to Markdown.
+ * Render a full Runbook object to Markdown.
  *
- * Generates complete Markdown for a workflow including title,
+ * Generates complete Markdown for a runbook including title,
  * description, and all steps.
  *
- * @param workflow - The Workflow to render
- * @returns Complete Markdown string for the entire workflow
+ * @param runbook - The Runbook to render
+ * @returns Complete Markdown string for the entire runbook
  */
-export function renderWorkflow(workflow: Workflow): string {
+export function renderRunbook(runbook: Runbook): string {
   const lines: string[] = [];
 
-  if (workflow.title) {
-    lines.push(`# ${workflow.title}`);
+  if (runbook.title) {
+    lines.push(`# ${runbook.title}`);
     lines.push('');
   }
 
-  if (workflow.description) {
-    lines.push(workflow.description);
+  if (runbook.description) {
+    lines.push(runbook.description);
     lines.push('');
   }
 
-  for (const step of workflow.steps) {
+  for (const step of runbook.steps) {
     lines.push(renderStep(step));
     lines.push('');
   }

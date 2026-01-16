@@ -1,6 +1,6 @@
 ---
 name: code-blocks
-description: Demonstrates various code block patterns in workflows
+description: Demonstrates various code block patterns in runbooks
 tags:
   - features
 
@@ -22,7 +22,7 @@ scenarios:
 
 # Code Blocks
 
-Demonstrates various code block patterns in workflows.
+Demonstrates various code block patterns in runbooks.
 
 ## 1. Setup
 - PASS: CONTINUE

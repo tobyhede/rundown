@@ -3,7 +3,7 @@ import {
   createTestWorkspace,
   runCli,
   readSession,
-  listWorkflowStates,
+  listRunbookStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -28,7 +28,7 @@ describe('status command', () => {
     expect(result.stdout).toContain('First step');
   });
 
-  it('shows workflow file path', async () => {
+  it('shows runbook file path', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     const result = runCli('status', workspace);
@@ -47,7 +47,7 @@ describe('status command', () => {
     expect(result.stdout).toContain('Step:');
   });
 
-  it('shows workflow ID', async () => {
+  it('shows runbook ID', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     const result = runCli('status', workspace);
@@ -94,8 +94,8 @@ describe('agent-scoped status', () => {
     await workspace.cleanup();
   });
 
-  it('shows agent-specific workflow when --agent provided', async () => {
-    // Start workflows in different stacks (prompted to keep active)
+  it('shows agent-specific runbook when --agent provided', async () => {
+    // Start runbooks in different stacks (prompted to keep active)
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
     runCli('run --prompted runbooks/retry.runbook.md --agent agent-001', workspace);
 
@@ -127,7 +127,7 @@ describe('ls command', () => {
     await workspace.cleanup();
   });
 
-  it('lists all workflow states', async () => {
+  it('lists all runbook states', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     const result = runCli('ls', workspace);
@@ -136,7 +136,7 @@ describe('ls command', () => {
     expect(result.stdout).toContain('simple.runbook.md');
   });
 
-  it('marks active workflow', async () => {
+  it('marks active runbook', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     const result = runCli('ls', workspace);
@@ -152,7 +152,7 @@ describe('ls command', () => {
     expect(result.stdout).toContain('1/');
   });
 
-  it('outputs "No workflows" when empty', async () => {
+  it('outputs "No runbooks" when empty', async () => {
     const result = runCli('ls', workspace);
 
     expect(result.stdout).toContain('No runbooks');
@@ -170,16 +170,16 @@ describe('stop command', () => {
     await workspace.cleanup();
   });
 
-  it('deletes active workflow state', async () => {
+  it('deletes active runbook state', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     runCli('stop', workspace);
 
-    const states = await listWorkflowStates(workspace);
+    const states = await listRunbookStates(workspace);
     expect(states).toHaveLength(0);
   });
 
-  it('clears active workflow', async () => {
+  it('clears active runbook', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     runCli('stop', workspace);
@@ -214,7 +214,7 @@ describe('complete command', () => {
     await workspace.cleanup();
   });
 
-  it('marks workflow as complete', async () => {
+  it('marks runbook as complete', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     const result = runCli('complete', workspace);
@@ -222,7 +222,7 @@ describe('complete command', () => {
     expect(result.stdout).toContain('COMPLETE');
   });
 
-  it('clears active workflow', async () => {
+  it('clears active runbook', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     runCli('complete', workspace);

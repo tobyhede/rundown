@@ -3,7 +3,7 @@ import { extractRawFrontmatter } from '../../src/helpers/extract-raw-frontmatter
 describe('extractRawFrontmatter', () => {
   it('extracts all YAML fields including unknown ones', () => {
     const markdown = `---
-name: test-workflow
+name: test-runbook
 scenarios:
   success:
     commands:
@@ -17,7 +17,7 @@ custom_field: value
     const result = extractRawFrontmatter(markdown);
 
     expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.name).toBe('test-workflow');
+    expect(result.frontmatter?.name).toBe('test-runbook');
     expect(result.frontmatter?.scenarios).toBeDefined();
     expect(result.frontmatter?.scenarios.success.commands).toEqual(['rd pass']);
     expect(result.frontmatter?.custom_field).toBe('value');

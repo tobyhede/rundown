@@ -10,23 +10,23 @@ describe('scenario command', () => {
 
     // Create a runbook with scenarios
     const runbook = `---
-name: test-workflow
+name: test-runbook
 scenarios:
   success:
     description: Happy path
     commands:
-      - rd run --prompted test-workflow.runbook.md
+      - rd run --prompted test-runbook.runbook.md
       - rd pass
       - rd pass
     result: COMPLETE
   failure:
     commands:
-      - rd run --prompted test-workflow.runbook.md
+      - rd run --prompted test-runbook.runbook.md
       - rd fail
     result: STOP
 ---
 
-# Test Workflow
+# Test Runbook
 
 ## 1. First Step
 
@@ -41,7 +41,7 @@ scenarios:
 
     const runbooksDir = join(workspace.cwd, '.claude', 'rundown', 'runbooks');
     await mkdir(runbooksDir, { recursive: true });
-    await writeFile(join(runbooksDir, 'test-workflow.runbook.md'), runbook);
+    await writeFile(join(runbooksDir, 'test-runbook.runbook.md'), runbook);
   });
 
   afterEach(async () => {
@@ -50,7 +50,7 @@ scenarios:
 
   describe('list subcommand', () => {
     it('lists available scenarios', async () => {
-      const result = runCli('scenario ls test-workflow.runbook.md', workspace);
+      const result = runCli('scenario ls test-runbook.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('NAME');
@@ -87,7 +87,7 @@ name: no-scenarios
 
   describe('show subcommand', () => {
     it('shows details for a specific scenario', async () => {
-      const result = runCli('scenario show test-workflow.runbook.md success', workspace);
+      const result = runCli('scenario show test-runbook.runbook.md success', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Name:        success');
@@ -98,7 +98,7 @@ name: no-scenarios
     });
 
     it('shows error for non-existent scenario', async () => {
-      const result = runCli('scenario show test-workflow.runbook.md nonexistent', workspace);
+      const result = runCli('scenario show test-runbook.runbook.md nonexistent', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('not found');

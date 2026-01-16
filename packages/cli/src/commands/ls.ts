@@ -2,8 +2,8 @@
 
 import type { Command } from 'commander';
 import {
-  WorkflowStateManager,
-  printNoWorkflows,
+  RunbookStateManager,
+  printNoRunbooks,
 } from '@rundown/core';
 import { discoverRunbooks } from '../services/discovery.js';
 import { getCwd, getStepTotal } from '../helpers/context.js';
@@ -11,7 +11,7 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { printTable } from '../helpers/table-formatter.js';
 
 /**
- * Registers the 'ls' command for listing workflows.
+ * Registers the 'ls' command for listing runbooks.
  * @param program - Commander program instance to register the command on
  */
 export function registerLsCommand(program: Command): void {
@@ -24,7 +24,7 @@ export function registerLsCommand(program: Command): void {
     .action(async (options: { all?: boolean; json?: boolean; tags?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        // MODE 1: List available workflows (--all)
+        // MODE 1: List available runbooks (--all)
         if (options.all) {
             let runbooks = await discoverRunbooks(cwd);
 
@@ -71,17 +71,17 @@ export function registerLsCommand(program: Command): void {
             return;
         }
 
-        // MODE 2: List active workflows (default)
-        const manager = new WorkflowStateManager(cwd);
+        // MODE 2: List active runbooks (default)
+        const manager = new RunbookStateManager(cwd);
         const states = await manager.list();
         const active = await manager.getActive();
-        const stashedId = await manager.getStashedWorkflowId();
+        const stashedId = await manager.getStashedRunbookId();
 
         if (states.length === 0) {
           if (options.json) {
             console.log('[]');
           } else {
-            printNoWorkflows();
+            printNoRunbooks();
           }
           return;
         }
@@ -107,8 +107,8 @@ export function registerLsCommand(program: Command): void {
               status = 'inactive';
             }
 
-            const totalSteps = await getStepTotal(cwd, state.workflow);
-            // Use state.instance for dynamic workflows
+            const totalSteps = await getStepTotal(cwd, state.runbook);
+            // Use state.instance for dynamic runbooks
             const displayStep = state.instance !== undefined
               ? String(state.instance)
               : state.step;
@@ -116,7 +116,7 @@ export function registerLsCommand(program: Command): void {
               id: state.id.slice(0, 8),
               status,
               step: `${displayStep}/${String(totalSteps)}`,
-              workflow: state.workflow,
+              runbook: state.runbook,
               title: state.title ?? '',
             };
           })
@@ -126,7 +126,7 @@ export function registerLsCommand(program: Command): void {
           { header: 'ID', key: 'id' },
           { header: 'STATUS', key: 'status' },
           { header: 'STEP', key: 'step' },
-          { header: 'RUNBOOK', key: 'workflow' },
+          { header: 'RUNBOOK', key: 'runbook' },
           { header: 'TITLE', key: 'title' },
         ]);
       });

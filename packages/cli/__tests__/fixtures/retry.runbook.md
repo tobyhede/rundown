@@ -14,7 +14,7 @@ rd echo --result fail --result fail --result pass
 - PASS: COMPLETE
 - FAIL: STOP
 
-Complete workflow.
+Complete runbook.
 
 ```bash
 rd echo --result pass

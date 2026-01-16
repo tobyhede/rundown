@@ -1,4 +1,4 @@
-import type { Step, Substep } from '../workflow/types.js';
+import type { Step, Substep } from '../runbook/types.js';
 
 type RenderableItem = Step | Substep;
 
@@ -7,7 +7,7 @@ type RenderableItem = Step | Substep;
  *
  * Generates a simplified Markdown representation optimized for CLI display.
  * Includes the heading, prompt, and command block while ignoring transitions
- * and nested workflow details that are not part of the CLI view.
+ * and nested runbook details that are not part of the CLI view.
  *
  * @param item - The Step or Substep to render
  * @param instanceNumber - For dynamic steps/substeps, the current instance number (replaces {N})

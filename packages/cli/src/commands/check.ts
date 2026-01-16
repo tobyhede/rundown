@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Command } from 'commander';
-import { parseWorkflowDocument, validateWorkflow, type ValidationError, type Step } from '@rundown/parser';
+import { parseRunbookDocument, validateRunbook, type ValidationError, type Step } from '@rundown/parser';
 
 function formatErrors(errors: ValidationError[]): string {
   return errors
@@ -16,7 +16,7 @@ function countSubsteps(steps: readonly Step[]): number {
 }
 
 /**
- * Registers the 'check' command for validating workflow files.
+ * Registers the 'check' command for validating runbook files.
  * @param program - Commander program instance to register the command on
  */
 export function registerCheckCommand(program: Command): void {
@@ -34,8 +34,8 @@ export function registerCheckCommand(program: Command): void {
 
       try {
         const content = fs.readFileSync(resolvedPath, 'utf-8');
-        const workflow = parseWorkflowDocument(content, path.basename(resolvedPath), { skipValidation: true });
-        const errors = validateWorkflow(workflow.steps);
+        const runbook = parseRunbookDocument(content, path.basename(resolvedPath), { skipValidation: true });
+        const errors = validateRunbook(runbook.steps);
 
         if (errors.length > 0) {
           console.error(`FAIL: ${String(errors.length)} error${errors.length > 1 ? 's' : ''}\n`);
@@ -43,8 +43,8 @@ export function registerCheckCommand(program: Command): void {
           process.exit(1);
         }
 
-        const stepCount = workflow.steps.length;
-        const substepCount = countSubsteps(workflow.steps);
+        const stepCount = runbook.steps.length;
+        const substepCount = countSubsteps(runbook.steps);
 
         if (substepCount > 0) {
           console.log(`PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount > 1 ? 's' : ''}`);

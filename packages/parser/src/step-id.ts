@@ -3,7 +3,7 @@ import type { StepId } from './schemas.js';
 /**
  * Reserved words that cannot be used as named step or substep identifiers.
  *
- * These keywords have special meaning in the Rundown workflow syntax:
+ * These keywords have special meaning in the Rundown runbook syntax:
  * - Flow control: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY
  * - Conditionals: PASS, FAIL, YES, NO
  * - Aggregation: ALL, ANY

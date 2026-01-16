@@ -2,7 +2,7 @@ import { describe, it, expect } from '@jest/globals';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { parseWorkflow } from '../src/index.js';
+import { parseRunbook } from '../src/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,23 +29,23 @@ function getFilesRecursively(dir: string): string[] {
 }
 
 describe('Rundown Conformance (Fixture Driven)', () => {
-  describe('Valid Workflows (Patterns)', () => {
+  describe('Valid Runbooks (Patterns)', () => {
     // recursively find all runbook patterns
     const files = getFilesRecursively(PATTERNS_DIR);
 
-    it.each(files)('should parse valid workflow: %s', (filePath) => {
+    it.each(files)('should parse valid runbook: %s', (filePath) => {
       const content = fs.readFileSync(filePath, 'utf8');
-      expect(() => parseWorkflow(content)).not.toThrow();
+      expect(() => parseRunbook(content)).not.toThrow();
     });
   });
 
-  describe('Invalid Workflows', () => {
+  describe('Invalid Runbooks', () => {
     const invalidDir = path.join(FIXTURES_DIR, 'invalid');
     const files = fs.readdirSync(invalidDir).filter(f => f.endsWith('.runbook.md'));
 
-    it.each(files)('should reject invalid workflow: %s', (file) => {
+    it.each(files)('should reject invalid runbook: %s', (file) => {
       const content = fs.readFileSync(path.join(invalidDir, file), 'utf8');
-      expect(() => parseWorkflow(content)).toThrow();
+      expect(() => parseRunbook(content)).toThrow();
     });
   });
 });

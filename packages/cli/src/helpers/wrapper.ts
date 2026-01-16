@@ -4,7 +4,7 @@ import {
   RundownError,
   Errors,
 } from '@rundown/core';
-import { WorkflowSyntaxError } from '@rundown/parser';
+import { RunbookSyntaxError } from '@rundown/parser';
 
 /**
  * Options for error handling behavior.
@@ -38,8 +38,8 @@ function toRundownError(error: unknown): RundownError {
     }
   }
 
-  // Legacy WorkflowSyntaxError from parser
-  if (error instanceof WorkflowSyntaxError) {
+  // Legacy RunbookSyntaxError from parser
+  if (error instanceof RunbookSyntaxError) {
     return Errors.syntaxError(error.message);
   }
 

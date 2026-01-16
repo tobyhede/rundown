@@ -95,6 +95,10 @@ The `rd` command is an alias for `rundown`.
 
 - [SPEC.md](docs/SPEC.md) - Rundown format specification
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for instructions on setting up the development environment and running tests.
+
 ## License
 
 MIT

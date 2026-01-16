@@ -1,5 +1,5 @@
-import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation, evaluateNonRetryAction } from '../../src/workflow/transition-handler.js';
-import type { SubstepState } from '../../src/workflow/types.js';
+import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation, evaluateNonRetryAction } from '../../src/runbook/transition-handler.js';
+import type { SubstepState } from '../../src/runbook/types.js';
 
 describe('GOTO NEXT action handling', () => {
   it('evaluatePassCondition returns goto for GOTO NEXT action', () => {

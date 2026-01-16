@@ -134,7 +134,7 @@ export interface SessionState {
   /** File extensions edited during this session (deduplicated) */
   file_extensions: string[];
 
-  /** Custom metadata for specific workflows */
+  /** Custom metadata for specific runbooks */
   metadata: Record<string, unknown>;
 }
 

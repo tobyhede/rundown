@@ -75,7 +75,7 @@ async function loadScenarios(file: string): Promise<LoadedRunbook> {
   const filePath = await resolveRunbookFile(cwd, file);
 
   if (!filePath) {
-    console.error(`Workflow file not found: ${file}`);
+    console.error(`Runbook file not found: ${file}`);
     process.exit(1);
   }
 
@@ -240,7 +240,7 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
   mkdirSync(runbooksDir, { recursive: true });
 
   try {
-    // 3. Copy runbook and any referenced child workflows
+    // 3. Copy runbook and any referenced child runbooks
     copyFileSync(filePath, join(runbooksDir, runbookFilename));
 
     const referenced = extractReferencedRunbooks(scenario);

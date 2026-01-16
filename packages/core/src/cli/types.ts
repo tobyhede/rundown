@@ -1,29 +1,29 @@
 /**
- * Workflow metadata for display in CLI output.
+ * Runbook metadata for display in CLI output.
  *
- * Contains essential information about a workflow's current state
+ * Contains essential information about a runbook's current state
  * for display in status and listing commands.
  */
-export interface WorkflowMetadata {
-  /** Path to the workflow source file */
+export interface RunbookMetadata {
+  /** Path to the runbook source file */
   file: string;
-  /** Current workflow state (e.g., 'running', 'complete', 'stopped') */
+  /** Current runbook state (e.g., 'running', 'complete', 'stopped') */
   state: string;
-  /** Whether the workflow is waiting for user input (only included if true) */
+  /** Whether the runbook is waiting for user input (only included if true) */
   prompted?: boolean;
 }
 
 /**
  * Step position for display in CLI output.
  *
- * Represents the current position within a workflow, typically
+ * Represents the current position within a runbook, typically
  * displayed in n/N format (e.g., "1/5" or "2.1/5").
- * For dynamic workflows, total may be '{N}' to indicate unbounded.
+ * For dynamic runbooks, total may be '{N}' to indicate unbounded.
  */
 export interface StepPosition {
   /** Current step identifier (e.g., "1", "ErrorHandler", "{N}") */
   current: string;
-  /** Total number of steps, or '{N}' for dynamic workflows */
+  /** Total number of steps, or '{N}' for dynamic runbooks */
   total: number | string;
   /** Current substep identifier within the step (e.g., "1", "2") */
   substep?: string;
@@ -32,7 +32,7 @@ export interface StepPosition {
 /**
  * Action block data for CLI output display.
  *
- * Contains information about the action taken during a workflow transition,
+ * Contains information about the action taken during a runbook transition,
  * including the action type, source step, and evaluation result.
  */
 export interface ActionBlockData {

@@ -23,7 +23,7 @@ describe('echo command', () => {
 
   describe('result sequence', () => {
     beforeEach(async () => {
-      // Start a workflow first (prompted mode to keep it active)
+      // Start a runbook first (prompted mode to keep it active)
       runCli('run --prompted runbooks/retry.runbook.md', workspace);
     });
 
@@ -47,7 +47,7 @@ describe('echo command', () => {
 
     // NOTE: Tests for retry count indexing removed - they relied on 'next --retry'
     // which was removed when 'next' command was replaced by pass/fail/goto.
-    // Retry behavior is now tested via FAIL conditions in workflows.
+    // Retry behavior is now tested via FAIL conditions in runbooks.
   });
 
   describe('error handling', () => {

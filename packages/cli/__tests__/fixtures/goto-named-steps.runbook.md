@@ -3,7 +3,7 @@
 - PASS: CONTINUE
 - FAIL: STOP
 
-Initialize the workflow.
+Initialize the runbook.
 
 ```bash
 rd echo --result pass

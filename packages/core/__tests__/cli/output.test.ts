@@ -6,16 +6,16 @@ import {
   printActionBlock,
   printStepBlock,
   printCommandExec,
-  printWorkflowComplete,
-  printWorkflowStopped,
-  printWorkflowStoppedAtStep,
-  printWorkflowStashed,
-  printNoActiveWorkflow,
+  printRunbookComplete,
+  printRunbookStopped,
+  printRunbookStoppedAtStep,
+  printRunbookStashed,
+  printNoActiveRunbook,
   TestWriter,
   setColorEnabled,
   resetColorCache,
 } from '../../src/cli/index.js';
-import type { Step } from '../../src/workflow/types.js';
+import type { Step } from '../../src/runbook/types.js';
 
 describe('output formatter', () => {
   let writer: TestWriter;
@@ -37,7 +37,7 @@ describe('output formatter', () => {
       );
     });
 
-    it('formats position with string total for dynamic workflows', () => {
+    it('formats position with string total for dynamic runbooks', () => {
       expect(formatPosition({ current: '1', total: '{N}' })).toBe('1/1*');
     });
 
@@ -197,38 +197,38 @@ describe('output formatter', () => {
     });
   });
 
-  describe('printWorkflowComplete', () => {
-    it('prints workflow complete message', () => {
-      printWorkflowComplete(undefined, writer);
+  describe('printRunbookComplete', () => {
+    it('prints runbook complete message', () => {
+      printRunbookComplete(undefined, writer);
       expect(writer.getOutput()).toContain('Runbook:  COMPLETE');
     });
   });
 
-  describe('printWorkflowStopped', () => {
+  describe('printRunbookStopped', () => {
     it('prints stopped message', () => {
-      printWorkflowStopped(undefined, writer);
+      printRunbookStopped(undefined, writer);
       expect(writer.getOutput()).toContain('Runbook:  STOP');
     });
   });
 
-  describe('printWorkflowStoppedAtStep', () => {
+  describe('printRunbookStoppedAtStep', () => {
     it('prints stop message', () => {
-      printWorkflowStoppedAtStep({ current: '2', total: 5 }, undefined, writer);
+      printRunbookStoppedAtStep({ current: '2', total: 5 }, undefined, writer);
       expect(writer.getOutput()).toContain('Runbook:  STOP');
     });
   });
 
-  describe('printWorkflowStashed', () => {
+  describe('printRunbookStashed', () => {
     it('prints step position and stashed message', () => {
-      printWorkflowStashed({ current: '2', total: 5 }, writer);
+      printRunbookStashed({ current: '2', total: 5 }, writer);
       expect(writer.getOutput()).toContain('Step:     2/5');
       expect(writer.getOutput()).toContain('Runbook:  STASHED');
     });
   });
 
-  describe('printNoActiveWorkflow', () => {
+  describe('printNoActiveRunbook', () => {
     it('prints no active runbook message', () => {
-      printNoActiveWorkflow(writer);
+      printNoActiveRunbook(writer);
       expect(writer.getLines()).toEqual(['No active runbook.']);
     });
   });

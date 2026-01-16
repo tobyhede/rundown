@@ -28,7 +28,7 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 
 ## Contents
 
-- [Sequential Workflows](#sequential-workflows)
+- [Sequential Runbooks](#sequential-runbooks)
 - [Dynamic Steps](#dynamic-steps)
 - [Named Steps](#named-steps)
 - [Substeps](#substeps)

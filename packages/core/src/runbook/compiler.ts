@@ -3,12 +3,12 @@ import { type Step, type Action, type NonRetryAction, type Transitions } from '.
 import type { StepId } from './step-id.js';
 
 /**
- * Context passed through the XState workflow state machine.
+ * Context passed through the XState runbook state machine.
  *
  * Maintains runtime state that persists across transitions including
- * retry counts, current substep, and workflow variables.
+ * retry counts, current substep, and runbook variables.
  */
-export interface WorkflowContext {
+export interface RunbookContext {
   /** Current retry count for the active step */
   retryCount: number;
   /** Current substep ID within the active step */
@@ -17,19 +17,19 @@ export interface WorkflowContext {
   nextInstance?: boolean;
   /** Flag indicating transition to next dynamic substep instance */
   nextSubstepInstance?: boolean;
-  /** User-defined workflow variables */
+  /** User-defined runbook variables */
   variables: Record<string, boolean | number | string>;
 }
 
 /**
- * Events that can be sent to the XState workflow state machine.
+ * Events that can be sent to the XState runbook state machine.
  *
  * - PASS: Mark the current step as passed, triggering the PASS transition
  * - FAIL: Mark the current step as failed, triggering the FAIL transition
  * - RETRY: Increment retry count and re-enter the current step
  * - GOTO: Jump directly to a specific step by ID
  */
-export type WorkflowEvent =
+export type RunbookEvent =
   | { type: 'PASS' }
   | { type: 'FAIL' }
   | { type: 'RETRY' }
@@ -81,7 +81,7 @@ function actionToTransition(
   if (action.type === 'RETRY') {
     return [
       {
-        guard: ({ context }: { context: WorkflowContext }) => context.retryCount < action.max,
+        guard: ({ context }: { context: RunbookContext }) => context.retryCount < action.max,
         actions: assign({
           retryCount: ({ context }) => (context.retryCount as number) + 1
         }),
@@ -315,19 +315,19 @@ function nonRetryActionToTransition(
 }
 
 /**
- * Compile workflow steps into an XState state machine.
+ * Compile runbook steps into an XState state machine.
  *
- * Generates a finite state machine from the workflow definition with:
+ * Generates a finite state machine from the runbook definition with:
  * - One state per step (or substep if the step has substeps)
  * - PASS/FAIL/RETRY/GOTO transitions based on step transitions
  * - COMPLETE and STOPPED final states
  *
- * @param steps - The parsed workflow steps to compile
+ * @param steps - The parsed runbook steps to compile
  * @returns An XState state machine definition
  */
 // XState snapshot type is not fully typed
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
-export function compileWorkflowToMachine(steps: Step[]) {
+export function compileRunbookToMachine(steps: Step[]) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const states: Record<string, any> = {};
 
@@ -362,7 +362,7 @@ export function compileWorkflowToMachine(steps: Step[]) {
 
   // Generate GOTO transitions for all possible target states
   const gotoTransitions = allStates.map((target) => ({
-    guard: ({ event }: { event: WorkflowEvent }) => {
+    guard: ({ event }: { event: RunbookEvent }) => {
       if (event.type !== 'GOTO') return false;
 
       const targetStep = event.target.step;
@@ -380,7 +380,7 @@ export function compileWorkflowToMachine(steps: Step[]) {
     target: target.id,
     actions: assign({
       retryCount: 0,
-      substep: ({ event }: { event: WorkflowEvent }) =>
+      substep: ({ event }: { event: RunbookEvent }) =>
         event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
       ...CLEAR_NEXT_FLAGS
     })
@@ -407,11 +407,11 @@ export function compileWorkflowToMachine(steps: Step[]) {
 
   return setup({
     types: {
-      context: {} as WorkflowContext,
-      events: {} as WorkflowEvent,
+      context: {} as RunbookContext,
+      events: {} as RunbookEvent,
     },
   }).createMachine({
-    id: 'workflow',
+    id: 'runbook',
     initial: allStates.length > 0 ? allStates[0].id : 'step_1',
     context: {
       retryCount: 0,

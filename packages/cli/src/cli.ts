@@ -21,7 +21,7 @@ import { setColorEnabled } from '@rundown/core';
 
 const program = new CommandClass();
 
-program.name('rundown').description('Workflow orchestration CLI').version('1.0.0');
+program.name('rundown').description('Runbook orchestration CLI').version('1.0.0');
 
 program.option('--no-color', 'Disable colored output');
 

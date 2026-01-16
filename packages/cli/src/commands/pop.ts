@@ -3,14 +3,14 @@
 import * as fs from 'fs/promises';
 import type { Command } from 'commander';
 import {
-  WorkflowStateManager,
-  parseWorkflow,
+  RunbookStateManager,
+  parseRunbook,
   printMetadata,
   printActionBlock,
   printStepBlock,
   type ActionBlockData,
 } from '@rundown/core';
-import { getCwd, findWorkflowFile } from '../helpers/context.js';
+import { getCwd, findRunbookFile } from '../helpers/context.js';
 import {
   getStepRetryMax,
   buildMetadata,
@@ -18,32 +18,32 @@ import {
 import { withErrorHandling } from '../helpers/wrapper.js';
 
 /**
- * Registers the 'pop' command for resuming stashed workflows.
+ * Registers the 'pop' command for resuming stashed runbooks.
  * @param program - Commander program instance to register the command on
  */
 export function registerPopCommand(program: Command): void {
   program
     .command('pop')
-    .description('Resume enforcement from stashed workflow')
-    .option('--agent <agentId>', 'Pop workflow to agent-specific stack')
+    .description('Resume enforcement from stashed runbook')
+    .option('--agent <agentId>', 'Pop runbook to agent-specific stack')
     .action(async (options: { agent?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const manager = new WorkflowStateManager(cwd);
+        const manager = new RunbookStateManager(cwd);
 
         const state = await manager.pop(options.agent);
 
         if (!state) {
-          console.log('No stashed workflow to restore.');
+          console.log('No stashed runbook to restore.');
           return;
         }
 
-        const workflowPath = await findWorkflowFile(cwd, state.workflow);
-        if (!workflowPath) {
-          throw new Error(`Workflow file ${state.workflow} not found`);
+        const runbookPath = await findRunbookFile(cwd, state.runbook);
+        if (!runbookPath) {
+          throw new Error(`Runbook file ${state.runbook} not found`);
         }
-        const content = await fs.readFile(workflowPath, 'utf8');
-        const steps = parseWorkflow(content);
+        const content = await fs.readFile(runbookPath, 'utf8');
+        const steps = parseRunbook(content);
         const currentStepIndex = steps.findIndex(s => s.name === state.step);
         const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
         const totalSteps = steps.length;

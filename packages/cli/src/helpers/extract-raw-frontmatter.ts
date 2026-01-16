@@ -14,7 +14,7 @@ export interface RawFrontmatterResult {
  * Extract raw YAML frontmatter from markdown without validation.
  *
  * Unlike the parser's extractFrontmatter, this preserves ALL fields
- * from the YAML without validating against WorkflowFrontmatterSchema.
+ * from the YAML without validating against RunbookFrontmatterSchema.
  * Used by CLI for accessing extension fields like `scenarios`.
  *
  * @param markdown - The markdown content with optional frontmatter

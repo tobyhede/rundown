@@ -1,15 +1,15 @@
-// src/workflow/types.ts
+// src/runbook/types.ts
 
 export * from '@rundown/parser';
 import { type StepId } from '@rundown/parser';
 
 /**
- * A step queued for agent binding, optionally with a child workflow.
+ * A step queued for agent binding, optionally with a child runbook.
  * Used in the pending step queue to correlate Step tool dispatch with SubagentStart.
  */
 export interface PendingStep {
   readonly stepId: StepId;
-  readonly workflow?: string;  // Child workflow file path (relative)
+  readonly runbook?: string;  // Child runbook file path (relative)
 }
 
 /**
@@ -37,13 +37,13 @@ export interface SubstepState {
  */
 export interface AgentBinding {
   readonly stepId: StepId;
-  readonly childWorkflowId?: string;
+  readonly childRunbookId?: string;
   readonly status: AgentStatus;
   readonly result?: AgentResult;
 }
 
 /**
- * Step state within a workflow
+ * Step state within a runbook
  */
 export interface StepState {
   readonly id: string;
@@ -54,15 +54,15 @@ export interface StepState {
 }
 
 /**
- * Workflow execution state (persisted)
+ * Runbook execution state (persisted)
  */
-export interface WorkflowState {
+export interface RunbookState {
   readonly id: string;
-  readonly workflow: string; // file path
+  readonly runbook: string; // file path
   readonly title?: string;
   readonly description?: string;
   readonly step: string;           // UNIFIED: "1", "ErrorHandler", "{N}"
-  readonly instance?: number;      // NEW: Dynamic workflow instance counter (1, 2, 3, ...)
+  readonly instance?: number;      // NEW: Dynamic runbook instance counter (1, 2, 3, ...)
   readonly substep?: string;
   readonly stepName: string;       // Human-readable description
   readonly retryCount: number;
@@ -76,13 +76,13 @@ export interface WorkflowState {
   // Substep tracking
   readonly substepStates?: readonly SubstepState[];
 
-  // Child workflow fields
+  // Child runbook fields
   readonly agentId?: string;
-  readonly parentWorkflowId?: string;
+  readonly parentRunbookId?: string;
   readonly parentStepId?: StepId;
 
   readonly nested?: {
-    readonly workflow: string;
+    readonly runbook: string;
     readonly instanceId: string;
   };
 

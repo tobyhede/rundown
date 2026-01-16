@@ -1,7 +1,7 @@
 // packages/cli/src/commands/prune.ts
 
 import type { Command } from 'commander';
-import { WorkflowStateManager } from '@rundown/core';
+import { RunbookStateManager } from '@rundown/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
@@ -14,25 +14,25 @@ interface PruneOptions {
 }
 
 /**
- * Registers the 'prune' command for removing workflow state.
+ * Registers the 'prune' command for removing runbook state.
  * @param program - Commander program instance to register the command on
  */
 export function registerPruneCommand(program: Command): void {
   program
     .command('prune')
-    .description('Remove workflow state (does not delete runbook files)')
+    .description('Remove runbook state (does not delete runbook files)')
     .option('--dry-run', 'Show what would be removed without deleting')
-    .option('--completed', 'Prune completed workflow state')
-    .option('--active', 'Prune active workflow state')
-    .option('--inactive', 'Prune inactive workflow state')
-    .option('--all', 'Prune all workflow state')
+    .option('--completed', 'Prune completed runbook state')
+    .option('--active', 'Prune active runbook state')
+    .option('--inactive', 'Prune inactive runbook state')
+    .option('--all', 'Prune all runbook state')
     .action(async (options: PruneOptions) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const manager = new WorkflowStateManager(cwd);
+        const manager = new RunbookStateManager(cwd);
         const states = await manager.list();
         const activeState = await manager.getActive();
-        const stashedId = await manager.getStashedWorkflowId();
+        const stashedId = await manager.getStashedRunbookId();
 
         // Default to --completed if no filter flags provided
         const hasFilter = options.completed ?? options.active ?? options.inactive ?? options.all;
@@ -53,7 +53,7 @@ export function registerPruneCommand(program: Command): void {
         });
 
         if (toDelete.length === 0) {
-          console.log('No workflow state to prune.');
+          console.log('No runbook state to prune.');
           return;
         }
 
@@ -62,7 +62,7 @@ export function registerPruneCommand(program: Command): void {
           for (const state of toDelete) {
             const status = getStatus(state, activeState, stashedId);
             const title = state.title ? `  [${state.title}]` : '';
-            console.log(`  ${state.id}  ${status}  ${state.workflow}${title}`);
+            console.log(`  ${state.id}  ${status}  ${state.runbook}${title}`);
           }
           return;
         }
@@ -71,10 +71,10 @@ export function registerPruneCommand(program: Command): void {
         for (const state of toDelete) {
           const status = getStatus(state, activeState, stashedId);
           const title = state.title ? `  [${state.title}]` : '';
-          console.log(`  ${state.id}  ${status}  ${state.workflow}${title}`);
+          console.log(`  ${state.id}  ${status}  ${state.runbook}${title}`);
           await manager.delete(state.id);
         }
-        console.log(`\nTotal: ${String(toDelete.length)} workflow(s).`);
+        console.log(`\nTotal: ${String(toDelete.length)} runbook(s).`);
       });
     });
 }

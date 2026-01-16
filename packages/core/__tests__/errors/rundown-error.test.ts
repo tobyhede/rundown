@@ -71,7 +71,7 @@ describe('RundownError', () => {
 
   describe('code', () => {
     it('returns error code string', () => {
-      const error = new RundownError('NO_ACTIVE_WORKFLOW');
+      const error = new RundownError('NO_ACTIVE_RUNBOOK');
       expect(error.code).toBe('RD-301');
     });
   });
@@ -122,16 +122,16 @@ describe('RundownError', () => {
 
 describe('Errors factory', () => {
   it('fileNotFound creates correct error', () => {
-    const error = Errors.fileNotFound('workflow.md');
+    const error = Errors.fileNotFound('runbook.md');
 
     expect(error).toBeInstanceOf(RundownError);
     expect(error.code).toBe('RD-101');
-    expect(error.context.file).toBe('workflow.md');
-    expect(error.message).toBe('Runbook file not found: workflow.md');
+    expect(error.context.file).toBe('runbook.md');
+    expect(error.message).toBe('Runbook file not found: runbook.md');
   });
 
-  it('noActiveWorkflow creates correct error', () => {
-    const error = Errors.noActiveWorkflow();
+  it('noActiveRunbook creates correct error', () => {
+    const error = Errors.noActiveRunbook();
 
     expect(error.code).toBe('RD-301');
     expect(error.message).toBe('No active runbook');

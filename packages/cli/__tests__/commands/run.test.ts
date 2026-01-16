@@ -4,8 +4,8 @@ import {
   runCli,
   readSession,
   getActiveState,
-  listWorkflowStates,
-  readWorkflowState,
+  listRunbookStates,
+  readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -21,7 +21,7 @@ describe('start command', () => {
   });
 
   describe('file mode', () => {
-    it('creates workflow state from valid workflow file', async () => {
+    it('creates runbook state from valid runbook file', async () => {
       const result = runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
       if (result.exitCode !== 0) {
@@ -33,7 +33,7 @@ describe('start command', () => {
       expect(result.stdout).toContain('simple.runbook.md');
     });
 
-    it('sets workflow as active', async () => {
+    it('sets runbook as active', async () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
       const session = await readSession(workspace);
@@ -45,7 +45,7 @@ describe('start command', () => {
 
       const state = await getActiveState(workspace);
       expect(state).not.toBeNull();
-      expect(state?.workflow).toBe('runbooks/simple.runbook.md');
+      expect(state?.runbook).toBe('runbooks/simple.runbook.md');
     });
 
     it('initializes step=1 and retryCount=0', async () => {
@@ -80,13 +80,13 @@ describe('start command', () => {
     it('creates state file on disk', async () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
-      const stateFiles = await listWorkflowStates(workspace);
+      const stateFiles = await listRunbookStates(workspace);
       expect(stateFiles.length).toBe(1);
     });
   });
 
   describe('auto-execution mode', () => {
-    it('executes commands and advances through workflow', async () => {
+    it('executes commands and advances through runbook', async () => {
       const result = runCli('run runbooks/simple.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
@@ -95,10 +95,10 @@ describe('start command', () => {
       expect(result.stdout).toContain('Runbook:  COMPLETE');
     });
 
-    it('completes workflow when all commands pass', async () => {
+    it('completes runbook when all commands pass', async () => {
       runCli('run runbooks/simple.runbook.md', workspace);
 
-      // Workflow completed, so activeWorkflow is null
+      // Runbook completed, so active runbook is null
       const session = await readSession(workspace);
       expect(session.active).toBeNull();
     });
@@ -106,7 +106,7 @@ describe('start command', () => {
 
   describe('step queueing mode (--step)', () => {
     beforeEach(async () => {
-      // Start a workflow first (prompted mode to keep it active)
+      // Start a runbook first (prompted mode to keep it active)
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
     });
 
@@ -139,7 +139,7 @@ describe('start command', () => {
     });
 
     it('fails if no active runbook', async () => {
-      // Stop current workflow
+      // Stop current runbook
       runCli('stop', workspace);
 
       const result = runCli('run --step 2', workspace);
@@ -156,7 +156,7 @@ describe('start command', () => {
       expect(result.stderr).toContain('Invalid step ID');
     });
 
-    it('should queue step with workflow file', async () => {
+    it('should queue step with runbook file', async () => {
       const result = runCli('run --step 1.1 runbooks/simple.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
@@ -165,12 +165,12 @@ describe('start command', () => {
 
       const state = await getActiveState(workspace);
       expect(state?.pendingSteps).toHaveLength(1);
-      expect(state?.pendingSteps[0].workflow).toBe('runbooks/simple.runbook.md');
+      expect(state?.pendingSteps[0].runbook).toBe('runbooks/simple.runbook.md');
     });
   });
 
-  describe('agent-scoped workflow start', () => {
-    it('starts workflow in agent-specific stack', async () => {
+  describe('agent-scoped runbook start', () => {
+    it('starts runbook in agent-specific stack', async () => {
       // Start parent in default stack (prompted to keep active)
       let result = runCli('run --prompted runbooks/simple.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
@@ -191,7 +191,7 @@ describe('start command', () => {
 
   describe('agent binding mode (--agent)', () => {
     beforeEach(async () => {
-      // Start workflow (prompted mode to keep it active) and queue a step
+      // Start runbook (prompted mode to keep it active) and queue a step
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
       runCli('run --step 1', workspace);
     });
@@ -245,19 +245,19 @@ describe('start command', () => {
       expect(result.stderr).toContain('No active runbook');
     });
 
-    it('should create child workflow linked to parent', async () => {
-      // Pop the step without workflow
+    it('should create child runbook linked to parent', async () => {
+      // Pop the step without runbook
       runCli('run --agent temp-agent', workspace);
 
-      // Now queue step 1 with a workflow
+      // Now queue step 1 with a runbook
       runCli('run --step 1 runbooks/simple.runbook.md', workspace);
 
-      // Bind agent - should create child workflow
+      // Bind agent - should create child runbook
       const result = runCli('run --agent test-agent-123', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Verify child workflow was created
-      const stateFiles = await listWorkflowStates(workspace);
+      // Verify child runbook was created
+      const stateFiles = await listRunbookStates(workspace);
       expect(stateFiles.length).toBe(2); // parent + child
 
       // Get session - child is in agent's stack (new architecture)
@@ -267,7 +267,7 @@ describe('start command', () => {
       const childId = agentStack[0];
 
       const allStates = await Promise.all(
-        stateFiles.map(file => readWorkflowState(workspace, file.replace('.json', '')))
+        stateFiles.map(file => readRunbookState(workspace, file.replace('.json', '')))
       );
       const parentState = allStates.find(state => {
         const bindings = state?.agentBindings;
@@ -277,15 +277,15 @@ describe('start command', () => {
           .some((binding: unknown) =>
             typeof binding === 'object' &&
             binding !== null &&
-            'childWorkflowId' in binding &&
-            (binding as Record<string, unknown>).childWorkflowId === childId
+            'childRunbookId' in binding &&
+            (binding as Record<string, unknown>).childRunbookId === childId
           );
       });
 
       expect(parentState).toBeTruthy();
       const agentBindings = (parentState!.agentBindings) as Record<string, unknown>;
       const agentBinding = agentBindings['test-agent-123'];
-      expect((agentBinding as Record<string, unknown>).childWorkflowId).toBe(childId);
+      expect((agentBinding as Record<string, unknown>).childRunbookId).toBe(childId);
     });
   });
 });

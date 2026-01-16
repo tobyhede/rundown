@@ -1,7 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { createActor } from 'xstate';
-import { compileWorkflowToMachine } from '../../src/workflow/compiler.js';
-import type { Step } from '../../src/workflow/types.js';
+import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
+import type { Step } from '../../src/runbook/types.js';
 
 describe('GOTO to self (implicit retry)', () => {
   it('should increment retryCount when GOTO targets current step via {N}', () => {
@@ -17,7 +17,7 @@ describe('GOTO to self (implicit retry)', () => {
       }
     }];
 
-    const machine = compileWorkflowToMachine(steps);
+    const machine = compileRunbookToMachine(steps);
     const actor = createActor(machine);
     actor.start();
 
@@ -52,7 +52,7 @@ describe('GOTO to self (implicit retry)', () => {
       }
     }];
 
-    const machine = compileWorkflowToMachine(steps);
+    const machine = compileRunbookToMachine(steps);
     const actor = createActor(machine);
     actor.start();
 
@@ -89,7 +89,7 @@ describe('GOTO to self (implicit retry)', () => {
       }
     ];
 
-    const machine = compileWorkflowToMachine(steps);
+    const machine = compileRunbookToMachine(steps);
     const actor = createActor(machine);
     actor.start();
 
@@ -123,7 +123,7 @@ describe('GOTO to self (implicit retry)', () => {
       ]
     }];
 
-    const machine = compileWorkflowToMachine(steps);
+    const machine = compileRunbookToMachine(steps);
     const actor = createActor(machine);
     actor.start();
 
@@ -160,7 +160,7 @@ describe('GOTO to self (implicit retry)', () => {
       ]
     }];
 
-    const machine = compileWorkflowToMachine(steps);
+    const machine = compileRunbookToMachine(steps);
     const actor = createActor(machine);
     actor.start();
 

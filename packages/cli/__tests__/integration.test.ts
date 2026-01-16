@@ -7,7 +7,7 @@ import {
   type TestWorkspace,
 } from './helpers/test-utils.js';
 
-describe('integration: full workflow scenarios', () => {
+describe('integration: full runbook scenarios', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
@@ -18,8 +18,8 @@ describe('integration: full workflow scenarios', () => {
     await workspace.cleanup();
   });
 
-  it('completes simple two-step workflow', async () => {
-    // Start workflow (prompted mode to test manual pass/fail flow)
+  it('completes simple two-step runbook', async () => {
+    // Start runbook (prompted mode to test manual pass/fail flow)
     let result = runCli('run --prompted runbooks/simple.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('## 1.');
@@ -29,7 +29,7 @@ describe('integration: full workflow scenarios', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('## 2');
 
-    // Complete workflow
+    // Complete runbook
     result = runCli('pass', workspace);
     expect(result.stdout).toContain('COMPLETE');
 
@@ -74,7 +74,7 @@ describe('integration: full workflow scenarios', () => {
     expect(result.stdout).toContain('COMPLETE');
   });
 
-  it('handles stash and pop during workflow', async () => {
+  it('handles stash and pop during runbook', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
     runCli('pass', workspace); // Advance to step 2
 
@@ -96,7 +96,7 @@ describe('integration: full workflow scenarios', () => {
     expect(result.stdout).toContain('COMPLETE');
   });
 
-  it('handles agent binding workflow', async () => {
+  it('handles agent binding runbook', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     // Queue steps for agents

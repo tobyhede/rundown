@@ -11,25 +11,25 @@ import type {
 import {
   type Step,
   type Substep,
-  type Workflow,
+  type Runbook,
   type Command
 } from './ast.js';
 import {
   type ParsedConditional,
-  WorkflowSyntaxError
+  RunbookSyntaxError
 } from './types.js';
 import {
   extractStepHeader,
   extractSubstepHeader,
   parseConditional,
   convertToTransitions,
-  extractWorkflowList,
+  extractRunbookList,
   isExecutableCodeBlock,
   isPromptCodeBlock,
   escapeForShellSingleQuote,
   validateNEXTUsage
 } from './helpers.js';
-import { validateWorkflow } from './validator.js';
+import { validateRunbook } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
 
 /**
@@ -83,23 +83,23 @@ interface StepBuilder {
 }
 
 /**
- * Parse workflow markdown into Step array (compatibility wrapper).
+ * Parse runbook markdown into Step array (compatibility wrapper).
  *
  * This is a simplified entry point that returns only the steps array,
- * discarding workflow metadata. For full document parsing including
- * title, description, and frontmatter, use {@link parseWorkflowDocument}.
+ * discarding runbook metadata. For full document parsing including
+ * title, description, and frontmatter, use {@link parseRunbookDocument}.
  *
  * @param markdown - The raw markdown content to parse
- * @returns Array of parsed Step objects representing the workflow
- * @see parseWorkflowDocument for full workflow parsing with metadata
+ * @returns Array of parsed Step objects representing the runbook
+ * @see parseRunbookDocument for full runbook parsing with metadata
  */
-export function parseWorkflow(markdown: string): Step[] {
-  const doc = parseWorkflowDocument(markdown);
+export function parseRunbook(markdown: string): Step[] {
+  const doc = parseRunbookDocument(markdown);
   return [...doc.steps];
 }
 
 /**
- * Options for controlling workflow parsing behavior.
+ * Options for controlling runbook parsing behavior.
  */
 export interface ParseOptions {
   /** If true, skip validation and don't throw on errors */
@@ -107,25 +107,25 @@ export interface ParseOptions {
 }
 
 /**
- * Parse entire workflow document including metadata.
+ * Parse entire runbook document including metadata.
  *
- * Parses a complete Rundown workflow markdown document, extracting:
+ * Parses a complete Rundown runbook markdown document, extracting:
  * - YAML frontmatter (name, version, author, tags)
  * - H1 title and preamble description
  * - H2 step definitions with commands, prompts, and transitions
  * - H3 substep definitions
- * - Workflow references (nested runbook lists)
+ * - Runbook references (nested runbook lists)
  *
  * @param markdown - The raw markdown content to parse
- * @param filename - Optional filename used to derive workflow name if not in frontmatter
+ * @param filename - Optional filename used to derive runbook name if not in frontmatter
  * @param options - Optional parsing options (e.g., skipValidation)
- * @returns Complete Workflow object with metadata and steps
- * @throws {WorkflowSyntaxError} When the markdown contains invalid syntax,
+ * @returns Complete Runbook object with metadata and steps
+ * @throws {RunbookSyntaxError} When the markdown contains invalid syntax,
  *   such as H4+ headings, duplicate substep IDs, multiple code blocks per step,
  *   or other specification violations
- * @see parseWorkflow for simplified parsing returning only steps
+ * @see parseRunbook for simplified parsing returning only steps
  */
-export function parseWorkflowDocument(markdown: string, filename?: string, options?: ParseOptions): Workflow {
+export function parseRunbookDocument(markdown: string, filename?: string, options?: ParseOptions): Runbook {
   const { frontmatter, content } = extractFrontmatter(markdown);
   const tree = fromMarkdown(content);
 
@@ -141,7 +141,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
   const finalizePendingSubstep = (): void => {
     if (currentStep?.pendingSubstep) {
       const ps = currentStep.pendingSubstep;
-      const workflows = extractWorkflowList(ps.content);
+      const runbooks = extractRunbookList(ps.content);
 
       // Validate NEXT usage before converting to transitions
       validateNEXTUsage(ps.pendingConditionals, currentStep.isDynamic, ps.isDynamic);
@@ -151,13 +151,13 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
       // Build prompt from promptText and remaining content
       let promptText = ps.promptText;
       if (ps.content.trim()) {
-        const contentWithoutWorkflows = ps.content
+        const contentWithoutRunbooks = ps.content
           .split('\n')
           .filter(line => !line.trim().startsWith('-') || !line.includes('.runbook.md'))
           .join('\n')
           .trim();
-        if (contentWithoutWorkflows) {
-          promptText += contentWithoutWorkflows + '\n';
+        if (contentWithoutRunbooks) {
+          promptText += contentWithoutRunbooks + '\n';
         }
       }
 
@@ -169,7 +169,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         command: ps.command,
         prompt: promptText.trim() || undefined,
         transitions: transitions ?? undefined,
-        workflows: workflows.length > 0 ? workflows : undefined,
+        workflows: runbooks.length > 0 ? runbooks : undefined,
         line: ps.line
       };
       currentStep.substeps.push(substep);
@@ -182,7 +182,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
       const headingText = extractText(node);
       const looksLikeStep = /^\d+[.:\-)\s]/.test(headingText);
       if (looksLikeStep) {
-        throw new WorkflowSyntaxError(
+        throw new RunbookSyntaxError(
           `H1 headers (# ...) cannot be used as step headers. Use H2 (## ${headingText}) instead.`
         );
       }
@@ -190,8 +190,8 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
     }
 
     if (isHeading(node) && node.depth >= 4) {
-      throw new WorkflowSyntaxError(
-        `H4+ headings are not allowed in workflows. Found heading at depth ${String(node.depth)}. Use ## for steps and ### for substeps only.`
+      throw new RunbookSyntaxError(
+        `H4+ headings are not allowed in runbooks. Found heading at depth ${String(node.depth)}. Use ## for steps and ### for substeps only.`
       );
     }
 
@@ -240,18 +240,18 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
       if (parsed) {
         if (currentStep.isDynamic) {
           if (parsed.stepRef !== '{N}') {
-            throw new WorkflowSyntaxError(
+            throw new RunbookSyntaxError(
               `Substep ${headingText} uses numeric prefix but parent step is dynamic ({N})`
             );
           }
         } else {
           if (parsed.stepRef === '{N}') {
-            throw new WorkflowSyntaxError(
+            throw new RunbookSyntaxError(
               `Substep ${headingText} uses {N} prefix but parent step ${currentStep.name} is static`
             );
           }
           if (parsed.stepRef !== currentStep.name) {
-            throw new WorkflowSyntaxError(
+            throw new RunbookSyntaxError(
               `Substep ${headingText} does not belong to step ${currentStep.name}`
             );
           }
@@ -260,7 +260,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         const duplicateId = currentStep.substeps.find((s) => s.id === parsed.id);
         if (duplicateId) {
           const stepLabel = currentStep.name;
-          throw new WorkflowSyntaxError(
+          throw new RunbookSyntaxError(
             `Duplicate substep ID '${parsed.id}' in step ${stepLabel}`
           );
         }
@@ -269,7 +269,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         const hasDynamic = currentStep.substeps.some((s) => s.isDynamic);
         if ((hasStatic && parsed.isDynamic) || (hasDynamic && !parsed.isDynamic)) {
           const stepLabel = currentStep.name;
-          throw new WorkflowSyntaxError(
+          throw new RunbookSyntaxError(
             `Cannot mix static and dynamic substeps in step ${stepLabel}`
           );
         }
@@ -310,7 +310,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
       if (cmd) {
         if (currentStep.pendingSubstep) {
           if (currentStep.pendingSubstep.command) {
-            throw new WorkflowSyntaxError(
+            throw new RunbookSyntaxError(
               `Multiple code blocks per substep not allowed in substep ${currentStep.pendingSubstep.id}`
             );
           }
@@ -319,7 +319,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
         } else {
           if (currentStep.command) {
             const stepLabel = currentStep.name;
-            throw new WorkflowSyntaxError(
+            throw new RunbookSyntaxError(
               `Multiple code blocks per step not allowed in Step ${stepLabel}.`
             );
           }
@@ -350,7 +350,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
               if (currentStep.pendingSubstep.hasSeenPromptText || currentStep.pendingSubstep.hasSeenContent) {
                 const stepLabel = currentStep.name;
                 const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
-                throw new WorkflowSyntaxError(
+                throw new RunbookSyntaxError(
                   `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`
                 );
               }
@@ -361,7 +361,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
               if (currentStep.hasSeenPromptText || currentStep.hasSeenContent) {
                 const stepLabel = currentStep.name;
                 const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
-                throw new WorkflowSyntaxError(
+                throw new RunbookSyntaxError(
                   `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`
                 );
               }
@@ -377,7 +377,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
                 const stepLabel = currentStep.name;
                 // E17-R2: Include line number in error for better DX
                 const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
-                throw new WorkflowSyntaxError(
+                throw new RunbookSyntaxError(
                   `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`
                 );
               }
@@ -388,7 +388,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
                 const stepLabel = currentStep.name;
                 // E17-R2: Include line number in error for better DX
                 const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
-                throw new WorkflowSyntaxError(
+                throw new RunbookSyntaxError(
                   `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`
                 );
               }
@@ -416,7 +416,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             if (currentStep.pendingSubstep.hasSeenPromptText || currentStep.pendingSubstep.hasSeenContent) {
               const stepLabel = currentStep.name;
               const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
-              throw new WorkflowSyntaxError(
+              throw new RunbookSyntaxError(
                 `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`
               );
             }
@@ -427,7 +427,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             if (currentStep.hasSeenPromptText || currentStep.hasSeenContent) {
               const stepLabel = currentStep.name;
               const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
-              throw new WorkflowSyntaxError(
+              throw new RunbookSyntaxError(
                 `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`
               );
             }
@@ -442,13 +442,13 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             const stepLabel = currentStep.name;
             // E17-R2: Include line number in error for better DX
             const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
-            throw new WorkflowSyntaxError(
+            throw new RunbookSyntaxError(
               `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`
             );
           }
           // Only add content after validation passes
           currentStep.pendingSubstep.content += ' - ' + text + '\n';
-          // Mark content seen if workflow list
+          // Mark content seen if runbook list
           if (isRunbookRef) {
             currentStep.pendingSubstep.hasSeenContent = true;
           }
@@ -459,7 +459,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
             const stepLabel = currentStep.name;
             // E17-R2: Include line number in error for better DX
             const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
-            throw new WorkflowSyntaxError(
+            throw new RunbookSyntaxError(
               `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`
             );
           }
@@ -469,7 +469,7 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
           if (!isRunbookRef) {
             implicitText += itemText;
           } else {
-            // Mark content seen if workflow list
+            // Mark content seen if runbook list
             currentStep.hasSeenContent = true;
           }
         }
@@ -485,10 +485,10 @@ export function parseWorkflowDocument(markdown: string, filename?: string, optio
   }
 
   if (!options?.skipValidation) {
-    const errors = validateWorkflow(steps);
+    const errors = validateRunbook(steps);
     if (errors.length > 0) {
       // For backwards compatibility, throw the first error
-      throw new WorkflowSyntaxError(errors[0].message);
+      throw new RunbookSyntaxError(errors[0].message);
     }
   }
 
@@ -518,7 +518,7 @@ function finalizeStep(
   validateNEXTUsage(pendingConditionals, step.isDynamic);
 
   const transitions = convertToTransitions(pendingConditionals);
-  const workflows = extractWorkflowList(step.content);
+  const runbooks = extractRunbookList(step.content);
 
   return {
     name: step.name,
@@ -528,7 +528,7 @@ function finalizeStep(
     prompt: promptText.trim() || undefined,
     transitions: transitions ?? undefined,
     substeps: step.substeps.length > 0 ? step.substeps : undefined,
-    workflows: workflows.length > 0 ? workflows : undefined,
+    workflows: runbooks.length > 0 ? runbooks : undefined,
     line: step.line
   };
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { getStepTotal, isDynamicWorkflow } from '../../src/helpers/context.js';
+import { getStepTotal, isDynamicRunbook } from '../../src/helpers/context.js';
 
 describe('context helpers', () => {
   let tempDir: string;
@@ -15,33 +15,33 @@ describe('context helpers', () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  describe('isDynamicWorkflow', () => {
-    it('returns true for workflow with dynamic first step', async () => {
+  describe('isDynamicRunbook', () => {
+    it('returns true for runbook with dynamic first step', async () => {
       const content = `# Dynamic\n## {N}. Process\nDo something.`;
       const filePath = path.join(tempDir, 'dynamic.md');
       await fs.writeFile(filePath, content);
 
-      const result = await isDynamicWorkflow(tempDir, 'dynamic.md');
+      const result = await isDynamicRunbook(tempDir, 'dynamic.md');
       expect(result).toBe(true);
     });
 
-    it('returns false for workflow with static first step', async () => {
+    it('returns false for runbook with static first step', async () => {
       const content = `# Static\n## 1. First Step\nDo something.`;
       const filePath = path.join(tempDir, 'static.md');
       await fs.writeFile(filePath, content);
 
-      const result = await isDynamicWorkflow(tempDir, 'static.md');
+      const result = await isDynamicRunbook(tempDir, 'static.md');
       expect(result).toBe(false);
     });
 
     it('returns false when file does not exist', async () => {
-      const result = await isDynamicWorkflow(tempDir, 'nonexistent.md');
+      const result = await isDynamicRunbook(tempDir, 'nonexistent.md');
       expect(result).toBe(false);
     });
   });
 
   describe('getStepTotal', () => {
-    it('returns {N} for dynamic workflows', async () => {
+    it('returns {N} for dynamic runbooks', async () => {
       const content = `# Dynamic\n## {N}. Process\nDo something.`;
       const filePath = path.join(tempDir, 'dynamic.md');
       await fs.writeFile(filePath, content);
@@ -50,7 +50,7 @@ describe('context helpers', () => {
       expect(result).toBe('{N}');
     });
 
-    it('returns step count for static workflows', async () => {
+    it('returns step count for static runbooks', async () => {
       const content = `# Static\n## 1. First\nOne.\n## 2. Second\nTwo.`;
       const filePath = path.join(tempDir, 'static.md');
       await fs.writeFile(filePath, content);

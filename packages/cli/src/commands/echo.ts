@@ -3,10 +3,10 @@
 import type { Command } from 'commander';
 import * as fs from 'fs/promises';
 import {
-  WorkflowStateManager,
-  parseWorkflow,
+  RunbookStateManager,
+  parseRunbook,
 } from '@rundown/core';
-import { getCwd, findWorkflowFile } from '../helpers/context.js';
+import { getCwd, findRunbookFile } from '../helpers/context.js';
 import {
   getStepRetryMax,
   isValidResult,
@@ -19,18 +19,18 @@ export function collect(value: string, previous: string[]): string[] {
 }
 
 /**
- * Registers the 'echo' command for workflow testing.
+ * Registers the 'echo' command for runbook testing.
  * @param program - Commander program instance to register the command on
  */
 export function registerEchoCommand(program: Command): void {
   program
     .command('echo [command...]')
-    .description('Echo command for workflow testing')
+    .description('Echo command for runbook testing')
     .option('-r, --result <outcome>', 'Add result to sequence (pass|fail)', collect, [])
     .action(async (command: string[] | undefined, options: { result: string[] }) => {
       try {
         const cwd = getCwd();
-        const manager = new WorkflowStateManager(cwd);
+        const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive();
         if (!state) {
           console.error('Error: No active runbook.');
@@ -50,12 +50,12 @@ export function registerEchoCommand(program: Command): void {
         const index = Math.min(retryCount, sequence.length - 1);
         const result = sequence[index] as 'pass' | 'fail';
 
-        // Load workflow to get current step for retry max
-        const workflowPath = await findWorkflowFile(cwd, state.workflow);
+        // Load runbook to get current step for retry max
+        const runbookPath = await findRunbookFile(cwd, state.runbook);
         let retryMax = 0;
-        if (workflowPath) {
-          const workflowContent = await fs.readFile(workflowPath, 'utf8');
-          const steps = parseWorkflow(workflowContent);
+        if (runbookPath) {
+          const runbookContent = await fs.readFile(runbookPath, 'utf8');
+          const steps = parseRunbook(runbookContent);
           const currentStepIndex = steps.findIndex(s => s.name === state.step);
           const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
           // currentStep is guaranteed to exist from array index

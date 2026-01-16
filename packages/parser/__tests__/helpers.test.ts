@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseAction, extractWorkflowList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, validateNEXTUsage, type ParsedConditional } from '../src/index.js';
+import { parseAction, extractRunbookList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, validateNEXTUsage, type ParsedConditional } from '../src/index.js';
 
 describe('parseAction GOTO NEXT', () => {
   it('parses GOTO NEXT as action', () => {
@@ -183,34 +183,34 @@ describe('parseAction GOTO with named targets', () => {
   });
 });
 
-describe('extractWorkflowList', () => {
-  it('should extract workflow files from markdown list', () => {
+describe('extractRunbookList', () => {
+  it('should extract runbook files from markdown list', () => {
     const content = `### 1.{n} Dispatch agents
  - verify-review.runbook.md
  - security-review.runbook.md
 
 Some other content`;
 
-    const result = extractWorkflowList(content);
+    const result = extractRunbookList(content);
     expect(result).toEqual(['verify-review.runbook.md', 'security-review.runbook.md']);
   });
 
-  it('should return empty array if no workflows', () => {
+  it('should return empty array if no runbooks', () => {
     const content = `### 1.{n} Dispatch agents
 
-Just a description, no workflows.`;
+Just a description, no runbooks.`;
 
-    const result = extractWorkflowList(content);
+    const result = extractRunbookList(content);
     expect(result).toEqual([]);
   });
 
   it('should only match .runbook.md files', () => {
     const content = `### 1.{n}
  - valid.runbook.md
- - not-a-workflow.md
+ - not-a-runbook.md
  - another.runbook.md`;
 
-    const result = extractWorkflowList(content);
+    const result = extractRunbookList(content);
     expect(result).toEqual(['valid.runbook.md', 'another.runbook.md']);
   });
 });

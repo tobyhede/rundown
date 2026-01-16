@@ -115,16 +115,16 @@ import {
 } from '@rundown/parser';
 
 /**
- * For WorkflowState.step - always a string: "1", "ErrorHandler", "{N}"
+ * For RunbookState.step - always a string: "1", "ErrorHandler", "{N}"
  */
-const WorkflowStepSchema = z.string().min(1);
+const RunbookStepSchema = z.string().min(1);
 
 /**
  * Schema for pending step.
  */
 const PendingStepSchema = z.object({
   stepId: StepIdSchema,
-  workflow: z.string().optional()
+  runbook: z.string().optional()
 });
 
 /**
@@ -139,15 +139,15 @@ const SubstepStateSchema = z.object({
 });
 
 /**
- * Workflow State Schema - Runtime Validation for Persisted WorkflowState
+ * Runbook State Schema - Runtime Validation for Persisted RunbookState
  */
-export const WorkflowStateSchema = z.object({
+export const RunbookStateSchema = z.object({
   id: z.string(),
-  workflow: z.string(),
+  runbook: z.string(),
   title: z.string().optional(),
   description: z.string().optional(),
-  step: WorkflowStepSchema, // UNIFIED: "1", "ErrorHandler", "{N}"
-  instance: z.number().int().positive().optional(), // Dynamic workflow instance (1, 2, 3, ...)
+  step: RunbookStepSchema, // UNIFIED: "1", "ErrorHandler", "{N}"
+  instance: z.number().int().positive().optional(), // Dynamic runbook instance (1, 2, 3, ...)
   substep: z.string().optional(),
   stepName: z.string(),
   retryCount: z.number().nonnegative().int(),
@@ -162,16 +162,16 @@ export const WorkflowStateSchema = z.object({
   pendingSteps: z.array(PendingStepSchema).readonly(),
   agentBindings: z.record(z.string(), z.object({
     stepId: StepIdSchema,
-    childWorkflowId: z.string().optional(),
+    childRunbookId: z.string().optional(),
     status: z.enum(['running', 'done', 'stopped']),
     result: z.enum(['pass', 'fail']).optional()
   })),
   substepStates: z.array(SubstepStateSchema).optional(),
   agentId: z.string().optional(),
-  parentWorkflowId: z.string().optional(),
+  parentRunbookId: z.string().optional(),
   parentStepId: StepIdSchema.optional(),
   nested: z.object({
-    workflow: z.string(),
+    runbook: z.string(),
     instanceId: z.string()
   }).optional(),
   startedAt: z.string(),
@@ -181,4 +181,4 @@ export const WorkflowStateSchema = z.object({
   lastResult: z.enum(['pass', 'fail']).optional()
 });
 
-export type ValidatedWorkflowState = z.infer<typeof WorkflowStateSchema>;
+export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;

@@ -5,9 +5,9 @@ import {
   renderTransitions,
   renderSubstep,
   renderStep
-} from '../../src/workflow/renderer/renderer.js';
-import { parseWorkflow } from '../../src/workflow/index.js';
-import type { Step, Substep } from '../../src/workflow/types.js';
+} from '../../src/runbook/renderer/renderer.js';
+import { parseRunbook } from '../../src/runbook/index.js';
+import type { Step, Substep } from '../../src/runbook/types.js';
 
 describe('renderAction', () => {
   it('renders CONTINUE', () => {
@@ -201,7 +201,7 @@ describe('renderSubstep with dynamic parent', () => {
 });
 
 describe('round-trip: parse -> render -> parse', () => {
-  it('round-trips simple workflow', () => {
+  it('round-trips simple runbook', () => {
     const original = `## 1. First step
 
 Some description
@@ -210,9 +210,9 @@ Some description
 
 More description`;
 
-    const parsed1 = parseWorkflow(original);
+    const parsed1 = parseRunbook(original);
     const rendered = parsed1.map(renderStep).join('\n\n');
-    const parsed2 = parseWorkflow(rendered);
+    const parsed2 = parseRunbook(rendered);
 
     expect(parsed2).toHaveLength(2);
     expect(parsed2[0].name).toBe('1');
@@ -221,7 +221,7 @@ More description`;
     expect(parsed2[1].description).toBe('Second step');
   });
 
-  it('round-trips workflow with substeps', () => {
+  it('round-trips runbook with substeps', () => {
     const original = `## 1. Dispatch reviewers
 
 ### 1.1 First reviewer (code-review-agent)
@@ -232,11 +232,11 @@ FAIL ANY: STOP
 
 ## 2. Complete`;
 
-    const parsed1 = parseWorkflow(original);
+    const parsed1 = parseRunbook(original);
     expect(parsed1[0].substeps).toHaveLength(2);
 
     const rendered = parsed1.map(renderStep).join('\n\n');
-    const parsed2 = parseWorkflow(rendered);
+    const parsed2 = parseRunbook(rendered);
 
     // Verify substeps survive round-trip
     expect(parsed2[0].substeps).toHaveLength(2);
@@ -247,7 +247,7 @@ FAIL ANY: STOP
     expect(parsed2[0].substeps?.[1].agentType).toBe('code-agent');
   });
 
-  it('round-trips workflow with dynamic substeps', () => {
+  it('round-trips runbook with dynamic substeps', () => {
     const original = `## 1. Execute batch
 
 ### 1.{n} Execute step
@@ -255,18 +255,18 @@ FAIL ANY: STOP
 PASS ALL: CONTINUE
 FAIL ANY: STOP`;
 
-    const parsed1 = parseWorkflow(original);
+    const parsed1 = parseRunbook(original);
     expect(parsed1[0].substeps?.[0].isDynamic).toBe(true);
 
     const rendered = parsed1.map(renderStep).join('\n\n');
-    const parsed2 = parseWorkflow(rendered);
+    const parsed2 = parseRunbook(rendered);
 
     expect(parsed2[0].substeps).toHaveLength(1);
     expect(parsed2[0].substeps?.[0].isDynamic).toBe(true);
     expect(parsed2[0].substeps?.[0].id).toBe('{n}');
   });
 
-  it('round-trips workflow with GOTO substep targets', () => {
+  it('round-trips runbook with GOTO substep targets', () => {
     const original = `## 1. First step
 
 PASS: GOTO 2.1
@@ -280,11 +280,11 @@ FAIL: STOP
 PASS ALL: CONTINUE
 FAIL ANY: STOP`;
 
-    const parsed1 = parseWorkflow(original);
+    const parsed1 = parseRunbook(original);
     expect(parsed1[0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
 
     const rendered = parsed1.map(renderStep).join('\n\n');
-    const parsed2 = parseWorkflow(rendered);
+    const parsed2 = parseRunbook(rendered);
 
     expect(parsed2[0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
   });
@@ -298,7 +298,7 @@ FAIL ANY: STOP`;
 
 ## 2. Continue`;
 
-    const parsed = parseWorkflow(markdown);
+    const parsed = parseRunbook(markdown);
     expect(parsed[0].substeps?.[0].workflows).toEqual(['setup.runbook.md']);
   });
 });

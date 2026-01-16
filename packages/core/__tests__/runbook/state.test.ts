@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { WorkflowStateManager } from '../../src/workflow/state.js';
-import { type Step, type Workflow } from '../../src/workflow/types.js';
+import { RunbookStateManager } from '../../src/runbook/state.js';
+import { type Step, type Workflow } from '../../src/runbook/types.js';
 
-describe('WorkflowStateManager', () => {
+describe('RunbookStateManager', () => {
   let testDir: string;
-  let manager: WorkflowStateManager;
+  let manager: RunbookStateManager;
   const mockSteps: Step[] = [{
     name: '1',
     description: 'Initial step',
@@ -21,19 +21,19 @@ describe('WorkflowStateManager', () => {
 
   beforeEach(async () => {
     testDir = await mkdtemp(join(tmpdir(), 'ws-test-'));
-    manager = new WorkflowStateManager(testDir);
+    manager = new RunbookStateManager(testDir);
   });
 
   afterEach(async () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  describe('getChildWorkflowResult', () => {
+  describe('getChildRunbookResult', () => {
     it('should return pass when child has completed=true', async () => {
       const child = await manager.create('child.runbook.md', mockWorkflow);
       await manager.update(child.id, { variables: { completed: true } });
 
-      const result = await manager.getChildWorkflowResult(child.id);
+      const result = await manager.getChildRunbookResult(child.id);
       expect(result).toBe('pass');
     });
 
@@ -41,7 +41,7 @@ describe('WorkflowStateManager', () => {
       const child = await manager.create('child.runbook.md', mockWorkflow);
       await manager.update(child.id, { variables: { stopped: true } });
 
-      const result = await manager.getChildWorkflowResult(child.id);
+      const result = await manager.getChildRunbookResult(child.id);
       expect(result).toBe('fail');
     });
 
@@ -50,12 +50,12 @@ describe('WorkflowStateManager', () => {
       // eslint-disable-next-line @typescript-eslint/no-deprecated
       await manager.setActive(child.id);
 
-      const result = await manager.getChildWorkflowResult(child.id);
+      const result = await manager.getChildRunbookResult(child.id);
       expect(result).toBeNull();
     });
 
     it('should return pass when child state deleted', async () => {
-      const result = await manager.getChildWorkflowResult('nonexistent-id');
+      const result = await manager.getChildRunbookResult('nonexistent-id');
       expect(result).toBe('pass');
     });
 
@@ -65,12 +65,12 @@ describe('WorkflowStateManager', () => {
       await manager.setActive(child.id);
       await manager.stash();
 
-      const result = await manager.getChildWorkflowResult(child.id);
+      const result = await manager.getChildRunbookResult(child.id);
       expect(result).toBeNull();
     });
   });
 
-  describe('WorkflowStateManager substep initialization', () => {
+  describe('RunbookStateManager substep initialization', () => {
     it('initializes substepStates when step has static substeps', async () => {
       const substeps = [
         { id: '1', description: 'First reviewer', isDynamic: false, prompts: [] },
@@ -103,7 +103,7 @@ describe('WorkflowStateManager', () => {
     });
   });
 
-  describe('WorkflowStateManager dynamic substeps', () => {
+  describe('RunbookStateManager dynamic substeps', () => {
     it('adds dynamic substep with incrementing ID', async () => {
       const state = await manager.create('test.runbook.md', mockWorkflow);
       await manager.update(state.id, { substepStates: [] });
@@ -121,7 +121,7 @@ describe('WorkflowStateManager', () => {
     });
   });
 
-  describe('WorkflowStateManager substep lifecycle', () => {
+  describe('RunbookStateManager substep lifecycle', () => {
     it('binds agent to substep', async () => {
       const state = await manager.create('test.runbook.md', mockWorkflow);
       await manager.update(state.id, {
@@ -241,17 +241,17 @@ describe('WorkflowStateManager', () => {
   });
 
   describe('Per-agent workflow stacks', () => {
-    it('pushWorkflow adds to default stack when no agentId', async () => {
+    it('pushRunbook adds to default stack when no agentId', async () => {
       const state = await manager.create('test.md', mockWorkflow);
-      await manager.pushWorkflow(state.id);
+      await manager.pushRunbook(state.id);
 
       const active = await manager.getActive();
       expect(active?.id).toBe(state.id);
     });
 
-    it('pushWorkflow adds to agent-specific stack', async () => {
+    it('pushRunbook adds to agent-specific stack', async () => {
       const state = await manager.create('test.md', mockWorkflow);
-      await manager.pushWorkflow(state.id, 'agent-001');
+      await manager.pushRunbook(state.id, 'agent-001');
 
       const active = await manager.getActive('agent-001');
       expect(active?.id).toBe(state.id);
@@ -261,14 +261,14 @@ describe('WorkflowStateManager', () => {
       expect(defaultActive).toBeNull();
     });
 
-    it('popWorkflow removes from stack and returns new top', async () => {
+    it('popRunbook removes from stack and returns new top', async () => {
       const parent = await manager.create('parent.md', mockWorkflow);
       const child = await manager.create('child.md', mockWorkflow);
 
-      await manager.pushWorkflow(parent.id);
-      await manager.pushWorkflow(child.id);
+      await manager.pushRunbook(parent.id);
+      await manager.pushRunbook(child.id);
 
-      const newTopId = await manager.popWorkflow();
+      const newTopId = await manager.popRunbook();
       expect(newTopId).toBe(parent.id);
 
       const active = await manager.getActive();
@@ -281,23 +281,23 @@ describe('WorkflowStateManager', () => {
       const wf3 = await manager.create('level3.md', mockWorkflow);
       const wf4 = await manager.create('level4.md', mockWorkflow);
 
-      await manager.pushWorkflow(wf1.id);
-      await manager.pushWorkflow(wf2.id);
-      await manager.pushWorkflow(wf3.id);
-      await manager.pushWorkflow(wf4.id);
+      await manager.pushRunbook(wf1.id);
+      await manager.pushRunbook(wf2.id);
+      await manager.pushRunbook(wf3.id);
+      await manager.pushRunbook(wf4.id);
 
       expect((await manager.getActive())?.id).toBe(wf4.id);
 
-      await manager.popWorkflow();
+      await manager.popRunbook();
       expect((await manager.getActive())?.id).toBe(wf3.id);
 
-      await manager.popWorkflow();
+      await manager.popRunbook();
       expect((await manager.getActive())?.id).toBe(wf2.id);
 
-      await manager.popWorkflow();
+      await manager.popRunbook();
       expect((await manager.getActive())?.id).toBe(wf1.id);
 
-      await manager.popWorkflow();
+      await manager.popRunbook();
       expect(await manager.getActive()).toBeNull();
     });
 
@@ -306,9 +306,9 @@ describe('WorkflowStateManager', () => {
       const child1 = await manager.create('child1.md', mockWorkflow);
       const child2 = await manager.create('child2.md', mockWorkflow);
 
-      await manager.pushWorkflow(main.id);
-      await manager.pushWorkflow(child1.id, 'agent-001');
-      await manager.pushWorkflow(child2.id, 'agent-002');
+      await manager.pushRunbook(main.id);
+      await manager.pushRunbook(child1.id, 'agent-001');
+      await manager.pushRunbook(child2.id, 'agent-002');
 
       // Each agent sees their own workflow
       expect((await manager.getActive())?.id).toBe(main.id);
@@ -316,7 +316,7 @@ describe('WorkflowStateManager', () => {
       expect((await manager.getActive('agent-002'))?.id).toBe(child2.id);
 
       // Pop one agent doesn't affect others
-      await manager.popWorkflow('agent-001');
+      await manager.popRunbook('agent-001');
       expect(await manager.getActive('agent-001')).toBeNull();
       expect((await manager.getActive('agent-002'))?.id).toBe(child2.id);
       expect((await manager.getActive())?.id).toBe(main.id);

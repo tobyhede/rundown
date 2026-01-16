@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseStepIdFromString, stepIdToString, stepIdEquals } from '../../src/workflow/step-id.js';
+import { parseStepIdFromString, stepIdToString, stepIdEquals } from '../../src/runbook/step-id.js';
 
 describe('parseStepIdFromString', () => {
   it('parses step only', () => {

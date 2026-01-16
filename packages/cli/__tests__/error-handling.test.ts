@@ -18,14 +18,14 @@ describe('error handling', () => {
     await workspace.cleanup();
   });
 
-  describe('WorkflowSyntaxError', () => {
+  describe('RunbookSyntaxError', () => {
     it('displays parsing errors clearly', async () => {
-      // Create invalid workflow
-      const invalidWorkflow = `
-# Not a valid workflow
+      // Create invalid runbook
+      const invalidRunbook = `
+# Not a valid runbook
 This doesn't have proper ## headers
 `;
-      await writeFile(join(workspace.cwd, 'invalid.md'), invalidWorkflow);
+      await writeFile(join(workspace.cwd, 'invalid.md'), invalidRunbook);
 
       const result = runCli('run invalid.md', workspace);
 
@@ -33,7 +33,7 @@ This doesn't have proper ## headers
       expect(result.stderr).toContain('Syntax error');
     });
 
-    it('handles empty workflow file', async () => {
+    it('handles empty runbook file', async () => {
       await writeFile(join(workspace.cwd, 'empty.md'), '');
 
       const result = runCli('run empty.md', workspace);
@@ -44,7 +44,7 @@ This doesn't have proper ## headers
   });
 
   describe('file not found', () => {
-    it('handles missing workflow file', async () => {
+    it('handles missing runbook file', async () => {
       const result = runCli('run nonexistent.md', workspace);
 
       expect(result.exitCode).toBe(1);
@@ -54,7 +54,7 @@ This doesn't have proper ## headers
 
   describe('invalid state', () => {
     it('handles corrupted state file', async () => {
-      // Start a workflow
+      // Start a runbook
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
       // Corrupt the state file
@@ -67,7 +67,7 @@ This doesn't have proper ## headers
         await writeFile(join(stateDir, stateFile), 'not valid json');
       }
 
-      // Try to use the workflow
+      // Try to use the runbook
       const result = runCli('pass', workspace);
 
       // Should handle gracefully (may show error or "no active runbook")

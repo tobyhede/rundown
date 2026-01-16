@@ -1,5 +1,5 @@
 import * as os from 'os';
-import { executeCommand } from '../../src/workflow/executor.js';
+import { executeCommand } from '../../src/runbook/executor.js';
 
 describe('executeCommand', () => {
   it('returns success true for exit code 0', async () => {

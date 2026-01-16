@@ -3,17 +3,17 @@
 import * as fs from 'fs/promises';
 import type { Command } from 'commander';
 import {
-  WorkflowStateManager,
-  parseWorkflow,
+  RunbookStateManager,
+  parseRunbook,
   stepIdToString,
   printMetadata,
   printActionBlock,
   printStepBlock,
-  printWorkflowStashed,
-  printNoActiveWorkflow,
+  printRunbookStashed,
+  printNoActiveRunbook,
   type ActionBlockData,
 } from '@rundown/core';
-import { getCwd, getStepTotal, findWorkflowFile } from '../helpers/context.js';
+import { getCwd, getStepTotal, findRunbookFile } from '../helpers/context.js';
 import {
   getStepRetryMax,
   buildMetadata,
@@ -21,23 +21,23 @@ import {
 import { withErrorHandling } from '../helpers/wrapper.js';
 
 /**
- * Registers the 'status' command for displaying workflow state.
+ * Registers the 'status' command for displaying runbook state.
  * @param program - Commander program instance to register the command on
  */
 export function registerStatusCommand(program: Command): void {
   program
     .command('status')
-    .description('Show current workflow state')
-    .option('--agent <agentId>', 'Show status for agent-specific workflow')
+    .description('Show current runbook state')
+    .option('--agent <agentId>', 'Show status for agent-specific runbook')
     .action(async (options: { agent?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const manager = new WorkflowStateManager(cwd);
+        const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive(options.agent);
-        const stashedId = await manager.getStashedWorkflowId();
+        const stashedId = await manager.getStashedRunbookId();
 
         if (!state && !stashedId) {
-          printNoActiveWorkflow();
+          printNoActiveRunbook();
           return;
         }
 
@@ -45,27 +45,27 @@ export function registerStatusCommand(program: Command): void {
           const stashed = await manager.load(stashedId);
           if (stashed) {
             printMetadata(buildMetadata(stashed));
-            const totalSteps = await getStepTotal(cwd, stashed.workflow);
-            printWorkflowStashed({ current: stashed.step, total: totalSteps, substep: stashed.substep });
+            const totalSteps = await getStepTotal(cwd, stashed.runbook);
+            printRunbookStashed({ current: stashed.step, total: totalSteps, substep: stashed.substep });
           }
           return;
         }
 
         if (!state) return;
 
-        const workflowPath = await findWorkflowFile(cwd, state.workflow);
-        if (!workflowPath) {
-          throw new Error(`Workflow file ${state.workflow} not found`);
+        const runbookPath = await findRunbookFile(cwd, state.runbook);
+        if (!runbookPath) {
+          throw new Error(`Runbook file ${state.runbook} not found`);
         }
-        const content = await fs.readFile(workflowPath, 'utf8');
-        const steps = parseWorkflow(content);
+        const content = await fs.readFile(runbookPath, 'utf8');
+        const steps = parseRunbook(content);
         const isDynamic = steps.length > 0 && steps[0].isDynamic;
-        // For dynamic workflows, find step by checking if it's the dynamic template
+        // For dynamic runbooks, find step by checking if it's the dynamic template
         const currentStepIndex = isDynamic ? 0 : steps.findIndex(s => s.name === state.step);
         const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
-        // '{N}' indicates dynamic workflow with unbounded iterations
+        // '{N}' indicates dynamic runbook with unbounded iterations
         const totalSteps: number | string = isDynamic ? '{N}' : steps.length;
-        // Use state.instance for dynamic workflows, state.step for static
+        // Use state.instance for dynamic runbooks, state.step for static
         const displayStep = isDynamic && state.instance !== undefined
           ? String(state.instance)
           : state.step;

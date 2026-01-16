@@ -16,8 +16,8 @@ export const Errors = {
     new RundownError('STATE_DIR_NOT_ACCESSIBLE', { file: path }),
 
   // Parse/Syntax
-  emptyWorkflow: (file: string): RundownError =>
-    new RundownError('EMPTY_WORKFLOW', { file }),
+  emptyRunbook: (file: string): RundownError =>
+    new RundownError('EMPTY_RUNBOOK', { file }),
 
   noStepsFound: (file: string): RundownError =>
     new RundownError('NO_STEPS_FOUND', { file }),
@@ -29,17 +29,17 @@ export const Errors = {
     new RundownError('SYNTAX_ERROR', { file, line, message }),
 
   // State
-  noActiveWorkflow: (): RundownError =>
-    new RundownError('NO_ACTIVE_WORKFLOW'),
+  noActiveRunbook: (): RundownError =>
+    new RundownError('NO_ACTIVE_RUNBOOK'),
 
   stateParseError: (file: string, message?: string): RundownError =>
     new RundownError('STATE_PARSE_ERROR', { file, message }),
 
-  workflowCompleted: (file?: string): RundownError =>
-    new RundownError('WORKFLOW_COMPLETED', { file }),
+  runbookCompleted: (file?: string): RundownError =>
+    new RundownError('RUNBOOK_COMPLETED', { file }),
 
-  workflowStopped: (file?: string): RundownError =>
-    new RundownError('WORKFLOW_STOPPED', { file }),
+  runbookStopped: (file?: string): RundownError =>
+    new RundownError('RUNBOOK_STOPPED', { file }),
 
   // Validation
   gotoTargetNotFound: (step: string, substep?: string): RundownError =>
@@ -59,11 +59,11 @@ export const Errors = {
   engineInitFailed: (cause?: Error): RundownError =>
     new RundownError('ENGINE_INIT_FAILED', {}, cause),
 
-  workflowHasNoSteps: (file?: string): RundownError =>
-    new RundownError('WORKFLOW_HAS_NO_STEPS', { file }),
+  runbookHasNoSteps: (file?: string): RundownError =>
+    new RundownError('RUNBOOK_HAS_NO_STEPS', { file }),
 
-  childWorkflowActive: (childId?: string): RundownError =>
-    new RundownError('CHILD_WORKFLOW_ACTIVE', { childId }),
+  childRunbookActive: (childId?: string): RundownError =>
+    new RundownError('CHILD_RUNBOOK_ACTIVE', { childId }),
 
   // Command
   invalidStepFormat: (value: string): RundownError =>

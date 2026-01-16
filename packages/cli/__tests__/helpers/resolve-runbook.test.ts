@@ -20,7 +20,7 @@ describe('resolveRunbookFile', () => {
     await fs.rm(testDir, { recursive: true, force: true });
   });
 
-  it('should find workflow in .claude/rundown/runbooks/', async () => {
+  it('should find runbook in .claude/rundown/runbooks/', async () => {
     const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
     await fs.mkdir(claudeDir, { recursive: true });
     await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Test');
@@ -30,7 +30,7 @@ describe('resolveRunbookFile', () => {
     expect(result).toBe(path.join(claudeDir, 'test.runbook.md'));
   });
 
-  it('should find workflow in plugin workflows directory', async () => {
+  it('should find runbook in plugin runbooks directory', async () => {
     const pluginDir = path.join(testDir, 'plugin/runbooks');
     await fs.mkdir(pluginDir, { recursive: true });
     await fs.writeFile(path.join(pluginDir, 'plugin.runbook.md'), '# Plugin');
@@ -43,7 +43,7 @@ describe('resolveRunbookFile', () => {
     // afterEach restores originalPluginRoot
   });
 
-  it('should find workflow relative to cwd', async () => {
+  it('should find runbook relative to cwd', async () => {
     await fs.writeFile(path.join(testDir, 'relative.runbook.md'), '# Relative');
 
     const result = await resolveRunbookFile(testDir, 'relative.runbook.md');
@@ -51,7 +51,7 @@ describe('resolveRunbookFile', () => {
     expect(result).toBe(path.join(testDir, 'relative.runbook.md'));
   });
 
-  it('should return null if workflow not found', async () => {
+  it('should return null if runbook not found', async () => {
     const result = await resolveRunbookFile(testDir, 'nonexistent.runbook.md');
 
     expect(result).toBeNull();

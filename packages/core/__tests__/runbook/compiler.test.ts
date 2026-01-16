@@ -1,7 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { createActor } from 'xstate';
-import { compileWorkflowToMachine } from '../../src/workflow/compiler.js';
-import type { Step } from '../../src/workflow/types.js';
+import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
+import type { Step } from '../../src/runbook/types.js';
 
 describe('workflow compiler', () => {
   describe('dynamic step compilation', () => {
@@ -27,7 +27,7 @@ describe('workflow compiler', () => {
         }
       ];
 
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       expect(machine).toBeDefined();
     });
 
@@ -44,7 +44,7 @@ describe('workflow compiler', () => {
           }
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       expect(machine).toBeDefined();
     });
   });
@@ -62,7 +62,7 @@ describe('workflow compiler', () => {
           ]
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       // @ts-expect-error - states is internal to machine
       const stateIds = Object.keys(machine.config.states);
       expect(stateIds).toContain('step_1_1');
@@ -78,7 +78,7 @@ describe('workflow compiler', () => {
           isDynamic: false
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       // @ts-expect-error - accessing internal states property
       const stateIds = Object.keys(machine.config.states);
       expect(stateIds).toContain('step_1');
@@ -99,7 +99,7 @@ describe('workflow compiler', () => {
           }
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -129,7 +129,7 @@ describe('workflow compiler', () => {
           ]
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -158,7 +158,7 @@ describe('workflow compiler', () => {
           ]
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -188,7 +188,7 @@ describe('workflow compiler', () => {
           ]
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -224,7 +224,7 @@ describe('workflow compiler', () => {
           ]
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -259,7 +259,7 @@ describe('workflow compiler', () => {
           ]
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -295,7 +295,7 @@ describe('workflow compiler', () => {
           ]
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -325,7 +325,7 @@ describe('workflow compiler', () => {
           description: 'Named step - should be skipped by CONTINUE'
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
@@ -358,7 +358,7 @@ describe('workflow compiler', () => {
           description: 'Second'
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
@@ -392,7 +392,7 @@ describe('workflow compiler', () => {
           }
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
@@ -430,7 +430,7 @@ describe('workflow compiler', () => {
           }
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
@@ -458,7 +458,7 @@ describe('workflow compiler', () => {
           }
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
@@ -489,7 +489,7 @@ describe('workflow compiler', () => {
           ]
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -519,7 +519,7 @@ describe('workflow compiler', () => {
           ]
         }
       ];
-      const machine = compileWorkflowToMachine(steps);
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
