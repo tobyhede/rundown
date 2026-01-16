@@ -26,10 +26,8 @@ function generateId(): string {
 }
 
 interface SessionData {
-  stacks: Record<string, string[]>;  // agentId → [wf1, wf2, ...]
-  defaultStack: string[];            // main agent stack (no agentId)
-  // Keep for backwards compatibility during migration
-  activeRunbook?: string | null;
+  stacks: Partial<Record<string, string[]>>;  // agentId → [wf1, wf2, ...]
+  defaultStack: string[];                     // main agent stack (no agentId)
   stashedRunbookId?: string;
 }
 
@@ -297,9 +295,7 @@ export class RunbookStateManager {
   /**
    * Get the currently active runbook for an agent.
    *
-   * Returns the top runbook from the agent's stack. Supports both the new
-   * stack-based format and the legacy activeRunbook format for backwards
-   * compatibility during migration.
+   * Returns the top runbook from the agent's stack.
    *
    * @param agentId - Optional agent ID; if omitted, uses the default stack
    * @returns The active runbook state, or null if no runbook is active
@@ -307,48 +303,17 @@ export class RunbookStateManager {
   async getActive(agentId?: string): Promise<RunbookState | null> {
     const session = await this.loadSession();
 
-    // Migration: handle old format
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (session.activeRunbook && !session.stacks && !session.defaultStack) {
-      return await this.load(session.activeRunbook);
-    }
-
     let stack: string[];
     if (agentId) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      stack = session.stacks?.[agentId] ?? [];
+      stack = session.stacks[agentId] ?? [];
     } else {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      stack = session.defaultStack ?? [];
+      stack = session.defaultStack;
     }
 
     const topId = stack[stack.length - 1];
     return topId ? await this.load(topId) : null;
   }
 
-  /**
-   * Set the active runbook ID directly in the session.
-   *
-   * @deprecated Use pushRunbook() and popRunbook() instead.
-   * This method only sets activeRunbook for backwards compatibility.
-   * New code should use the stack-based methods for proper per-agent isolation.
-   *
-   * @param id - The runbook state ID to set as active, or null to clear
-   */
-  async setActive(id: string | null): Promise<void> {
-    await fs.mkdir(path.dirname(this.sessionPath), { recursive: true });
-
-    let session: SessionData = { activeRunbook: null, stacks: {}, defaultStack: [] };
-    try {
-      const content = await fs.readFile(this.sessionPath, 'utf8');
-      session = JSON.parse(content) as SessionData;
-    } catch {
-      /* use default */
-    }
-
-    session.activeRunbook = id;
-    await fs.writeFile(this.sessionPath, JSON.stringify(session, null, 2));
-  }
 
   /**
    * Push a runbook onto an agent's runbook stack.
@@ -362,22 +327,13 @@ export class RunbookStateManager {
   async pushRunbook(id: string, agentId?: string): Promise<void> {
     const session = await this.loadSession();
 
-    // Initialize stacks if not present (migration)
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (!session.stacks) {
-      session.stacks = {};
-    }
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (!session.defaultStack) {
-      session.defaultStack = [];
-    }
-
     if (agentId) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (!session.stacks[agentId]) {
-        session.stacks[agentId] = [];
+      const stack = session.stacks[agentId];
+      if (stack) {
+        stack.push(id);
+      } else {
+        session.stacks[agentId] = [id];
       }
-      session.stacks[agentId].push(id);
     } else {
       session.defaultStack.push(id);
     }
@@ -397,16 +353,6 @@ export class RunbookStateManager {
   async popRunbook(agentId?: string): Promise<string | null> {
     const session = await this.loadSession();
 
-    // Initialize if not present
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (!session.stacks) {
-      session.stacks = {};
-    }
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (!session.defaultStack) {
-      session.defaultStack = [];
-    }
-
     let stack: string[];
     if (agentId) {
       stack = session.stacks[agentId] ?? [];
@@ -415,7 +361,6 @@ export class RunbookStateManager {
     } else {
       stack = session.defaultStack;
       stack.pop();
-      session.defaultStack = stack;
     }
 
     await this.saveSession(session);
@@ -559,7 +504,6 @@ export class RunbookStateManager {
    *
    * Removes the active runbook from the agent's stack and stores its ID
    * in the session's stashed slot. Only one runbook can be stashed at a time.
-   * Supports both the new stack-based format and legacy activeRunbook format.
    *
    * @param agentId - Optional agent ID; if omitted, uses the default stack
    * @returns The stashed runbook ID, or null if no runbook was active
@@ -567,42 +511,19 @@ export class RunbookStateManager {
   async stash(agentId?: string): Promise<string | null> {
     const session = await this.loadSession();
 
-    // Get the active runbook ID - check stacks first, then fall back to activeRunbook
-    let activeId: string | null | undefined = null;
-
+    let activeId: string | undefined;
     if (agentId) {
-      // Agent-specific stack
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      const stack = session.stacks?.[agentId];
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      activeId = stack?.[stack.length - 1];
+      const stack = session.stacks[agentId];
+      if (!stack || stack.length === 0) return null;
+      activeId = stack[stack.length - 1];
+      stack.pop();
     } else {
-      // Check defaultStack first (new format), then activeRunbook (old format)
       const stack = session.defaultStack;
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      activeId = stack && stack.length > 0 ? stack[stack.length - 1] : session.activeRunbook;
+      if (stack.length === 0) return null;
+      activeId = stack[stack.length - 1];
+      stack.pop();
     }
 
-    if (!activeId) return null;
-
-    // Pop from appropriate stack
-    if (agentId) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (session.stacks?.[agentId]) {
-        session.stacks[agentId].pop();
-      }
-    } else {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (session.defaultStack && session.defaultStack.length > 0) {
-        session.defaultStack.pop();
-      } else if (session.activeRunbook) {
-        // Migration: clear activeRunbook for old format
-        session.activeRunbook = null;
-      }
-    }
-
-    // Store stashed ID (one per agent would need more complex structure)
-    // For now, keep single stash for backwards compat
     session.stashedRunbookId = activeId;
     await this.saveSession(session);
 
@@ -614,7 +535,6 @@ export class RunbookStateManager {
    *
    * Retrieves the stashed runbook ID and pushes it back onto the agent's
    * stack, making it the active runbook again. Clears the stashed slot.
-   * Supports both the new stack-based format and legacy activeRunbook format.
    *
    * @param agentId - Optional agent ID; if omitted, uses the default stack
    * @returns The restored runbook state, or null if nothing was stashed or runbook not found
@@ -632,26 +552,16 @@ export class RunbookStateManager {
       return null;
     }
 
-    // Push back to appropriate location
+    // Push back to appropriate stack
     if (agentId) {
-      // Agent-specific stack
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (!session.stacks) session.stacks = {};
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (!session.stacks[agentId]) session.stacks[agentId] = [];
-      session.stacks[agentId].push(stashedId);
-    } else {
-      // Default stack (new format) or activeRunbook (old format for compat)
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (session.defaultStack !== undefined || session.stacks !== undefined) {
-        // New format: use defaultStack
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (!session.defaultStack) session.defaultStack = [];
-        session.defaultStack.push(stashedId);
+      const stack = session.stacks[agentId];
+      if (stack) {
+        stack.push(stashedId);
       } else {
-        // Old format: restore to activeRunbook
-        session.activeRunbook = stashedId;
+        session.stacks[agentId] = [stashedId];
       }
+    } else {
+      session.defaultStack.push(stashedId);
     }
 
     session.stashedRunbookId = undefined;
@@ -675,7 +585,7 @@ export class RunbookStateManager {
       const content = await fs.readFile(this.sessionPath, 'utf8');
       return JSON.parse(content) as SessionData;
     } catch {
-      return { activeRunbook: null, stacks: {}, defaultStack: [] };
+      return { stacks: {}, defaultStack: [] };
     }
   }
 

@@ -89,7 +89,6 @@ export function registerRunCommand(program: Command): void {
             agentId: options.agent  // Pass agent ID
           });
 
-          // Use pushRunbook instead of setActive
           await manager.pushRunbook(state.id, options.agent);
 
           if (runbook.steps[0].substeps && runbook.steps[0].substeps.length > 0) {

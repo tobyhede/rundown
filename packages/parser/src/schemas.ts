@@ -157,7 +157,6 @@ export const StepSchema = z.object({
   transitions: TransitionsSchema.optional(),
   substeps: z.array(SubstepSchema).readonly().optional(),
   workflows: z.array(z.string()).readonly().optional(),
-  nestedWorkflow: z.string().optional(), // @deprecated
   line: z.number().optional(),
 });
 

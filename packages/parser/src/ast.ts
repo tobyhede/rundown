@@ -68,8 +68,6 @@ export interface Step {
   readonly workflows?: readonly string[];
   /** Source line number for error reporting */
   readonly line?: number;
-  /** @deprecated Use workflows instead */
-  readonly nestedRunbook?: string;
 }
 
 /**

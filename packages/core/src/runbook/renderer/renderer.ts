@@ -116,14 +116,6 @@ export function renderStep(step: Step): string {
     }
   }
 
-  // Nested Runbook (deprecated but kept for backwards compatibility)
-  // eslint-disable-next-line @typescript-eslint/no-deprecated
-  if (step.nestedRunbook) {
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    lines.push(`@${step.nestedRunbook}`);
-    lines.push('');
-  }
-
   return lines.join('\n').trim();
 }
 

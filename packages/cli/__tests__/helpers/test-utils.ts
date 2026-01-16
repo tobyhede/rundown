@@ -93,8 +93,8 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
  * Read session.json for active/stashed runbook verification.
  *
  * Maps internal session fields to test-friendly names:
- * - `activeWorkflow` (from RunbookStateManager) → `active`
- * - `stashedWorkflowId` (from RunbookStateManager) → `stashed`
+ * - `defaultStack` (top of default stack) → `active`
+ * - `stashedRunbookId` (from RunbookStateManager) → `stashed`
  * - `stacks` (for multi-agent runbooks) → `stacks`
  * - `defaultStack` (default stack for runbooks) → `defaultStack`
  */
@@ -108,25 +108,11 @@ export async function readSession(workspace: TestWorkspace): Promise<{
     const content = await readFile(workspace.sessionPath(), 'utf-8');
     const session = JSON.parse(content) as Record<string, unknown>;
 
-    // Support both old and new formats
-    const activeWorkflow = session.activeWorkflow ?? session.active_workflow;
     const stacks = (session.stacks as Record<string, string[]> | undefined) ?? {};
     const defaultStack = (session.defaultStack as string[] | undefined) ?? [];
 
-    // Detect format: if stacks or defaultStack exist, we're in new format
-    const isNewFormat = Object.keys(stacks).length > 0 || (defaultStack as unknown[]).length > 0;
-
-    // Priority for determining active:
-    // 1. If old format (no stacks/defaultStack): use activeWorkflow (old field)
-    // 2. If new format: use defaultStack, ignore activeWorkflow field
-    let active: string | null = null;
-    if (!isNewFormat && typeof activeWorkflow === 'string') {
-      // Old format: use activeWorkflow field
-      active = activeWorkflow;
-    } else if (defaultStack.length > 0) {
-      // New format or has defaultStack: use top of stack
-      active = defaultStack[defaultStack.length - 1] ?? null;
-    }
+    // Active runbook is the top of the default stack
+    const active = defaultStack.length > 0 ? defaultStack[defaultStack.length - 1] ?? null : null;
 
     return {
       active,
@@ -141,6 +127,11 @@ export async function readSession(workspace: TestWorkspace): Promise<{
 
 /**
  * Write session.json to set active/stashed runbook.
+ *
+ * Uses stack-based format:
+ * - `active` is written to the top of `defaultStack`
+ * - `stashed` is written to `stashedRunbookId`
+ * - `stacks` for multi-agent runbooks
  */
 export async function writeSession(
   workspace: TestWorkspace,
@@ -153,7 +144,7 @@ export async function writeSession(
 ): Promise<void> {
   const sessionData: Record<string, unknown> = {};
 
-  // Support new stack format
+  // Stack-based format
   if (session.stacks !== undefined) {
     sessionData.stacks = session.stacks;
   }
@@ -161,12 +152,13 @@ export async function writeSession(
     sessionData.defaultStack = session.defaultStack;
   }
 
-  // Keep old format for backwards compat
-  if (session.active !== undefined) {
-    sessionData.activeWorkflow = session.active;
+  // If active is provided but defaultStack isn't, write to defaultStack
+  if (session.active !== undefined && session.defaultStack === undefined) {
+    sessionData.defaultStack = session.active ? [session.active] : [];
   }
+
   if (session.stashed !== undefined) {
-    sessionData.stashedWorkflowId = session.stashed;
+    sessionData.stashedRunbookId = session.stashed;
   }
 
   await writeFile(workspace.sessionPath(), JSON.stringify(sessionData, null, 2));

@@ -56,25 +56,6 @@ export async function getStepTotal(cwd: string, runbookPath: string): Promise<nu
 }
 
 /**
- * Get total step count for a runbook file.
- * @param cwd - Current working directory
- * @param runbookPath - Path to the runbook file
- * @returns The number of steps in the runbook, or 0 if file cannot be read
- * @deprecated Use getStepTotal() instead for proper dynamic runbook support
- */
-export async function getStepCount(cwd: string, runbookPath: string): Promise<number> {
-  try {
-    const fullPath = await resolveRunbookFile(cwd, runbookPath);
-    if (!fullPath) return 0;
-    const content = await fs.readFile(fullPath, 'utf8');
-    const steps = parseRunbook(content);
-    return steps.length;
-  } catch {
-    return 0;
-  }
-}
-
-/**
  * Find runbook file in current working directory.
  * @param cwd - Current working directory
  * @param filename - Runbook filename to find

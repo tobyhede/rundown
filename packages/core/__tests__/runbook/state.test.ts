@@ -47,8 +47,7 @@ describe('RunbookStateManager', () => {
 
     it('should return null when child is still active', async () => {
       const child = await manager.create('child.runbook.md', mockRunbook);
-      // eslint-disable-next-line @typescript-eslint/no-deprecated
-      await manager.setActive(child.id);
+      await manager.pushRunbook(child.id);
 
       const result = await manager.getChildRunbookResult(child.id);
       expect(result).toBeNull();
@@ -61,8 +60,7 @@ describe('RunbookStateManager', () => {
 
     it('should return null when child is stashed', async () => {
       const child = await manager.create('child.runbook.md', mockRunbook);
-      // eslint-disable-next-line @typescript-eslint/no-deprecated
-      await manager.setActive(child.id);
+      await manager.pushRunbook(child.id);
       await manager.stash();
 
       const result = await manager.getChildRunbookResult(child.id);
