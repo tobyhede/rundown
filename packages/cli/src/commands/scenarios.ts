@@ -256,14 +256,22 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
     }
 
     // 4. Print scenario header
+    console.log();
     console.log(`${dim('Scenario:')}  ${info(scenarioName)}`);
+    console.log(dim('─'.repeat(50)));
     console.log();
 
     // 5. Execute commands in sequence
-    for (const cmd of scenario.commands) {
+    const totalCommands = scenario.commands.length;
+    for (let i = 0; i < scenario.commands.length; i++) {
+      const cmd = scenario.commands[i];
+      const cmdNum = i + 1;
+
       if (!quiet) {
-        console.log(dim('---'));
-        console.log(`${dim('$')} ${cmd}`);
+        // Clear visual separator between commands
+        console.log();
+        console.log(dim(`━━━ [${cmdNum}/${totalCommands}] ${'━'.repeat(40)}`));
+        console.log(`${info('▶')} ${cmd}`);
         console.log();
       }
 
@@ -316,11 +324,12 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
 
     // 7. Report result
     const matches = actualResult === scenario.result;
-    
+
     if (!quiet) {
-      console.log(dim('---'));
+      console.log();
+      console.log(dim('━'.repeat(50)));
     }
-    console.log(`Scenario: ${colorizeStatus(actualResult)}`);
+    console.log(`${dim('Result:')}    ${colorizeStatus(actualResult)}`);
 
     if (!matches) {
       process.exit(1);

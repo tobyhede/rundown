@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   getWebContainer,
   setupRundown,
@@ -86,6 +86,15 @@ export function RunbookRunner({
     Object.keys(scenarios)[0] || ''
   );
 
+  const terminalRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when output changes
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [output]);
+
   // Initialize WebContainer on mount
   useEffect(() => {
     let cancelled = false;
@@ -134,7 +143,11 @@ export function RunbookRunner({
     try {
       const result = await runRdCommand(container, args);
       const cleanOutput = stripAnsi(result.output || '(no output)');
-      setOutput((prev) => [...prev, cleanOutput]);
+      
+      // Split output into lines to correctly detect and badge auto-executed commands
+      const newLines = cleanOutput.split('\n');
+      
+      setOutput((prev) => [...prev, ...newLines]);
       setCurrentStep((prev) => prev + 1);
       setStatus('ready');
     } catch (err) {
@@ -164,14 +177,6 @@ export function RunbookRunner({
     }
   }, [container, status]);
 
-  const handleScenarioChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setSelectedScenario(e.target.value);
-      reset();
-    },
-    [reset]
-  );
-
   const scenario = scenarios[selectedScenario];
   const isComplete = scenario && currentStep >= scenario.commands.length;
   const canRun = status === 'ready' && !isComplete;
@@ -197,7 +202,7 @@ export function RunbookRunner({
           Select Scenario
         </label>
         <div className="flex flex-wrap gap-2">
-          {Object.entries(scenarios).map(([key, s]) => (
+          {Object.entries(scenarios).map(([key]) => (
             <button
               key={key}
               disabled={status === 'running'}
@@ -265,7 +270,8 @@ export function RunbookRunner({
 
       {/* Terminal Output */}
       <div
-        className={`bg-black/50 rounded p-4 font-mono text-sm overflow-auto whitespace-pre-wrap break-all ${
+        ref={terminalRef}
+        className={`bg-black/50 rounded p-4 font-mono text-sm overflow-auto whitespace-pre-wrap break-all scroll-smooth ${
           compact ? 'min-h-[150px] max-h-[250px]' : 'min-h-[200px] max-h-[600px]'
         }`}
       >
