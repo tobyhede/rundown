@@ -18,8 +18,8 @@ npm install -g @rundown/cli
 
 ```bash
 rundown run <file>       # Run a runbook
-rundown pass             # Mark current step as passed (evaluates PASS condition)
-rundown fail             # Mark current step as failed (evaluates FAIL condition)
+rundown pass             # Mark current step as passed (aliases: yes, ok)
+rundown fail             # Mark current step as failed (alias: no)
 rundown goto <n>         # Jump to specific step number
 rundown status           # Show current state
 rundown stop [message]   # Abort runbook with optional message
@@ -31,7 +31,10 @@ rundown ls --all         # List available runbook files
 rundown check <file>     # Check runbook for errors
 rundown echo             # Test helper: echo with configurable result
 rundown prune            # Remove stale runbook state files
-rundown scenario <cmd>   # List, show, or run scenarios
+rundown scenario ls <file>           # List scenarios in a runbook
+rundown scenario show <file> <name>  # Show scenario details
+rundown scenario run <file> <name>   # Run a scenario
+rundown prompt <content> # Output content in markdown fences
 ```
 
 The `rd` command is an alias for `rundown`.
@@ -66,21 +69,22 @@ All exported symbols must have TSDoc documentation following these requirements:
 | Type guards | Description, `@param`, `@returns` with type predicate explanation |
 | Deprecated items | `@deprecated` with migration guidance |
 
-**Example:**
+**Example** (simplified; see actual source for full documentation):
 ```typescript
 /**
- * Parse a runbook document from markdown content.
+ * Parse entire runbook document including metadata.
  *
- * @param markdown - The markdown content to parse
- * @param filename - Source filename for error messages
- * @param options - Parser options
- * @returns Parsed runbook with steps and metadata
- * @throws RunbookSyntaxError if markdown contains invalid syntax
+ * Parses a complete Rundown runbook markdown document, extracting:
+ * - YAML frontmatter (name, version, author, tags)
+ * - H1 title and preamble description
+ * - H2 step definitions with commands, prompts, and transitions
  *
- * @example
- * ```ts
- * const runbook = parseRunbookDocument(content, 'my-runbook.md');
- * ```
+ * @param markdown - The raw markdown content to parse
+ * @param filename - Optional filename used to derive runbook name if not in frontmatter
+ * @param options - Optional parsing options (e.g., skipValidation)
+ * @returns Complete Runbook object with metadata and steps
+ * @throws {RunbookSyntaxError} When the markdown contains invalid syntax
+ * @see parseRunbook for simplified parsing returning only steps
  */
 export function parseRunbookDocument(
   markdown: string,

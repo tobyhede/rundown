@@ -43,7 +43,7 @@ npm install -g @rundown/cli
 
 Create a runbook file `deploy.runbook.md`:
 
-```markdown
+````markdown
 ---
 name: Deploy to Production
 ---
@@ -71,7 +71,7 @@ npm run build
 ```bash
 npm run deploy
 ```
-```
+````
 
 Run the runbook:
 
@@ -99,13 +99,17 @@ The `rd` command is an alias for `rundown`.
 | `rundown ls --json` | Output as JSON for programmatic use |
 | `rundown ls --tags <tags>` | Filter runbooks by comma-separated tags |
 | `rundown check <file>` | Validate runbook file |
+| `rundown echo` | Test helper: echo with configurable result |
+| `rundown prune` | Remove stale runbook state files |
+| `rundown scenario <cmd>` | List, show, or run scenarios |
+| `rundown prompt <content>` | Output content in markdown fences |
 
 ## Packages
 
 | Package | Description |
 |---------|-------------|
 | [@rundown/parser](packages/parser) | Markdown runbook parser |
-| [@rundown/core](packages/core) | Runbook state management |
+| [@rundown/core](packages/core) | Runbook state management and XState compilation |
 | [@rundown/cli](packages/cli) | Command-line interface |
 
 ## Documentation
