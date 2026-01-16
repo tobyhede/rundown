@@ -9,6 +9,26 @@
   Enforce process. Track progress. Resume anytime.
 </p>
 
+<p align="center">
+  <a href="https://github.com/tobyhede/rundown/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="Rundown is released under the MIT license." />
+  </a>
+  <a href="https://www.npmjs.com/package/@rundown/cli">
+    <img src="https://img.shields.io/npm/v/@rundown/cli.svg" alt="Current npm package version." />
+  </a>
+</p>
+
+> **Note:** Rundown is currently in **Alpha**. APIs and formats may change.
+
+## Why Rundown?
+
+Shell scripts are brittle. Wikis are ignored. Rundown bridges the gap:
+
+*   **Human-Readable:** Write standard Markdown.
+*   **Machine-Executable:** The CLI runs your code blocks and enforces your process.
+*   **Stateful:** It remembers where you left off. Close your terminal, reboot your machine, and `rundown status` picks right back up.
+*   **Agent-Ready:** Designed to be the perfect "runtime" for AI agents (like Claude) to execute long-running, complex tasks reliably.
+
 ## Features
 
 - **Markdown-based runbooks** - Define multi-step processes in readable `.runbook.md` files
