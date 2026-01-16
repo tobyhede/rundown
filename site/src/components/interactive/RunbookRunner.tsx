@@ -55,6 +55,14 @@ function parseRdArgs(cmd: string): string[] {
 }
 
 /**
+ * Strip ANSI escape codes from a string.
+ */
+function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1B\[[0-9;]*[JKmsu]/g, '');
+}
+
+/**
  * Interactive runbook runner component that executes Rundown runbooks in a WebContainer.
  *
  * Boots a WebContainer on mount, loads a pre-built snapshot with @rundown/cli,
@@ -125,7 +133,8 @@ export function RunbookRunner({
 
     try {
       const result = await runRdCommand(container, args);
-      setOutput((prev) => [...prev, result.output || '(no output)']);
+      const cleanOutput = stripAnsi(result.output || '(no output)');
+      setOutput((prev) => [...prev, cleanOutput]);
       setCurrentStep((prev) => prev + 1);
       setStatus('ready');
     } catch (err) {
@@ -255,9 +264,9 @@ export function RunbookRunner({
       )}
 
       {/* Terminal Output */}
-      <pre
-        className={`bg-black/50 rounded p-4 font-mono text-sm text-green-400 overflow-auto ${
-          compact ? 'min-h-[150px] max-h-[250px]' : 'min-h-[200px] max-h-[400px]'
+      <div
+        className={`bg-black/50 rounded p-4 font-mono text-sm overflow-auto whitespace-pre-wrap break-all ${
+          compact ? 'min-h-[150px] max-h-[250px]' : 'min-h-[200px] max-h-[600px]'
         }`}
       >
         {output.length === 0 ? (
@@ -267,22 +276,34 @@ export function RunbookRunner({
               : 'Loading environment...'}
           </span>
         ) : (
-          output.map((line, i) => (
-            <div
-              key={i}
-              className={
-                line.startsWith('$')
-                  ? 'text-cyber-cyan'
-                  : line.startsWith('Error')
-                    ? 'text-red-400'
-                    : ''
-              }
-            >
-              {line}
-            </div>
-          ))
+          output.map((line, i) => {
+            const isCommand = line.startsWith('$');
+            const isError = line.startsWith('Error');
+
+            return (
+              <div
+                key={i}
+                className={`mb-2 last:mb-0 ${
+                  isCommand
+                    ? 'text-cyber-cyan font-bold border-b border-cyber-cyan/10 pb-1 mt-6 first:mt-0 bg-cyber-cyan/5 -mx-4 px-4 py-1'
+                    : isError
+                      ? 'text-red-400 bg-red-900/20 p-2 rounded'
+                      : 'text-green-400/90'
+                }`}
+              >
+                {isCommand ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] bg-cyber-cyan text-cyber-dark px-1 rounded uppercase font-black tracking-tighter">CMD</span>
+                    <span>{line}</span>
+                  </div>
+                ) : (
+                  line
+                )}
+              </div>
+            );
+          })
         )}
-      </pre>
+      </div>
 
       {/* Progress */}
       <div className="mt-3 flex items-center justify-between text-xs text-gray-500 font-mono">
