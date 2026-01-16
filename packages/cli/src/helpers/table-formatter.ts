@@ -7,11 +7,13 @@
 /**
  * Column definition for table formatting.
  */
-export interface Column {
+export interface Column<T = any> {
   /** Column header text (will be uppercased) */
   header: string;
   /** Key to extract value from row object */
-  key: string;
+  key?: string; // keyof T would be better but keeping string for backward compat
+  /** Function to extract value from row object */
+  get?: (row: T) => string | number | boolean | null | undefined;
   /** Alignment for this column (default: left) */
   align?: 'left' | 'right';
 }
@@ -41,12 +43,24 @@ export interface TableOptions {
  * // ['NAME  DESCRIPTION', 'foo   A foo']
  * ```
  */
-export function formatTable(
-  rows: Record<string, string | number | boolean | null | undefined>[],
-  columns: Column[],
+export function formatTable<T = Record<string, any>>(
+  rows: T[],
+  columns: Column<T>[],
   options?: TableOptions
 ): string[] {
   const separator = options?.separator ?? '  ';
+
+  // Helper to extract value
+  const getValue = (row: T, col: Column<T>): string => {
+    if (col.get) {
+      return String(col.get(row) ?? '');
+    }
+    if (col.key) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return String((row as any)[col.key] ?? '');
+    }
+    return '';
+  };
 
   // Calculate max width for each column (except last)
   const widths = columns.map((col, i) => {
@@ -55,7 +69,7 @@ export function formatTable(
 
     const headerLen = col.header.length;
     const maxDataLen = rows.reduce((max, row) => {
-      const value = String(row[col.key] ?? '');
+      const value = getValue(row, col);
       return Math.max(max, value.length);
     }, 0);
     return Math.max(headerLen, maxDataLen);
@@ -72,7 +86,7 @@ export function formatTable(
   // Format data rows
   const dataLines = rows.map((row) => {
     const parts = columns.map((col, i) => {
-      const value = String(row[col.key] ?? '');
+      const value = getValue(row, col);
       if (i === columns.length - 1) return value;
       return col.align === 'right' ? value.padStart(widths[i]) : value.padEnd(widths[i]);
     });
@@ -89,9 +103,9 @@ export function formatTable(
  * @param columns - Column definitions
  * @param options - Formatting options
  */
-export function printTable(
-  rows: Record<string, string | number | boolean | null | undefined>[],
-  columns: Column[],
+export function printTable<T = Record<string, any>>(
+  rows: T[],
+  columns: Column<T>[],
   options?: TableOptions
 ): void {
   const lines = formatTable(rows, columns, options);

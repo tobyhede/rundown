@@ -3,12 +3,11 @@
 import type { Command } from 'commander';
 import {
   RunbookStateManager,
-  printNoRunbooks,
 } from '@rundown/core';
 import { discoverRunbooks } from '../services/discovery.js';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
-import { printTable } from '../helpers/table-formatter.js';
+import { OutputManager } from '../services/output-manager.js';
 
 /**
  * Registers the 'ls' command for listing runbooks.
@@ -24,6 +23,8 @@ export function registerLsCommand(program: Command): void {
     .action(async (options: { all?: boolean; json?: boolean; tags?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
+        const output = new OutputManager({ json: options.json });
+
         // MODE 1: List available runbooks (--all)
         if (options.all) {
             let runbooks = await discoverRunbooks(cwd);
@@ -36,38 +37,29 @@ export function registerLsCommand(program: Command): void {
               );
             }
 
-            if (runbooks.length === 0) {
-              if (options.json) {
-                 console.log('[]');
-              } else {
-                 console.log('No runbooks found.');
-              }
-              return;
-            }
-
-            if (options.json) {
-              const output = runbooks.map((w) => ({
+            output.list(runbooks, [
+              { 
+                header: 'NAME', 
+                get: (w) => w.source === 'plugin' ? `${w.name} [${w.source}]` : w.name 
+              },
+              { 
+                header: 'DESCRIPTION', 
+                get: (w) => w.description ?? '' 
+              },
+              { 
+                header: 'TAGS', 
+                get: (w) => w.tags?.join(', ') ?? '' 
+              },
+            ], {
+              emptyMessage: 'No runbooks found.',
+              jsonMapper: (w) => ({
                 name: w.name,
                 source: w.source,
                 description: w.description,
                 tags: w.tags,
                 path: w.path,
-              }));
-              console.log(JSON.stringify(output, null, 2));
-              return;
-            }
-
-            const rows = runbooks.map((w) => ({
-              name: w.source === 'plugin' ? `${w.name} [${w.source}]` : w.name,
-              description: w.description ?? '',
-              tags: w.tags?.join(', ') ?? '',
-            }));
-
-            printTable(rows, [
-              { header: 'NAME', key: 'name' },
-              { header: 'DESCRIPTION', key: 'description' },
-              { header: 'TAGS', key: 'tags' },
-            ]);
+              }),
+            });
             return;
         }
 
@@ -77,22 +69,8 @@ export function registerLsCommand(program: Command): void {
         const active = await manager.getActive();
         const stashedId = await manager.getStashedRunbookId();
 
-        if (states.length === 0) {
-          if (options.json) {
-            console.log('[]');
-          } else {
-            printNoRunbooks();
-          }
-          return;
-        }
-
-        if (options.json) {
-           console.log(JSON.stringify(states, null, 2));
-           return;
-        }
-
-        // Build rows
-        const rows = await Promise.all(
+        // Pre-calculate derived data for table display
+        const enrichedStates = await Promise.all(
           states.map(async (state) => {
             let status: string;
             if (active?.id === state.id) {
@@ -112,23 +90,36 @@ export function registerLsCommand(program: Command): void {
             const displayStep = state.instance !== undefined
               ? String(state.instance)
               : state.step;
+            
             return {
-              id: state.id.slice(0, 8),
-              status,
-              step: `${displayStep}/${String(totalSteps)}`,
-              runbook: state.runbook,
-              title: state.title ?? '',
+              ...state,
+              _status: status,
+              _displayStep: `${displayStep}/${String(totalSteps)}`,
             };
           })
         );
 
-        printTable(rows, [
-          { header: 'ID', key: 'id' },
-          { header: 'STATUS', key: 'status' },
-          { header: 'STEP', key: 'step' },
+        output.list(enrichedStates, [
+          { header: 'ID', get: (s) => s.id.slice(0, 8) },
+          { header: 'STATUS', get: (s) => s._status },
+          { header: 'STEP', get: (s) => s._displayStep },
           { header: 'RUNBOOK', key: 'runbook' },
-          { header: 'TITLE', key: 'title' },
-        ]);
+          { header: 'TITLE', get: (s) => s.title ?? '' },
+        ], {
+          emptyMessage: 'No active runbooks.\nRun "rundown ls --all" to see available runbooks.',
+          // For JSON, we stick to the original states (without enriched props) to maintain API compatibility,
+          // OR we could allow the enriched props if useful.
+          // The previous implementation did `JSON.stringify(states)`, so it didn't include _status etc.
+          // To be safe and cleaner, we strip the enriched props or just map back to what we want.
+          // Actually, passing `enrichedStates` to jsonMapper where we pick fields is hard because `states` has loose shape.
+          // Simpler: Just output enrichedStates? No, _status is internal convention.
+          // We can use jsonMapper to return the original state part.
+          jsonMapper: (s) => {
+             // eslint-disable-next-line @typescript-eslint/no-unused-vars
+             const { _status, _displayStep, ...original } = s;
+             return original;
+          }
+        });
       });
     });
 }

@@ -1,12 +1,12 @@
 ---
-name: workflow-composition
+name: runbook-composition
 description: Demonstrates composing multiple child workflows to verify lint, types, and tests all pass
 
 scenarios:
   completed:
     description: Tests successful completion when all child workflows pass
     commands:
-      - rd run --prompted workflow-composition.runbook.md
+      - rd run --prompted runbook-composition.runbook.md
       - rd pass
       - rd pass
       - rd pass
@@ -15,7 +15,7 @@ scenarios:
   child-fails:
     description: Tests failure when a child workflow fails
     commands:
-      - rd run --prompted workflow-composition.runbook.md
+      - rd run --prompted runbook-composition.runbook.md
       - rd fail
     result: STOP
 tags:
