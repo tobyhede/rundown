@@ -152,10 +152,10 @@ describe('ls command', () => {
     expect(result.stdout).toContain('1/');
   });
 
-  it('outputs "No runbooks" when empty', async () => {
+  it('outputs "No active runbooks" when empty', async () => {
     const result = runCli('ls', workspace);
 
-    expect(result.stdout).toContain('No runbooks');
+    expect(result.stdout).toContain('No active runbooks');
   });
 });
 
