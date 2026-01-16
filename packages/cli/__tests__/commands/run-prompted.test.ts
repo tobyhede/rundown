@@ -7,7 +7,6 @@ import {
   getActiveState,
   readSession,
   verifyRdCommand,
-  getBinPath,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
