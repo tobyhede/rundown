@@ -2,7 +2,7 @@ import { StepSchema, ActionSchema } from './schemas.js';
 import type { Step, Action } from './ast.js';
 
 /**
- * Represents a validation error found during workflow analysis.
+ * Represents a validation error found during runbook analysis.
  */
 export interface ValidationError {
   /** Source line number where the error was detected, if available */
@@ -23,9 +23,9 @@ function getErrorContext(step: Step, substepId?: string): string {
 }
 
 /**
- * Find the dynamic step template in a workflow.
+ * Find the dynamic step template in a runbook.
  *
- * @param steps - Array of workflow steps
+ * @param steps - Array of runbook steps
  * @returns The dynamic step if one exists, undefined otherwise
  */
 function findDynamicStep(steps: readonly Step[]): Step | undefined {
@@ -33,10 +33,10 @@ function findDynamicStep(steps: readonly Step[]): Step | undefined {
 }
 
 /**
- * Check if a workflow has a dynamic step template ({N}).
+ * Check if a runbook has a dynamic step template ({N}).
  *
- * @param steps - Array of workflow steps
- * @returns True if the workflow has a dynamic step
+ * @param steps - Array of runbook steps
+ * @returns True if the runbook has a dynamic step
  */
 function hasDynamicStep(steps: readonly Step[]): boolean {
   return findDynamicStep(steps) !== undefined;
@@ -53,7 +53,7 @@ function hasDynamicSubstep(step: Step): boolean {
 }
 
 /**
- * Validates a parsed workflow against Rundown specification rules.
+ * Validates a parsed runbook against Rundown specification rules.
  *
  * Checks for conformance with:
  * - Step pattern rules (numeric vs dynamic vs named steps)
@@ -63,9 +63,9 @@ function hasDynamicSubstep(step: Step): boolean {
  * - Schema validation for each step structure
  *
  * @param steps - Readonly array of parsed Step objects to validate
- * @returns Array of ValidationError objects, empty if workflow is valid
+ * @returns Array of ValidationError objects, empty if runbook is valid
  */
-export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
+export function validateRunbook(steps: readonly Step[]): ValidationError[] {
   const errors: ValidationError[] = [];
 
   if (steps.length === 0) {
@@ -129,11 +129,12 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
 
   for (const step of steps) {
     // Conformance Rule 4: Exclusivity (Step level)
-    const hasBody = (step.command !== undefined) || (step.prompt !== undefined && step.prompt.length > 0);
+    // A step can optionally have a prompt, plus EXACTLY ONE OF: command, substeps, or runbooks.
+    const hasCommand = (step.command !== undefined);
     const hasSubsteps = (step.substeps !== undefined && step.substeps.length > 0);
-    const hasWorkflows = (step.workflows !== undefined && step.workflows.length > 0);
+    const hasRunbooks = (step.workflows !== undefined && step.workflows.length > 0);
 
-    const contentCount = [hasBody, hasSubsteps, hasWorkflows].filter(Boolean).length;
+    const contentCount = [hasCommand, hasSubsteps, hasRunbooks].filter(Boolean).length;
     if (contentCount > 1) {
       errors.push({
         line: step.line,
@@ -148,10 +149,10 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
 
     if (step.substeps) {
       for (const substep of step.substeps) {
-        const sHasBody = (substep.command !== undefined) || (substep.prompt !== undefined && substep.prompt.length > 0);
-        const sHasWorkflows = (substep.workflows !== undefined && substep.workflows.length > 0);
+        const sHasCommand = (substep.command !== undefined);
+        const sHasRunbooks = (substep.workflows !== undefined && substep.workflows.length > 0);
 
-        if (sHasBody && sHasWorkflows) {
+        if (sHasCommand && sHasRunbooks) {
           errors.push({
             line: step.line,
             message: `Substep ${step.name}.${substep.id}: Violates Exclusivity Rule. A substep must have either a Body or a Runbook List, but not both.`
@@ -181,7 +182,7 @@ export function validateWorkflow(steps: readonly Step[]): ValidationError[] {
  *
  * @param action - The Action object to validate
  * @param currentSubstepId - ID of the current substep, or undefined if at step level
- * @param steps - All steps in the workflow, used for GOTO target resolution
+ * @param steps - All steps in the runbook, used for GOTO target resolution
  * @param currentStepObj - The Step containing this action, used for context and error reporting
  * @param errors - Array to which validation errors are appended (mutated)
  */
@@ -215,14 +216,14 @@ export function validateAction(
       if ('qualifier' in action.target && action.target.qualifier) {
         const qualifier = action.target.qualifier;
 
-        // GOTO NEXT {N} - must have a dynamic step in workflow
+        // GOTO NEXT {N} - must have a dynamic step in runbook
         if (qualifier.step === '{N}' && !qualifier.substep) {
           const dynamicStepExists = hasDynamicStep(steps);
           if (!dynamicStepExists) {
             const context = getErrorContext(currentStepObj, currentSubstepId);
             errors.push({
               line: currentStepObj.line,
-              message: `Step ${context}: GOTO NEXT {N} invalid - no dynamic step exists in workflow.`
+              message: `Step ${context}: GOTO NEXT {N} invalid - no dynamic step exists in runbook.`
             });
           }
           return;
@@ -235,7 +236,7 @@ export function validateAction(
             const context = getErrorContext(currentStepObj, currentSubstepId);
             errors.push({
               line: currentStepObj.line,
-              message: `Step ${context}: GOTO NEXT {N}.{n} invalid - no dynamic step exists in workflow.`
+              message: `Step ${context}: GOTO NEXT {N}.{n} invalid - no dynamic step exists in runbook.`
             });
             return;
           }
@@ -287,27 +288,27 @@ export function validateAction(
       return;
     }
 
-    // Handle GOTO {N} - valid if workflow has a dynamic step
+    // Handle GOTO {N} - valid if runbook has a dynamic step
     if (targetStep === '{N}' && !targetSubstep) {
       const dynamicStepExists = hasDynamicStep(steps);
       if (!dynamicStepExists) {
         const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO {N} invalid - no dynamic step exists in workflow.`
+          message: `Step ${context}: GOTO {N} invalid - no dynamic step exists in runbook.`
         });
       }
       return;
     }
 
-    // Handle GOTO {N}.{n} - valid if workflow has dynamic step with dynamic substep
+    // Handle GOTO {N}.{n} - valid if runbook has dynamic step with dynamic substep
     if (targetStep === '{N}' && targetSubstep === '{n}') {
       const dynamicStep = findDynamicStep(steps);
       if (!dynamicStep) {
         const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO {N}.{n} invalid - no dynamic step exists in workflow.`
+          message: `Step ${context}: GOTO {N}.{n} invalid - no dynamic step exists in runbook.`
         });
         return;
       }

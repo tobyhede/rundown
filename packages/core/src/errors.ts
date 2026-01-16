@@ -76,3 +76,6 @@ export type SessionLoadResult<T> =
 export function isFileNotFoundError(error: SessionLoadError): boolean {
   return error.type === 'file_not_found';
 }
+
+// Re-export error code system
+export * from './errors/index.js';

@@ -1,7 +1,7 @@
 {
   "name": "@rundown/parser",
   "version": "1.0.0",
-  "description": "Markdown workflow parser for Rundown",
+  "description": "Markdown runbook parser for Rundown",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,7 +21,7 @@
   },
   "keywords": [
     "rundown",
-    "workflow",
+    "runbook",
     "parser",
     "markdown"
   ],

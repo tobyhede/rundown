@@ -1,13 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseHookInput, WorkflowStateSchema, StepIdSchema, ActionSchema, TransitionsSchema } from '../src/schemas.js';
+import { parseHookInput, RunbookStateSchema, StepIdSchema, ActionSchema, TransitionsSchema } from '../src/schemas.js';
 
 /**
- * Creates a valid workflow state object for testing.
+ * Creates a valid runbook state object for testing.
  * Note: step is now a string ("1", "ErrorHandler", etc.)
  */
 const createValidState = (overrides: Record<string, unknown> = {}) => ({
   id: 'test-id',
-  workflow: 'test.md',
+  runbook: 'test.md',
   step: '1',
   stepName: 'Test Step',
   retryCount: 0,
@@ -54,45 +54,45 @@ describe('parseHookInput', () => {
   });
 });
 
-describe('WorkflowStateSchema - step name validation', () => {
+describe('RunbookStateSchema - step name validation', () => {
   it('accepts valid numeric step name', () => {
-    const result = WorkflowStateSchema.safeParse(createValidState());
+    const result = RunbookStateSchema.safeParse(createValidState());
     expect(result.success).toBe(true);
   });
 
   it('accepts named step', () => {
-    const result = WorkflowStateSchema.safeParse(createValidState({ step: 'ErrorHandler' }));
+    const result = RunbookStateSchema.safeParse(createValidState({ step: 'ErrorHandler' }));
     expect(result.success).toBe(true);
   });
 
   it('rejects empty step name', () => {
-    const result = WorkflowStateSchema.safeParse(createValidState({ step: '' }));
+    const result = RunbookStateSchema.safeParse(createValidState({ step: '' }));
     expect(result.success).toBe(false);
   });
 
   it('rejects non-string step', () => {
-    const result = WorkflowStateSchema.safeParse(createValidState({ step: 123 }));
+    const result = RunbookStateSchema.safeParse(createValidState({ step: 123 }));
     expect(result.success).toBe(false);
   });
 });
 
-describe('WorkflowStateSchema - StepId validation', () => {
+describe('RunbookStateSchema - StepId validation', () => {
   it('accepts valid StepId object', () => {
-    const result = WorkflowStateSchema.safeParse(
+    const result = RunbookStateSchema.safeParse(
       createValidState({ pendingSteps: [{ stepId: { step: '1' } }] })
     );
     expect(result.success).toBe(true);
   });
 
   it('accepts StepId with substep', () => {
-    const result = WorkflowStateSchema.safeParse(
+    const result = RunbookStateSchema.safeParse(
       createValidState({ pendingSteps: [{ stepId: { step: '1', substep: '1' } }] })
     );
     expect(result.success).toBe(true);
   });
 
   it('rejects StepId without step field', () => {
-    const result = WorkflowStateSchema.safeParse(
+    const result = RunbookStateSchema.safeParse(
       createValidState({ pendingSteps: [{ substep: '1' }] })
     );
     expect(result.success).toBe(false);

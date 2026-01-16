@@ -41,24 +41,24 @@ describe('pass command', () => {
       runCli('pass', workspace); // Advance to step 2 which has PASS: COMPLETE
     });
 
-    it('marks workflow complete', async () => {
+    it('marks runbook complete', async () => {
       const result = runCli('pass', workspace);
 
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
-    it('clears active workflow', async () => {
+    it('clears active runbook', async () => {
       runCli('pass', workspace);
 
       const session = await readSession(workspace);
       expect(session.active).toBeNull();
     });
 
-    it('should set variables.completed=true when completing workflow', async () => {
+    it('should set variables.completed=true when completing runbook', async () => {
       runCli('pass', workspace);
 
       const states = await getAllStates(workspace);
-      const state = states.find(s => s.workflow === 'runbooks/simple.runbook.md');
+      const state = states.find(s => s.runbook === 'runbooks/simple.runbook.md');
       expect(state?.variables.completed).toBe(true);
     });
   });
@@ -84,35 +84,35 @@ describe('pass command', () => {
     });
   });
 
-  describe('nested workflow completion restores parent', () => {
-    it('should restore parent workflow as active when nested child completes', async () => {
-      // Create parent/child workflows for nesting test
-      const parentWorkflow = `## 1. Parent step
+  describe('nested runbook completion restores parent', () => {
+    it('should restore parent runbook as active when nested child completes', async () => {
+      // Create parent/child runbooks for nesting test
+      const parentRunbook = `## 1. Parent step
 - PASS: COMPLETE
 
 Do parent work.
 `;
-      const childWorkflow = `## 1. Child step
+      const childRunbook = `## 1. Child step
 - PASS: COMPLETE
 
 Do child work.
 `;
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'parent-nest.md'), parentWorkflow);
-      await writeFile(join(workspace.cwd, 'runbooks', 'child-nest.md'), childWorkflow);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent-nest.md'), parentRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'child-nest.md'), childRunbook);
 
-      // Start parent workflow (prompted mode to keep it active)
+      // Start parent runbook (prompted mode to keep it active)
       runCli('run --prompted runbooks/parent-nest.md', workspace);
       const session1 = await readSession(workspace);
       const parentId = session1.active;
 
-      // Start child workflow in same stack (nested)
+      // Start child runbook in same stack (nested)
       runCli('run --prompted runbooks/child-nest.md', workspace);
       const session2 = await readSession(workspace);
       expect(session2.active).not.toBe(parentId); // Child is now active
       expect(session2.defaultStack).toContain(parentId); // Parent still in stack
 
-      // Complete child workflow
+      // Complete child runbook
       runCli('pass', workspace); // Child step 1: DONE -> complete
 
       // Parent should now be active (child popped from stack)
@@ -121,17 +121,17 @@ Do child work.
     });
   });
 
-  describe('agent workflow completion', () => {
-    it('should complete agent workflow independently of parent', async () => {
-      // Start parent workflow (prompted mode to keep it active)
+  describe('agent runbook completion', () => {
+    it('should complete agent runbook independently of parent', async () => {
+      // Start parent runbook (prompted mode to keep it active)
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
       const session1 = await readSession(workspace);
       const parentId = session1.active;
 
-      // Start agent workflow independently (not via binding)
+      // Start agent runbook independently (not via binding)
       runCli('run --prompted runbooks/simple.runbook.md --agent test-agent', workspace);
 
-      // Agent has its own workflow
+      // Agent has its own runbook
       const session2 = await readSession(workspace);
       expect(session2.stacks['test-agent']).toBeDefined();
       expect(session2.stacks['test-agent'].length).toBe(1);
@@ -139,7 +139,7 @@ Do child work.
       // Parent still in default stack
       expect(session2.defaultStack).toContain(parentId);
 
-      // Complete agent's workflow
+      // Complete agent's runbook
       runCli(['pass', '--agent', 'test-agent'], workspace); // Step 1: CONTINUE -> Step 2
       runCli(['pass', '--agent', 'test-agent'], workspace); // Step 2: DONE -> complete
 
@@ -152,22 +152,22 @@ Do child work.
     });
   });
 
-  describe('workflow completion with stack', () => {
-    it('pops to parent workflow on completion', async () => {
-      // Create parent/child workflows
-      const parentWorkflow = `## 1. Step one
+  describe('runbook completion with stack', () => {
+    it('pops to parent runbook on completion', async () => {
+      // Create parent/child runbooks
+      const parentRunbook = `## 1. Step one
 - PASS: COMPLETE
 
 Do something.
 `;
-      const childWorkflow = `## 1. Step one
+      const childRunbook = `## 1. Step one
 - PASS: COMPLETE
 
 Do work.
 `;
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'parent.md'), parentWorkflow);
-      await writeFile(join(workspace.cwd, 'runbooks', 'child.md'), childWorkflow);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent.md'), parentRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.md'), childRunbook);
 
       // Start parent (prompted to prevent auto-completion)
       runCli('run --prompted runbooks/parent.md', workspace);
@@ -177,15 +177,15 @@ Do work.
 
       // Complete child
       let result = runCli('pass', workspace);
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
 
       // Should now be on parent
       result = runCli('status', workspace);
       expect(result.stdout).toContain('parent.md');
     });
 
-    it('agent workflow pops to null when no parent', async () => {
-      // Create a single-step workflow for quick completion
+    it('agent runbook pops to null when no parent', async () => {
+      // Create a single-step runbook for quick completion
       const singleStep = `## 1. Do it
 - PASS: COMPLETE
 `;
@@ -194,12 +194,12 @@ Do work.
 
       runCli('run --prompted runbooks/single.md --agent agent-001', workspace);
 
-      // Complete workflow
+      // Complete runbook
       runCli('pass --agent agent-001', workspace);
 
       // Agent stack should be empty
       const result = runCli('status --agent agent-001', workspace);
-      expect(result.stdout).toContain('No active workflow');
+      expect(result.stdout).toContain('No active runbook');
     });
   });
 });

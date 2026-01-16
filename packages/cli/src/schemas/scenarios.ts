@@ -3,7 +3,7 @@ import { z } from 'zod';
 /**
  * Schema for a single scenario within a runbook.
  *
- * Scenarios document command sequences for walking through a workflow,
+ * Scenarios document command sequences for walking through a runbook,
  * serving as both user documentation and test cases.
  */
 export const ScenarioSchema = z.object({

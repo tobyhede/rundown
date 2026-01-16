@@ -1,22 +1,22 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseWorkflow } from '../src/index.js';
+import { parseRunbook } from '../src/index.js';
 
-describe('Step-level workflows', () => {
-  it('parses workflow list in substep', () => {
+describe('Step-level runbooks', () => {
+  it('parses runbook list in substep', () => {
     const markdown = `## 1. Execute
 
-### 1.1 Execute workflow
+### 1.1 Execute runbook
 - PASS: CONTINUE
 - FAIL: STOP
 
  - task-details.runbook.md
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps![0].workflows).toEqual(['task-details.runbook.md']);
   });
 
-  it('rejects step with both workflows and substeps', () => {
+  it('rejects step with both runbooks and substeps', () => {
     const markdown = `## 1. Execute
 
  - task.runbook.md
@@ -27,31 +27,31 @@ describe('Step-level workflows', () => {
 
 Do work.
 `;
-    expect(() => parseWorkflow(markdown)).toThrow(/Violates Exclusivity Rule/i);
+    expect(() => parseRunbook(markdown)).toThrow(/Violates Exclusivity Rule/i);
   });
 
-  it('parses multiple workflows on substep', () => {
+  it('parses multiple runbooks on substep', () => {
     const markdown = `## 1. Execute
 
-### 1.1 Workflows
+### 1.1 Runbooks
 - PASS: CONTINUE
 - FAIL: STOP
 
- - workflow-a.runbook.md
- - workflow-b.runbook.md
+ - runbook-a.runbook.md
+ - runbook-b.runbook.md
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps![0].workflows).toEqual([
-      'workflow-a.runbook.md',
-      'workflow-b.runbook.md'
+      'runbook-a.runbook.md',
+      'runbook-b.runbook.md'
     ]);
   });
 });
 
-describe('parseWorkflow with substep workflows', () => {
-  it('should parse workflow list in substep', () => {
-    const markdown = `# Test Workflow
+describe('parseRunbook with substep runbooks', () => {
+  it('should parse runbook list in substep', () => {
+    const markdown = `# Test Runbook
 
 ## 1. Dispatch agents
 
@@ -63,7 +63,7 @@ describe('parseWorkflow with substep workflows', () => {
  - security.runbook.md
 `;
 
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps![0].workflows).toEqual([
       'review.runbook.md',
@@ -84,7 +84,7 @@ ls
 pwd
 \`\`\`
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].command?.code).toBe('ls');
     expect(steps[1].command?.code).toBe('pwd');
   });
@@ -95,7 +95,7 @@ pwd
 Please look at this example.
 \`\`\`
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     // prompt blocks become rd prompt commands
     expect(steps[0].command).toEqual({
       code: "rd prompt 'Please look at this example.'"
@@ -109,7 +109,7 @@ Please look at this example.
 {"key": "value"}
 \`\`\`
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     // JSON code blocks are ignored - not valid for execution
     expect(steps[0].command).toBeUndefined();
     expect(steps[0].prompt).toBeUndefined();
@@ -125,7 +125,7 @@ Show this to agent.
 npm run example --flag value
 \`\`\`
 `;
-    const steps = parseWorkflow(md);
+    const steps = parseRunbook(md);
     // prompt block becomes command, text before it becomes prompt
     expect(steps[0].command).toEqual({
       code: "rd prompt 'npm run example --flag value'"
@@ -140,7 +140,7 @@ npm run example --flag value
 echo 'hello world'
 \`\`\`
 `;
-    const steps = parseWorkflow(md);
+    const steps = parseRunbook(md);
     expect(steps[0].command).toEqual({
       code: "rd prompt 'echo '\\''hello world'\\'''"
     });
@@ -157,7 +157,7 @@ Run this automatically.
 npm run build
 \`\`\`
 `;
-    const steps = parseWorkflow(md);
+    const steps = parseRunbook(md);
     expect(steps[0].command).toEqual({
       code: 'npm run build',
     });
@@ -175,7 +175,7 @@ The following instructions are important:
 - instruction 1
 - instruction 2
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].prompt).toContain('The following instructions are important:');
     expect(steps[0].prompt).toContain('- instruction 1');
     expect(steps[0].prompt).toContain('- instruction 2');
@@ -197,7 +197,7 @@ describe('GOTO substep validation', () => {
 
 Do something.
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].transitions?.pass).toEqual({
       kind: 'pass',
       action: { type: 'GOTO', target: { step: '2', substep: '1' } }
@@ -216,7 +216,7 @@ Do something.
 - PASS: CONTINUE
 - FAIL: STOP
 `;
-    expect(() => parseWorkflow(markdown)).toThrow(/substep does not exist/i);
+    expect(() => parseRunbook(markdown)).toThrow(/substep does not exist/i);
   });
 
   it('rejects GOTO N.M into dynamic substeps', () => {
@@ -233,7 +233,7 @@ Do something.
 
 Do work.
 `;
-    expect(() => parseWorkflow(markdown)).toThrow(/substep does not exist/i);
+    expect(() => parseRunbook(markdown)).toThrow(/substep does not exist/i);
   });
 });
 
@@ -247,7 +247,7 @@ describe('substep with prompts', () => {
 
 This is the implicit prompt text.
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].substeps![0].prompt).toBe('This is the implicit prompt text.');
   });
 });
@@ -268,7 +268,7 @@ Do work.
 
 More work.
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'CONTINUE' } });
     expect(steps[0].substeps![0].transitions?.fail).toEqual({ kind: 'fail', action: { type: 'STOP', message: 'BLOCKED' } });
     expect(steps[0].substeps![1].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'COMPLETE' } });
@@ -284,7 +284,7 @@ More work.
 
 Do work.
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'CONTINUE' } });
     expect(steps[0].substeps![0].transitions?.fail).toEqual({ kind: 'fail', action: { type: 'STOP' } });
   });
@@ -302,7 +302,7 @@ describe('substep GOTO validation', () => {
 - PASS: CONTINUE
 - FAIL: STOP
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].substeps![0].transitions?.fail).toEqual({
       kind: 'fail',
       action: { type: 'GOTO', target: { step: '1', substep: '2' } }
@@ -320,7 +320,7 @@ describe('substep GOTO validation', () => {
 - PASS: CONTINUE
 - FAIL: STOP
 `;
-    expect(() => parseWorkflow(markdown)).toThrow(/substep.*does not exist|invalid/i);
+    expect(() => parseRunbook(markdown)).toThrow(/substep.*does not exist|invalid/i);
   });
 });
 
@@ -336,7 +336,7 @@ describe('substep with command', () => {
 npm run lint
 \`\`\`
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps![0].command?.code).toBe('npm run lint');
   });
@@ -356,7 +356,7 @@ npm run lint
 npm test
 \`\`\`
 `;
-    expect(() => parseWorkflow(markdown)).toThrow(/multiple code blocks/i);
+    expect(() => parseRunbook(markdown)).toThrow(/multiple code blocks/i);
   });
 });
 
@@ -369,7 +369,7 @@ describe('prompt as single string', () => {
 This is the prompt text.
 Multiple lines here.
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].prompt).toBe('This is the prompt text.\nMultiple lines here.');
     expect((steps[0] as any).prompts).toBeUndefined();
   });
@@ -387,7 +387,7 @@ npm test
 
 This text appears after the code block.
 `;
-    expect(() => parseWorkflow(markdown)).toThrow(/prompt.*must appear before/i);
+    expect(() => parseRunbook(markdown)).toThrow(/prompt.*must appear before/i);
   });
 
   it('allows text before code block', () => {
@@ -401,7 +401,7 @@ This prompt appears before the code block.
 npm test
 \`\`\`
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].prompt).toBe('This prompt appears before the code block.');
     expect(steps[0].command?.code).toBe('npm test');
   });
@@ -420,7 +420,7 @@ echo "code"
 
 Text after code block - invalid.
 `;
-    expect(() => parseWorkflow(markdown)).toThrow(/prompt.*must appear before/i);
+    expect(() => parseRunbook(markdown)).toThrow(/prompt.*must appear before/i);
   });
 
   // E5-R1: Edge case tests added from cross-check validation
@@ -433,7 +433,7 @@ Text after code block - invalid.
 
 This text appears after runbooks - invalid.
 `;
-    expect(() => parseWorkflow(markdown)).toThrow(/prompt.*must appear before/i);
+    expect(() => parseRunbook(markdown)).toThrow(/prompt.*must appear before/i);
   });
 
   it('concatenates multiple paragraphs before code block', () => {
@@ -448,7 +448,7 @@ Second paragraph with more details.
 npm test
 \`\`\`
 `;
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].prompt).toContain('First paragraph');
     expect(steps[0].prompt).toContain('Second paragraph');
   });
@@ -464,12 +464,12 @@ npm test
 \`\`\`
 `;
     // Should not throw - whitespace-only is ignored
-    const steps = parseWorkflow(markdown);
+    const steps = parseRunbook(markdown);
     expect(steps[0].prompt).toBe('Prompt text.');
   });
 });
 
-describe('parseWorkflow with named steps', () => {
+describe('parseRunbook with named steps', () => {
   it('parses named step', () => {
     const md = `## 1 Main step
 - PASS: COMPLETE
@@ -479,7 +479,7 @@ describe('parseWorkflow with named steps', () => {
 
 Handle cleanup`;
 
-    const steps = parseWorkflow(md);
+    const steps = parseRunbook(md);
     expect(steps).toHaveLength(2);
     expect(steps[0]).toMatchObject({
       name: '1',
@@ -496,7 +496,7 @@ Handle cleanup`;
 ### 1.1 First substep
 ### 1.Cleanup Handle cleanup`;
 
-    const steps = parseWorkflow(md);
+    const steps = parseRunbook(md);
     expect(steps[0].substeps).toHaveLength(2);
     expect(steps[0].substeps![0]).toMatchObject({
       id: '1',
@@ -514,7 +514,7 @@ Handle cleanup`;
 ## ErrorHandler
 Handle errors`;
 
-    const steps = parseWorkflow(md);
+    const steps = parseRunbook(md);
     expect(steps).toHaveLength(3);
     expect(steps[2].name).toBe('ErrorHandler');
   });
@@ -526,7 +526,7 @@ Handle errors`;
 ## ErrorHandler
 Handle errors`;
 
-    const steps = parseWorkflow(md);
+    const steps = parseRunbook(md);
     expect(steps).toHaveLength(2);
     expect(steps[0].isDynamic).toBe(true);
     expect(steps[1].name).toBe('ErrorHandler');
@@ -535,6 +535,6 @@ Handle errors`;
   it('rejects reserved word as step name', () => {
     const md = `## NEXT Do something`;
 
-    expect(() => parseWorkflow(md)).toThrow();
+    expect(() => parseRunbook(md)).toThrow();
   });
 });

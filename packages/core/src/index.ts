@@ -1,4 +1,4 @@
-// @rundown/core - Shared workflow and configuration library
+// @rundown/core - Shared runbook and configuration library
 
 // Core types and schemas
 export * from './types.js';
@@ -8,8 +8,8 @@ export {
   parseHookInput,
   SessionStateSchema,
   type ValidatedSessionState,
-  WorkflowStateSchema,
-  type ValidatedWorkflowState,
+  RunbookStateSchema,
+  type ValidatedRunbookState,
   // Schema-first exports
   StepIdSchema,
   ActionSchema,
@@ -17,8 +17,8 @@ export {
   TransitionsSchema,
 } from './schemas.js';
 
-// Workflow types
-export type { PendingStep } from './workflow/types.js';
+// Runbook types
+export type { PendingStep } from './runbook/types.js';
 
 // Errors
 export * from './errors.js';
@@ -27,8 +27,8 @@ export * from './errors.js';
 export * from './utils.js';
 export * from './logger.js';
 
-// Workflow system
-export * from './workflow/index.js';
+// Runbook system
+export * from './runbook/index.js';
 
 // CLI output module
 export * from './cli/index.js';

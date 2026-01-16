@@ -2,10 +2,10 @@ import { z } from 'zod';
 import * as yaml from 'js-yaml';
 
 /**
- * Workflow frontmatter metadata
+ * Runbook frontmatter metadata
  */
-export interface WorkflowFrontmatter {
-  name: string;           // Required: workflow identifier
+export interface RunbookFrontmatter {
+  name: string;           // Required: runbook identifier
   description?: string;   // Optional: for listing
   version?: string;       // Optional: semantic version
   author?: string;        // Optional
@@ -13,9 +13,9 @@ export interface WorkflowFrontmatter {
 }
 
 /**
- * Zod schema for validating workflow frontmatter
+ * Zod schema for validating runbook frontmatter
  */
-export const WorkflowFrontmatterSchema = z.object({
+export const RunbookFrontmatterSchema = z.object({
   name: z
     .string()
     .min(1, 'Name is required')
@@ -29,7 +29,7 @@ export const WorkflowFrontmatterSchema = z.object({
 /**
  * Type derived from Zod schema
  */
-export type WorkflowFrontmatterType = z.infer<typeof WorkflowFrontmatterSchema>;
+export type RunbookFrontmatterType = z.infer<typeof RunbookFrontmatterSchema>;
 
 /**
  * Extract YAML frontmatter from markdown content.
@@ -41,14 +41,14 @@ export type WorkflowFrontmatterType = z.infer<typeof WorkflowFrontmatterSchema>;
  * Frontmatter requirements:
  * - Must be at the start of the file
  * - Must be enclosed in --- delimiters
- * - Must be valid YAML conforming to WorkflowFrontmatterSchema
+ * - Must be valid YAML conforming to RunbookFrontmatterSchema
  *
  * @param markdown - The raw markdown content to parse
  * @returns Object containing parsed frontmatter (or null if missing/invalid)
  *          and the remaining content with frontmatter removed
  */
 export function extractFrontmatter(markdown: string): {
-  frontmatter: WorkflowFrontmatter | null;
+  frontmatter: RunbookFrontmatter | null;
   content: string;
 } {
   const trimmed = markdown.trim();
@@ -86,7 +86,7 @@ export function extractFrontmatter(markdown: string): {
     const parsed = yaml.load(yamlContent) as Record<string, unknown>;
 
     // Validate against schema
-    const validated = WorkflowFrontmatterSchema.parse(parsed);
+    const validated = RunbookFrontmatterSchema.parse(parsed);
 
     // Extract remaining content (after closing ---)
     const remaining = lines.slice(endIndex + 1).join('\n').trimStart();
@@ -105,13 +105,13 @@ export function extractFrontmatter(markdown: string): {
 }
 
 /**
- * Extract workflow name from a runbook filename.
+ * Extract runbook name from a runbook filename.
  *
- * Removes the .runbook.md extension to derive the workflow name.
+ * Removes the .runbook.md extension to derive the runbook name.
  * Used as a fallback when frontmatter does not specify a name.
  *
- * @param filename - The runbook filename (e.g., "my-workflow.runbook.md")
- * @returns The workflow name without extension (e.g., "my-workflow")
+ * @param filename - The runbook filename (e.g., "my-runbook.runbook.md")
+ * @returns The runbook name without extension (e.g., "my-runbook")
  *
  * @example
  * nameFromFilename("setup.runbook.md") // returns "setup"

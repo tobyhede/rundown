@@ -21,7 +21,7 @@ describe('start --prompted', () => {
   });
 
   describe('prompted mode behavior', () => {
-    it('creates workflow in prompted mode', async () => {
+    it('creates runbook in prompted mode', async () => {
       const result = runCli('run --prompted runbooks/with-commands.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
@@ -40,7 +40,7 @@ describe('start --prompted', () => {
       const result = runCli('run --prompted runbooks/with-commands.runbook.md', workspace);
 
       // In prompted mode, the command should be shown but not executed
-      // The workflow should stop at the first step waiting for manual input
+      // The runbook should stop at the first step waiting for manual input
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('## 1.');
       expect(result.stdout).toContain('Execute command');
@@ -71,16 +71,16 @@ describe('start --prompted', () => {
       expect(result.stdout).not.toContain('$ rd echo');
     });
 
-    it('inherits prompted flag in child workflows', async () => {
-      // Start parent workflow in prompted mode
+    it('inherits prompted flag in child runbooks', async () => {
+      // Start parent runbook in prompted mode
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
       const session1 = await readSession(workspace);
       const _parentId = session1.active;
 
-      // Queue step with child workflow
+      // Queue step with child runbook
       runCli(['run', '--step', '1', 'runbooks/with-commands.runbook.md'], workspace);
 
-      // Bind agent (creates child workflow)
+      // Bind agent (creates child runbook)
       runCli(['run', '--agent', 'test-agent'], workspace);
 
       // Child should inherit prompted flag
@@ -102,34 +102,34 @@ describe('start --prompted', () => {
     it('stores lastResult after successful execution', async () => {
       const result = runCli('run runbooks/with-commands.runbook.md', workspace);
 
-      // Workflow completes in auto mode (both steps pass)
-      expect(result.stdout).toContain('complete');
+      // Runbook completes in auto mode (both steps pass)
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('stores lastResult as pass on successful command', async () => {
       const result = runCli('run runbooks/with-commands.runbook.md', workspace);
 
-      // Workflow completes in auto mode
-      expect(result.stdout).toContain('complete');
+      // Runbook completes in auto mode
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('stores lastResult as fail on failed command', async () => {
-      // Using failing command workflow - now uses rd echo which succeeds after retries
+      // Using failing command runbook - now uses rd echo which succeeds after retries
       const result = runCli('run runbooks/with-failing-command.runbook.md', workspace);
 
       // Should show RETRY behavior then eventually pass
       expect(result.stdout).toContain('$ rd echo');
-      // The workflow now completes successfully after retries
-      expect(result.stdout).toContain('complete');
+      // The runbook now completes successfully after retries
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('continues execution loop on pass condition', async () => {
       const result = runCli('run runbooks/with-commands.runbook.md', workspace);
 
-      // Workflow should complete (both steps executed in auto mode)
+      // Runbook should complete (both steps executed in auto mode)
       expect(result.stdout).toContain('## 1.');
       expect(result.stdout).toContain('## 2.');
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('chains multiple auto-executing steps', async () => {
@@ -137,7 +137,7 @@ describe('start --prompted', () => {
 
       // Both steps should execute automatically
       expect(result.stdout).toContain('Execute command');
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('applies FAIL condition when command fails', async () => {
@@ -146,8 +146,8 @@ describe('start --prompted', () => {
       // Should trigger retry (FAIL: RETRY 2) then succeed on 3rd attempt
       expect(result.stdout).toContain('$ rd echo');
       expect(result.stdout).toContain('RETRY');
-      // Workflow completes after successful retry
-      expect(result.stdout).toContain('complete');
+      // Runbook completes after successful retry
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('respects max retries on repeated failures', async () => {
@@ -170,10 +170,10 @@ describe('start --prompted', () => {
     });
 
     it('does not execute prompt code blocks even without CLI --prompted flag', async () => {
-      // Create workflow with prompt code block
-      const workflowsDir = join(workspace.cwd, 'runbooks');
-      await mkdir(workflowsDir, { recursive: true });
-      await writeFile(join(workflowsDir, 'with-prompt-block.runbook.md'), `# Prompt Block Test
+      // Create runbook with prompt code block
+      const runbooksDir = join(workspace.cwd, 'runbooks');
+      await mkdir(runbooksDir, { recursive: true });
+      await writeFile(join(runbooksDir, 'with-prompt-block.runbook.md'), `# Prompt Block Test
 
 ## 1. Step with prompt block
 - PASS: COMPLETE
@@ -197,7 +197,7 @@ npm run dangerous-command
   });
 
   describe('mode consistency', () => {
-    it('can start same workflow in auto mode after prompted mode', async () => {
+    it('can start same runbook in auto mode after prompted mode', async () => {
       // First: prompted mode
       runCli('stop', workspace);
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
@@ -207,10 +207,10 @@ npm run dangerous-command
       // Clean up
       runCli('stop', workspace);
 
-      // Second: auto mode - workflow completes immediately
+      // Second: auto mode - runbook completes immediately
       const result = runCli('run runbooks/simple.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('enforces prompted mode across manual steps', async () => {
@@ -227,11 +227,11 @@ npm run dangerous-command
       expect(state2?.step).toBe('2');
     });
 
-    it('allows mixed auto and prompted workflows', async () => {
-      // Auto mode - workflow completes immediately
+    it('allows mixed auto and prompted runbooks', async () => {
+      // Auto mode - runbook completes immediately
       const result1 = runCli('run runbooks/simple.runbook.md', workspace);
       expect(result1.stdout).not.toContain('Prompt:   Yes');
-      expect(result1.stdout).toContain('complete');
+      expect(result1.stdout).toContain('COMPLETE');
 
       // Prompted mode
       const result2 = runCli('run --prompted runbooks/simple.runbook.md', workspace);
@@ -266,8 +266,8 @@ npm run dangerous-command
     it('updates step progression after auto-execution', async () => {
       const result = runCli('run runbooks/with-commands.runbook.md', workspace);
 
-      // Workflow completes in auto mode (all steps pass)
-      expect(result.stdout).toContain('complete');
+      // Runbook completes in auto mode (all steps pass)
+      expect(result.stdout).toContain('COMPLETE');
     });
   });
 });

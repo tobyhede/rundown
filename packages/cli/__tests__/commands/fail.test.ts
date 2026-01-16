@@ -45,7 +45,7 @@ describe('fail command', () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
     });
 
-    it('blocks workflow', async () => {
+    it('blocks runbook', async () => {
       const result = runCli('fail', workspace);
 
       expect(result.exitCode).toBe(1);
@@ -54,17 +54,17 @@ describe('fail command', () => {
     it('outputs error message', async () => {
       const result = runCli('fail', workspace);
 
-      expect(result.stdout).toContain('stopped');
+      expect(result.stdout).toContain('STOP');
     });
 
     it('should set variables.stopped=true when STOP action triggered', async () => {
-      // workflow already started by beforeEach
+      // runbook already started by beforeEach
       runCli('fail', workspace);
 
-      // After blocking, the workflow is saved but no longer active
+      // After blocking, the runbook is saved but no longer active
       // Retrieve from all states
       const states = await getAllStates(workspace);
-      const state = states.find(s => s.workflow === 'runbooks/simple.runbook.md');
+      const state = states.find(s => s.runbook === 'runbooks/simple.runbook.md');
       expect(state?.variables.stopped).toBe(true);
     });
   });
@@ -83,9 +83,9 @@ describe('fail command', () => {
     });
   });
 
-  describe('workflow fail with stack', () => {
-    it('agent workflow pops and blocks when fail causes STOP', async () => {
-      // Create a single-step workflow that blocks on fail
+  describe('runbook fail with stack', () => {
+    it('agent runbook pops and blocks when fail causes STOP', async () => {
+      // Create a single-step runbook that blocks on fail
       const singleStep = `## 1. Do it
 
 - PASS: COMPLETE
@@ -96,32 +96,32 @@ describe('fail command', () => {
 
       runCli('run --prompted runbooks/single-fail.md --agent agent-001', workspace);
 
-      // Fail workflow - should block and pop
+      // Fail runbook - should block and pop
       const result = runCli('fail --agent agent-001', workspace);
       expect(result.exitCode).toBe(1);
 
       // Agent stack should be empty
       const statusResult = runCli('status --agent agent-001', workspace);
-      expect(statusResult.stdout).toContain('No active workflow');
+      expect(statusResult.stdout).toContain('No active runbook');
     });
 
-    it('pops to parent workflow on fail completion', async () => {
-      // Create parent/child workflows
-      const parentWorkflow = `## 1. Step one
+    it('pops to parent runbook on fail completion', async () => {
+      // Create parent/child runbooks
+      const parentRunbook = `## 1. Step one
 - PASS: COMPLETE
 - FAIL: COMPLETE
 
 Do something.
 `;
-      const childWorkflow = `## 1. Step one
+      const childRunbook = `## 1. Step one
 - PASS: COMPLETE
 - FAIL: COMPLETE
 
 Do work.
 `;
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'parent-fail.md'), parentWorkflow);
-      await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.md'), childWorkflow);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent-fail.md'), parentRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.md'), childRunbook);
 
       // Start parent (prompted to prevent auto-completion)
       runCli('run --prompted runbooks/parent-fail.md', workspace);
@@ -131,7 +131,7 @@ Do work.
 
       // Fail child - should complete (FAIL: COMPLETE) and pop to parent
       const result = runCli('fail', workspace);
-      expect(result.stdout).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
 
       // Should now be on parent
       const statusResult = runCli('status', workspace);

@@ -1,21 +1,35 @@
-import type { Step } from '../workflow/types.js';
-import type { WorkflowMetadata, StepPosition, ActionBlockData } from './types.js';
+import type { Step, Substep } from '../runbook/types.js';
+import type { RunbookMetadata, StepPosition, ActionBlockData } from './types.js';
+import type { OutputWriter } from './writer.js';
+import { getWriter } from './context.js';
 import { renderStepForCLI } from './render.js';
+import {
+  success,
+  failure,
+  warning,
+  info,
+  dim,
+  colorizeStatus,
+  colorizeResult,
+} from './colors.js';
 
 const SEPARATOR = '-----';
 
 /**
- * Format step position as n/N.
+ * Format step position as n/N or n/* for dynamic runbooks.
  *
  * Formats a StepPosition into a human-readable string like "1/5" or "2.1/5".
+ * For dynamic runbooks (total is '{N}'), shows asterisk to indicate unbounded.
  *
  * @param pos - The StepPosition to format
- * @returns Formatted position string (e.g., "1/5", "2.1/5")
+ * @returns Formatted position string (e.g., "1/5", "2.1/5", "1.2/*")
  */
 export function formatPosition(pos: StepPosition): string {
-  const stepPart = pos.substep
-    ? `${pos.current}.${pos.substep}`
-    : pos.current;
+  const stepPart = pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
+  // For dynamic runbooks, show instance number + asterisk to indicate unbounded
+  if (pos.total === '{N}') {
+    return `${stepPart}/${pos.current}*`;
+  }
   return `${stepPart}/${String(pos.total)}`;
 }
 
@@ -23,23 +37,29 @@ export function formatPosition(pos: StepPosition): string {
  * Print separator line to stdout.
  *
  * Outputs a visual separator ("-----") for CLI output formatting.
+ *
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printSeparator(): void {
-  console.log(SEPARATOR);
+export function printSeparator(writer: OutputWriter = getWriter()): void {
+  writer.writeLine(dim(SEPARATOR));
 }
 
 /**
  * Print metadata block to stdout.
  *
- * Outputs workflow metadata including file path, state, and optional prompt status.
+ * Outputs runbook metadata including file path, state, and optional prompt status.
  *
- * @param meta - The WorkflowMetadata to display
+ * @param meta - The RunbookMetadata to display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printMetadata(meta: WorkflowMetadata): void {
-  console.log(`File:     ${meta.file}`);
-  console.log(`State:    ${meta.state}`);
+export function printMetadata(
+  meta: RunbookMetadata,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine(`File:     ${meta.file}`);
+  writer.writeLine(`State:    ${colorizeStatus(meta.state)}`);
   if (meta.prompted) {
-    console.log(`Prompt:   Yes`);
+    writer.writeLine(`Prompt:   ${success('Yes')}`);
   }
 }
 
@@ -49,30 +69,40 @@ export function printMetadata(meta: WorkflowMetadata): void {
  * Outputs the action taken, optional source step position, and optional result.
  *
  * @param data - The ActionBlockData containing action details
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printActionBlock(data: ActionBlockData): void {
-  console.log(`Action:   ${data.action}`);
+export function printActionBlock(
+  data: ActionBlockData,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine(`Action:   ${info(data.action)}`);
   if (data.from) {
-    console.log(`From:     ${formatPosition(data.from)}`);
+    writer.writeLine(`From:     ${formatPosition(data.from)}`);
   }
   if (data.result) {
-    console.log(`Result:   ${data.result}`);
+    writer.writeLine(`Result:   ${colorizeResult(data.result)}`);
   }
 }
 
 /**
- * Print step block to stdout.
+ * Print step or substep block to stdout.
  *
- * Outputs the step position and rendered step content.
+ * Outputs the step position and rendered content for the current item.
+ * For dynamic items, substitutes {N} and {n} with the actual instance/substep numbers.
  *
  * @param pos - The current step position
- * @param step - The Step to render and display
+ * @param item - The Step or Substep to render and display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printStepBlock(pos: StepPosition, step: Step): void {
-  console.log('');
-  console.log(`Step:     ${formatPosition(pos)}`);
-  console.log('');
-  console.log(renderStepForCLI(step));
+export function printStepBlock(
+  pos: StepPosition,
+  item: Step | Substep,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('');
+  writer.writeLine(`Step:     ${info(formatPosition(pos))}`);
+  writer.writeLine('');
+  writer.writeLine(renderStepForCLI(item, pos.current, pos.substep));
 }
 
 /**
@@ -81,115 +111,126 @@ export function printStepBlock(pos: StepPosition, step: Step): void {
  * Outputs the command that is about to be executed with a shell prompt prefix.
  *
  * @param command - The shell command to display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printCommandExec(command: string): void {
-  console.log('');
-  console.log(`$ ${command}`);
-  console.log('');
+export function printCommandExec(
+  command: string,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('');
+  writer.writeLine(`$ ${command}`);
+  writer.writeLine('');
 }
 
 /**
- * Print workflow complete message to stdout.
+ * Print runbook complete message to stdout.
  *
- * Outputs a message indicating the workflow has completed successfully.
+ * Outputs a message indicating the runbook has completed successfully.
  *
  * @param message - Optional completion message to display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowComplete(message?: string): void {
-  console.log('');
-  if (message) {
-    console.log(`Workflow complete: ${message}`);
-  } else {
-    console.log('Workflow complete.');
-  }
+export function printRunbookComplete(
+  message?: string,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine(`Runbook:  ${success('COMPLETE')}`);
 }
 
 /**
- * Print workflow stopped message to stdout.
+ * Print runbook stopped message to stdout.
  *
- * Outputs a message indicating the workflow has been stopped.
+ * Outputs a message indicating the runbook has been stopped.
  *
  * @param message - Optional stop message to display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowStopped(message?: string): void {
-  console.log('');
-  if (message) {
-    console.log(`Workflow stopped: ${message}`);
-  } else {
-    console.log('Workflow stopped.');
-  }
+export function printRunbookStopped(
+  message?: string,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine(`Runbook:  ${failure('STOP')}`);
 }
 
 /**
- * Print workflow stopped message with step position to stdout.
+ * Print runbook stopped message with step position to stdout.
  *
- * Outputs a message indicating the workflow was stopped at a specific step.
+ * Outputs a message indicating the runbook was stopped at a specific step.
  *
- * @param pos - The step position where the workflow was stopped
+ * @param pos - The step position where the runbook was stopped
  * @param message - Optional stop message to display
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowStoppedAtStep(pos: StepPosition, message?: string): void {
-  console.log('');
-  const stepStr = pos.substep
-    ? `${pos.current}.${pos.substep}`
-    : pos.current;
-  if (message) {
-    console.log(`Workflow stopped at step ${stepStr}: ${message}`);
-  } else {
-    console.log(`Workflow stopped at step ${stepStr}.`);
-  }
+export function printRunbookStoppedAtStep(
+  pos: StepPosition,
+  message?: string,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine(`Runbook:  ${failure('STOP')}`);
 }
 
 /**
- * Print workflow stashed message to stdout.
+ * Print runbook stashed message to stdout.
  *
- * Outputs a message indicating the workflow has been stashed at the given position.
+ * Outputs a message indicating the runbook has been stashed at the given position.
  *
- * @param pos - The step position where the workflow was stashed
+ * @param pos - The step position where the runbook was stashed
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowStashed(pos: StepPosition): void {
-  console.log('');
-  console.log(`Step:     ${formatPosition(pos)}`);
-  console.log('');
-  console.log('Workflow stashed.');
+export function printRunbookStashed(
+  pos: StepPosition,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('');
+  writer.writeLine(`Step:     ${info(formatPosition(pos))}`);
+  writer.writeLine('');
+  writer.writeLine(`Runbook:  ${warning('STASHED')}`);
 }
 
 /**
- * Print no active workflow message to stdout.
+ * Print no active runbook message to stdout.
  *
- * Outputs a message indicating there is no currently active workflow.
+ * Outputs a message indicating there is no currently active runbook.
+ *
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printNoActiveWorkflow(): void {
-  console.log('No active workflow.');
+export function printNoActiveRunbook(
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine(dim('No active runbook.'));
 }
 
 /**
- * Print no workflows message to stdout.
+ * Print no runbooks message to stdout.
  *
- * Outputs a message indicating there are no workflows available.
+ * Outputs a message indicating there are no runbooks available.
+ *
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printNoWorkflows(): void {
-  console.log('No workflows.');
+export function printNoRunbooks(writer: OutputWriter = getWriter()): void {
+  writer.writeLine(dim('No runbooks.'));
 }
 
 /**
- * Print workflow list entry to stdout.
+ * Print runbook list entry to stdout.
  *
- * Outputs a single line for a workflow in the list format.
+ * Outputs a single line for a runbook in the list format.
  *
- * @param id - The workflow state ID
+ * @param id - The runbook state ID
  * @param status - The current status (e.g., 'running', 'stopped')
  * @param step - The current step position
- * @param file - The workflow source file path
- * @param title - Optional workflow title
+ * @param file - The runbook source file path
+ * @param title - Optional runbook title
+ * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printWorkflowListEntry(
+export function printRunbookListEntry(
   id: string,
   status: string,
   step: string,
   file: string,
-  title?: string
+  title?: string,
+  writer: OutputWriter = getWriter()
 ): void {
   const titleStr = title ? `  [${title}]` : '';
-  console.log(`${id}  ${status}  ${step}  ${file}${titleStr}`);
+  writer.writeLine(`${id}  ${colorizeStatus(status)}  ${step}  ${file}${titleStr}`);
 }

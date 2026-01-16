@@ -4,6 +4,18 @@ version: 1.0.0
 
 # Rundown Format
 
+## Grammar Notation
+
+| Symbol | Meaning |
+|--------|---------|
+| `[ x ]` | Optional element |
+| `{ x }` | Zero or more repetitions |
+| `x \| y` | Choice (x or y) |
+| `"text"` | Literal text |
+| `x ...` | One or more of x |
+
+---
+
 [ frontmatter ]
 # title
 [ description ]
@@ -90,12 +102,20 @@ where frontmatter is:
     [ "description:" text ]
     [ "version:" text ]
     [ "author:" text ]
+    [ "tags:" tag_list ]
     [ scenarios ]
   "---"
 
 where slug is:
   [a-z0-9-]+
   (lowercase alphanumeric with hyphens)
+
+where tag_list is:
+  "- " tag { "- " tag }
+
+where tag is:
+  text
+  (any string - convention is lowercase alphanumeric with hyphens)
 
 where scenarios is:
   "scenarios:"

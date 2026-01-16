@@ -1,11 +1,11 @@
 # CLAUDE.md
 
-Rundown is a format for defining executable workflows using Markdown.
+Rundown is a format for defining executable runbooks using Markdown.
 
 ## Packages
 
-- `@rundown/parser` - Markdown workflow parser
-- `@rundown/core` - Workflow state management and XState compilation
+- `@rundown/parser` - Markdown runbook parser
+- `@rundown/core` - Runbook state management and XState compilation
 - `@rundown/cli` - Command-line interface (`rundown`, `rd`)
 
 ## Installation
@@ -17,28 +17,28 @@ npm install -g @rundown/cli
 ## Commands
 
 ```bash
-rundown run <file>       # Run a workflow
+rundown run <file>       # Run a runbook
 rundown pass             # Mark current step as passed (evaluates PASS condition)
 rundown fail             # Mark current step as failed (evaluates FAIL condition)
 rundown goto <n>         # Jump to specific step number
 rundown status           # Show current state
-rundown stop [message]   # Abort workflow with optional message
+rundown stop [message]   # Abort runbook with optional message
 rundown complete [message] # Mark complete with optional message
-rundown stash            # Pause enforcement
-rundown pop              # Resume enforcement
-rundown ls               # List active workflows
-rundown ls --all         # List available workflow files
-rundown check <file>     # Check workflow for errors
+rundown stash            # Pause enforcement (stash active runbook)
+rundown pop              # Resume enforcement (restore stashed runbook)
+rundown ls               # List active runbooks
+rundown ls --all         # List available runbook files
+rundown check <file>     # Check runbook for errors
 rundown echo             # Test helper: echo with configurable result
-rundown prune            # Remove stale workflow state files
-rundown scenarios <file> # List or show scenarios from runbook
+rundown prune            # Remove stale runbook state files
+rundown scenario <cmd>   # List, show, or run scenarios
 ```
 
 The `rd` command is an alias for `rundown`.
 
 ## State Persistence
 
-State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown/session.json` (active workflow tracking). Workflow source files are discovered from `.claude/rundown/runbooks/`. All persist across context clears.
+State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown/session.json` (active runbook tracking). Runbook source files are discovered from `.claude/rundown/runbooks/`. All persist across context clears.
 
 ## Environment Variables
 
@@ -69,25 +69,45 @@ All exported symbols must have TSDoc documentation following these requirements:
 **Example:**
 ```typescript
 /**
- * Parse a workflow document from markdown content.
+ * Parse a runbook document from markdown content.
  *
  * @param markdown - The markdown content to parse
  * @param filename - Source filename for error messages
  * @param options - Parser options
- * @returns Parsed workflow with steps and metadata
- * @throws WorkflowSyntaxError if markdown contains invalid syntax
+ * @returns Parsed runbook with steps and metadata
+ * @throws RunbookSyntaxError if markdown contains invalid syntax
  *
  * @example
  * ```ts
- * const workflow = parseWorkflowDocument(content, 'my-workflow.md');
+ * const runbook = parseRunbookDocument(content, 'my-runbook.md');
  * ```
  */
-export function parseWorkflowDocument(
+export function parseRunbookDocument(
   markdown: string,
   filename?: string,
   options?: ParseOptions
-): Workflow { ... }
+): Runbook { ... }
 ```
+
+## CLI Output Standards
+
+New CLI commands MUST use the shared table formatter for consistent output:
+
+```typescript
+import { printTable } from '../helpers/table-formatter.js';
+
+printTable(rows, [
+  { header: 'NAME', key: 'name' },
+  { header: 'STATUS', key: 'status' },
+]);
+```
+
+Key conventions:
+- UPPERCASE headers, 2-space column separators
+- Left-align text, right-align numbers
+- `--json` flag for machine-readable output
+
+See [docs/RUNDOWN.md](docs/RUNDOWN.md#output-format) for full output formatting standards.
 
 ## Documentation
 

@@ -1,0 +1,136 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { RunbookRunner } from '../../components/interactive/RunbookRunner';
+import { promises as fs } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
+import path from 'node:path';
+
+export async function getStaticPaths() {
+  const patternsDir = path.resolve('..', 'runbooks', 'patterns');
+
+  async function getFiles(dir: string): Promise<string[]> {
+    const dirents = await fs.readdir(dir, { withFileTypes: true });
+    const files = await Promise.all(dirents.map((dirent) => {
+      const res = path.join(dir, dirent.name);
+      return dirent.isDirectory() ? getFiles(res) : Promise.resolve([res]);
+    }));
+    return Array.prototype.concat(...files);
+  }
+
+  const allFiles = await getFiles(patternsDir);
+  const runbookFiles = allFiles.filter((f) => f.endsWith('.runbook.md'));
+
+  const paths = [];
+
+  for (const filePath of runbookFiles) {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    const fileName = path.basename(filePath);
+
+    if (frontmatterMatch) {
+      try {
+        const frontmatter = parseYaml(frontmatterMatch[1]);
+        const bodyContent = content.replace(/^---\n[\s\S]*?\n---\n?/, '');
+
+        paths.push({
+          params: { pattern: fileName.replace('.runbook.md', '') },
+          props: {
+            filename: fileName, // Use basename so WebContainer sees flat list
+            content: bodyContent,
+            rawContent: content,
+            frontmatter,
+          },
+        });
+      } catch {
+        // Skip files with invalid frontmatter
+      }
+    }
+  }
+
+  return paths;
+}
+
+interface Props {
+  filename: string;
+  content: string;
+  rawContent: string;
+  frontmatter: {
+    name: string;
+    description: string;
+    tags: string[];
+    scenarios: Record<
+      string,
+      {
+        description: string;
+        commands: string[];
+        result: string;
+      }
+    >;
+  };
+}
+
+const { filename, content, rawContent, frontmatter } = Astro.props;
+const hasScenarios =
+  frontmatter.scenarios && Object.keys(frontmatter.scenarios).length > 0;
+---
+
+<Layout title={`${frontmatter.name} | Rundown Patterns`}>
+  <main class="container mx-auto px-4 py-16 max-w-7xl">
+    <!-- Header -->
+    <div class="mb-8">
+      <a
+        href="/patterns"
+        class="text-cyber-cyan hover:text-cyber-cyan/80 text-sm mb-4 inline-block"
+      >
+        ← Back to Patterns
+      </a>
+      <h1 class="text-3xl font-bold text-cyber-cyan mb-2">
+        {frontmatter.name}
+      </h1>
+      <p class="text-gray-400">{frontmatter.description}</p>
+      <div class="mt-3 flex flex-wrap gap-2">
+        {
+          frontmatter.tags?.map((tag) => (
+            <span class="text-xs px-2 py-1 bg-cyber-purple/20 text-cyber-purple rounded">
+              {tag}
+            </span>
+          ))
+        }
+      </div>
+    </div>
+
+    <!-- Two-column layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <!-- Left: Source -->
+      <div>
+        <h2 class="text-lg font-semibold text-white mb-4">Source</h2>
+        <pre
+          class="bg-cyber-darker border border-cyber-cyan/20 rounded-lg p-4 overflow-auto max-h-[800px] text-sm font-mono text-gray-300 whitespace-pre-wrap"><code set:text={content} /></pre>
+      </div>
+
+      <!-- Right: Interactive Runner -->
+      <div>
+        <h2 class="text-lg font-semibold text-white mb-4">Try It</h2>
+        {
+          hasScenarios ? (
+            <RunbookRunner
+              client:load
+              runbookPath={filename}
+              runbookContent={rawContent}
+              scenarios={frontmatter.scenarios}
+              compact={false}
+            />
+          ) : (
+            <div class="bg-cyber-darker border border-cyber-cyan/20 rounded-lg p-6 text-gray-400">
+              <p>This pattern does not have interactive scenarios defined.</p>
+              <p class="text-sm mt-2">
+                Add a <code class="text-cyber-cyan">scenarios</code> section to
+                the frontmatter to enable interactive execution.
+              </p>
+            </div>
+          )
+        }
+      </div>
+    </div>
+  </main>
+</Layout>

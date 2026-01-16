@@ -1,6 +1,6 @@
-# Simple Feature Workflow
+# Simple Feature Runbook
 
-A simple workflow to implement a feature.
+A simple runbook to implement a feature.
 
 ## 1. Create Implementation Plan
 

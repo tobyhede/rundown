@@ -1,10 +1,10 @@
-export { parseWorkflow, parseWorkflowDocument, type ParseOptions } from './parser.js';
+export { parseRunbook, parseRunbookDocument, type ParseOptions } from './parser.js';
 export {
-  validateWorkflow,
+  validateRunbook,
   validateAction
 } from './validator.js';
 export type { ValidationError } from './validator.js';
-export { WorkflowSyntaxError, MAX_STEP_NUMBER } from './types.js';
+export { RunbookSyntaxError, MAX_STEP_NUMBER } from './types.js';
 export type { ParsedConditional, AggregationModifier } from './types.js';
 export type * from './ast.js';
 export * from './schemas.js';
@@ -15,7 +15,7 @@ export {
   parseConditional,
   convertToTransitions,
   extractSubstepHeader,
-  extractWorkflowList,
+  extractRunbookList,
   isExecutableCodeBlock,
   isPromptCodeBlock,
   escapeForShellSingleQuote,
@@ -35,10 +35,10 @@ export type { ParseStepIdOptions } from './step-id.js';
 export {
   extractFrontmatter,
   nameFromFilename,
-  WorkflowFrontmatterSchema
+  RunbookFrontmatterSchema
 } from './frontmatter.js';
 export type {
-  WorkflowFrontmatter,
-  WorkflowFrontmatterType
+  RunbookFrontmatter,
+  RunbookFrontmatterType
 } from './frontmatter.js';
-export { hasPrompt, hasCommand, hasSubsteps, hasWorkflows } from './guards.js';
+export { hasPrompt, hasCommand, hasSubsteps, hasRunbooks } from './guards.js';

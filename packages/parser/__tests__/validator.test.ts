@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { validateWorkflow, type Step } from '../src/index.js';
+import { validateRunbook, type Step } from '../src/index.js';
 
 describe('validator strict rules', () => {
   const mockStep = (overrides: Partial<Step>): Step => ({
@@ -15,7 +15,7 @@ describe('validator strict rules', () => {
         isDynamic: true,
         transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.filter(e => e.message.includes('GOTO {N}'))).toHaveLength(0);
     });
 
@@ -24,7 +24,7 @@ describe('validator strict rules', () => {
         name: '1',
         transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
       expect(errors.some(e => e.message.includes('GOTO self creates infinite loop'))).toBe(true);
     });
@@ -37,7 +37,7 @@ describe('validator strict rules', () => {
           transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1', substep: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         }]
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
       expect(errors.some(e => e.message.includes('GOTO self creates infinite loop'))).toBe(true);
     });
@@ -54,7 +54,7 @@ describe('validator strict rules', () => {
           isDynamic: true
         })
       ];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
       expect(errors.some(e => e.message.includes('Invalid step pattern'))).toBe(true);
     });
@@ -64,7 +64,7 @@ describe('validator strict rules', () => {
         number: '1',
         transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
       expect(errors.some(e => e.message.includes('GOTO NEXT invalid - requires dynamic context'))).toBe(true);
     });
@@ -74,7 +74,7 @@ describe('validator strict rules', () => {
         isDynamic: true,
         transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.filter(e => e.message.includes('GOTO NEXT'))).toHaveLength(0);
     });
 
@@ -85,7 +85,7 @@ describe('validator strict rules', () => {
           transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}', substep: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         })
       ];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
       expect(errors.some(e => e.message.includes('invalid - requires dynamic step context'))).toBe(true);
     });
@@ -96,7 +96,7 @@ describe('validator strict rules', () => {
         substeps: [{ id: '1', description: 'Sub', isDynamic: false }],
         transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}', substep: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.filter(e => e.message.includes('GOTO {N}'))).toHaveLength(0);
     });
 
@@ -121,7 +121,7 @@ describe('validator strict rules', () => {
           ]
         },
       ];
-      const errors = validateWorkflow(steps as any[]);
+      const errors = validateRunbook(steps as any[]);
       expect(errors.length).toBeGreaterThan(0);
       expect(errors[0].message).toContain('NonExistent');
     });
@@ -139,50 +139,71 @@ describe('validator strict rules', () => {
           },
         },
       ];
-      const errors = validateWorkflow(steps as any[]);
+      const errors = validateRunbook(steps as any[]);
       expect(errors.length).toBeGreaterThan(0);
     });
   });
 
 
   describe('Exclusivity rules', () => {
-    it('rejects H2 step with both body and substeps', () => {
+    it('accepts H2 step with both prompt and runbooks', () => {
+      const steps = [mockStep({
+        number: '1',
+        prompt: 'P',
+        runbooks: ['w.runbook.md']
+      })];
+      const errors = validateRunbook(steps);
+      expect(errors.filter(e => e.message.includes('Violates Exclusivity Rule'))).toHaveLength(0);
+    });
+
+    it('accepts H2 step with both prompt and substeps', () => {
       const steps = [mockStep({
         number: '1',
         prompt: 'P',
         substeps: [{ id: '1', description: 'S', isDynamic: false }]
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
+      expect(errors.filter(e => e.message.includes('Violates Exclusivity Rule'))).toHaveLength(0);
+    });
+
+    it('rejects H2 step with both command and substeps', () => {
+      const steps = [mockStep({
+        number: '1',
+        command: { code: 'echo', language: 'bash' },
+        substeps: [{ id: '1', description: 'S', isDynamic: false }]
+      })];
+      const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
       expect(errors.some(e => e.message.includes('Violates Exclusivity Rule'))).toBe(true);
     });
 
-    it('rejects H3 substep with both body and workflows', () => {
+    it('rejects H3 substep with both body and runbooks', () => {
       const steps = [mockStep({
         number: '1',
         substeps: [{
           id: '1', description: 'S', isDynamic: false,
-          prompt: 'P',
+          command: { code: 'echo', language: 'bash' },
           workflows: ['w.runbook.md']
         }]
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
       expect(errors.some(e => e.message.includes('Violates Exclusivity Rule'))).toBe(true);
     });
   });
 
   describe('Error collection', () => {
-    it('collects multiple errors from single workflow', () => {
+    it('collects multiple errors from single runbook', () => {
       const steps = [
         mockStep({
           name: '1',
           prompt: 'P',
+          command: { code: 'echo', language: 'bash' },
           substeps: [{ id: '1', description: 'S', isDynamic: false }],
           transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         })
       ];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(1);
     });
 
@@ -191,23 +212,24 @@ describe('validator strict rules', () => {
         line: 42,
         number: '1',
         prompt: 'P',
+        command: { code: 'echo', language: 'bash' },
         substeps: [{ id: '1', description: 'S', isDynamic: false }]
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
       const errorWithLine = errors.find(e => e.line === 42);
       expect(errorWithLine).toBeDefined();
     });
   });
 
-  describe('validateWorkflow with named steps', () => {
+  describe('validateRunbook with named steps', () => {
     it('allows named steps after static steps', () => {
       const steps = [
         { name: '1', isDynamic: false, description: 'First' },
         { name: '2', isDynamic: false, description: 'Second' },
         { name: 'Cleanup', isDynamic: false, description: 'Cleanup' },
       ];
-      const errors = validateWorkflow(steps as any[]);
+      const errors = validateRunbook(steps as any[]);
       expect(errors).toHaveLength(0);
     });
 
@@ -216,7 +238,7 @@ describe('validator strict rules', () => {
         { name: '{N}', isDynamic: true, description: 'Dynamic' },
         { name: 'ErrorHandler', isDynamic: false, description: 'Handler' },
       ];
-      const errors = validateWorkflow(steps as any[]);
+      const errors = validateRunbook(steps as any[]);
       expect(errors).toHaveLength(0);
     });
 
@@ -234,7 +256,7 @@ describe('validator strict rules', () => {
         },
         { name: 'Cleanup', isDynamic: false, description: 'Cleanup' },
       ];
-      const errors = validateWorkflow(steps as any[]);
+      const errors = validateRunbook(steps as any[]);
       expect(errors).toHaveLength(0);
     });
 
@@ -251,7 +273,7 @@ describe('validator strict rules', () => {
           },
         },
       ];
-      const errors = validateWorkflow(steps as any[]);
+      const errors = validateRunbook(steps as any[]);
       expect(errors.length).toBeGreaterThan(0);
       expect(errors[0].message).toContain('NonExistent');
     });
@@ -273,13 +295,13 @@ describe('validator strict rules', () => {
           },
         },
       ];
-      const errors = validateWorkflow(steps as any[]);
+      const errors = validateRunbook(steps as any[]);
       expect(errors).toHaveLength(0);
     });
   });
 
   describe('GOTO {N} validation', () => {
-    it('accepts GOTO {N} when workflow has dynamic step', () => {
+    it('accepts GOTO {N} when runbook has dynamic step', () => {
       const steps = [mockStep({
         name: '{N}',
         isDynamic: true,
@@ -289,11 +311,11 @@ describe('validator strict rules', () => {
           fail: { kind: 'fail', action: { type: 'STOP' } }
         }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.filter(e => e.message.includes('GOTO {N}'))).toHaveLength(0);
     });
 
-    it('accepts GOTO {N} from ErrorHandler when workflow has dynamic step', () => {
+    it('accepts GOTO {N} from ErrorHandler when runbook has dynamic step', () => {
       const steps = [
         mockStep({
           name: '{N}',
@@ -314,11 +336,11 @@ describe('validator strict rules', () => {
           }
         })
       ];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.filter(e => e.message.includes('GOTO {N}'))).toHaveLength(0);
     });
 
-    it('rejects GOTO {N} when workflow has no dynamic step', () => {
+    it('rejects GOTO {N} when runbook has no dynamic step', () => {
       const steps = [mockStep({
         name: '1',
         isDynamic: false,
@@ -328,7 +350,7 @@ describe('validator strict rules', () => {
           fail: { kind: 'fail', action: { type: 'STOP' } }
         }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.some(e => e.message.includes('no dynamic step'))).toBe(true);
     });
   });
@@ -351,7 +373,7 @@ describe('validator strict rules', () => {
           }
         })
       ];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.filter(e => e.message.includes('GOTO 1.{n}'))).toHaveLength(0);
     });
 
@@ -372,7 +394,7 @@ describe('validator strict rules', () => {
           }
         })
       ];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.some(e => e.message.includes('no dynamic substep'))).toBe(true);
     });
   });
@@ -401,7 +423,7 @@ describe('validator strict rules', () => {
           fail: { kind: 'fail', action: { type: 'STOP' } }
         }
       });
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.filter(e => e.message.includes('GOTO NEXT'))).toHaveLength(0);
     });
 
@@ -415,7 +437,7 @@ describe('validator strict rules', () => {
           fail: { kind: 'fail', action: { type: 'STOP' } }
         }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.some(e => e.message.includes('no dynamic step'))).toBe(true);
     });
 
@@ -430,7 +452,7 @@ describe('validator strict rules', () => {
           fail: { kind: 'fail', action: { type: 'STOP' } }
         }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.filter(e => e.message.includes('GOTO NEXT'))).toHaveLength(0);
     });
 
@@ -445,7 +467,7 @@ describe('validator strict rules', () => {
           fail: { kind: 'fail', action: { type: 'STOP' } }
         }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.some(e => e.message.includes('no dynamic substep'))).toBe(true);
     });
 
@@ -460,7 +482,7 @@ describe('validator strict rules', () => {
           fail: { kind: 'fail', action: { type: 'STOP' } }
         }
       })];
-      const errors = validateWorkflow(steps);
+      const errors = validateRunbook(steps);
       expect(errors.some(e => e.message.includes('no dynamic substep'))).toBe(true);
     });
   });

@@ -1,0 +1,35 @@
+---
+name: agent-binding-failure
+description: Parent handles agent failure gracefully
+tags:
+  - composition
+  - error-handling
+
+scenarios:
+  agent-fails:
+    description: Agent fails, parent handles via GOTO
+    commands:
+      - rd run --prompted agent-binding-failure.runbook.md
+      - rd run --step 1 agent-binding-failure.runbook.md
+      - rd run --agent agent-1
+      - rd fail --agent agent-1
+      - rd pass
+      - rd pass
+    result: COMPLETE
+---
+
+# Agent Binding - Failure Handling
+
+## 1. Delegate to Agent
+- PASS: COMPLETE
+- FAIL: GOTO Cleanup
+
+Please delegate this task to an agent. We expect it to fail to test recovery.
+
+- child-task.runbook.md
+
+## Cleanup
+- PASS: COMPLETE
+- FAIL: STOP
+
+Handle failure gracefully.

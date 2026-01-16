@@ -3,12 +3,12 @@
 import * as fs from 'fs/promises';
 import type { Command } from 'commander';
 import {
-  WorkflowStateManager,
-  parseWorkflow,
+  RunbookStateManager,
+  parseRunbook,
   parseStepIdFromString,
   stepIdToString,
 } from '@rundown/core';
-import { resolveWorkflowFile } from '../helpers/resolve-workflow.js';
+import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
 import { printSeparator, printActionBlock } from '@rundown/core';
@@ -25,14 +25,13 @@ export function registerGotoCommand(program: Command): void {
     .action(async (stepArg: string) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const manager = new WorkflowStateManager(cwd);
+        const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive();
 
         if (!state) {
-          console.log('No active workflow');
+          console.log('No active runbook');
           return;
         }
-
         // Parse target with StepId
         const target = parseStepIdFromString(stepArg);
         if (!target) {
@@ -47,13 +46,13 @@ export function registerGotoCommand(program: Command): void {
           process.exit(1);
         }
 
-        const workflowPath = await resolveWorkflowFile(cwd, state.workflow);
-        if (!workflowPath) {
-          console.error(`Error: Workflow file ${state.workflow} not found`);
+        const runbookPath = await resolveRunbookFile(cwd, state.runbook);
+        if (!runbookPath) {
+          console.error(`Error: Runbook file ${state.runbook} not found`);
           process.exit(1);
         }
-        const content = await fs.readFile(workflowPath, 'utf8');
-        const steps = parseWorkflow(content);
+        const content = await fs.readFile(runbookPath, 'utf8');
+        const steps = parseRunbook(content);
 
         // Validate step exists (numeric steps and named steps - dynamic {N} references are validated at runtime)
         if (target.step !== '{N}') {
@@ -86,7 +85,7 @@ export function registerGotoCommand(program: Command): void {
         // Create XState actor
         const actor = await manager.createActor(state.id, steps);
         if (!actor) {
-          console.error('Error: Failed to initialize workflow engine');
+          console.error('Error: Failed to initialize runbook engine');
           process.exit(1);
         }
 

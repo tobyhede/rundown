@@ -22,3 +22,8 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+
+# Generated WebContainer snapshot (large binary)
+public/rundown-snapshot.bin
+playwright-report/
+test-results/

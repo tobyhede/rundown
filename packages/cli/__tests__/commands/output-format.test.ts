@@ -29,7 +29,7 @@ describe('output format integration tests', () => {
       expect(result.stdout).toContain('First step');
     });
 
-    it('includes workflow ID in metadata', async () => {
+    it('includes runbook ID in metadata', async () => {
       const result = runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
       expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
@@ -157,7 +157,7 @@ describe('output format integration tests', () => {
       expect(result.stdout).toContain('First step');
     });
 
-    it('includes workflow details in metadata', async () => {
+    it('includes runbook details in metadata', async () => {
       const result = runCli('status', workspace);
 
       expect(result.stdout).toContain('State:');
@@ -189,11 +189,11 @@ describe('output format integration tests', () => {
       const result = runCli('stop', workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('stopped');
+      expect(result.stdout).toContain('STOP');
       expect(result.stdout).toContain('simple.runbook.md');
     });
 
-    it('includes workflow ID in output', async () => {
+    it('includes runbook ID in output', async () => {
       const result = runCli('stop', workspace);
 
       expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
@@ -203,13 +203,13 @@ describe('output format integration tests', () => {
       const result = runCli('stop', workspace);
 
       // Should confirm the stop action
-      expect(result.stdout.toLowerCase()).toContain('stopped');
+      expect(result.stdout).toContain('STOP');
     });
 
     it('prints stop message details when provided', async () => {
       const result = runCli(['stop', 'User cancelled'], workspace);
 
-      expect(result.stdout).toContain('Workflow stopped: User cancelled');
+      expect(result.stdout).toContain('Runbook:  STOP');
     });
   });
 
@@ -223,7 +223,7 @@ describe('output format integration tests', () => {
       const result = runCli('pass', workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout.toLowerCase()).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
       // Completion message shows without file reference
       expect(result.stdout).toContain('Action:');
     });
@@ -231,7 +231,7 @@ describe('output format integration tests', () => {
     it('shows completion confirmation', async () => {
       const result = runCli('pass', workspace);
 
-      expect(result.stdout.toLowerCase()).toContain('complete');
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('includes action in output', async () => {
@@ -256,7 +256,7 @@ describe('output format integration tests', () => {
       // Step info
       expect(result.stdout).toContain('Step:');
       // Stashed message
-      expect(result.stdout).toContain('stashed');
+      expect(result.stdout).toContain('STASHED');
     });
 
     it('shows file metadata in output', async () => {
@@ -269,7 +269,7 @@ describe('output format integration tests', () => {
     it('includes stashed confirmation', async () => {
       const result = runCli('stash', workspace);
 
-      expect(result.stdout).toContain('Workflow stashed');
+      expect(result.stdout).toContain('Runbook:  STASHED');
     });
   });
 
@@ -309,7 +309,7 @@ describe('output format integration tests', () => {
   });
 
   describe('ls command output', () => {
-    it('prints workflow entries', async () => {
+    it('prints runbook entries', async () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
       const result = runCli('ls', workspace);
@@ -319,7 +319,7 @@ describe('output format integration tests', () => {
       expect(result.stdout).toContain('1/2');
     });
 
-    it('marks active workflow', async () => {
+    it('marks active runbook', async () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
       const result = runCli('ls', workspace);
@@ -327,7 +327,7 @@ describe('output format integration tests', () => {
       expect(result.stdout).toContain('active');
     });
 
-    it('shows step number for each workflow', async () => {
+    it('shows step number for each runbook', async () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
       const result = runCli('ls', workspace);
@@ -335,9 +335,9 @@ describe('output format integration tests', () => {
       expect(result.stdout).toContain('1/2');
     });
 
-    it('shows all workflows in state directory', async () => {
+    it('shows all runbooks in state directory', async () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
-      // Start another workflow to have multiple entries
+      // Start another runbook to have multiple entries
       runCli('stop', workspace);
       runCli('run --prompted runbooks/retry.runbook.md', workspace);
 
@@ -346,10 +346,10 @@ describe('output format integration tests', () => {
       expect(result.stdout).toContain('retry.runbook.md');
     });
 
-    it('displays "No workflows" when empty', async () => {
+    it('displays "No runbooks" when empty', async () => {
       const result = runCli('ls', workspace);
 
-      expect(result.stdout).toContain('No workflows');
+      expect(result.stdout).toContain('No runbooks');
     });
   });
 
@@ -372,7 +372,7 @@ describe('output format integration tests', () => {
       const statusResult = runCli('status', workspace);
       const listResult = runCli('ls', workspace);
 
-      // Both should contain workflow file reference
+      // Both should contain runbook file reference
       expect(statusResult.stdout).toContain('simple.runbook.md');
       expect(listResult.stdout).toContain('simple.runbook.md');
     });

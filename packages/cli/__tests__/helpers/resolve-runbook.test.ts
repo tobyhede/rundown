@@ -1,0 +1,101 @@
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { resolveRunbookFile } from '../../src/helpers/resolve-runbook.js';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import * as os from 'os';
+
+describe('resolveRunbookFile', () => {
+  let testDir: string;
+  let originalPluginRoot: string | undefined;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resolve-test-'));
+    // Save original env to restore in afterEach
+    originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  });
+
+  afterEach(async () => {
+    // Restore env BEFORE cleanup to prevent bleeding into other tests
+    process.env.CLAUDE_PLUGIN_ROOT = originalPluginRoot;
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  it('should find runbook in .claude/rundown/runbooks/', async () => {
+    const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Test');
+
+    const result = await resolveRunbookFile(testDir, 'test.runbook.md');
+
+    expect(result).toBe(path.join(claudeDir, 'test.runbook.md'));
+  });
+
+  it('should find runbook in plugin runbooks directory', async () => {
+    const pluginDir = path.join(testDir, 'plugin/runbooks');
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(path.join(pluginDir, 'plugin.runbook.md'), '# Plugin');
+
+    // Set CLAUDE_PLUGIN_ROOT for this test
+    process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
+
+    const result = await resolveRunbookFile(testDir, 'plugin.runbook.md');
+    expect(result).toBe(path.join(pluginDir, 'plugin.runbook.md'));
+    // afterEach restores originalPluginRoot
+  });
+
+  it('should find runbook relative to cwd', async () => {
+    await fs.writeFile(path.join(testDir, 'relative.runbook.md'), '# Relative');
+
+    const result = await resolveRunbookFile(testDir, 'relative.runbook.md');
+
+    expect(result).toBe(path.join(testDir, 'relative.runbook.md'));
+  });
+
+  it('should return null if runbook not found', async () => {
+    const result = await resolveRunbookFile(testDir, 'nonexistent.runbook.md');
+
+    expect(result).toBeNull();
+  });
+
+  it('should prefer .claude/rundown/runbooks over relative path', async () => {
+    // Create in both locations
+    const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Claude');
+    await fs.writeFile(path.join(testDir, 'test.runbook.md'), '# Relative');
+
+    const result = await resolveRunbookFile(testDir, 'test.runbook.md');
+
+    expect(result).toBe(path.join(claudeDir, 'test.runbook.md'));
+  });
+
+  describe('resolution precedence', () => {
+    it('prefers project runbook over bundled', async () => {
+      // Create a project-local override of a bundled runbook
+      const claudeDir = path.join(testDir, '.claude', 'rundown', 'runbooks');
+      await fs.mkdir(claudeDir, { recursive: true });
+      await fs.writeFile(
+        path.join(claudeDir, 'retry-success.runbook.md'),
+        '---\nname: override\n---\n# Override\n'
+      );
+
+      const result = await resolveRunbookFile(testDir, 'retry-success.runbook.md');
+
+      expect(result).toBe(path.join(claudeDir, 'retry-success.runbook.md'));
+    });
+  });
+
+  describe('bundled runbook resolution', () => {
+    it('finds bundled runbook when not found elsewhere', async () => {
+      // Clear plugin root to isolate test (restored by afterEach)
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+
+      // Use a known bundled runbook filename (retry-success exists in runbooks/patterns/retries/)
+      const result = await resolveRunbookFile(testDir, 'retry-success.runbook.md');
+
+      expect(result).not.toBeNull();
+      expect(result).toContain('runbooks');
+      expect(result).toContain('retry-success.runbook.md');
+    });
+  });
+});

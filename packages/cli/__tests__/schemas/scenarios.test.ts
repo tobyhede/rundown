@@ -3,7 +3,7 @@ import { ScenarioSchema, ScenariosSchema, parseScenarios } from '../../src/schem
 describe('ScenarioSchema', () => {
   it('validates a complete scenario', () => {
     const scenario = {
-      description: 'Happy path through workflow',
+      description: 'Happy path through runbook',
       commands: ['rd run --prompted test.runbook.md', 'rd pass', 'rd pass'],
       result: 'COMPLETE',
     };

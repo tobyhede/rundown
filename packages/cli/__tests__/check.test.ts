@@ -18,9 +18,9 @@ describe('rd check', () => {
     await workspace.cleanup();
   });
 
-  it('outputs PASS with step count for valid workflow', () => {
-    const workflowPath = path.join(workspace.cwd, 'valid.runbook.md');
-    fs.writeFileSync(workflowPath, `## 1. First step
+  it('outputs PASS with step count for valid runbook', () => {
+    const runbookPath = path.join(workspace.cwd, 'valid.runbook.md');
+    fs.writeFileSync(runbookPath, `## 1. First step
 - PASS: CONTINUE
 
 Do something.
@@ -31,16 +31,16 @@ Do something.
 Do another thing.
 `);
 
-    const result = runCli(`check ${workflowPath}`, workspace);
+    const result = runCli(`check ${runbookPath}`, workspace);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS:');
     expect(result.stdout).toContain('2 steps');
   });
 
-  it('outputs FAIL with all errors for invalid workflow', () => {
-    const workflowPath = path.join(workspace.cwd, 'invalid.runbook.md');
-    fs.writeFileSync(workflowPath, `## 1. First step
+  it('outputs FAIL with all errors for invalid runbook', () => {
+    const runbookPath = path.join(workspace.cwd, 'invalid.runbook.md');
+    fs.writeFileSync(runbookPath, `## 1. First step
 - PASS: CONTINUE
 
 Do something.
@@ -51,7 +51,7 @@ Do something.
 Do another thing.
 `);
 
-    const result = runCli(`check ${workflowPath}`, workspace);
+    const result = runCli(`check ${runbookPath}`, workspace);
 
     expect(result.exitCode).toBe(1);
     // Check both stdout and stderr since validate uses both console.log and console.error
@@ -62,8 +62,8 @@ Do another thing.
   });
 
   it('includes line numbers in error output', () => {
-    const workflowPath = path.join(workspace.cwd, 'invalid.runbook.md');
-    fs.writeFileSync(workflowPath, `## 1. First step
+    const runbookPath = path.join(workspace.cwd, 'invalid.runbook.md');
+    fs.writeFileSync(runbookPath, `## 1. First step
 - PASS: CONTINUE
 
 Do something.
@@ -74,7 +74,7 @@ Do something.
 Missing step 2.
 `);
 
-    const result = runCli(`check ${workflowPath}`, workspace);
+    const result = runCli(`check ${runbookPath}`, workspace);
 
     expect(result.exitCode).toBe(1);
     // Check both stdout and stderr since validate uses console.error for failures
@@ -86,7 +86,7 @@ Missing step 2.
   });
 
   it('outputs FAIL for non-existent file', () => {
-    const result = runCli('check /nonexistent/path/workflow.md', workspace);
+    const result = runCli('check /nonexistent/path/runbook.md', workspace);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr || result.stdout).toContain('FAIL');

@@ -16,6 +16,7 @@
     "packages/core/__tests__/**/*.ts",
     "packages/cli/src/**/*.ts",
     "packages/cli/__tests__/**/*.ts",
+    "packages/cli/jest.setup.ts",
     "eslint.config.js"
   ],
   "exclude": ["node_modules", "**/dist/**"]

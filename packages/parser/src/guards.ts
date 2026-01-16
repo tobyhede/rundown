@@ -44,15 +44,15 @@ export function hasSubsteps(step: Step): step is Step & { substeps: readonly Sub
 }
 
 /**
- * Type guard: checks if a step or substep has nested workflows defined.
+ * Type guard: checks if a step or substep has nested runbooks defined.
  *
  * When this guard returns true, TypeScript narrows the type to include
  * a non-empty workflows array of runbook references.
  *
  * @param unit - The Step or Substep to check
- * @returns True if the unit has one or more workflow references, enabling type narrowing
+ * @returns True if the unit has one or more runbook references, enabling type narrowing
  */
-export function hasWorkflows<T extends Step | Substep>(
+export function hasRunbooks<T extends Step | Substep>(
   unit: T
 ): unit is T & { workflows: readonly string[] } {
   return unit.workflows !== undefined && unit.workflows.length > 0;

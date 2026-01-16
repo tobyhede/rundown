@@ -17,10 +17,20 @@ import { registerCheckCommand } from './commands/check.js';
 import { registerPruneCommand } from './commands/prune.js';
 import { registerPromptCommand } from './commands/prompt.js';
 import { registerScenariosCommand } from './commands/scenarios.js';
+import { setColorEnabled } from '@rundown/core';
 
 const program = new CommandClass();
 
-program.name('rundown').description('Workflow orchestration CLI').version('1.0.0');
+program.name('rundown').description('Runbook orchestration CLI').version('1.0.0');
+
+program.option('--no-color', 'Disable colored output');
+
+program.hook('preAction', (thisCommand) => {
+  const opts = thisCommand.opts();
+  if (opts.color === false) {
+    setColorEnabled(false);
+  }
+});
 
 registerRunCommand(program);
 

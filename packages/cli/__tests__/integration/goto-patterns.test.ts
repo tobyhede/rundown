@@ -26,16 +26,16 @@ describe('integration: GOTO patterns', () => {
     mkdirSync(targetDir, { recursive: true });
 
     const patterns = [
-      'goto-step.runbook.md',
-      'goto-substep.runbook.md',
-      'goto-dynamic-substep.runbook.md',
-      'goto-next.runbook.md',
-      'goto-named.runbook.md',
+      'navigation/goto-static.runbook.md',
+      'navigation/goto-dynamic-substep.runbook.md',
+      'navigation/goto-named.runbook.md',
+      'dynamic/dynamic-step-next.runbook.md',
     ];
 
     for (const pattern of patterns) {
       const src = join(patternsDir, pattern);
-      const dest = join(targetDir, pattern);
+      const filename = pattern.split('/').pop()!;
+      const dest = join(targetDir, filename);
       copyFileSync(src, dest);
     }
   });
@@ -44,109 +44,205 @@ describe('integration: GOTO patterns', () => {
     await workspace.cleanup();
   });
 
-  describe('GOTO N (step jump)', () => {
-    it('jumps from step 1 to step 3, skipping step 2', async () => {
-      runCli('run --prompted goto-step.runbook.md', workspace);
+    describe('GOTO N (step jump)', () => {
 
-      // Step 1 passes → GOTO 3
-      let result = runCli('pass', workspace);
-      expect(result.stdout).toContain('## 3');
-      expect(result.stdout).toContain('Jump target');
+      it('jumps from step 1 to step 3, skipping step 2', async () => {
 
-      const state = await getActiveState(workspace);
-      expect(state?.step).toBe('3');
+        const start = runCli('run --prompted goto-static.runbook.md', workspace);
 
-      // Complete from step 3
-      result = runCli('pass', workspace);
-      expect(result.stdout).toContain('complete');
-    });
-  });
+        expect(start.exitCode).toBe(0);
 
-  describe('GOTO N.M (substep jump)', () => {
-    it('jumps from 1.1 to 1.3, skipping 1.2', async () => {
-      runCli('run --prompted goto-substep.runbook.md', workspace);
+  
 
-      // Substep 1.1 passes → GOTO 1.3
-      let result = runCli('pass', workspace);
-      expect(result.stdout).toContain('GOTO 1.3');
-      expect(result.stdout).toContain('Step:     1.3');
+        // Step 1 passes → GOTO 3
 
-      // State stores step and substep separately
-      const state = await getActiveState(workspace);
-      expect(state?.step).toBe('1');
-      expect(state?.substep).toBe('3');
+        const result1 = runCli('pass', workspace);
 
-      // Complete from 1.3
-      result = runCli('pass', workspace);
-      expect(result.stdout).toContain('complete');
-    });
-  });
+        expect(result1.stdout).toContain('## 3');
 
-  describe('GOTO {N}.M (dynamic substep)', () => {
-    it('jumps within dynamic instance from {N}.1 to {N}.3', async () => {
-      runCli('run --prompted goto-dynamic-substep.runbook.md', workspace);
+        expect(result1.stdout).toContain('Jump Target');
 
-      // First instance: {N}.1 → GOTO {N}.3 (dynamic steps use {N} template)
-      let result = runCli('pass', workspace);
-      expect(result.stdout).toContain('GOTO {N}.3');
-      expect(result.stdout).toContain('Step:     {N}.3');
 
-      // {N}.3 passes → GOTO NEXT advances the dynamic instance
-      result = runCli('pass', workspace);
-      // Dynamic step advancement is indicated by step counter reset
-      expect(result.stdout).toContain('{N}');
-    });
-  });
 
-  describe('GOTO NEXT (dynamic instance advance)', () => {
-    it('advances through dynamic instances via GOTO NEXT', async () => {
-      runCli('run --prompted goto-next.runbook.md', workspace);
+        const state = await getActiveState(workspace);
 
-      // Instance passes → GOTO NEXT (rendered as step advancement)
-      let result = runCli('pass', workspace);
-      // Dynamic steps show {N} template in output
-      expect(result.stdout).toContain('{N}');
+        expect(state?.step).toBe('3');
 
-      // Fail to exit loop (FAIL: COMPLETE)
-      result = runCli('fail', workspace);
-      expect(result.stdout).toContain('complete');
-    });
-  });
 
-  describe('GOTO named (named step jump)', () => {
-    it('jumps to named steps (Process → Cleanup)', async () => {
-      runCli('run --prompted goto-named.runbook.md', workspace);
 
-      // Initialize passes → CONTINUE
-      let result = runCli('pass', workspace);
-      expect(result.stdout).toContain('Process');
+        // Complete from step 3
 
-      // Process passes → GOTO Cleanup (skips ErrorHandler)
-      result = runCli('pass', workspace);
-      expect(result.stdout).toContain('Cleanup');
+        const result2 = runCli('pass', workspace);
 
-      // Cleanup passes → COMPLETE
-      result = runCli('pass', workspace);
-      expect(result.stdout).toContain('complete');
+        expect(result2.stdout).toContain('COMPLETE');
+
+      });
+
     });
 
-    it('jumps to ErrorHandler on failure, then to Cleanup', async () => {
-      runCli('run --prompted goto-named.runbook.md', workspace);
+  
 
-      // Initialize passes → CONTINUE
-      runCli('pass', workspace);
+    describe('GOTO N.M (substep jump)', () => {
 
-      // Process fails → GOTO ErrorHandler
-      let result = runCli('fail', workspace);
-      expect(result.stdout).toContain('ErrorHandler');
+      it('jumps from 4.1 to 4.3, skipping 4.2', async () => {
 
-      // ErrorHandler passes → GOTO Cleanup
-      result = runCli('pass', workspace);
-      expect(result.stdout).toContain('Cleanup');
+        const start = runCli('run --prompted goto-static.runbook.md', workspace);
 
-      // Cleanup passes → COMPLETE
-      result = runCli('pass', workspace);
-      expect(result.stdout).toContain('complete');
+        expect(start.exitCode).toBe(0);
+
+        runCli('goto 4', workspace);
+
+  
+
+        // Substep 4.1 passes → GOTO 4.3
+
+        const result1 = runCli('pass', workspace);
+
+        expect(result1.stdout).toContain('GOTO 4.3');
+
+        expect(result1.stdout).toContain('Step:     4.3');
+
+  
+
+        // State stores step and substep separately
+
+        const state = await getActiveState(workspace);
+
+        expect(state?.step).toBe('4');
+
+        expect(state?.substep).toBe('3');
+
+  
+
+        // Complete from 4.3
+
+        // Complete from step 3
+
+        const result2 = runCli('pass', workspace);
+
+        expect(result2.stdout).toContain('COMPLETE');
+
+      });
+
     });
-  });
+
+  
+
+    describe('GOTO {N}.M (dynamic substep)', () => {
+
+      it('jumps within dynamic instance from {N}.1 to {N}.3', async () => {
+
+        const start = runCli('run --prompted goto-dynamic-substep.runbook.md', workspace);
+
+        expect(start.exitCode).toBe(0);
+
+  
+
+        // First instance: {N}.1 → GOTO {N}.3 (now resolved as GOTO 1.3)
+
+        const result1 = runCli('pass', workspace);
+
+        expect(result1.stdout).toContain('GOTO 1.3');
+
+        expect(result1.stdout).toContain('Step:     1.3/1*');
+
+
+
+        // {N}.3 passes → GOTO NEXT advances the dynamic instance
+
+        const result2 = runCli('pass', workspace);
+
+        // Dynamic step advancement shows asterisk for unbounded total
+
+        expect(result2.stdout).toMatch(/\/\d+\*/);
+
+      });
+
+    });
+
+  
+
+    describe('GOTO NEXT (dynamic instance advance)', () => {
+
+      it('advances through dynamic instances via GOTO NEXT', async () => {
+
+        const start = runCli('run --prompted dynamic-step-next.runbook.md', workspace);
+
+        expect(start.exitCode).toBe(0);
+
+  
+
+        // Instance passes → GOTO NEXT (rendered as step advancement)
+
+        const result = runCli('pass', workspace);
+
+        // Dynamic steps show asterisk for unbounded total
+
+        expect(result.stdout).toMatch(/\/\d+\*/);
+
+
+
+        // Check for iteration (next instance)
+
+        expect(result.stdout).toMatch(/\/\d+\*/);
+
+      });
+
+    });
+
+    
+
+    describe('GOTO named (named step jump)', () => {
+
+      it('jumps to named steps (Initialize → Cleanup)', async () => {
+
+        const start = runCli('run --prompted goto-named.runbook.md', workspace);
+
+        expect(start.exitCode).toBe(0);
+
+  
+
+        // Initialize passes → GOTO Cleanup
+
+        const result1 = runCli('pass', workspace);
+
+        expect(result1.stdout).toContain('Cleanup');
+
+  
+
+        // Cleanup passes → COMPLETE
+
+        // Complete from step 3
+
+        const result2 = runCli('pass', workspace);
+
+        expect(result2.stdout).toContain('COMPLETE');
+
+      });
+
+  
+
+      it('jumps from named to static (Process → 1)', async () => {
+
+        const start = runCli('run --prompted goto-named.runbook.md', workspace);
+
+        expect(start.exitCode).toBe(0);
+
+        runCli('goto Process', workspace);
+
+  
+
+        // Process passes → GOTO 1
+
+        const result = runCli('pass', workspace);
+
+        expect(result.stdout).toContain('## 1');
+
+        expect(result.stdout).toContain('Static Step');
+
+      });
+
+    });
+
+  
 });

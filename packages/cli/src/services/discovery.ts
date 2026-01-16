@@ -3,6 +3,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { extractFrontmatter, nameFromFilename } from '@rundown/parser';
+import { getBundledRunbooksPath } from '../helpers/bundled-runbooks.js';
 
 /**
  * Metadata for a discovered runbook file.
@@ -14,7 +15,7 @@ export interface DiscoveredRunbook {
   /** Absolute path to the runbook file */
   path: string;
   /** Source directory where the runbook was found */
-  source: 'project' | 'plugin';
+  source: 'project' | 'plugin' | 'bundled';
   /** Optional description from frontmatter */
   description?: string;
   /** Optional tags from frontmatter for filtering */
@@ -26,19 +27,19 @@ export interface DiscoveredRunbook {
  */
 interface SearchPath {
   path: string;
-  source: 'project' | 'plugin';
+  source: 'project' | 'plugin' | 'bundled';
 }
 
 /**
  * Get search paths for runbooks.
- * Returns project directory first (takes precedence), then plugin directory.
+ * Returns project directory first (takes precedence), then plugin directory, then bundled.
  * @param cwd - Current working directory
  * @returns Array of search paths with source information
  */
 export function getSearchPaths(cwd: string): SearchPath[] {
   const paths: SearchPath[] = [];
 
-  // Project runbooks directory
+  // Project runbooks directory (highest priority)
   const projectRunbooksDir = path.join(cwd, '.claude', 'rundown', 'runbooks');
   paths.push({
     path: projectRunbooksDir,
@@ -55,6 +56,13 @@ export function getSearchPaths(cwd: string): SearchPath[] {
     });
   }
 
+  // Bundled runbooks (lowest priority - fallback)
+  const bundledRunbooksDir = getBundledRunbooksPath();
+  paths.push({
+    path: bundledRunbooksDir,
+    source: 'bundled',
+  });
+
   return paths;
 }
 
@@ -66,7 +74,7 @@ export function getSearchPaths(cwd: string): SearchPath[] {
  * @param source - Source type for discovered runbooks
  * @returns Array of discovered runbooks with extracted metadata
  */
-export async function scanDirectory(dirPath: string, source: 'project' | 'plugin'): Promise<DiscoveredRunbook[]> {
+export async function scanDirectory(dirPath: string, source: 'project' | 'plugin' | 'bundled'): Promise<DiscoveredRunbook[]> {
   const runbooks: DiscoveredRunbook[] = [];
 
   try {
