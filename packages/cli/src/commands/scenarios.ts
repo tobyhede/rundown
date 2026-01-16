@@ -181,9 +181,14 @@ function showScenarioDetails(name: string, scenarios: Scenarios, json?: boolean)
   const writer = output.getWriter();
 
   if (!(name in scenarios)) {
-    // If output is json, we should probably output an error object or empty? 
-    // But currently the contract is to exit.
-    // Ideally we'd throw or use output.writeError.
+    if (output.isJson()) {
+      writer.writeJson({
+        error: true,
+        message: `Scenario "${name}" not found`,
+        available: Object.keys(scenarios)
+      });
+      process.exit(1);
+    }
     console.error(`Scenario "${name}" not found`);
     console.error(`Available: ${Object.keys(scenarios).join(', ')}`);
     process.exit(1);

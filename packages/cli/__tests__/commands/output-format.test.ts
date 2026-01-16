@@ -349,7 +349,7 @@ describe('output format integration tests', () => {
     it('displays "No runbooks" when empty', async () => {
       const result = runCli('ls', workspace);
 
-      expect(result.stdout).toContain('No runbooks');
+      expect(result.stdout).toContain('No active runbooks');
     });
   });
 

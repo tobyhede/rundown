@@ -34,7 +34,7 @@ async function resolveByPath(cwd: string, filename: string): Promise<string | nu
   }
 
   // 3. Check relative to cwd
-  const relativePath = path.join(cwd, filename);
+  const relativePath = path.resolve(cwd, filename);
   try {
     await fs.access(relativePath);
     return relativePath;

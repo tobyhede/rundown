@@ -11,7 +11,7 @@ export interface Column<T = any> {
   /** Column header text (will be uppercased) */
   header: string;
   /** Key to extract value from row object */
-  key?: string; // keyof T would be better but keeping string for backward compat
+  key?: keyof T & string;
   /** Function to extract value from row object */
   get?: (row: T) => string | number | boolean | null | undefined;
   /** Alignment for this column (default: left) */
@@ -56,8 +56,7 @@ export function formatTable<T = Record<string, any>>(
       return String(col.get(row) ?? '');
     }
     if (col.key) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return String((row as any)[col.key] ?? '');
+      return String(row[col.key] ?? '');
     }
     return '';
   };

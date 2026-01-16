@@ -5,6 +5,7 @@ import { RunbookStateManager } from '@rundown/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputManager } from '../services/output-manager.js';
+import { getStatus } from '../helpers/status.js';
 
 interface PruneOptions {
   dryRun?: boolean;
@@ -121,15 +122,4 @@ export function registerPruneCommand(program: Command): void {
         }
       });
     });
-}
-
-function getStatus(
-  state: { id: string; variables: { completed?: boolean } },
-  activeState: { id: string } | null,
-  stashedId: string | null
-): string {
-  if (activeState?.id === state.id) return 'active';
-  if (state.id === stashedId) return 'stashed';
-  if (state.variables.completed) return 'complete';
-  return 'inactive';
 }

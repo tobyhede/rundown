@@ -2,10 +2,15 @@ import { OutputWriter, ConsoleWriter } from '@rundown/core';
 import { formatTable, Column } from '../helpers/table-formatter.js';
 
 export interface OutputManagerOptions {
+  /** Whether to output in JSON format */
   json?: boolean;
+  /** Custom writer to use (default: ConsoleWriter) */
   writer?: OutputWriter;
 }
 
+/**
+ * Options for configuring list output behavior in both text and JSON modes.
+ */
 export interface ListOptions<T, U = T> {
   /** Message to display if list is empty (text mode only) */
   emptyMessage?: string;
@@ -16,11 +21,19 @@ export interface ListOptions<T, U = T> {
 /**
  * Manages CLI output rendering, handling switching between
  * human-readable (Text/Table) and machine-readable (JSON) formats.
+ * 
+ * This service allows commands to be output-agnostic. It routes data
+ * to either a structured JSON stream or formatted text output based
+ * on the configuration.
  */
 export class OutputManager {
   private json: boolean;
   private writer: OutputWriter;
 
+  /**
+   * Create a new OutputManager.
+   * @param options - Configuration options for the manager
+   */
   constructor(options: OutputManagerOptions = {}) {
     this.json = options.json ?? false;
     this.writer = options.writer ?? new ConsoleWriter();
@@ -28,6 +41,9 @@ export class OutputManager {
 
   /**
    * Output a list of items.
+   * 
+   * In JSON mode, outputs a JSON array of items (mapped if jsonMapper provided).
+   * In Text mode, outputs a formatted ASCII table.
    * 
    * @param items - The list of items to output
    * @param columns - Column definitions for table output
@@ -54,6 +70,7 @@ export class OutputManager {
 
   /**
    * Check if JSON mode is enabled.
+   * @returns True if JSON output is enabled
    */
   isJson(): boolean {
     return this.json;
@@ -61,6 +78,7 @@ export class OutputManager {
 
   /**
    * Get the underlying writer.
+   * @returns The configured OutputWriter instance
    */
   getWriter(): OutputWriter {
     return this.writer;

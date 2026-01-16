@@ -8,6 +8,7 @@ import { discoverRunbooks } from '../services/discovery.js';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputManager } from '../services/output-manager.js';
+import { getStatus } from '../helpers/status.js';
 
 /**
  * Registers the 'ls' command for listing runbooks.
@@ -72,18 +73,7 @@ export function registerLsCommand(program: Command): void {
         // Pre-calculate derived data for table display
         const enrichedStates = await Promise.all(
           states.map(async (state) => {
-            let status: string;
-            if (active?.id === state.id) {
-              status = 'active';
-            } else if (state.id === stashedId) {
-              status = 'stashed';
-            } else if (state.variables.completed) {
-              status = 'complete';
-            } else if (state.variables.stopped) {
-              status = 'stopped';
-            } else {
-              status = 'inactive';
-            }
+            const status = getStatus(state, active, stashedId);
 
             const totalSteps = await getStepTotal(cwd, state.runbook);
             // Use state.instance for dynamic runbooks
@@ -107,13 +97,7 @@ export function registerLsCommand(program: Command): void {
           { header: 'TITLE', get: (s) => s.title ?? '' },
         ], {
           emptyMessage: 'No active runbooks.\nRun "rundown ls --all" to see available runbooks.',
-          // For JSON, we stick to the original states (without enriched props) to maintain API compatibility,
-          // OR we could allow the enriched props if useful.
-          // The previous implementation did `JSON.stringify(states)`, so it didn't include _status etc.
-          // To be safe and cleaner, we strip the enriched props or just map back to what we want.
-          // Actually, passing `enrichedStates` to jsonMapper where we pick fields is hard because `states` has loose shape.
-          // Simpler: Just output enrichedStates? No, _status is internal convention.
-          // We can use jsonMapper to return the original state part.
+          // Strip internal display properties for JSON output
           jsonMapper: (s) => {
              // eslint-disable-next-line @typescript-eslint/no-unused-vars
              const { _status, _displayStep, ...original } = s;
