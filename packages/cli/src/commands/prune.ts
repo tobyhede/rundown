@@ -4,6 +4,7 @@ import type { Command } from 'commander';
 import { RunbookStateManager } from '@rundown/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputManager } from '../services/output-manager.js';
 
 interface PruneOptions {
   dryRun?: boolean;
@@ -11,6 +12,7 @@ interface PruneOptions {
   active?: boolean;
   inactive?: boolean;
   all?: boolean;
+  json?: boolean;
 }
 
 /**
@@ -26,9 +28,13 @@ export function registerPruneCommand(program: Command): void {
     .option('--active', 'Prune active runbook state')
     .option('--inactive', 'Prune inactive runbook state')
     .option('--all', 'Prune all runbook state')
+    .option('--json', 'Output as JSON')
     .action(async (options: PruneOptions) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
+        const output = new OutputManager({ json: options.json });
+        const writer = output.getWriter();
+
         const manager = new RunbookStateManager(cwd);
         const states = await manager.list();
         const activeState = await manager.getActive();
@@ -52,29 +58,67 @@ export function registerPruneCommand(program: Command): void {
           return false;
         });
 
-        if (toDelete.length === 0) {
-          console.log('No runbook state to prune.');
-          return;
-        }
+        // Enrich items with status string for display
+        const enrichedItems = toDelete.map(state => ({
+          ...state,
+          _status: getStatus(state, activeState, stashedId)
+        }));
 
-        if (options.dryRun) {
-          console.log('Would remove state for:');
-          for (const state of toDelete) {
-            const status = getStatus(state, activeState, stashedId);
-            const title = state.title ? `  [${state.title}]` : '';
-            console.log(`  ${state.id}  ${status}  ${state.runbook}${title}`);
+        if (toDelete.length === 0) {
+          if (output.isJson()) {
+            writer.writeJson([]);
+          } else {
+            writer.writeLine('No runbook state to prune.');
           }
           return;
         }
 
-        console.log('Pruned state for:');
-        for (const state of toDelete) {
-          const status = getStatus(state, activeState, stashedId);
-          const title = state.title ? `  [${state.title}]` : '';
-          console.log(`  ${state.id}  ${status}  ${state.runbook}${title}`);
-          await manager.delete(state.id);
+        if (options.dryRun) {
+          if (!output.isJson()) {
+            writer.writeLine('Would remove state for:');
+          }
+          
+          output.list(enrichedItems, [
+            { header: 'ID', key: 'id' },
+            { header: 'STATUS', get: (item) => item._status },
+            { header: 'RUNBOOK', key: 'runbook' },
+            { header: 'TITLE', get: (item) => item.title ? `[${item.title}]` : '' }
+          ], {
+            // For JSON, clean up internal fields
+            jsonMapper: (item) => {
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { _status, ...rest } = item;
+              return { ...rest, status: item._status };
+            }
+          });
+          return;
         }
-        console.log(`\nTotal: ${String(toDelete.length)} runbook(s).`);
+
+        if (!output.isJson()) {
+          writer.writeLine('Pruned state for:');
+        }
+
+        // Perform deletion
+        for (const state of toDelete) {
+           await manager.delete(state.id);
+        }
+
+        output.list(enrichedItems, [
+            { header: 'ID', key: 'id' },
+            { header: 'STATUS', get: (item) => item._status },
+            { header: 'RUNBOOK', key: 'runbook' },
+            { header: 'TITLE', get: (item) => item.title ? `[${item.title}]` : '' }
+          ], {
+            jsonMapper: (item) => {
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { _status, ...rest } = item;
+              return { ...rest, status: item._status };
+            }
+        });
+
+        if (!output.isJson()) {
+          writer.writeLine(`\nTotal: ${String(toDelete.length)} runbook(s).`);
+        }
       });
     });
 }

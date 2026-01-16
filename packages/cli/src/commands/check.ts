@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Command } from 'commander';
 import { parseRunbookDocument, validateRunbook, type ValidationError, type Step } from '@rundown/parser';
+import { OutputManager } from '../services/output-manager.js';
 
 function formatErrors(errors: ValidationError[]): string {
   return errors
@@ -23,12 +24,20 @@ export function registerCheckCommand(program: Command): void {
   program
     .command('check <file>')
     .description('Check a runbook file for errors')
-    .action((file: string) => {
+    .option('--json', 'Output as JSON')
+    .action((file: string, options: { json?: boolean }) => {
+      const output = new OutputManager({ json: options.json });
+      const writer = output.getWriter();
+
       // Resolve file path
       const resolvedPath = path.resolve(file);
 
       if (!fs.existsSync(resolvedPath)) {
-        console.error(`FAIL: File not found: ${file}`);
+        if (output.isJson()) {
+          writer.writeJson({ valid: false, errors: [{ message: `File not found: ${file}` }] });
+        } else {
+          writer.writeError(`FAIL: File not found: ${file}`);
+        }
         process.exit(1);
       }
 
@@ -38,22 +47,44 @@ export function registerCheckCommand(program: Command): void {
         const errors = validateRunbook(runbook.steps);
 
         if (errors.length > 0) {
-          console.error(`FAIL: ${String(errors.length)} error${errors.length > 1 ? 's' : ''}\n`);
-          console.error(formatErrors(errors));
+          if (output.isJson()) {
+            writer.writeJson({ 
+              valid: false, 
+              errors: errors.map(e => ({ line: e.line, message: e.message })) 
+            });
+          } else {
+            writer.writeError(`FAIL: ${String(errors.length)} error${errors.length > 1 ? 's' : ''}\n`);
+            writer.writeError(formatErrors(errors));
+          }
           process.exit(1);
         }
 
         const stepCount = runbook.steps.length;
         const substepCount = countSubsteps(runbook.steps);
 
-        if (substepCount > 0) {
-          console.log(`PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount > 1 ? 's' : ''}`);
+        if (output.isJson()) {
+          writer.writeJson({
+            valid: true,
+            errors: [],
+            stats: {
+              steps: stepCount,
+              substeps: substepCount
+            }
+          });
         } else {
-          console.log(`PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}`);
+          if (substepCount > 0) {
+            writer.writeLine(`PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount > 1 ? 's' : ''}`);
+          } else {
+            writer.writeLine(`PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}`);
+          }
         }
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`FAIL: ${message}`);
+        if (output.isJson()) {
+          writer.writeJson({ valid: false, errors: [{ message }] });
+        } else {
+          writer.writeError(`FAIL: ${message}`);
+        }
         process.exit(1);
       }
     });
