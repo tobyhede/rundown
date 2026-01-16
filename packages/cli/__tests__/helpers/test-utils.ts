@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, cp, readFile, writeFile, readdir, access } from 'fs/promises';
+import { mkdir, mkdtemp, rm, cp, readFile, writeFile, readdir, symlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { spawnSync } from 'child_process';
@@ -8,29 +8,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
- * Get the path to node_modules/.bin directory.
- * Used for PATH configuration in test subprocess execution.
+ * Get the absolute path to the CLI entry point.
  */
-export function getBinPath(): string {
-  return join(__dirname, '..', '..', '..', '..', 'node_modules', '.bin');
-}
-
-/**
- * Verify that the rd command exists at the expected path.
- * Throws if not found, helping diagnose CI issues.
- */
-export async function verifyRdCommand(): Promise<void> {
-  const binPath = getBinPath();
-  const rdPath = join(binPath, 'rd');
-  try {
-    await access(rdPath);
-  } catch {
-    throw new Error(
-      `rd command not found at expected path: ${rdPath}\n` +
-      `__dirname: ${__dirname}\n` +
-      `binPath: ${binPath}`
-    );
-  }
+export function getCliPath(): string {
+  return join(__dirname, '..', '..', 'dist', 'cli.js');
 }
 
 export interface TestWorkspace {
@@ -39,6 +20,7 @@ export interface TestWorkspace {
   runbookPath: (name: string) => string;
   statePath: () => string;
   sessionPath: () => string;
+  binPath: () => string;
 }
 
 export interface CliResult {
@@ -49,6 +31,7 @@ export interface CliResult {
 
 /**
  * Creates isolated temp directory with fixtures and .claude structure.
+ * Also creates a symlink to the CLI in node_modules/.bin for rd commands.
  */
 export async function createTestWorkspace(): Promise<TestWorkspace> {
   const tempDir = await mkdtemp(join(tmpdir(), 'rd-test-'));
@@ -56,12 +39,20 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
   const pluginDir = join(tempDir, 'plugin');
   const pluginRunbooksDir = join(pluginDir, 'runbooks');
   const rootRunbooksDir = join(tempDir, 'runbooks');
+  const binDir = join(tempDir, 'node_modules', '.bin');
 
   // Create .claude/rundown structure
   await mkdir(join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
   await mkdir(projectRunbooksDir, { recursive: true });
   await mkdir(pluginRunbooksDir, { recursive: true });
   await mkdir(rootRunbooksDir, { recursive: true });
+  
+  // Create node_modules/.bin with symlink to CLI
+  // This ensures 'rd' command works in fixtures regardless of monorepo symlink state
+  await mkdir(binDir, { recursive: true });
+  const cliPath = getCliPath();
+  await symlink(cliPath, join(binDir, 'rd'));
+  await symlink(cliPath, join(binDir, 'rundown'));
 
   // Copy fixtures to temp dir
   const fixturesDir = join(__dirname, '..', 'fixtures');
@@ -75,6 +66,7 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
     runbookPath: (name: string) => join(rootRunbooksDir, name),
     statePath: () => join(tempDir, '.claude', 'rundown', 'runs'),
     sessionPath: () => join(tempDir, '.claude', 'rundown', 'session.json'),
+    binPath: () => binDir,
   };
 }
 
@@ -87,11 +79,11 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
  * runCli(['run', 'my runbook.md'], workspace)    // Path with spaces
  */
 export function runCli(args: string | string[], workspace: TestWorkspace): CliResult {
-  const cliPath = join(__dirname, '..', '..', 'dist', 'cli.js');
+  const cliPath = getCliPath();
   const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
 
-  // Add node_modules/.bin to PATH for rd echo commands in fixtures
-  const binPath = getBinPath();
+  // Use workspace's node_modules/.bin which has symlinks to CLI
+  const binPath = workspace.binPath();
   
   // Plugin root for discovery tests
   const pluginDir = join(workspace.cwd, 'plugin');
