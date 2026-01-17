@@ -33,13 +33,15 @@ Shell scripts are brittle. Wikis are ignored. Rundown bridges the gap:
 - **XState compilation** - Runbooks compile to state machines for reliable execution
 - **CLI control** - Simple commands to run, pass, fail, and navigate runbooks
 
-## Installation
+## Get Started
+
+### Install
 
 ```bash
 npm install -g @rundown/cli
 ```
 
-## Quick Start
+### Create Your First Runbook
 
 Create a runbook file `deploy.runbook.md`:
 
