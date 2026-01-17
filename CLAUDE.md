@@ -95,16 +95,23 @@ export function parseRunbookDocument(
 
 ## CLI Output Standards
 
-New CLI commands MUST use the shared table formatter for consistent output:
+New CLI commands MUST use `OutputManager` for consistent output with automatic JSON/text mode switching:
 
 ```typescript
-import { printTable } from '../helpers/table-formatter.js';
+import { OutputManager } from '../services/output-manager.js';
 
-printTable(rows, [
+const output = new OutputManager({ json: options.json });
+
+output.list(items, [
   { header: 'NAME', key: 'name' },
   { header: 'STATUS', key: 'status' },
-]);
+], {
+  emptyMessage: 'No items found.',
+  jsonMapper: (item) => ({ name: item.name, status: item.status }),
+});
 ```
+
+For direct table formatting without JSON support, use `formatTable` from `../helpers/table-formatter.js`.
 
 Key conventions:
 - UPPERCASE headers, 2-space column separators
@@ -112,6 +119,16 @@ Key conventions:
 - `--json` flag for machine-readable output
 
 See [docs/RUNDOWN.md](docs/RUNDOWN.md#output-format) for full output formatting standards.
+
+## Internal Command Execution
+
+In WebContainer environments where nested process spawning doesn't work, the CLI intercepts `rd`/`rundown` commands and executes them directly:
+
+- `packages/cli/src/services/internal-commands.ts` - Dispatcher for internal command execution
+- `isInternalRdCommand()` - Detects rd/rundown commands
+- `executeRdCommandInternal()` - Executes commands without spawning
+
+Currently supported internally: `echo`. Unsupported commands fall back to spawn.
 
 ## Documentation
 

@@ -87,8 +87,17 @@ The `rd` command is an alias for `rundown`.
 
 **Run a runbook:**
 ```bash
-rundown run examples/runbooks/simple.runbook.md
+# Using an absolute path
+rundown run /path/to/project/.claude/rundown/runbooks/simple.runbook.md
+
+# Or from the project root, with runbook in the standard location
+rundown run simple.runbook.md
 ```
+
+The CLI resolves runbook paths in this order:
+1. Absolute path (used as-is)
+2. Relative to current working directory
+3. Relative to `.claude/rundown/runbooks/` in the project root
 
 **Check status:**
 ```bash
@@ -168,6 +177,15 @@ Transition evaluation:
 | **Manual** | `--prompted` flag or no code block | CLI waits for manual `rd pass` or `rd fail` |
 
 **Note:** A `prompt` code block becomes an `rd prompt '...'` command that outputs the content wrapped in markdown fences. It executes automatically like `bash` blocks.
+
+#### WebContainer Environment
+
+In WebContainer environments (e.g., StackBlitz), nested process spawning may not work correctly. The CLI includes an internal command dispatcher (`packages/cli/src/services/internal-commands.ts`) that intercepts `rd`/`rundown` commands and executes them directly without spawning a child process.
+
+- `isInternalRdCommand()` detects rd/rundown commands
+- `executeRdCommandInternal()` dispatches to internal handlers
+- Currently supported: `echo` command
+- Unsupported commands fall back to standard spawn behavior
 
 Example of a step that auto-executes:
 ````markdown
