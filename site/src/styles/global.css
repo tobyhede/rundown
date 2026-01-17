@@ -4,16 +4,27 @@
 
 @layer base {
   html {
-    @apply bg-cyber-darker text-white antialiased;
+    @apply bg-white dark:bg-cyber-darker text-gray-900 dark:text-white antialiased;
   }
 
   body {
-    @apply min-h-screen;
-    background: linear-gradient(180deg, #0A0A1A 0%, #1A0A2E 50%, #0A0A1A 100%);
+    @apply min-h-screen bg-white dark:bg-[linear-gradient(180deg,#0A0A1A_0%,#1A0A2E_50%,#0A0A1A_100%)];
   }
 
   ::selection {
     @apply bg-cyber-magenta/30;
+  }
+
+  h1 {
+    @apply text-2xl md:text-3xl text-gray-700 dark:text-gray-200 font-normal;
+  }
+
+  p {
+    @apply text-lg text-gray-600 dark:text-gray-400;
+  }
+
+  h2 {
+    @apply text-lg text-gray-600 dark:text-gray-400 font-bold;
   }
 }
 

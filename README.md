@@ -15,14 +15,13 @@
   </a>
 </p>
 
-> **Note:** Rundown is currently in **Alpha**. APIs and formats may change.
-
 ## Why Rundown?
 
-Shell scripts are brittle. Wikis are ignored. Rundown bridges the gap:
+Rundown transforms static documentation into interactive, stateful CLI workflows, bridging the gap between "how-to" and "done."
 
 *   **Human-Readable:** Write standard Markdown.
-*   **Machine-Executable:** The CLI runs your code blocks and enforces your process.
+*   **Agent-Readable:** Write standard Markdown.
+*   **Machine-Executable:**  Rundown CLI executes and enforces your process.
 *   **Stateful:** It remembers where you left off. Close your terminal, reboot your machine, and `rundown status` picks right back up.
 *   **Agent-Ready:** Designed to be the perfect "runtime" for AI agents (like Claude) to execute long-running, complex tasks reliably.
 

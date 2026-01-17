@@ -1,5 +1,7 @@
 ---
 import '../styles/global.css';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
 
 interface Props {
   title: string;
@@ -37,7 +39,11 @@ const canonicalURL = new URL(Astro.url.pathname, 'https://rundown.cool');
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>{title}</title>
   </head>
-  <body class="font-mono">
-    <slot />
+  <body class="flex flex-col font-mono bg-white dark:bg-cyber-dark text-gray-900 dark:text-gray-200 transition-colors duration-300">
+    <Header />
+    <div class="flex-1">
+      <slot />
+    </div>
+    <Footer />
   </body>
 </html>
