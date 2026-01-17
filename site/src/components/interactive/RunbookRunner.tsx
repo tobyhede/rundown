@@ -94,7 +94,7 @@ export function RunbookRunner({
   );
 
   // Theme tracking
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(false);
 
   useEffect(() => {
     const html = document.documentElement;
@@ -110,6 +110,8 @@ export function RunbookRunner({
 
   // Track if we have already auto-started to prevent re-running on reset
   const hasAutoStarted = useRef(false);
+  // Track previous scenario to detect user-initiated changes
+  const previousScenario = useRef<string | null>(null);
 
   // Runbook internal state extracted from CLI output
   const [runbookStep, setRunbookStep] = useState<string>('—');
@@ -127,7 +129,7 @@ export function RunbookRunner({
 
     const term = new Terminal({
       theme: {
-        background: '#00000000', // Transparent to let parent BG show through
+        background: isDarkMode ? '#00000000' : '#ffffff', // Explicit white for light mode, transparent for dark
         foreground: isDarkMode ? '#cccccc' : '#333333',
         cursor: isDarkMode ? '#00e5ff' : '#9b4dff',
         selectionBackground: isDarkMode ? 'rgba(0, 229, 255, 0.3)' : 'rgba(155, 77, 255, 0.3)',
@@ -180,7 +182,7 @@ export function RunbookRunner({
   useEffect(() => {
     if (xtermInstance.current) {
       xtermInstance.current.options.theme = {
-        background: '#00000000',
+        background: isDarkMode ? '#00000000' : '#ffffff',
         foreground: isDarkMode ? '#cccccc' : '#333333',
         cursor: isDarkMode ? '#00e5ff' : '#9b4dff',
         selectionBackground: isDarkMode ? 'rgba(0, 229, 255, 0.3)' : 'rgba(155, 77, 255, 0.3)',
@@ -310,6 +312,25 @@ export function RunbookRunner({
     }
   }, [autoStart, status, currentStep, executeStep]);
 
+  // Auto-start when scenario changes (user selection)
+  useEffect(() => {
+    // Skip initial mount - let autoStart handle that
+    if (previousScenario.current === null) {
+      previousScenario.current = selectedScenario;
+      return;
+    }
+
+    // If scenario changed and we're ready at step 0, auto-execute
+    if (
+      selectedScenario !== previousScenario.current &&
+      status === 'ready' &&
+      currentStep === 0
+    ) {
+      previousScenario.current = selectedScenario;
+      executeStep();
+    }
+  }, [selectedScenario, status, currentStep, executeStep]);
+
   const reset = useCallback(async () => {
     // Clean up runbook state in container to avoid stale state
     if (container) {
@@ -351,7 +372,7 @@ export function RunbookRunner({
   return (
     <div
       className={`bg-gray-100 dark:bg-cyber-darker rounded-lg border border-gray-300 dark:border-cyber-cyan/30 ${ 
-        compact ? 'p-4' : 'p-6'
+        compact ? 'p-4' : 'p-6 flex flex-col h-full'
       }`}
     >
       {/* Scenario Selection */}
@@ -430,7 +451,7 @@ export function RunbookRunner({
       {/* Terminal Output Container */}
       <div
         className={`bg-white dark:bg-black/10 rounded p-4 border border-gray-300 dark:border-white/10 overflow-hidden relative ${ 
-          compact ? 'h-[250px]' : 'h-[400px]'
+          compact ? 'h-[250px]' : 'flex-1 min-h-[400px]'
         }`}
       >
         <div ref={terminalRef} className="h-full w-full" />

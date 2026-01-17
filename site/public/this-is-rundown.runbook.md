@@ -37,9 +37,9 @@ scenarios:
     result: COMPLETE
 ---
 
-# This is Rundown
+# Hello
 
-## 1 Hello. This is Rundown.
+## 1 This is Rundown
 
 Rundown transforms markdown into an executable specification.
 Headings become steps, code-blocks become executable commands.

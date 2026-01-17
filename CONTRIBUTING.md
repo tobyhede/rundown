@@ -129,4 +129,55 @@ npm run lint:fix
 4. Rebuild the snapshot if you've modified package code.
 5. Submit a pull request with a clear description of your changes.
 
+## Continuous Integration
+
+GitHub Actions runs on all pull requests and pushes to `main`:
+
+| Workflow | Trigger | What it does |
+|----------|---------|--------------|
+| `ci.yml` | PRs and pushes to main | Builds, lints, and tests across Node.js 18, 20, and 22 |
+| `release.yml` | Pushes to main | Handles npm publishing via Changesets |
+
+### CI Pipeline Steps
+
+1. `npm ci` - Install dependencies
+2. `npm run build` - Build all packages (parser → core → cli)
+3. `npm run lint` - Run ESLint
+4. `npm test` - Run Jest tests
+
+## Releases
+
+Releases are managed with [Changesets](https://github.com/changesets/changesets) and automated via GitHub Actions.
+
+### How It Works
+
+1. **Add a changeset** when making changes that should be released:
+   ```bash
+   npx changeset
+   ```
+   Follow the prompts to select packages and describe your changes.
+
+2. **Merge your PR** - The changeset file (`.changeset/*.md`) is committed with your code.
+
+3. **Version PR created** - After merge, the release workflow creates a "Version Packages" PR that bumps versions.
+
+4. **Publish** - Merging the Version PR triggers npm publish for all affected packages.
+
+### Package Versioning
+
+All three npm packages use **fixed versioning** - they release together with the same version number:
+- `@rundown/parser`
+- `@rundown/core`
+- `@rundown/cli`
+
+The `site` package is private and never published to npm.
+
+### Manual Release Commands
+
+```bash
+npx changeset           # Create a new changeset
+npx changeset version   # Apply changesets and bump versions
+npx changeset publish   # Publish to npm (usually done by CI)
+```
+
 Thank you for contributing!
