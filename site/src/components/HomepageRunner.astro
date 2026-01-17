@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import path from 'node:path';
 
 // Load the discover runbook at build time
-const runbookPath = path.resolve('public', 'discover-rundown.runbook.md');
+const runbookPath = path.resolve('public', 'this-is-rundown.runbook.md');
 const rawContent = await fs.readFile(runbookPath, 'utf-8');
 
 // Parse frontmatter
@@ -13,7 +13,7 @@ const frontmatterMatch = rawContent.match(/^---\n([\s\S]*?)\n---/);
 const frontmatter = frontmatterMatch ? parseYaml(frontmatterMatch[1]) : {};
 const bodyContent = rawContent.replace(/^---\n[\s\S]*?\n---\n?/, '');
 
-const filename = 'discover-rundown.runbook.md';
+const filename = 'this-is-rundown.runbook.md';
 const scenarios = frontmatter.scenarios || {};
 ---
 
@@ -22,14 +22,14 @@ const scenarios = frontmatter.scenarios || {};
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
     <!-- Left: Source -->
     <div class="flex flex-col">
-      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Source</h2>
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">source.rundown.md</h2>
       <pre
         class="bg-gray-900 dark:bg-cyber-darker border border-gray-700 dark:border-cyber-cyan/20 rounded-lg p-4 overflow-auto flex-1 text-sm font-mono text-gray-300 whitespace-pre-wrap"><code set:text={bodyContent} /></pre>
     </div>
 
     <!-- Right: Interactive Runner -->
     <div class="flex flex-col">
-      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Try It</h2>
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Run</h2>
       <div class="flex-1">
         <RunbookRunner
           client:load
