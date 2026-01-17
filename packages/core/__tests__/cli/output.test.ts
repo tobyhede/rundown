@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import {
   formatPosition,
+  formatStepNumber,
   printSeparator,
   printMetadata,
   printActionBlock,
@@ -55,6 +56,24 @@ describe('output formatter', () => {
       expect(formatPosition({ current: 'RECOVER', total: 6, substep: '1' })).toBe(
         'RECOVER.1'
       );
+    });
+  });
+
+  describe('formatStepNumber', () => {
+    it('formats step number without substep', () => {
+      expect(formatStepNumber({ current: '2', total: 5 })).toBe('2');
+    });
+
+    it('formats step number with substep', () => {
+      expect(formatStepNumber({ current: '2', total: 5, substep: '1' })).toBe('2.1');
+    });
+
+    it('formats named step', () => {
+      expect(formatStepNumber({ current: 'RECOVER', total: 6 })).toBe('RECOVER');
+    });
+
+    it('formats named step with substep', () => {
+      expect(formatStepNumber({ current: 'RECOVER', total: 6, substep: '2' })).toBe('RECOVER.2');
     });
   });
 
@@ -123,7 +142,7 @@ describe('output formatter', () => {
       );
       expect(writer.getLines()).toEqual([
         'Action:   CONTINUE',
-        'From:     1/5',
+        'From:     1',
         'Result:   PASS',
       ]);
     });
@@ -136,7 +155,7 @@ describe('output formatter', () => {
         },
         writer
       );
-      expect(writer.getLines()).toEqual(['Action:   GOTO 3', 'From:     1/5']);
+      expect(writer.getLines()).toEqual(['Action:   GOTO 3', 'From:     1']);
     });
 
     it('prints retry with count', () => {
@@ -149,6 +168,24 @@ describe('output formatter', () => {
         writer
       );
       expect(writer.getOutput()).toContain('Action:   RETRY (1/3)');
+    });
+
+    it('prints action with command field', () => {
+      printActionBlock(
+        {
+          action: 'RETRY (1/1)',
+          from: { current: '1', total: 1 },
+          command: 'npm run deploy:check',
+          result: 'FAIL',
+        },
+        writer
+      );
+      expect(writer.getLines()).toEqual([
+        'Action:   RETRY (1/1)',
+        'From:     1',
+        'Command:  npm run deploy:check',
+        'Result:   FAIL',
+      ]);
     });
   });
 

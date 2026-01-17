@@ -40,6 +40,20 @@ export function formatPosition(pos: StepPosition): string {
 }
 
 /**
+ * Format step number without total (for "From:" display in action blocks).
+ *
+ * Unlike formatPosition which shows "n/N", this shows just the step number
+ * with optional substep (e.g., "1" or "2.1"). Used in action blocks where
+ * the total is redundant information.
+ *
+ * @param pos - The StepPosition to format
+ * @returns Formatted step number string (e.g., "1", "2.1", "RECOVER")
+ */
+export function formatStepNumber(pos: StepPosition): string {
+  return pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
+}
+
+/**
  * Print separator line to stdout.
  *
  * Outputs a visual separator ("-----") for CLI output formatting.
@@ -83,7 +97,10 @@ export function printActionBlock(
 ): void {
   writer.writeLine(`Action:   ${info(data.action)}`);
   if (data.from) {
-    writer.writeLine(`From:     ${formatPosition(data.from)}`);
+    writer.writeLine(`From:     ${formatStepNumber(data.from)}`);
+  }
+  if (data.command) {
+    writer.writeLine(`Command:  ${data.command}`);
   }
   if (data.result) {
     writer.writeLine(`Result:   ${colorizeResult(data.result)}`);

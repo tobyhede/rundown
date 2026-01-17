@@ -5,6 +5,7 @@ export { TestWriter, type CapturedOutput } from './test-writer.js';
 export { getWriter, setWriter, withWriter, withWriterAsync } from './context.js';
 export * from './output.js';
 export * from './render.js';
+export * from './command-utils.js';
 export {
   isColorEnabled,
   setColorEnabled,

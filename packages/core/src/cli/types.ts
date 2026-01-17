@@ -42,4 +42,6 @@ export interface ActionBlockData {
   from?: StepPosition;
   /** The pass/fail result of the evaluation (aligns with --result flag) */
   result?: 'PASS' | 'FAIL';
+  /** The command that was executed (display-friendly, with rd echo wrapper stripped) */
+  command?: string;
 }
