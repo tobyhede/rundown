@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // packages/cli/src/cli.ts
 
-import { Command as CommandClass } from 'commander';
+import { Command } from 'commander';
 import { registerRunCommand } from './commands/run.js';
 import { registerGotoCommand } from './commands/goto.js';
 import { registerPassCommand } from './commands/pass.js';
@@ -19,7 +19,7 @@ import { registerPromptCommand } from './commands/prompt.js';
 import { registerScenariosCommand } from './commands/scenarios.js';
 import { setColorEnabled } from '@rundown/core';
 
-const program = new CommandClass();
+const program = new Command();
 
 program.name('rundown').description('Runbook orchestration CLI').version('1.0.0');
 
@@ -33,33 +33,19 @@ program.hook('preAction', (thisCommand) => {
 });
 
 registerRunCommand(program);
-
 registerPassCommand(program);
-
 registerFailCommand(program);
-
 registerCompleteCommand(program);
-
 registerGotoCommand(program);
-
 registerStatusCommand(program);
-
 registerStopCommand(program);
-
 registerLsCommand(program);
-
 registerStashCommand(program);
-
 registerPopCommand(program);
-
 registerEchoCommand(program);
-
 registerCheckCommand(program);
-
 registerPruneCommand(program);
-
 registerPromptCommand(program);
-
 registerScenariosCommand(program);
 
 program.parse();
