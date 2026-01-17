@@ -12,11 +12,17 @@ import {
   type Substep,
   type RunbookMetadata,
   type RunbookState,
+  type ExecutionResult,
   executeCommand,
   evaluatePassCondition,
   evaluateFailCondition,
   countNumberedSteps,
+  extractDisplayCommand,
 } from '@rundown/core';
+import {
+  isInternalRdCommand,
+  executeRdCommandInternal,
+} from './internal-commands.js';
 
 /**
  * Check if runbook snapshot indicates completion.
@@ -172,9 +178,22 @@ export async function runExecutionLoop(
       return 'waiting';
     }
 
-    // Execute command (output via stdio:inherit)
+    // Execute command
+    // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
     printCommandExec(currentStep.command.code);
-    const execResult = await executeCommand(currentStep.command.code, cwd);
+    let execResult: ExecutionResult;
+
+    if (isInternalRdCommand(currentStep.command.code)) {
+      const internalResult = await executeRdCommandInternal(currentStep.command.code, cwd);
+      if (internalResult !== null) {
+        execResult = internalResult;
+      } else {
+        // Fallback to spawn if internal execution not supported for this subcommand
+        execResult = await executeCommand(currentStep.command.code, cwd);
+      }
+    } else {
+      execResult = await executeCommand(currentStep.command.code, cwd);
+    }
 
     // Store result
     const lastResult = execResult.success ? 'pass' : 'fail';
@@ -251,6 +270,7 @@ export async function runExecutionLoop(
     printActionBlock({
       action,
       from: { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep },
+      command: extractDisplayCommand(currentStep.command.code),
       result: execResult.success ? 'PASS' : 'FAIL',
     });
 

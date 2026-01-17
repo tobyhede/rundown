@@ -1,25 +1,31 @@
-// packages/cli/src/commands/test.ts
+// packages/cli/src/commands/echo.ts
 
 import type { Command } from 'commander';
-import * as fs from 'fs/promises';
+import { getCwd } from '../helpers/context.js';
 import {
-  RunbookStateManager,
-  parseRunbook,
-} from '@rundown/core';
-import { getCwd, findRunbookFile } from '../helpers/context.js';
-import {
-  getStepRetryMax,
-  isValidResult,
-} from '../services/execution.js';
+  DEFAULT_RESULT_SEQUENCE,
+  executeEchoLogic,
+} from '../helpers/echo-command.js';
 
-export const DEFAULT_RESULT_SEQUENCE: string[] = ['pass'];
-
+/**
+ * Collect option values into an array.
+ * Used for repeatable --result options.
+ *
+ * @param value - The new value to add
+ * @param previous - Previously collected values
+ * @returns Updated array with new value appended
+ */
 export function collect(value: string, previous: string[]): string[] {
   return previous.concat([value]);
 }
 
 /**
  * Registers the 'echo' command for runbook testing.
+ *
+ * The echo command is a test helper that echoes back arguments with a
+ * configurable pass/fail result. It supports result sequences that change
+ * behavior on retries, useful for testing retry logic in runbooks.
+ *
  * @param program - Commander program instance to register the command on
  */
 export function registerEchoCommand(program: Command): void {
@@ -30,48 +36,23 @@ export function registerEchoCommand(program: Command): void {
     .action(async (command: string[] | undefined, options: { result: string[] }) => {
       try {
         const cwd = getCwd();
-        const manager = new RunbookStateManager(cwd);
-        const state = await manager.getActive();
-        if (!state) {
-          console.error('Error: No active runbook.');
-          process.exit(1);
-        }
-        const sequence = options.result.length > 0 ? options.result.map(r => r.toLowerCase()) : DEFAULT_RESULT_SEQUENCE;
+        const sequence = options.result.length > 0
+          ? options.result
+          : DEFAULT_RESULT_SEQUENCE;
+        const commandArgs = command ?? [];
 
-        // Validate all results are 'pass' or 'fail'
-        for (const r of sequence) {
-          if (!isValidResult(r)) {
-            console.error(`Error: Invalid result "${r}". Use "pass" or "fail".`);
-            process.exit(1);
-          }
+        const result = await executeEchoLogic(sequence, commandArgs, cwd);
+
+        if (result.error) {
+          console.error(result.error);
+          process.exit(result.exitCode);
         }
 
-        const retryCount = state.retryCount;
-        const index = Math.min(retryCount, sequence.length - 1);
-        const result = sequence[index] as 'pass' | 'fail';
-
-        // Load runbook to get current step for retry max
-        const runbookPath = await findRunbookFile(cwd, state.runbook);
-        let retryMax = 0;
-        if (runbookPath) {
-          const runbookContent = await fs.readFile(runbookPath, 'utf8');
-          const steps = parseRunbook(runbookContent);
-          const currentStepIndex = steps.findIndex(s => s.name === state.step);
-          const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
-          // currentStep is guaranteed to exist from array index
-          if (currentStep) {
-            retryMax = getStepRetryMax(currentStep);
-          }
+        if (result.output) {
+          console.log(result.output);
         }
 
-        // Output verbose status
-        const attempt = retryCount + 1;
-        const resultUpper = result.toUpperCase();
-        const commandStr = command?.join(' ') ?? '';
-        console.log(`[${resultUpper}] ${commandStr} [${String(attempt)}/${String(retryMax + 1)}]`);
-
-        // Exit with appropriate code
-        process.exit(result === 'pass' ? 0 : 1);
+        process.exit(result.exitCode);
       } catch (error) {
         let message = 'Failed to process test command';
         if (error instanceof Error) {

@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import * as path from 'path';
 
 /**
  * Result of executing a shell command.
@@ -18,6 +19,13 @@ export interface ExecutionResult {
  * Spawns a shell process to run the command, inheriting stdin/stdout/stderr
  * from the parent process. Supports cross-platform execution (Windows cmd, Unix sh).
  *
+ * The PATH environment variable is automatically enhanced to include
+ * `node_modules/.bin` relative to the working directory, enabling execution
+ * of locally installed npm binaries without global installation.
+ *
+ * Note: In WebContainer environments, nested process spawning has limitations.
+ * For rd commands, use the internal command dispatcher in the CLI package instead.
+ *
  * Note: Errors during spawn are caught and returned as failed results rather than thrown.
  *
  * @param command - The shell command to execute
@@ -26,15 +34,25 @@ export interface ExecutionResult {
  */
 export function executeCommand(command: string, cwd: string): Promise<ExecutionResult> {
   return new Promise((resolve) => {
-    // Cross-platform shell selection
+    // Build PATH that includes node_modules/.bin for local package binaries
+    const binPath = path.join(cwd, 'node_modules', '.bin');
     const isWindows = process.platform === 'win32';
+    const pathSeparator = isWindows ? ';' : ':';
+    const existingPath = process.env.PATH ?? process.env.Path ?? '';
+    const enhancedPath = `${binPath}${pathSeparator}${existingPath}`;
+
+    const env = {
+      ...process.env,
+      PATH: enhancedPath,
+    };
+
     const shell = isWindows ? 'cmd' : 'sh';
     const shellArgs = isWindows ? ['/c', command] : ['-c', command];
 
     const child = spawn(shell, shellArgs, {
       cwd,
       stdio: 'inherit',
-      env: process.env  // Explicitly pass environment for cross-platform consistency
+      env,
     });
 
     child.on('close', (code) => {
