@@ -52,11 +52,13 @@ Human-readable. Agent-readable. Machine-executable.
 Rundown keeps agents on track by injecting precision context at the exact moment it’s needed.
 
 
+
 ## 3 Make complex workflows deterministic
 - PASS: CONTINUE
 - FAIL: GOTO RECOVER
 
 Rundown works *with* agents, adding guardrails that enforce transitions and improve accuracy.
+
 
 
 ## 4 Execute the right commands at the right time
@@ -70,12 +72,14 @@ rd echo npm run test
 ```
 
 
+
 ## 5 Track progresss across agents and sessions
 - PASS: CONTINUE
 - FAIL: STOP
 
 State-aware CLI ensures progress is never lost.
 Save and resume complex processes at any time.
+
 
 
 ## 6 Ready to get started?
@@ -87,8 +91,10 @@ npm install -g @rundown/cli
 ```
 
 
+
 ## RECOVER Recover from errors
 - PASS: GOTO 4
 - FAIL: STOP
 
+If you are here, an error occurred.
 Named steps enable error handling and conditional logic.

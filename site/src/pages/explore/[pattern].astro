@@ -103,14 +103,14 @@ const hasScenarios =
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
       <!-- Left: Source -->
       <div>
-        <h2 class="mb-4">Source</h2>
+        <h2 class="mb-4">Rundown</h2>
         <pre
           class="bg-gray-900 dark:bg-cyber-darker border border-gray-700 dark:border-cyber-cyan/20 rounded-lg p-4 overflow-auto max-h-[800px] text-sm font-mono text-gray-300 whitespace-pre-wrap"><code set:text={content} /></pre>
       </div>
 
       <!-- Right: Interactive Runner -->
       <div>
-        <h2 class="mb-4">Try It</h2>
+        <h2 class="mb-4">Run</h2>
         {
           hasScenarios ? (
             <RunbookRunner
