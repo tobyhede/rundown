@@ -9,6 +9,7 @@
   "scripts": {
     "build": "npm run build -w packages/parser && npm run build -w packages/core && npm run build -w packages/cli",
     "build:site": "npm run build -w site",
+    "build:all": "npm run build && npm run build -w site",
     "test": "npm run test -w packages/parser && npm run test -w packages/core && npm run test -w packages/cli",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
