@@ -9,7 +9,7 @@ scenarios:
       - rd pass
     result: COMPLETE
 tags:
-  - features
+  - tests
 ---
 
 # Action Messages

@@ -2,7 +2,7 @@
 name: metadata-header
 description: Runbook with H1 title and description text
 tags:
-  - features
+  - tests
 
 scenarios:
   completed:

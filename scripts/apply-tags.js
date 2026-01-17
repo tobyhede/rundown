@@ -16,7 +16,7 @@ const CATEGORIES = {
   composition: [
     'agent-*.runbook.md',
     'child-task.runbook.md',
-    'workflow-composition.runbook.md',
+    'runbook-composition.runbook.md',
     'multi-agent-dynamic.runbook.md',
     'substep-runbooks.runbook.md'
   ],
@@ -30,8 +30,7 @@ const CATEGORIES = {
   transition: [
     'default-transitions.runbook.md',
     'complex-transitions.runbook.md',
-    'pass-*.runbook.md',
-    'fail-*.runbook.md',
+    'transition-actions.runbook.md',
     'substep-transitions.runbook.md',
     'dynamic-substep-transitions.runbook.md'
   ],
@@ -69,8 +68,15 @@ const CATEGORIES = {
     'standard-sequential.runbook.md'
   ],
 
-  // Specific Features
-  features: [
+  // Featured Runbooks
+  featured: [
+    'code-review.runbook.md',
+    'dev-test-retry.runbook.md',
+    'deploy-service.runbook.md'
+  ],
+
+  // Tests
+  tests: [
     'action-messages.runbook.md',
     'code-blocks.runbook.md',
     'list-instructions.runbook.md',
@@ -79,6 +85,7 @@ const CATEGORIES = {
 };
 
 const PRIORITY = [
+  'featured',
   'navigation',
   'composition',
   'retries',
@@ -88,7 +95,7 @@ const PRIORITY = [
   'substeps',
   'dynamic',
   'sequential',
-  'features'
+  'tests'
 ];
 
 function matchPattern(filename, pattern) {

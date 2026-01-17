@@ -2,7 +2,7 @@
 name: list-instructions
 description: Demonstrates steps with list-formatted instructions
 tags:
-  - features
+  - tests
 
 scenarios:
   completed:

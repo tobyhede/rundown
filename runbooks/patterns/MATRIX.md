@@ -105,16 +105,16 @@ Comprehensive coverage matrix for Rundown runbook patterns.
 
 ## Other Patterns
 
-6 patterns for additional features.
+6 patterns for core functionality.
 
 | Pattern | Feature | File |
 |---------|---------|------|
 | Prompts | User prompts with checkboxes | [prompted-steps](prompts/prompted-steps.runbook.md) |
 | Mixed prompts | Multiple prompt types | [mixed-prompts](prompts/mixed-prompts.runbook.md) |
-| Metadata header | YAML frontmatter | [metadata-header](features/metadata-header.runbook.md) |
-| List instructions | Bulleted instruction lists | [list-instructions](features/list-instructions.runbook.md) |
+| Metadata header | YAML frontmatter | [metadata-header](tests/metadata-header.runbook.md) |
+| List instructions | Bulleted instruction lists | [list-instructions](tests/list-instructions.runbook.md) |
 | Runbook composition | Including other runbooks | [runbook-composition](composition/runbook-composition.runbook.md) |
-| Code blocks | Multiple code block types | [code-blocks](features/code-blocks.runbook.md) |
+| Code blocks | Multiple code block types | [code-blocks](tests/code-blocks.runbook.md) |
 
 ---
 
@@ -133,7 +133,17 @@ Comprehensive coverage matrix for Rundown runbook patterns.
 
 | Pattern | Description | File |
 |---------|-------------|------|
-| action-messages | STOP and COMPLETE with message parameters | [action-messages](features/action-messages.runbook.md) |
+| action-messages | STOP and COMPLETE with message parameters | [action-messages](tests/action-messages.runbook.md) |
+
+---
+
+## Featured Patterns
+
+| Pattern | Description | File |
+|---------|-------------|------|
+| code-review | Standardized code review process | [code-review](featured/code-review.runbook.md) |
+| dev-test-retry | Dev workflow with automatic retries | [dev-test-retry](featured/dev-test-retry.runbook.md) |
+| deploy-service | Safe deployment with health checks | [deploy-service](featured/deploy-service.runbook.md) |
 
 ---
 
@@ -149,4 +159,5 @@ Comprehensive coverage matrix for Rundown runbook patterns.
 | Other | 6 |
 | Subrunbook Patterns | 4 |
 | Message Patterns | 1 |
-| **Total** | **59** |
+| Featured Patterns | 3 |
+| **Total** | **62** |

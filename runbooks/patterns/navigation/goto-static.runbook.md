@@ -3,7 +3,6 @@ name: goto-static
 description: Demonstrates static GOTO patterns (Step, Substep, NEXT, Named Substep)
 tags:
   - navigation
-  - substeps
 
 scenarios:
   goto-step:

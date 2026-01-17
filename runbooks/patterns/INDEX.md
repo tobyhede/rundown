@@ -37,7 +37,8 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 - [Retry Behavior](#retry-behavior)
 - [Prompts](#prompts)
 - [Composition & Agents](#composition--agents)
-- [Specific Features](#specific-features)
+- [Featured Runbooks](#featured-runbooks)
+- [Tests](#tests)
 
 ---
 
@@ -389,33 +390,57 @@ Helper child runbook (used in composition tests).
 
 ---
 
-## Specific Features
+## Featured Runbooks
 
-Additional specific functionality.
+Real-world use cases demonstrating Rundown in action.
+
+### code-review.runbook.md
+
+Standardized code review process.
+
+- [code-review.runbook.md](./featured/code-review.runbook.md)
+
+### dev-test-retry.runbook.md
+
+Development workflow with automatic retries and failure recovery.
+
+- [dev-test-retry.runbook.md](./featured/dev-test-retry.runbook.md)
+
+### deploy-service.runbook.md
+
+Safe deployment process with health checks and rollback.
+
+- [deploy-service.runbook.md](./featured/deploy-service.runbook.md)
+
+---
+
+## Tests
+
+Core functionality and edge case verification.
 
 ### action-messages.runbook.md
 
 STOP and COMPLETE with custom messages.
 
-- [action-messages.runbook.md](./features/action-messages.runbook.md)
+- [action-messages.runbook.md](./tests/action-messages.runbook.md)
 
 ### code-blocks.runbook.md
 
 Various code block patterns in runbooks.
 
-- [code-blocks.runbook.md](./features/code-blocks.runbook.md)
+- [code-blocks.runbook.md](./tests/code-blocks.runbook.md)
 
 ### list-instructions.runbook.md
 
 List-based step instructions.
 
-- [list-instructions.runbook.md](./features/list-instructions.runbook.md)
+- [list-instructions.runbook.md](./tests/list-instructions.runbook.md)
 
 ### metadata-header.runbook.md
 
 YAML frontmatter metadata.
 
-- [metadata-header.runbook.md](./features/metadata-header.runbook.md)
+- [metadata-header.runbook.md](./tests/metadata-header.runbook.md)
 
 ---
 
