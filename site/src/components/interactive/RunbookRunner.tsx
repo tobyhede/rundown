@@ -363,21 +363,21 @@ export function RunbookRunner({
 
   // Helper to format result color
   const getResultColor = (res: string | null) => {
-    if (!res) return 'text-gray-500';
-    if (res === 'COMPLETE') return 'text-green-400';
-    if (res === 'STOP' || res === 'STOPPED') return 'text-red-400';
-    return 'text-yellow-400';
+    if (!res) return 'text-muted-foreground';
+    if (res === 'COMPLETE') return 'text-green-500';
+    if (res === 'STOP' || res === 'STOPPED') return 'text-destructive';
+    return 'text-yellow-500';
   };
 
   return (
     <div
-      className={`bg-gray-100 dark:bg-cyber-darker rounded-lg border border-gray-300 dark:border-cyber-cyan/30 ${ 
+      className={`bg-card rounded-lg border border-border ${
         compact ? 'p-4' : 'p-6 flex flex-col h-full'
       }`}
     >
       {/* Scenario Selection */}
       <div className="mb-6">
-        <label className="text-[10px] uppercase tracking-wider text-cyber-purple dark:text-cyber-magenta font-bold mb-2 block opacity-80">
+        <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2 block">
           Select Scenario
         </label>
         <div className="flex flex-wrap gap-2">
@@ -389,10 +389,10 @@ export function RunbookRunner({
                 setSelectedScenario(key);
                 reset();
               }}
-              className={`px-3 py-1.5 text-xs font-mono rounded border transition-all whitespace-normal text-left ${ 
+              className={`px-3 py-1.5 text-xs font-mono rounded-md border transition-all whitespace-normal text-left ${
                 selectedScenario === key
-                  ? 'bg-cyber-cyan/20 border-cyber-cyan text-gray-900 dark:text-cyber-cyan shadow-[0_0_10px_rgba(0,229,255,0.3)]'
-                  : 'bg-white dark:bg-cyber-dark/50 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-500 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-900 dark:hover:text-gray-300'
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-secondary border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground'
               }`}
             >
               {key}
@@ -400,22 +400,22 @@ export function RunbookRunner({
           ))}
         </div>
         {scenario?.description && (
-          <p className="mt-2 text-xs text-gray-600 dark:text-gray-400 italic leading-relaxed">
+          <p className="mt-2 text-xs text-muted-foreground italic leading-relaxed">
             {scenario.description}
           </p>
         )}
       </div>
 
       {/* Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pt-4 border-t border-gray-300 dark:border-cyber-cyan/10">
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pt-4 border-t border-border">
         <div className="flex items-center gap-3">
           <span
-            className={`text-xs font-mono uppercase tracking-widest ${ 
+            className={`text-xs font-mono uppercase tracking-widest ${
               status === 'error'
-                ? 'text-red-500 dark:text-red-400'
+                ? 'text-destructive'
                 : status === 'ready'
-                  ? 'text-green-600 dark:text-green-400'
-                  : 'text-yellow-600 dark:text-yellow-400'
+                  ? 'text-green-500'
+                  : 'text-yellow-500'
             }`}
           >
             {statusText}
@@ -426,7 +426,7 @@ export function RunbookRunner({
           <button
             onClick={executeStep}
             disabled={!canRun}
-            className="px-4 py-1.5 bg-cyber-cyan text-gray-900 font-bold text-sm rounded disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-neon-cyan transition-shadow"
+            className="h-9 px-4 bg-primary text-primary-foreground font-medium text-sm rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
           >
             {isComplete ? 'Complete' : 'Next Step'}
           </button>
@@ -434,7 +434,7 @@ export function RunbookRunner({
             onClick={reset}
             // Only disable reset if nothing has happened yet
             disabled={status === 'running' || (currentStep === 0 && !error)}
-            className="px-3 py-1.5 border border-cyber-purple/50 text-cyber-purple text-sm rounded hover:bg-cyber-purple/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="h-9 px-3 border border-input bg-background text-foreground text-sm rounded-md hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Reset
           </button>
@@ -443,32 +443,32 @@ export function RunbookRunner({
 
       {/* Error display */}
       {error && (
-        <div className="mb-4 p-3 bg-red-900/10 dark:bg-red-900/30 border border-red-500/50 rounded text-red-600 dark:text-red-400 text-sm font-mono">
+        <div className="mb-4 p-3 bg-destructive/10 border border-destructive/50 rounded text-destructive text-sm font-mono">
           {error}
         </div>
       )}
 
       {/* Terminal Output Container */}
       <div
-        className={`bg-white dark:bg-black/10 rounded p-4 border border-gray-300 dark:border-white/10 overflow-hidden relative ${ 
+        className={`bg-background rounded-md p-4 border border-border/50 overflow-hidden relative ${
           compact ? 'h-[250px]' : 'flex-1 min-h-[400px]'
         }`}
       >
         <div ref={terminalRef} className="h-full w-full" />
-        
+
         {/* Placeholder/Loading State Overlay */}
         {(!container || status === 'booting' || status === 'loading') && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 dark:bg-cyber-darker/80 z-10 text-gray-500 font-mono text-xs">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 z-10 text-muted-foreground font-mono text-xs">
              <p>{statusText}</p>
           </div>
         )}
       </div>
 
       {/* Footer Progress & Status */}
-      <div className="mt-4 flex items-center justify-between text-[10px] font-mono border-t border-gray-300 dark:border-white/5 pt-4">
+      <div className="mt-4 flex items-center justify-between text-[10px] font-mono border-t border-border pt-4">
         <div className="flex items-center gap-2">
-          <span className="text-gray-500 uppercase tracking-tighter">Step</span>
-          <span className="text-gray-900 dark:text-white font-bold">
+          <span className="text-muted-foreground uppercase tracking-tighter">Step</span>
+          <span className="text-foreground font-bold">
             {runbookStep}/{runbookTotal}
           </span>
         </div>
@@ -476,7 +476,7 @@ export function RunbookRunner({
         <div className="flex items-center gap-6">
           {runbookResult && (
             <div className="flex items-center gap-2">
-              <span className="text-gray-500 uppercase tracking-tighter">Result</span>
+              <span className="text-muted-foreground uppercase tracking-tighter">Result</span>
               <span className={`font-bold ${getResultColor(runbookResult)}`}>
                 {runbookResult}
               </span>
@@ -484,8 +484,8 @@ export function RunbookRunner({
           )}
 
           <div className="flex items-center gap-2">
-            <span className="text-gray-500 uppercase tracking-tighter">Expected</span>
-            <span className="text-cyber-purple dark:text-cyber-cyan font-bold">{scenario?.result}</span>
+            <span className="text-muted-foreground uppercase tracking-tighter">Expected</span>
+            <span className="text-foreground font-bold">{scenario?.result}</span>
           </div>
         </div>
       </div>
@@ -494,7 +494,7 @@ export function RunbookRunner({
       <div className="mt-4 flex justify-end">
         <div className="flex items-center gap-2 opacity-40 hover:opacity-100 transition-opacity">
           <div
-            className={`w-1.5 h-1.5 rounded-full ${ 
+            className={`w-1.5 h-1.5 rounded-full ${
               status === 'ready'
                 ? 'bg-green-500 animate-pulse'
                 : status === 'running'
@@ -502,7 +502,7 @@ export function RunbookRunner({
                   : 'bg-red-500'
             }`}
           />
-          <span className="text-[9px] text-gray-500 uppercase tracking-widest font-bold">
+          <span className="text-[9px] text-muted-foreground uppercase tracking-widest font-bold">
             Env {status}
           </span>
         </div>

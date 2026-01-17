@@ -18,7 +18,12 @@ function crossOriginIsolationPlugin() {
 
 export default defineConfig({
   site: 'https://rundown.cool',
-  integrations: [tailwind(), react()],
+  integrations: [
+    tailwind({
+      applyBaseStyles: false,
+    }),
+    react(),
+  ],
   build: {
     assets: '_assets',
   },

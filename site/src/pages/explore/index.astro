@@ -61,6 +61,15 @@ const grouped = patterns.reduce(
   },
   {} as Record<string, PatternMeta[]>
 );
+
+// Sort groups: featured first, tests last, others alphabetically
+const sortedGroups = Object.entries(grouped).sort(([a], [b]) => {
+  if (a === 'featured') return -1;
+  if (b === 'featured') return 1;
+  if (a === 'tests') return 1;
+  if (b === 'tests') return -1;
+  return a.localeCompare(b);
+});
 ---
 
 <Layout title="Explore Rundown">
@@ -72,7 +81,7 @@ const grouped = patterns.reduce(
     </p>
 
     {
-      Object.entries(grouped).map(([group, items]) => (
+      sortedGroups.map(([group, items]) => (
         <section class="mb-12">
           <h2 class="mb-4 capitalize">
             {group}
@@ -81,15 +90,15 @@ const grouped = patterns.reduce(
             {items.map((pattern) => (
               <a
                 href={`/explore/${pattern.slug}`}
-                class="block p-4 bg-gray-100 dark:bg-cyber-darker border border-gray-300 dark:border-cyber-cyan/20 rounded-lg hover:border-cyber-purple dark:hover:border-cyber-cyan/50 hover:shadow-lg dark:hover:shadow-neon-cyan/20 transition-all"
+                class="block p-4 bg-card border border-border rounded-lg hover:border-cyber-cyan/50 hover:shadow-lg transition-all"
               >
-                <h3 class="font-mono text-gray-900 dark:text-cyber-cyan mb-2">{pattern.name}</h3>
-                <p class="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
+                <h3 class="font-mono text-card-foreground mb-2">{pattern.name}</h3>
+                <p class="text-sm text-muted-foreground line-clamp-2">
                   {pattern.description}
                 </p>
                 <div class="mt-3 flex flex-wrap gap-1">
                   {pattern.tags.map((tag) => (
-                    <span class="text-xs px-2 py-0.5 bg-cyber-purple/10 dark:bg-cyber-purple/20 text-cyber-purple rounded">
+                    <span class="text-xs px-2.5 py-0.5 bg-secondary text-secondary-foreground rounded-md border border-transparent font-semibold">
                       {tag}
                     </span>
                   ))}

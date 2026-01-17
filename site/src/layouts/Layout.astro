@@ -39,7 +39,7 @@ const canonicalURL = new URL(Astro.url.pathname, 'https://rundown.cool');
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>{title}</title>
   </head>
-  <body class="flex flex-col font-mono bg-white dark:bg-cyber-dark text-gray-900 dark:text-gray-200 transition-colors duration-300">
+  <body class="flex flex-col font-mono bg-background text-foreground transition-colors duration-300">
     <Header />
     <div class="flex-1">
       <slot />

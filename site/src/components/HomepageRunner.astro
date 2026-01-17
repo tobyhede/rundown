@@ -22,14 +22,14 @@ const scenarios = frontmatter.scenarios || {};
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
     <!-- Left: Source -->
     <div class="flex flex-col">
-      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">source.rundown.md</h2>
+      <h2 class="text-lg font-semibold text-foreground mb-4">source.rundown.md</h2>
       <pre
-        class="bg-gray-100 dark:bg-cyber-darker border border-gray-300 dark:border-cyber-cyan/20 rounded-lg p-4 overflow-auto flex-1 text-sm font-mono text-gray-800 dark:text-gray-300 whitespace-pre-wrap"><code set:text={bodyContent} /></pre>
+        class="bg-muted border border-border rounded-lg p-4 overflow-auto flex-1 text-sm font-mono text-foreground whitespace-pre-wrap"><code set:text={bodyContent} /></pre>
     </div>
 
     <!-- Right: Interactive Runner -->
     <div class="flex flex-col">
-      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Run</h2>
+      <h2 class="text-lg font-semibold text-foreground mb-4">Run</h2>
       <div class="flex-1">
         <RunbookRunner
           client:load

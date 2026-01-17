@@ -25,13 +25,13 @@ const quickstartUrl = 'https://github.com/tobyhede/rundown#get-started';
       href={quickstartUrl}
       target="_blank"
       rel="noopener noreferrer"
-      class="w-48 flex justify-center items-center px-8 py-3 bg-cyber-cyan text-gray-900 font-bold rounded-lg hover:shadow-neon-cyan transition-shadow"
+      class="w-48 flex justify-center items-center h-10 px-8 bg-primary text-primary-foreground font-medium rounded-md hover:bg-primary/90 transition-colors"
     >
       Get Started
     </a>
     <a
       href="/explore"
-      class="w-48 flex justify-center items-center px-8 py-3 border border-cyber-purple dark:border-cyber-magenta text-cyber-purple dark:text-cyber-magenta font-bold rounded-lg hover:shadow-neon-magenta transition-shadow"
+      class="w-48 flex justify-center items-center h-10 px-8 border border-input bg-background text-foreground font-medium rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
     >
       Explore
     </a>
@@ -39,13 +39,13 @@ const quickstartUrl = 'https://github.com/tobyhede/rundown#get-started';
 
   <!-- Install snippet -->
   <div class="mt-6 w-full max-w-md">
-    <div class="flex items-center justify-between bg-gray-100 dark:bg-cyber-darker border border-gray-300 dark:border-cyber-cyan/20 rounded-lg px-4 py-3">
-      <code class="text-gray-800 dark:text-gray-300 font-mono text-sm">
-        <span class="text-gray-500">❯</span> npm install -g @rundown/cli
+    <div class="flex items-center justify-between bg-muted border border-border rounded-lg px-4 py-3">
+      <code class="text-foreground font-mono text-sm">
+        <span class="text-muted-foreground">❯</span> npm install -g @rundown/cli
       </code>
       <button
         id="copy-install-btn"
-        class="text-gray-500 dark:text-gray-400 hover:text-cyber-purple dark:hover:text-cyber-cyan transition-colors ml-4"
+        class="text-muted-foreground hover:text-cyber-cyan transition-colors ml-4"
         title="Copy to clipboard"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

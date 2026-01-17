@@ -80,18 +80,18 @@ const hasScenarios =
     <div class="mb-8">
       <a
         href="/explore"
-        class="text-cyber-purple dark:text-cyber-cyan hover:text-cyber-purple/80 dark:hover:text-cyber-cyan/80 text-sm mb-4 inline-block"
+        class="text-primary hover:text-primary/80 text-sm mb-4 inline-block"
       >
         ← Back to Explore
       </a>
       <h1 class="mb-2">
         {frontmatter.name}
       </h1>
-      <p class="text-gray-600 dark:text-gray-400">{frontmatter.description}</p>
+      <p class="text-muted-foreground">{frontmatter.description}</p>
       <div class="mt-3 flex flex-wrap gap-2">
         {
           frontmatter.tags?.map((tag) => (
-            <span class="text-xs px-2 py-1 bg-cyber-purple/10 dark:bg-cyber-purple/20 text-cyber-purple rounded">
+            <span class="text-xs px-2.5 py-0.5 bg-secondary text-secondary-foreground rounded-md border border-transparent font-semibold">
               {tag}
             </span>
           ))
@@ -105,7 +105,7 @@ const hasScenarios =
       <div class="flex flex-col">
         <h2 class="mb-4">Rundown</h2>
         <pre
-          class="bg-gray-100 dark:bg-cyber-darker border border-gray-300 dark:border-cyber-cyan/20 rounded-lg p-4 overflow-auto max-h-[800px] flex-1 text-sm font-mono text-gray-800 dark:text-gray-300 whitespace-pre-wrap"><code set:text={content} /></pre>
+          class="bg-muted border border-border rounded-lg p-4 overflow-auto max-h-[800px] flex-1 text-sm font-mono text-foreground whitespace-pre-wrap"><code set:text={content} /></pre>
       </div>
 
       <!-- Right: Interactive Runner -->
@@ -123,10 +123,10 @@ const hasScenarios =
               autoStart={true}
             />
           ) : (
-            <div class="bg-gray-100 dark:bg-cyber-darker border border-gray-300 dark:border-cyber-cyan/20 rounded-lg p-6 text-gray-600 dark:text-gray-400">
+            <div class="bg-muted border border-border rounded-lg p-6 text-muted-foreground">
               <p>This pattern does not have interactive scenarios defined.</p>
               <p class="text-sm mt-2">
-                Add a <code class="text-cyber-purple dark:text-cyber-cyan">scenarios</code> section to
+                Add a <code class="text-cyber-cyan">scenarios</code> section to
                 the frontmatter to enable interactive execution.
               </p>
             </div>
