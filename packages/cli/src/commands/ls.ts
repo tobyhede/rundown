@@ -99,8 +99,7 @@ export function registerLsCommand(program: Command): void {
           emptyMessage: 'No active runbooks.\nRun "rundown ls --all" to see available runbooks.',
           // Strip internal display properties for JSON output
           jsonMapper: (s) => {
-             // eslint-disable-next-line @typescript-eslint/no-unused-vars
-             const { _status, _displayStep, ...original } = s;
+             const { _status: _, _displayStep: __, ...original } = s;
              return original;
           }
         });

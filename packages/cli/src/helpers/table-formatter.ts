@@ -7,7 +7,7 @@
 /**
  * Column definition for table formatting.
  */
-export interface Column<T = any> {
+export interface Column<T = unknown> {
   /** Column header text (will be uppercased) */
   header: string;
   /** Key to extract value from row object */
@@ -43,7 +43,7 @@ export interface TableOptions {
  * // ['NAME  DESCRIPTION', 'foo   A foo']
  * ```
  */
-export function formatTable<T = Record<string, any>>(
+export function formatTable<T = Record<string, unknown>>(
   rows: T[],
   columns: Column<T>[],
   options?: TableOptions
@@ -102,7 +102,7 @@ export function formatTable<T = Record<string, any>>(
  * @param columns - Column definitions
  * @param options - Formatting options
  */
-export function printTable<T = Record<string, any>>(
+export function printTable<T = Record<string, unknown>>(
   rows: T[],
   columns: Column<T>[],
   options?: TableOptions

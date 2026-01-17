@@ -87,8 +87,7 @@ export function registerPruneCommand(program: Command): void {
           ], {
             // For JSON, clean up internal fields
             jsonMapper: (item) => {
-              // eslint-disable-next-line @typescript-eslint/no-unused-vars
-              const { _status, ...rest } = item;
+              const { _status: _, ...rest } = item;
               return { ...rest, status: item._status };
             }
           });
@@ -111,8 +110,7 @@ export function registerPruneCommand(program: Command): void {
             { header: 'TITLE', get: (item) => item.title ? `[${item.title}]` : '' }
           ], {
             jsonMapper: (item) => {
-              // eslint-disable-next-line @typescript-eslint/no-unused-vars
-              const { _status, ...rest } = item;
+              const { _status: _, ...rest } = item;
               return { ...rest, status: item._status };
             }
         });

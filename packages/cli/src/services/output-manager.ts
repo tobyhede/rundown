@@ -1,5 +1,7 @@
-import { OutputWriter, ConsoleWriter } from '@rundown/core';
-import { formatTable, Column } from '../helpers/table-formatter.js';
+import type { OutputWriter } from '@rundown/core';
+import { ConsoleWriter } from '@rundown/core';
+import type { Column } from '../helpers/table-formatter.js';
+import { formatTable } from '../helpers/table-formatter.js';
 
 export interface OutputManagerOptions {
   /** Whether to output in JSON format */

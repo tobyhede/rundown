@@ -144,15 +144,15 @@ export function registerStatusCommand(program: Command): void {
             pending: state.pendingSteps.length > 0 
               ? state.pendingSteps.map((p) => stepIdToString(p.stepId)) 
               : undefined,
-            agents: Object.keys(state.agentBindings).length > 0 
-              ? Object.entries(state.agentBindings).reduce((acc, [agentId, binding]) => {
+            agents: Object.keys(state.agentBindings).length > 0
+              ? Object.entries(state.agentBindings).reduce<Record<string, { step: string; status: string; result?: string }>>((acc, [agentId, binding]) => {
                 acc[agentId] = {
                   step: stepIdToString(binding.stepId),
                   status: binding.status,
                   result: binding.result
                 };
                 return acc;
-              }, {} as Record<string, { step: string; status: string; result?: string }>)
+              }, {})
               : undefined
            };
            writer.writeJson(statusData);
