@@ -40,6 +40,17 @@ async function buildSnapshot() {
     if (useLocalPackages) {
       console.log('Using local packages (set USE_NPM_PACKAGES=1 to use npm)...');
 
+      // Build packages first to ensure dist folders exist
+      console.log('Building packages...');
+      execSync('npm run build', { cwd: projectRoot, stdio: 'inherit' });
+
+      // Verify critical files exist
+      const cliEntryPoint = join(projectRoot, 'packages/cli/dist/cli.js');
+      if (!existsSync(cliEntryPoint)) {
+        throw new Error(`CLI entry point not found at ${cliEntryPoint}. Build may have failed.`);
+      }
+      console.log('✓ CLI entry point verified');
+
       // Pack local packages
       const packagesDir = join(projectRoot, 'packages');
       const tarballs: string[] = [];
