@@ -40,6 +40,10 @@ async function buildSnapshot() {
     if (useLocalPackages) {
       console.log('Using local packages (set USE_NPM_PACKAGES=1 to use npm)...');
 
+      // Install dependencies for all workspaces (needed when building from site directory)
+      console.log('Installing monorepo dependencies...');
+      execSync('npm install', { cwd: projectRoot, stdio: 'inherit' });
+
       // Build packages first to ensure dist folders exist
       console.log('Building packages...');
       execSync('npm run build', { cwd: projectRoot, stdio: 'inherit' });
