@@ -39,6 +39,8 @@ interface Props {
   scenarios: Record<string, Scenario>;
   /** Whether to render in compact mode for embedding */
   compact?: boolean;
+  /** Whether to automatically start the first command on load */
+  autoStart?: boolean;
 }
 
 /** Component lifecycle status for WebContainer initialization and command execution */
@@ -81,6 +83,7 @@ export function RunbookRunner({
   runbookContent,
   scenarios,
   compact = false,
+  autoStart = false,
 }: Props) {
   const [container, setContainer] = useState<WebContainer | null>(null);
   const [status, setStatus] = useState<Status>('idle');
@@ -89,6 +92,24 @@ export function RunbookRunner({
   const [selectedScenario, setSelectedScenario] = useState<string>(
     Object.keys(scenarios)[0] || ''
   );
+
+  // Theme tracking
+  const [isDarkMode, setIsDarkMode] = useState(true);
+
+  useEffect(() => {
+    const html = document.documentElement;
+    setIsDarkMode(html.classList.contains('dark'));
+
+    const observer = new MutationObserver(() => {
+      setIsDarkMode(html.classList.contains('dark'));
+    });
+
+    observer.observe(html, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  // Track if we have already auto-started to prevent re-running on reset
+  const hasAutoStarted = useRef(false);
 
   // Runbook internal state extracted from CLI output
   const [runbookStep, setRunbookStep] = useState<string>('—');
@@ -107,9 +128,9 @@ export function RunbookRunner({
     const term = new Terminal({
       theme: {
         background: '#00000000', // Transparent to let parent BG show through
-        foreground: '#cccccc',
-        cursor: '#00e5ff',
-        selectionBackground: 'rgba(0, 229, 255, 0.3)',
+        foreground: isDarkMode ? '#cccccc' : '#333333',
+        cursor: isDarkMode ? '#00e5ff' : '#9b4dff',
+        selectionBackground: isDarkMode ? 'rgba(0, 229, 255, 0.3)' : 'rgba(155, 77, 255, 0.3)',
         black: '#000000',
         red: '#ef4444',
         green: '#22c55e',
@@ -154,6 +175,34 @@ export function RunbookRunner({
       xtermInstance.current = null;
     };
   }, []);
+
+  // Update Xterm theme when isDarkMode changes
+  useEffect(() => {
+    if (xtermInstance.current) {
+      xtermInstance.current.options.theme = {
+        background: '#00000000',
+        foreground: isDarkMode ? '#cccccc' : '#333333',
+        cursor: isDarkMode ? '#00e5ff' : '#9b4dff',
+        selectionBackground: isDarkMode ? 'rgba(0, 229, 255, 0.3)' : 'rgba(155, 77, 255, 0.3)',
+        black: '#000000',
+        red: '#ef4444',
+        green: '#22c55e',
+        yellow: '#eab308',
+        blue: '#3b82f6',
+        magenta: '#d946ef',
+        cyan: '#06b6d4',
+        white: '#ffffff',
+        brightBlack: '#6b7280',
+        brightRed: '#f87171',
+        brightGreen: '#4ade80',
+        brightYellow: '#fde047',
+        brightBlue: '#60a5fa',
+        brightMagenta: '#e879f9',
+        brightCyan: '#22d3ee',
+        brightWhite: '#ffffff',
+      };
+    }
+  }, [isDarkMode]);
 
   // Reset internal runbook state when scenario changes
   const resetInternalState = useCallback(() => {
@@ -253,6 +302,14 @@ export function RunbookRunner({
     }
   }, [container, selectedScenario, scenarios, currentStep, status]);
 
+  // Handle auto-start on load
+  useEffect(() => {
+    if (autoStart && !hasAutoStarted.current && status === 'ready' && currentStep === 0) {
+      hasAutoStarted.current = true;
+      executeStep();
+    }
+  }, [autoStart, status, currentStep, executeStep]);
+
   const reset = useCallback(async () => {
     // Clean up runbook state in container to avoid stale state
     if (container) {
@@ -293,13 +350,13 @@ export function RunbookRunner({
 
   return (
     <div
-      className={`bg-cyber-darker rounded-lg border border-cyber-cyan/30 ${ 
+      className={`bg-gray-100 dark:bg-cyber-darker rounded-lg border border-gray-300 dark:border-cyber-cyan/30 ${ 
         compact ? 'p-4' : 'p-6'
       }`}
     >
       {/* Scenario Selection */}
       <div className="mb-6">
-        <label className="text-[10px] uppercase tracking-wider text-cyber-magenta font-bold mb-2 block opacity-80">
+        <label className="text-[10px] uppercase tracking-wider text-cyber-purple dark:text-cyber-magenta font-bold mb-2 block opacity-80">
           Select Scenario
         </label>
         <div className="flex flex-wrap gap-2">
@@ -313,8 +370,8 @@ export function RunbookRunner({
               }}
               className={`px-3 py-1.5 text-xs font-mono rounded border transition-all whitespace-normal text-left ${ 
                 selectedScenario === key
-                  ? 'bg-cyber-cyan/20 border-cyber-cyan text-cyber-cyan shadow-[0_0_10px_rgba(0,229,255,0.3)]'
-                  : 'bg-cyber-dark/50 border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'
+                  ? 'bg-cyber-cyan/20 border-cyber-cyan text-gray-900 dark:text-cyber-cyan shadow-[0_0_10px_rgba(0,229,255,0.3)]'
+                  : 'bg-white dark:bg-cyber-dark/50 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-500 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-900 dark:hover:text-gray-300'
               }`}
             >
               {key}
@@ -322,22 +379,22 @@ export function RunbookRunner({
           ))}
         </div>
         {scenario?.description && (
-          <p className="mt-2 text-xs text-gray-400 italic leading-relaxed">
+          <p className="mt-2 text-xs text-gray-600 dark:text-gray-400 italic leading-relaxed">
             {scenario.description}
           </p>
         )}
       </div>
 
       {/* Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pt-4 border-t border-cyber-cyan/10">
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pt-4 border-t border-gray-300 dark:border-cyber-cyan/10">
         <div className="flex items-center gap-3">
           <span
             className={`text-xs font-mono uppercase tracking-widest ${ 
               status === 'error'
-                ? 'text-red-400'
+                ? 'text-red-500 dark:text-red-400'
                 : status === 'ready'
-                  ? 'text-green-400'
-                  : 'text-yellow-400'
+                  ? 'text-green-600 dark:text-green-400'
+                  : 'text-yellow-600 dark:text-yellow-400'
             }`}
           >
             {statusText}
@@ -348,7 +405,7 @@ export function RunbookRunner({
           <button
             onClick={executeStep}
             disabled={!canRun}
-            className="px-4 py-1.5 bg-cyber-cyan text-cyber-dark font-bold text-sm rounded disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-neon-cyan transition-shadow"
+            className="px-4 py-1.5 bg-cyber-cyan text-gray-900 font-bold text-sm rounded disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-neon-cyan transition-shadow"
           >
             {isComplete ? 'Complete' : 'Next Step'}
           </button>
@@ -356,7 +413,7 @@ export function RunbookRunner({
             onClick={reset}
             // Only disable reset if nothing has happened yet
             disabled={status === 'running' || (currentStep === 0 && !error)}
-            className="px-3 py-1.5 border border-cyber-magenta/50 text-cyber-magenta text-sm rounded hover:bg-cyber-magenta/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 border border-cyber-purple/50 text-cyber-purple text-sm rounded hover:bg-cyber-purple/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Reset
           </button>
@@ -365,14 +422,14 @@ export function RunbookRunner({
 
       {/* Error display */}
       {error && (
-        <div className="mb-4 p-3 bg-red-900/30 border border-red-500/50 rounded text-red-400 text-sm font-mono">
+        <div className="mb-4 p-3 bg-red-900/10 dark:bg-red-900/30 border border-red-500/50 rounded text-red-600 dark:text-red-400 text-sm font-mono">
           {error}
         </div>
       )}
 
       {/* Terminal Output Container */}
       <div
-        className={`bg-black/10 rounded p-4 border border-white/10 overflow-hidden relative ${ 
+        className={`bg-white dark:bg-black/10 rounded p-4 border border-gray-300 dark:border-white/10 overflow-hidden relative ${ 
           compact ? 'h-[250px]' : 'h-[400px]'
         }`}
       >
@@ -380,17 +437,17 @@ export function RunbookRunner({
         
         {/* Placeholder/Loading State Overlay */}
         {(!container || status === 'booting' || status === 'loading') && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-cyber-darker/80 z-10 text-gray-500 font-mono text-xs">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 dark:bg-cyber-darker/80 z-10 text-gray-500 font-mono text-xs">
              <p>{statusText}</p>
           </div>
         )}
       </div>
 
       {/* Footer Progress & Status */}
-      <div className="mt-4 flex items-center justify-between text-[10px] font-mono border-t border-white/5 pt-4">
+      <div className="mt-4 flex items-center justify-between text-[10px] font-mono border-t border-gray-300 dark:border-white/5 pt-4">
         <div className="flex items-center gap-2">
           <span className="text-gray-500 uppercase tracking-tighter">Step</span>
-          <span className="text-white font-bold">
+          <span className="text-gray-900 dark:text-white font-bold">
             {runbookStep}/{runbookTotal}
           </span>
         </div>
@@ -407,7 +464,7 @@ export function RunbookRunner({
 
           <div className="flex items-center gap-2">
             <span className="text-gray-500 uppercase tracking-tighter">Expected</span>
-            <span className="text-cyber-cyan font-bold">{scenario?.result}</span>
+            <span className="text-cyber-purple dark:text-cyber-cyan font-bold">{scenario?.result}</span>
           </div>
         </div>
       </div>
