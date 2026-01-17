@@ -7,6 +7,7 @@ import {
   parseRunbook,
   parseStepIdFromString,
   stepIdToString,
+  countNumberedSteps,
 } from '@rundown/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
@@ -110,7 +111,7 @@ export function registerGotoCommand(program: Command): void {
         printSeparator();
         printActionBlock({
           action: `GOTO ${stepIdToString(target)}`,
-          from: { current: prevStep, total: steps.length, substep: prevSubstep },
+          from: { current: prevStep, total: countNumberedSteps(steps), substep: prevSubstep },
         });
 
         // Continue with execution loop

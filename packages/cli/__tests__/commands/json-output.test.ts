@@ -93,7 +93,7 @@ echo hello
       fs.writeFileSync(runbookPath, `---
 name: test-runbook
 ---
-## Step 1
+## 1 Step
 prompt: Wait
 `);
       runCli('run --prompted test.runbook.md', workspace);
@@ -104,7 +104,7 @@ prompt: Wait
       expect(output.active).toBe(true);
       expect(output.stashed).toBe(false);
       expect(output.runbook).toHaveProperty('file', 'test.runbook.md');
-      expect(output.step).toHaveProperty('current', 'Step');
+      expect(output.step).toHaveProperty('current', '1');
       expect(output.step).toHaveProperty('total', 1);
     });
   });

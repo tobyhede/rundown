@@ -8,6 +8,7 @@ import {
   printMetadata,
   printActionBlock,
   printStepBlock,
+  countNumberedSteps,
   type ActionBlockData,
 } from '@rundown/core';
 import { getCwd, findRunbookFile } from '../helpers/context.js';
@@ -46,7 +47,7 @@ export function registerPopCommand(program: Command): void {
         const steps = parseRunbook(content);
         const currentStepIndex = steps.findIndex(s => s.name === state.step);
         const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
-        const totalSteps = steps.length;
+        const totalSteps = countNumberedSteps(steps);
 
         // Print metadata
         printMetadata(buildMetadata(state));

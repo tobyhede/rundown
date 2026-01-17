@@ -10,6 +10,7 @@ import {
   printActionBlock,
   printRunbookComplete,
   printRunbookStoppedAtStep,
+  countNumberedSteps,
 } from '@rundown/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
@@ -130,7 +131,7 @@ export function registerFailCommand(program: Command): void {
         const prevRetryCount = state.retryCount;
         const isDynamic = steps.length > 0 && steps[0].isDynamic;
         // '{N}' indicates dynamic runbook with unbounded iterations
-        const totalSteps: number | string = isDynamic ? '{N}' : steps.length;
+        const totalSteps: number | string = isDynamic ? '{N}' : countNumberedSteps(steps);
         // Use state.instance for dynamic runbooks
         const displayStep = isDynamic && state.instance !== undefined
           ? String(state.instance)

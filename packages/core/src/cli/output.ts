@@ -1,4 +1,5 @@
 import type { Step, Substep } from '../runbook/types.js';
+import { isNumberedStepName } from '../runbook/step-utils.js';
 import type { RunbookMetadata, StepPosition, ActionBlockData } from './types.js';
 import type { OutputWriter } from './writer.js';
 import { getWriter } from './context.js';
@@ -20,12 +21,17 @@ const SEPARATOR = '-----';
  *
  * Formats a StepPosition into a human-readable string like "1/5" or "2.1/5".
  * For dynamic runbooks (total is '{N}'), shows asterisk to indicate unbounded.
+ * For named steps (non-numeric like "RECOVER"), omits the total.
  *
  * @param pos - The StepPosition to format
- * @returns Formatted position string (e.g., "1/5", "2.1/5", "1.2/*")
+ * @returns Formatted position string (e.g., "1/5", "2.1/5", "1.2/*", "RECOVER")
  */
 export function formatPosition(pos: StepPosition): string {
   const stepPart = pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
+  // For named steps (non-numeric), don't show total
+  if (!isNumberedStepName(pos.current)) {
+    return stepPart;
+  }
   // For dynamic runbooks, show instance number + asterisk to indicate unbounded
   if (pos.total === '{N}') {
     return `${stepPart}/${pos.current}*`;

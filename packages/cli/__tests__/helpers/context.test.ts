@@ -63,5 +63,29 @@ describe('context helpers', () => {
       const result = await getStepTotal(tempDir, 'nonexistent.md');
       expect(result).toBe(0);
     });
+
+    it('excludes named steps from count', async () => {
+      const content = `# Runbook with Named Step
+
+## 1 First Step
+
+Do the first thing.
+
+## 2 Second Step
+
+Do the second thing.
+
+## RECOVER Recovery Step
+- PASS: STOP
+- FAIL: STOP
+
+Handle recovery.
+`;
+      const filePath = path.join(tempDir, 'named-step.md');
+      await fs.writeFile(filePath, content);
+
+      const result = await getStepTotal(tempDir, 'named-step.md');
+      expect(result).toBe(2);
+    });
   });
 });

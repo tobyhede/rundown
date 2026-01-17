@@ -11,10 +11,9 @@ import {
   printStepBlock,
   printRunbookStashed,
   printNoActiveRunbook,
+  countNumberedSteps,
   type ActionBlockData,
   type RunbookMetadata,
-  type Step,
-  type Substep,
 } from '@rundown/core';
 import { getCwd, getStepTotal, findRunbookFile } from '../helpers/context.js';
 import {
@@ -108,7 +107,7 @@ export function registerStatusCommand(program: Command): void {
         const currentStepIndex = isDynamic ? 0 : steps.findIndex(s => s.name === state.step);
         const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
         // '{N}' indicates dynamic runbook with unbounded iterations
-        const totalSteps: number | string = isDynamic ? '{N}' : steps.length;
+        const totalSteps: number | string = isDynamic ? '{N}' : countNumberedSteps(steps);
         // Use state.instance for dynamic runbooks, state.step for static
         const displayStep = isDynamic && state.instance !== undefined
           ? String(state.instance)

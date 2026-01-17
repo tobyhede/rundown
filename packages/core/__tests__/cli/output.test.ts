@@ -46,6 +46,16 @@ describe('output formatter', () => {
         '1.2/1*'
       );
     });
+
+    it('formats named step without total', () => {
+      expect(formatPosition({ current: 'RECOVER', total: 6 })).toBe('RECOVER');
+    });
+
+    it('formats named step with substep without total', () => {
+      expect(formatPosition({ current: 'RECOVER', total: 6, substep: '1' })).toBe(
+        'RECOVER.1'
+      );
+    });
   });
 
   describe('printSeparator', () => {

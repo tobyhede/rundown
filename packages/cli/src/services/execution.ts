@@ -15,6 +15,7 @@ import {
   executeCommand,
   evaluatePassCondition,
   evaluateFailCondition,
+  countNumberedSteps,
 } from '@rundown/core';
 
 /**
@@ -142,9 +143,9 @@ export async function runExecutionLoop(
       ? String(state.instance)   // Use instance field: 1, 2, 3, ...
       : state.step;              // Use step name: "1", "ErrorHandler", etc.
 
-    // For dynamic runbooks, display {N} as total; for static, use steps.length
+    // For dynamic runbooks, display {N} as total; for static, use numbered step count
     // '{N}' indicates dynamic runbook with unbounded iterations
-    const totalSteps: number | string = isDynamicRunbook ? '{N}' : steps.length;
+    const totalSteps: number | string = isDynamicRunbook ? '{N}' : countNumberedSteps(steps);
 
     // Determine what to render: substep if we're at one, otherwise the step
     let itemToRender: Step | Substep = currentStep;

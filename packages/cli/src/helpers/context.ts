@@ -2,7 +2,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { parseRunbook } from '@rundown/core';
+import { parseRunbook, countNumberedSteps } from '@rundown/core';
 import { resolveRunbookFile } from './resolve-runbook.js';
 
 /**
@@ -34,11 +34,12 @@ export async function isDynamicRunbook(cwd: string, runbookPath: string): Promis
 
 /**
  * Get total step display value for a runbook.
- * Returns '{N}' for dynamic runbooks, step count for static runbooks.
+ * Returns '{N}' for dynamic runbooks, numbered step count for static runbooks.
+ * Named steps (like "RECOVER") are excluded from the count.
  *
  * @param cwd - Current working directory
  * @param runbookPath - Path to the runbook file
- * @returns '{N}' for dynamic runbooks, or numeric step count for static runbooks, or 0 on error
+ * @returns '{N}' for dynamic runbooks, or numbered step count for static runbooks, or 0 on error
  */
 export async function getStepTotal(cwd: string, runbookPath: string): Promise<number | string> {
   try {
@@ -49,7 +50,7 @@ export async function getStepTotal(cwd: string, runbookPath: string): Promise<nu
     if (steps.length > 0 && steps[0].isDynamic) {
       return '{N}';
     }
-    return steps.length;
+    return countNumberedSteps(steps);
   } catch {
     return 0;
   }
