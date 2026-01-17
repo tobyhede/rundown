@@ -73,7 +73,7 @@ rd echo npm run test
 
 
 
-## 5 Track progresss across agents and sessions
+## 5 Track progress across agents and sessions
 - PASS: CONTINUE
 - FAIL: STOP
 
