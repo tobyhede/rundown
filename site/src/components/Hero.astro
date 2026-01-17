@@ -8,15 +8,15 @@ const quickstartUrl = 'https://github.com/tobyhede/rundown#get-started';
     <img
       src="/logo.png"
       alt="Rundown Logo"
-      class="w-80 h-80 md:w-96 md:h-96 lg:w-[460px] lg:h-[460px] rounded-2xl shadow-neon-purple"
+      class="w-80 h-80 md:w-96 md:h-96 lg:w-[460px] lg:h-[460px] rounded-2xl"
     />
   </div>
 
-  <h1 class="mb-3 max-w-3xl">
+  <h1 class="text-2xl md:text-3xl text-foreground mb-3 max-w-3xl">
     Run your Markdown
   </h1>
 
-  <p class="mb-8 max-w-2xl">
+  <p class="text-lg text-muted-foreground mb-8 max-w-2xl">
     Transform static documentation into interactive, stateful workflows that enforce your process.
   </p>
 
@@ -25,13 +25,13 @@ const quickstartUrl = 'https://github.com/tobyhede/rundown#get-started';
       href={quickstartUrl}
       target="_blank"
       rel="noopener noreferrer"
-      class="w-48 flex justify-center items-center h-10 px-8 bg-primary text-primary-foreground font-medium rounded-md hover:bg-primary/90 transition-colors"
+      class="w-48 flex justify-center items-center h-10 px-8 bg-foreground text-background font-medium rounded-md hover:bg-foreground/90 transition-colors"
     >
       Get Started
     </a>
     <a
       href="/explore"
-      class="w-48 flex justify-center items-center h-10 px-8 border border-input bg-background text-foreground font-medium rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+      class="w-48 flex justify-center items-center h-10 px-8 border border-border bg-background text-foreground font-medium rounded-md hover:bg-muted transition-colors"
     >
       Explore
     </a>
@@ -45,7 +45,7 @@ const quickstartUrl = 'https://github.com/tobyhede/rundown#get-started';
       </code>
       <button
         id="copy-install-btn"
-        class="text-muted-foreground hover:text-cyber-cyan transition-colors ml-4"
+        class="text-muted-foreground hover:text-foreground transition-colors ml-4"
         title="Copy to clipboard"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -61,7 +61,7 @@ const quickstartUrl = 'https://github.com/tobyhede/rundown#get-started';
     await navigator.clipboard.writeText('npm install -g @rundown/cli');
     const btn = document.getElementById('copy-install-btn');
     if (btn) {
-      btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-cyber-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
       </svg>`;
       setTimeout(() => {
