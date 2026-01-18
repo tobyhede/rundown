@@ -19,13 +19,13 @@ scenarios:
       - rd pass
       - rd pass
       - rd pass
+      - rd pass
+      - rd pass
     result: COMPLETE
   impossible-fix:
     description: Tests continue to fail despite recovery attempts
     commands:
       - rd run --prompted dev-test-retry.runbook.md
-      - rd fail
-      - rd pass
       - rd fail
       - rd pass
       - rd fail
