@@ -235,6 +235,26 @@ export function printNoRunbooks(writer: OutputWriter = getWriter()): void {
 }
 
 /**
+ * Print policy denied message to stdout.
+ *
+ * Outputs a message indicating a command was blocked by policy.
+ *
+ * @param command - The command that was blocked
+ * @param reason - The reason for denial
+ * @param writer - OutputWriter to use (defaults to global writer)
+ */
+export function printPolicyDenied(
+  command: string,
+  reason: string,
+  writer: OutputWriter = getWriter()
+): void {
+  writer.writeLine('');
+  writer.writeLine(`${failure('Policy Denied')}: ${command}`);
+  writer.writeLine(`Reason:   ${dim(reason)}`);
+  writer.writeLine('');
+}
+
+/**
  * Print runbook list entry to stdout.
  *
  * Outputs a single line for a runbook in the list format.

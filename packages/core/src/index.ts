@@ -32,3 +32,6 @@ export * from './runbook/index.js';
 
 // CLI output module
 export * from './cli/index.js';
+
+// Policy module
+export * from './policy/index.js';

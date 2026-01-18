@@ -8,12 +8,14 @@ import {
   printCommandExec,
   printRunbookComplete,
   printRunbookStoppedAtStep,
+  printPolicyDenied,
   type Step,
   type Substep,
   type RunbookMetadata,
   type RunbookState,
   type ExecutionResult,
   executeCommand,
+  executeCommandWithPolicy,
   evaluatePassCondition,
   evaluateFailCondition,
   countNumberedSteps,
@@ -23,6 +25,11 @@ import {
   isInternalRdCommand,
   executeRdCommandInternal,
 } from './internal-commands.js';
+import {
+  getPolicyEvaluator,
+  getPolicyPrompter,
+  isPolicyEnforced,
+} from './policy-context.js';
 
 /**
  * Check if runbook snapshot indicates completion.
@@ -190,10 +197,16 @@ export async function runExecutionLoop(
         execResult = internalResult;
       } else {
         // Fallback to spawn if internal execution not supported for this subcommand
-        execResult = await executeCommand(itemToRender.command.code, cwd);
+        execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd);
       }
     } else {
-      execResult = await executeCommand(itemToRender.command.code, cwd);
+      execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd);
+    }
+
+    // Handle policy denial
+    if (execResult.policyDenied) {
+      printPolicyDenied(itemToRender.command.code, execResult.denialReason ?? 'Permission denied');
+      return 'stopped';
     }
 
     // Store result
@@ -546,4 +559,27 @@ export function deriveAction(
 
   // Sequential step change or same step = CONTINUE
   return 'CONTINUE';
+}
+
+/**
+ * Execute a command with policy enforcement.
+ *
+ * Uses the global policy context to check permissions before execution.
+ * If policy is enforced and the command requires permission, prompts the user.
+ *
+ * @param command - The shell command to execute
+ * @param cwd - Working directory for execution
+ * @returns Execution result
+ */
+async function executeCommandWithPolicyCheck(command: string, cwd: string): Promise<ExecutionResult> {
+  // Check if policy enforcement is active
+  if (!isPolicyEnforced()) {
+    return executeCommand(command, cwd);
+  }
+
+  // Use policy-aware execution
+  return executeCommandWithPolicy(command, cwd, {
+    evaluator: getPolicyEvaluator(),
+    prompter: getPolicyPrompter(),
+  });
 }
