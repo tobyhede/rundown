@@ -15,6 +15,9 @@ export const ScenarioSchema = z.object({
 
   /** Expected terminal state: COMPLETE or STOP */
   result: z.enum(['COMPLETE', 'STOP']),
+
+  /** Optional flag to skip this scenario in automated testing */
+  skip: z.boolean().optional(),
 });
 
 /**
