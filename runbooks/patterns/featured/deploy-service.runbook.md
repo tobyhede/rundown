@@ -8,20 +8,38 @@ scenarios:
     description: Deployment with automatic command execution
     commands:
       - rd run deploy-service.runbook.md
-      - rd pass
+      - rd pass # 2 Announce start of deployment
+    result: COMPLETE
+  prompted:
+    description: Deployment with prompted confirmation at each step
+    commands:
+      - rd run --prompted deploy-service.runbook.md
+      - rd pass  # 1.1 Verify required permissions
+      - rd pass  # 1.2 Verify environment configuration
+      - rd pass  # 1.3 Check current status
+      - rd pass  # 1.4 Create database snapshot
+      - rd pass  # 2 Announce start of deployment
+      - rd pass  # 3.1 Push deploy build
+      - rd pass  # 3.2 Migrate database
+      - rd pass  # 3.3 Restart services
+      - rd pass  # 4.1 Run smoke tests
+      - rd pass  # 4.2 Run health checks (retry 1/3)
+      - rd pass  # 4.2 Run health checks (retry 2/3)
+      - rd pass  # 4.2 Run health checks (retry 3/3)
+      - rd pass  # 4.2 CONTINUE after retries exhausted
     result: COMPLETE
   stopped:
     description: Database migration fails, triggering rollback
     commands:
       - rd run --prompted deploy-service.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd fail
-      - rd pass
+      - rd pass  # 1.1 Verify required permissions
+      - rd pass  # 1.2 Verify environment configuration
+      - rd pass  # 1.3 Check current status
+      - rd pass  # 1.4 Create database snapshot
+      - rd pass  # 2 Announce start of deployment
+      - rd pass  # 3.1 Push deploy build
+      - rd fail  # 3.2 Migrate database - FAIL triggers GOTO Rollback
+      - rd pass  # Rollback - PASS triggers STOP
     result: STOP
 ---
 
