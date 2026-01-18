@@ -468,6 +468,311 @@ describe('runbook compiler', () => {
     });
   });
 
+  describe('lastAction preservation (bug fix)', () => {
+    /**
+     * These tests verify that the lastAction context field is correctly set
+     * to reflect the ACTUAL transition defined in the runbook, not computed
+     * from step number changes. This was a bug where CONTINUE transitions
+     * were incorrectly displayed as "GOTO X" when steps weren't sequential.
+     */
+
+    it('sets lastAction to CONTINUE for CONTINUE transitions', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Step 2'
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.lastAction).toBe('CONTINUE');
+    });
+
+    it('sets lastAction to CONTINUE even when jumping to non-sequential step via substeps', () => {
+      // This is the key bug case: step 2 -> step 3.1 with CONTINUE
+      // Previously displayed as "GOTO 3.1" because step numbers weren't sequential
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1',
+          substeps: [
+            { id: '1', description: 'Substep 1.1', isDynamic: false },
+            {
+              id: '2',
+              description: 'Substep 1.2',
+              isDynamic: false,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', action: { type: 'STOP' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Step 2 (no substeps)'
+        },
+        {
+          name: '3',
+          isDynamic: false,
+          description: 'Step 3',
+          substeps: [
+            { id: '1', description: 'Substep 3.1', isDynamic: false },
+            { id: '2', description: 'Substep 3.2', isDynamic: false }
+          ]
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Start at 1.1, pass to 1.2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.lastAction).toBe('CONTINUE');
+
+      // Pass 1.2, should CONTINUE to step 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.lastAction).toBe('CONTINUE');
+      expect(actor.getSnapshot().value).toBe('step_2');
+
+      // Pass step 2, should CONTINUE to step 3.1
+      // This was the bug: showed "GOTO 3.1" but should be "CONTINUE"
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.lastAction).toBe('CONTINUE');
+      expect(actor.getSnapshot().value).toBe('step_3_1');
+    });
+
+    it('sets lastAction to STOP for STOP transitions', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.lastAction).toBe('STOP');
+    });
+
+    it('sets lastAction to COMPLETE for COMPLETE transitions', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.lastAction).toBe('COMPLETE');
+    });
+
+    it('sets lastAction to GOTO X for explicit GOTO transitions', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', action: { type: 'GOTO', target: { step: 'ErrorHandler' } } }
+          }
+        },
+        {
+          name: 'ErrorHandler',
+          isDynamic: false,
+          description: 'Error handler'
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.lastAction).toBe('GOTO ErrorHandler');
+    });
+
+    it('sets lastAction to GOTO X.Y for GOTO with substep', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '3' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Step 2',
+          substeps: [
+            { id: '1', description: 'Substep 2.1', isDynamic: false },
+            { id: '2', description: 'Substep 2.2', isDynamic: false },
+            { id: '3', description: 'Substep 2.3', isDynamic: false }
+          ]
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.lastAction).toBe('GOTO 2.3');
+    });
+
+    it('sets lastAction to RETRY for RETRY transitions', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: {
+              kind: 'fail',
+              action: { type: 'RETRY', max: 3, then: { type: 'STOP' } }
+            }
+          }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.lastAction).toBe('RETRY');
+      expect(snapshot.context.retryCount).toBe(1);
+    });
+
+    it('sets lastAction to GOTO NEXT for dynamic transitions', () => {
+      const steps: Step[] = [
+        {
+          name: '{N}',
+          isDynamic: true,
+          description: 'Dynamic step',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.lastAction).toBe('GOTO NEXT');
+    });
+
+    it('sets lastAction for GOTO event (external jump)', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1'
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Step 2'
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'GOTO', target: { step: '2' } });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.lastAction).toBe('GOTO 2');
+    });
+
+    it('sets lastAction for explicit RETRY event', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1'
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'RETRY' });
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.lastAction).toBe('RETRY');
+    });
+
+    it('preserves lastAction with {N} placeholder for dynamic GOTO', () => {
+      const steps: Step[] = [
+        {
+          name: '{N}',
+          isDynamic: true,
+          description: 'Dynamic step',
+          substeps: [
+            {
+              id: '1',
+              isDynamic: false,
+              description: 'First substep',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}', substep: '3' } } },
+                fail: { kind: 'fail', action: { type: 'STOP' } }
+              }
+            },
+            { id: '2', isDynamic: false, description: 'Second substep' },
+            { id: '3', isDynamic: false, description: 'Third substep' }
+          ]
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+      // Should preserve {N} for CLI to resolve with actual instance
+      expect(snapshot.context.lastAction).toBe('GOTO {N}.3');
+    });
+  });
+
   describe('flag clearing in terminal transitions', () => {
     it('clears flags when transition reaches COMPLETE', () => {
       const steps: Step[] = [

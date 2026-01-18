@@ -225,25 +225,19 @@ export async function runExecutionLoop(
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     updatedState = await handleNextInstanceFlags(snapshot, updatedState, manager, runbookId, steps, isComplete, isStopped);
 
-    // Derive action string
+    // Read action from XState context (source of truth)
     const retryMax = getStepRetryMax(currentStep);
+    const lastActionFromContext = extractLastAction(snapshot);
     // Compute substep instance for {n} resolution
-    // If substep is numeric, use it; if {n}, use substepStates count
     const substepInstance = updatedState.substep
       ? (updatedState.substep === '{n}'
           ? (updatedState.substepStates?.length ?? 1)
           : parseInt(updatedState.substep, 10) || undefined)
       : undefined;
-    const action = deriveAction(
-      prevStep,
-      updatedState.step,
-      prevSubstep,
-      updatedState.substep,
-      prevRetryCount,
+    const action = formatActionForDisplay(
+      lastActionFromContext,
       updatedState.retryCount,
       retryMax,
-      isComplete,
-      isStopped,
       updatedState.instance,
       substepInstance
     );
@@ -334,6 +328,73 @@ export async function runExecutionLoop(
     state = await manager.load(runbookId);
     if (!state) return 'stopped';
   }
+}
+
+/**
+ * XState snapshot context with lastAction field.
+ * Used for type-safe extraction of action from persisted snapshots.
+ */
+interface SnapshotContext {
+  lastAction?: string;
+  nextInstance?: boolean;
+  nextSubstepInstance?: boolean;
+}
+
+/**
+ * Extract the lastAction from an XState snapshot in a type-safe way.
+ *
+ * @param snapshot - The persisted XState snapshot
+ * @returns The lastAction string or undefined
+ */
+export function extractLastAction(snapshot: unknown): string | undefined {
+  if (
+    snapshot &&
+    typeof snapshot === 'object' &&
+    'context' in snapshot &&
+    snapshot.context &&
+    typeof snapshot.context === 'object' &&
+    'lastAction' in snapshot.context
+  ) {
+    return (snapshot.context as SnapshotContext).lastAction;
+  }
+  return undefined;
+}
+
+/**
+ * Format action for display, resolving placeholders and adding retry details.
+ *
+ * Reads the lastAction from XState context (source of truth) and formats
+ * it for user-friendly display. Resolves {N} and {n} placeholders to actual
+ * instance numbers, and appends retry count info for RETRY actions.
+ *
+ * @param lastAction - The lastAction value from XState context
+ * @param retryCount - Current retry count
+ * @param retryMax - Maximum retries allowed
+ * @param instance - Step instance number for resolving {N} placeholders
+ * @param substepInstance - Substep instance number for resolving {n} placeholders
+ * @returns Formatted action string for display
+ */
+export function formatActionForDisplay(
+  lastAction: string | undefined,
+  retryCount: number,
+  retryMax: number,
+  instance?: number,
+  substepInstance?: number
+): string {
+  if (!lastAction) return 'CONTINUE';
+  if (lastAction === 'RETRY') {
+    return `RETRY (${String(retryCount)}/${String(retryMax)})`;
+  }
+
+  // Resolve {N} and {n} placeholders with actual instance numbers
+  let result = lastAction;
+  if (instance !== undefined && result.includes('{N}')) {
+    result = result.replace(/\{N\}/g, String(instance));
+  }
+  if (substepInstance !== undefined && result.includes('{n}')) {
+    result = result.replace(/\{n\}/g, String(substepInstance));
+  }
+  return result;
 }
 
 /**

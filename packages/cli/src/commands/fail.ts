@@ -16,7 +16,8 @@ import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import {
   runExecutionLoop,
-  deriveAction,
+  formatActionForDisplay,
+  extractLastAction,
   getStepRetryMax,
   isRunbookComplete,
   isRunbookStopped,
@@ -126,9 +127,8 @@ export function registerFailCommand(program: Command): void {
 
         // Main step fail - send FAIL event to actor
         // Capture prev state BEFORE mutation
-        const prevStep = state.step;
+        const _prevStep = state.step;  // Used only for debugging/logging if needed
         const prevSubstep = state.substep;
-        const prevRetryCount = state.retryCount;
         const isDynamic = steps.length > 0 && steps[0].isDynamic;
         // '{N}' indicates dynamic runbook with unbounded iterations
         const totalSteps: number | string = isDynamic ? '{N}' : countNumberedSteps(steps);
@@ -153,19 +153,19 @@ export function registerFailCommand(program: Command): void {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
         updatedState = await handleNextInstanceFlags(snapshot, updatedState, manager, state.id, steps, isComplete, isStopped);
 
-        // Derive action
+        // Read action from XState context (source of truth)
         const retryMax = getStepRetryMax(currentStep);
+        const lastActionFromContext = extractLastAction(snapshot);
         // Compute substep instance for {n} resolution
         const substepInstance = updatedState.substep
           ? (updatedState.substep === '{n}'
               ? (updatedState.substepStates?.length ?? 1)
               : parseInt(updatedState.substep, 10) || undefined)
           : undefined;
-        const action = deriveAction(
-          prevStep, updatedState.step,
-          prevSubstep, updatedState.substep,
-          prevRetryCount, updatedState.retryCount,
-          retryMax, isComplete, isStopped,
+        const action = formatActionForDisplay(
+          lastActionFromContext,
+          updatedState.retryCount,
+          retryMax,
           updatedState.instance,
           substepInstance
         );
@@ -196,7 +196,8 @@ export function registerFailCommand(program: Command): void {
         });
 
         // Evaluate fail condition once to get message
-        const failResult = evaluateFailCondition(currentStep, prevRetryCount);
+        // Use state.retryCount (pre-transition value) to correctly determine message
+        const failResult = evaluateFailCondition(currentStep, state.retryCount);
 
         // Handle stopped
         if (isStopped) {

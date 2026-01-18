@@ -19,6 +19,8 @@ export interface RunbookContext {
   nextSubstepInstance?: boolean;
   /** User-defined runbook variables */
   variables: Record<string, boolean | number | string>;
+  /** Last action taken by the state machine (source of truth for transition type) */
+  lastAction?: string;
 }
 
 /**
@@ -58,6 +60,18 @@ function formatStateId(stepName: string, substepId?: string): string {
 }
 
 /**
+ * Format a GOTO action string for display.
+ * @param target - The StepId target of the GOTO action
+ * @returns Formatted string like "GOTO 3" or "GOTO 3.1" or "GOTO ErrorHandler"
+ */
+function formatGotoAction(target: StepId): string {
+  if (target.substep) {
+    return `GOTO ${target.step}.${target.substep}`;
+  }
+  return `GOTO ${target.step}`;
+}
+
+/**
  * Check if a step is a numbered step (vs named step).
  * Numbered steps: "1", "2", "10", "{N}" (dynamic)
  * Named steps: "ErrorHandler", "Cleanup", "Recovery"
@@ -83,6 +97,7 @@ function actionToTransition(
       {
         guard: ({ context }: { context: RunbookContext }) => context.retryCount < action.max,
         actions: assign({
+          lastAction: 'RETRY',
           retryCount: ({ context }) => (context.retryCount as number) + 1
         }),
         target: currentStateId
@@ -142,6 +157,7 @@ function nonRetryActionToTransition(
       return {
         target,
         actions: assign({
+          lastAction: 'CONTINUE',
           retryCount: 0,
           // Extract substep from ID: step_N_M -> M
           substep: target.startsWith('step_') && target.includes('_', 5)
@@ -155,6 +171,7 @@ function nonRetryActionToTransition(
       return {
         target: 'COMPLETE',
         actions: assign({
+          lastAction: 'COMPLETE',
           ...CLEAR_NEXT_FLAGS
         })
       };
@@ -162,6 +179,7 @@ function nonRetryActionToTransition(
       return {
         target: 'STOPPED',
         actions: assign({
+          lastAction: 'STOP',
           ...CLEAR_NEXT_FLAGS
         })
       };
@@ -199,6 +217,7 @@ function nonRetryActionToTransition(
             return {
               target: formatStateId(targetStepName, dynSubstep.id),
               actions: assign({
+                lastAction: 'GOTO NEXT',
                 retryCount: 0,
                 substep: dynSubstep.id,
                 nextSubstepInstance: true
@@ -216,6 +235,7 @@ function nonRetryActionToTransition(
             return {
               target: formatStateId(dynamicStep.name, nextSubstepId),
               actions: assign({
+                lastAction: 'GOTO NEXT',
                 retryCount: 0,
                 substep: nextSubstepId,
                 nextInstance: true
@@ -235,6 +255,7 @@ function nonRetryActionToTransition(
           return {
             target: formatStateId(stepName, substepId),
             actions: assign({
+              lastAction: 'GOTO NEXT',
               retryCount: 0,
               substep: substepId,
               nextSubstepInstance: true
@@ -251,6 +272,7 @@ function nonRetryActionToTransition(
         return {
           target: formatStateId(dynamicStep.name, nextSubstepId),
           actions: assign({
+            lastAction: 'GOTO NEXT',
             retryCount: 0,
             substep: nextSubstepId,
             nextInstance: true
@@ -276,6 +298,7 @@ function nonRetryActionToTransition(
         return {
           target: computedTarget,
           actions: assign({
+            lastAction: formatGotoAction(action.target),
             retryCount: isGotoToSelf
               ? ({ context }) => (context.retryCount as number) + 1
               : 0,
@@ -302,6 +325,7 @@ function nonRetryActionToTransition(
       return {
         target: computedTarget,
         actions: assign({
+          lastAction: formatGotoAction(action.target),
           retryCount: isGotoToSelf
             ? ({ context }) => (context.retryCount as number) + 1
             : 0,
@@ -379,6 +403,12 @@ export function compileRunbookToMachine(steps: Step[]) {
     },
     target: target.id,
     actions: assign({
+      lastAction: ({ event }: { event: RunbookEvent }) => {
+        if (event.type !== 'GOTO') return undefined;
+        const step = event.target.step;
+        const substep = event.target.substep;
+        return substep ? `GOTO ${step}.${substep}` : `GOTO ${step}`;
+      },
       retryCount: 0,
       substep: ({ event }: { event: RunbookEvent }) =>
         event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
@@ -396,6 +426,7 @@ export function compileRunbookToMachine(steps: Step[]) {
         FAIL: actionToTransition(config.transitions.fail.action, config.id, config.stepName, config.substepId, steps),
         RETRY: {
           actions: assign({
+            lastAction: 'RETRY',
             retryCount: ({ context }) => (context.retryCount as number) + 1
           }),
           target: config.id
@@ -419,6 +450,7 @@ export function compileRunbookToMachine(steps: Step[]) {
       nextInstance: undefined,
       nextSubstepInstance: undefined,
       variables: {},
+      lastAction: undefined,
     },
     states: {
       ...states,

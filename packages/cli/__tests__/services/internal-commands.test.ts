@@ -97,8 +97,8 @@ rd echo test
       manager = new RunbookStateManager(tempDir);
 
       // Spy on console methods
-      consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-      consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+      consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     });
 
     afterEach(async () => {

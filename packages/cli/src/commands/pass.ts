@@ -16,7 +16,8 @@ import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import {
   runExecutionLoop,
-  deriveAction,
+  formatActionForDisplay,
+  extractLastAction,
   getStepRetryMax,
   isRunbookComplete,
   isRunbookStopped,
@@ -110,7 +111,6 @@ export function registerPassCommand(program: Command): void {
         // Capture prev state BEFORE mutation
         const prevStep = state.step;
         const prevSubstep = state.substep;
-        const prevRetryCount = state.retryCount;
         const isDynamic = steps.length > 0 && steps[0].isDynamic;
         // '{N}' indicates dynamic runbook with unbounded iterations
         const totalSteps: number | string = isDynamic ? '{N}' : countNumberedSteps(steps);
@@ -135,21 +135,21 @@ export function registerPassCommand(program: Command): void {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
         updatedState = await handleNextInstanceFlags(snapshot, updatedState, manager, state.id, steps, isComplete, isStopped);
 
-        // Derive action
+        // Read action from XState context (source of truth)
         const prevStepIndex = steps.findIndex(s => s.name === prevStep);
         const currentStep = prevStepIndex >= 0 ? steps[prevStepIndex] : steps[0];
         const retryMax = getStepRetryMax(currentStep);
+        const lastActionFromContext = extractLastAction(snapshot);
         // Compute substep instance for {n} resolution
         const substepInstance = updatedState.substep
           ? (updatedState.substep === '{n}'
               ? (updatedState.substepStates?.length ?? 1)
               : parseInt(updatedState.substep, 10) || undefined)
           : undefined;
-        const action = deriveAction(
-          prevStep, updatedState.step,
-          prevSubstep, updatedState.substep,
-          prevRetryCount, updatedState.retryCount,
-          retryMax, isComplete, isStopped,
+        const action = formatActionForDisplay(
+          lastActionFromContext,
+          updatedState.retryCount,
+          retryMax,
           updatedState.instance,
           substepInstance
         );
