@@ -30,19 +30,19 @@ describe('echo command', () => {
     it('returns pass by default (no flags)', () => {
       const result = runCli('echo npm install', workspace);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('[PASS]');
+      expect(result.stdout).toContain('npm install');
     });
 
     it('returns pass with explicit --result pass', () => {
       const result = runCli('echo --result pass npm install', workspace);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('[PASS]');
+      expect(result.stdout).toContain('npm install');
     });
 
     it('returns fail with --result fail', () => {
       const result = runCli('echo --result fail npm install', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout).toContain('[FAIL]');
+      expect(result.stdout).toContain('npm install');
     });
 
     // NOTE: Tests for retry count indexing removed - they relied on 'next --retry'

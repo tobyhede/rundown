@@ -152,7 +152,7 @@ rd echo test
         expect(result).not.toBeNull();
         expect(result?.success).toBe(true);
         expect(result?.exitCode).toBe(0);
-        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[PASS]'));
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('test'));
       });
 
       it('returns pass with explicit --result pass', async () => {
@@ -173,7 +173,7 @@ rd echo test
         expect(result).not.toBeNull();
         expect(result?.success).toBe(false);
         expect(result?.exitCode).toBe(1);
-        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[FAIL]'));
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('test'));
       });
 
       it('returns error for invalid result value', async () => {

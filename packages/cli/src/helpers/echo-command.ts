@@ -9,14 +9,11 @@
  * command dispatcher.
  */
 
-import * as fs from 'fs/promises';
 import {
   RunbookStateManager,
-  parseRunbook,
   type ExecutionResult,
 } from '@rundown/core';
-import { findRunbookFile } from './context.js';
-import { getStepRetryMax, isValidResult } from '../services/execution.js';
+import { isValidResult } from '../services/execution.js';
 
 /**
  * Default result sequence when no --result options are provided.
@@ -88,24 +85,8 @@ export async function executeEchoLogic(
   const index = Math.min(retryCount, normalizedSequence.length - 1);
   const result = normalizedSequence[index] as 'pass' | 'fail';
 
-  // Load runbook to get current step for retry max
-  const runbookPath = await findRunbookFile(cwd, state.runbook);
-  let retryMax = 0;
-  if (runbookPath) {
-    const runbookContent = await fs.readFile(runbookPath, 'utf8');
-    const steps = parseRunbook(runbookContent);
-    const currentStepIndex = steps.findIndex(s => s.name === state.step);
-    const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
-    if (currentStep) {
-      retryMax = getStepRetryMax(currentStep);
-    }
-  }
-
-  // Build output message
-  const attempt = retryCount + 1;
-  const resultUpper = result.toUpperCase();
-  const commandStr = commandArgs.join(' ');
-  const output = `[${resultUpper}] ${commandStr} [${String(attempt)}/${String(retryMax + 1)}]`;
+  // Build output message - just the command string
+  const output = commandArgs.join(' ');
 
   return {
     success: result === 'pass',

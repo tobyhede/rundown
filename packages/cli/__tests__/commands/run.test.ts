@@ -91,7 +91,6 @@ describe('start command', () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('$ rd echo --result pass');
-      expect(result.stdout).toContain('[PASS]');
       expect(result.stdout).toContain('Runbook:  COMPLETE');
     });
 
