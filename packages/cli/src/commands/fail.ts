@@ -18,7 +18,7 @@ import {
   runExecutionLoop,
   formatActionForDisplay,
   extractLastAction,
-  getStepRetryMax,
+  extractRetryMax,
   isRunbookComplete,
   isRunbookStopped,
 } from '../services/execution.js';
@@ -153,8 +153,8 @@ export function registerFailCommand(program: Command): void {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
         updatedState = await handleNextInstanceFlags(snapshot, updatedState, manager, state.id, steps, isComplete, isStopped);
 
-        // Read action from XState context (source of truth)
-        const retryMax = getStepRetryMax(currentStep);
+        // Read action from XState context (source of truth for retryMax and lastAction)
+        const retryMax = extractRetryMax(snapshot);
         const lastActionFromContext = extractLastAction(snapshot);
         // Compute substep instance for {n} resolution
         const substepInstance = updatedState.substep
