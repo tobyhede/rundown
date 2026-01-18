@@ -93,6 +93,8 @@ export function registerRunCommand(program: Command): void {
 
           if (runbook.steps[0].substeps && runbook.steps[0].substeps.length > 0) {
             await manager.initializeSubsteps(state.id, runbook.steps[0].substeps);
+            // Set the current substep to the first substep
+            await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
           }
 
           // Print metadata and action

@@ -174,25 +174,26 @@ export async function runExecutionLoop(
     printStepBlock({ current: displayStep, total: totalSteps, substep: displaySubstep }, itemToRender);
 
     // If CLI prompted mode, OR no command
-    if (prompted || !currentStep.command) {
+    // Use itemToRender which may be a substep with its own command
+    if (prompted || !itemToRender.command) {
       return 'waiting';
     }
 
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
-    printCommandExec(currentStep.command.code);
+    printCommandExec(itemToRender.command.code);
     let execResult: ExecutionResult;
 
-    if (isInternalRdCommand(currentStep.command.code)) {
-      const internalResult = await executeRdCommandInternal(currentStep.command.code, cwd);
+    if (isInternalRdCommand(itemToRender.command.code)) {
+      const internalResult = await executeRdCommandInternal(itemToRender.command.code, cwd);
       if (internalResult !== null) {
         execResult = internalResult;
       } else {
         // Fallback to spawn if internal execution not supported for this subcommand
-        execResult = await executeCommand(currentStep.command.code, cwd);
+        execResult = await executeCommand(itemToRender.command.code, cwd);
       }
     } else {
-      execResult = await executeCommand(currentStep.command.code, cwd);
+      execResult = await executeCommand(itemToRender.command.code, cwd);
     }
 
     // Store result
@@ -270,7 +271,7 @@ export async function runExecutionLoop(
     printActionBlock({
       action,
       from: { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep },
-      command: extractDisplayCommand(currentStep.command.code),
+      command: extractDisplayCommand(itemToRender.command.code),
       result: execResult.success ? 'PASS' : 'FAIL',
     });
 
@@ -422,10 +423,21 @@ export function deriveAction(
     return result;
   };
 
-  // CRITICAL FIX: Any transition with a substep target is a GOTO
-  // Even "sequential" step changes are GOTO if substep is specified
-  // Because GOTO step_2.1 is meaningfully different from CONTINUE to step_2
+  // Helper to check if substep transition is sequential
+  const isSequentialSubstep = (prev: string | undefined, next: string | undefined): boolean => {
+    if (!prev || !next) return false;
+    const prevNum = parseInt(prev, 10);
+    const nextNum = parseInt(next, 10);
+    return !isNaN(prevNum) && !isNaN(nextNum) && nextNum === prevNum + 1;
+  };
+
+  // Handle substep transitions
   if (newSubstep) {
+    // Same step, sequential substeps (1.1 → 1.2) = CONTINUE
+    if (newStep === prevStep && isSequentialSubstep(prevSubstep, newSubstep)) {
+      return 'CONTINUE';
+    }
+    // Non-sequential substep or different step = GOTO
     const resolvedSubstep = resolvePlaceholders(newSubstep);
     return `GOTO ${resolvePlaceholders(newStep)}.${resolvedSubstep}`;
   }
