@@ -8,27 +8,28 @@ scenarios:
     description: Tests pass on the first attempt
     commands:
       - rd run --prompted dev-test-retry.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass  # 1 Run Tests - GOTO 3
+      - rd pass  # 3 Commit Changes - COMPLETE
     result: COMPLETE
   flaky-test-retry:
     description: Tests fail initially, but pass after recovery and retry
     commands:
       - rd run --prompted dev-test-retry.runbook.md
-      - rd fail
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd fail  # 1 Run Tests - CONTINUE
+      - rd pass  # 2 Recovery and Fix - RETRY (1/2) GOTO 1
+      - rd pass  # 1 Run Tests - GOTO 3
+      - rd pass  # 3 Commit Changes - COMPLETE
     result: COMPLETE
   impossible-fix:
     description: Tests continue to fail despite recovery attempts
     commands:
       - rd run --prompted dev-test-retry.runbook.md
-      - rd fail
-      - rd pass
-      - rd fail
+      - rd fail  # 1 Run Tests - CONTINUE
+      - rd pass  # 2 Recovery and Fix - RETRY (1/2) GOTO 1
+      - rd fail  # 1 Run Tests - CONTINUE
+      - rd pass  # 2 Recovery and Fix - RETRY (2/2) GOTO 1
+      - rd fail  # 1 Run Tests - CONTINUE
+      - rd fail  # 2 Recovery and Fix - retries exhausted, STOP
     result: STOP
 ---
 
@@ -44,7 +45,7 @@ A workflow for implementing features and ensuring tests pass with recovery.
 Run the test suite to verify the implementation.
 
 ```bash
-rd echo "Running tests..." --result pass
+rd echo npm test
 ```
 
 ## 2. Recovery and Fix
@@ -55,7 +56,7 @@ rd echo "Running tests..." --result pass
 Attempt to fix the environment or the code.
 
 ```bash
-rd echo "Attempting automated fix..." --result pass
+rd echo npm run fix:auto
 ```
 
 ## 3. Commit Changes
@@ -65,5 +66,5 @@ rd echo "Attempting automated fix..." --result pass
 Commit the changes to the repository.
 
 ```bash
-rd echo "git commit -m 'feat: implement new logic'" --result pass
+rd echo git commit -m 'feat: implement new logic'
 ```
