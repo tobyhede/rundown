@@ -11,6 +11,8 @@ import type { StepId } from './step-id.js';
 export interface RunbookContext {
   /** Current retry count for the active step */
   retryCount: number;
+  /** Maximum retries allowed for current RETRY action (source of truth for retry limits) */
+  retryMax?: number;
   /** Current substep ID within the active step */
   substep?: string;
   /** Flag indicating transition to next dynamic step instance */
@@ -98,7 +100,8 @@ function actionToTransition(
         guard: ({ context }: { context: RunbookContext }) => context.retryCount < action.max,
         actions: assign({
           lastAction: 'RETRY',
-          retryCount: ({ context }) => (context.retryCount as number) + 1
+          retryCount: ({ context }) => (context.retryCount as number) + 1,
+          retryMax: action.max
         }),
         target: currentStateId
       },
@@ -418,6 +421,12 @@ export function compileRunbookToMachine(steps: Step[]) {
 
   // Build the machine states
   allStates.forEach(config => {
+    // Extract retryMax from transitions (check both PASS and FAIL)
+    const retryMaxFromTransitions =
+      config.transitions.pass.action.type === 'RETRY' ? config.transitions.pass.action.max :
+      config.transitions.fail.action.type === 'RETRY' ? config.transitions.fail.action.max :
+      undefined;
+
     states[config.id] = {
       on: {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -427,7 +436,8 @@ export function compileRunbookToMachine(steps: Step[]) {
         RETRY: {
           actions: assign({
             lastAction: 'RETRY',
-            retryCount: ({ context }) => (context.retryCount as number) + 1
+            retryCount: ({ context }) => (context.retryCount as number) + 1,
+            retryMax: retryMaxFromTransitions
           }),
           target: config.id
         },
@@ -446,6 +456,7 @@ export function compileRunbookToMachine(steps: Step[]) {
     initial: allStates.length > 0 ? allStates[0].id : 'step_1',
     context: {
       retryCount: 0,
+      retryMax: undefined,
       substep: undefined,
       nextInstance: undefined,
       nextSubstepInstance: undefined,

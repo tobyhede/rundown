@@ -225,8 +225,8 @@ export async function runExecutionLoop(
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     updatedState = await handleNextInstanceFlags(snapshot, updatedState, manager, runbookId, steps, isComplete, isStopped);
 
-    // Read action from XState context (source of truth)
-    const retryMax = getStepRetryMax(currentStep);
+    // Read action from XState context (source of truth for retryMax and lastAction)
+    const retryMax = extractRetryMax(snapshot);
     const lastActionFromContext = extractLastAction(snapshot);
     // Compute substep instance for {n} resolution
     const substepInstance = updatedState.substep
@@ -331,11 +331,12 @@ export async function runExecutionLoop(
 }
 
 /**
- * XState snapshot context with lastAction field.
- * Used for type-safe extraction of action from persisted snapshots.
+ * XState snapshot context with lastAction and retryMax fields.
+ * Used for type-safe extraction of action and retry info from persisted snapshots.
  */
 interface SnapshotContext {
   lastAction?: string;
+  retryMax?: number;
   nextInstance?: boolean;
   nextSubstepInstance?: boolean;
 }
@@ -358,6 +359,30 @@ export function extractLastAction(snapshot: unknown): string | undefined {
     return (snapshot.context as SnapshotContext).lastAction;
   }
   return undefined;
+}
+
+/**
+ * Extract the retryMax from an XState snapshot in a type-safe way.
+ *
+ * The XState context is the source of truth for retryMax, storing the value
+ * when a RETRY action is triggered. This avoids needing to re-derive it from
+ * step definitions.
+ *
+ * @param snapshot - The persisted XState snapshot
+ * @returns The retryMax number or 0 if not set
+ */
+export function extractRetryMax(snapshot: unknown): number {
+  if (
+    snapshot &&
+    typeof snapshot === 'object' &&
+    'context' in snapshot &&
+    snapshot.context &&
+    typeof snapshot.context === 'object' &&
+    'retryMax' in snapshot.context
+  ) {
+    return (snapshot.context as SnapshotContext).retryMax ?? 0;
+  }
+  return 0;
 }
 
 /**
@@ -411,14 +436,18 @@ export function isValidResult(r: string): r is 'pass' | 'fail' {
 }
 
 /**
- * Get retry max for a step.
- * @param step - Runbook step to get retry max from
+ * Get retry max for a step or substep.
+ * @param item - Runbook step or substep to get retry max from
  * @returns Maximum number of retries, or 0 if no retry configured
  */
-export function getStepRetryMax(step: Step): number {
-  // eslint-disable-next-line @typescript-eslint/prefer-optional-chain, @typescript-eslint/no-unnecessary-condition
-  if (step.transitions && step.transitions.fail && step.transitions.fail.action.type === 'RETRY') {
-    return step.transitions.fail.action.max;
+export function getStepRetryMax(item: Step | Substep): number {
+  // Check FAIL transition first
+  if (item.transitions?.fail?.action.type === 'RETRY') {
+    return item.transitions.fail.action.max;
+  }
+  // Also check PASS transition
+  if (item.transitions?.pass?.action.type === 'RETRY') {
+    return item.transitions.pass.action.max;
   }
   return 0; // No retry configured
 }
