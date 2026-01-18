@@ -202,5 +202,55 @@ export function extractPrimaryExecutable(command: string): string | null {
 export function extractAllExecutables(command: string): string[] {
   const commands = extractCommands(command);
   const executables = commands.map(c => c.executable);
-  return [...new Set(executables)];
+
+  // Also extract commands from backticks
+  const backtickExecutables = extractBacktickCommands(command);
+
+  return [...new Set([...executables, ...backtickExecutables])];
+}
+
+/**
+ * Extract commands hidden in backtick command substitution.
+ *
+ * Backticks (`) are used for command substitution in shell scripts.
+ * This function extracts the commands inside backticks so they can be
+ * checked against the policy.
+ *
+ * @param command - The shell command string to scan for backticks
+ * @returns Array of executable names found inside backticks
+ *
+ * @example
+ * ```typescript
+ * extractBacktickCommands('echo `id`')
+ * // => ['id']
+ *
+ * extractBacktickCommands('echo `whoami` `hostname`')
+ * // => ['whoami', 'hostname']
+ * ```
+ */
+export function extractBacktickCommands(command: string): string[] {
+  const backtickRegex = /`([^`]+)`/g;
+  const executables: string[] = [];
+  let match;
+
+  while ((match = backtickRegex.exec(command)) !== null) {
+    // Recursively extract executables from the backtick content
+    const backtickContent = match[1];
+    const nestedExecutables = extractAllExecutablesInternal(backtickContent);
+    executables.push(...nestedExecutables);
+  }
+
+  return executables;
+}
+
+/**
+ * Internal helper to extract executables without recursing into backticks.
+ * Used to avoid infinite recursion in extractAllExecutables.
+ *
+ * @param command - The shell command string to parse
+ * @returns Array of unique executable names
+ */
+function extractAllExecutablesInternal(command: string): string[] {
+  const commands = extractCommands(command);
+  return commands.map(c => c.executable);
 }

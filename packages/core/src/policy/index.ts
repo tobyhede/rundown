@@ -60,6 +60,7 @@ export {
   extractCommands,
   extractPrimaryExecutable,
   extractAllExecutables,
+  extractBacktickCommands,
 } from './parser.js';
 
 // Policy loader
