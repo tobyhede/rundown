@@ -165,13 +165,11 @@ export async function executeCommandWithPolicy(
     }
   }
 
-  // Execute with optional environment filtering
-  if (env) {
-    const filteredEnv = evaluator.filterEnvironment({ ...process.env, ...env });
-    return executeCommandWithEnv(command, cwd, filteredEnv);
-  }
-
-  return executeCommand(command, cwd);
+  // Always filter environment through policy evaluator
+  // Start with process.env, overlay any custom env, then filter
+  const baseEnv = { ...process.env, ...env } as Record<string, string>;
+  const filteredEnv = evaluator.filterEnvironment(baseEnv);
+  return executeCommandWithEnv(command, cwd, filteredEnv);
 }
 
 /**

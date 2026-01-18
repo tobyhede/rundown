@@ -116,15 +116,38 @@ export function extractCommands(command: string): ParsedCommand[] {
 }
 
 /**
+ * Check if a token is an environment variable assignment (KEY=VALUE).
+ *
+ * @param token - Token to check
+ * @returns True if token matches KEY=VALUE pattern
+ */
+function isEnvAssignment(token: string): boolean {
+  // Match KEY=VALUE where KEY is a valid env var name (alphanumeric + underscore, not starting with digit)
+  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
+}
+
+/**
  * Build a ParsedCommand from an array of tokens.
  *
+ * Skips leading environment variable assignments (KEY=VALUE) to find the actual executable.
+ * For example, `NODE_ENV=production node app.js` extracts `node` as the executable.
+ *
  * @param tokens - Array of command tokens
- * @returns ParsedCommand or null if tokens are empty
+ * @returns ParsedCommand or null if tokens are empty or only contain env assignments
  */
 function buildCommand(tokens: string[]): ParsedCommand | null {
   if (tokens.length === 0) return null;
 
-  const executable = path.basename(tokens[0]);
+  // Skip leading KEY=VALUE environment assignments to find the actual executable
+  let executableIndex = 0;
+  while (executableIndex < tokens.length && isEnvAssignment(tokens[executableIndex])) {
+    executableIndex++;
+  }
+
+  // If all tokens are env assignments, no executable found
+  if (executableIndex >= tokens.length) return null;
+
+  const executable = path.basename(tokens[executableIndex]);
   const original = tokens.join(' ');
 
   return { executable, original };

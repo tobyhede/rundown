@@ -92,6 +92,27 @@ export class PolicyEvaluator {
   }
 
   /**
+   * Set the current runbook path for override matching.
+   *
+   * Call this before evaluating commands to enable runbook-specific policy overrides.
+   * The path is matched against override patterns like 'deploy/*.runbook.md'.
+   *
+   * @param runbookPath - The runbook file path (relative to repo root)
+   */
+  setRunbookPath(runbookPath: string | undefined): void {
+    this.options.runbookPath = runbookPath;
+  }
+
+  /**
+   * Get the current runbook path.
+   *
+   * @returns The current runbook path, or undefined if not set
+   */
+  getRunbookPath(): string | undefined {
+    return this.options.runbookPath;
+  }
+
+  /**
    * Check if a command is allowed to execute.
    *
    * @param command - The shell command string to check

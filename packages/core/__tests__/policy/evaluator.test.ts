@@ -336,6 +336,84 @@ describe('PolicyEvaluator', () => {
       expect(decision.allowed).toBe(false);
       expect(decision.requiresPrompt).toBe(false); // mode is deny, not prompted
     });
+
+    it('should apply overrides after setRunbookPath is called', () => {
+      const policy: PolicyConfig = {
+        version: 1,
+        default: {
+          mode: 'deny',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [
+          {
+            runbook: 'deploy/*.runbook.md',
+            mode: 'execute',
+            run: {
+              allow: ['kubectl'],
+              deny: [],
+            },
+          },
+        ],
+        grants: [],
+      };
+      // Create evaluator without runbookPath
+      const evaluator = new PolicyEvaluator(policy, { repoRoot });
+
+      // Initially kubectl should be denied (no runbook override applies)
+      let decision = evaluator.checkCommand('kubectl get pods');
+      expect(decision.allowed).toBe(false);
+
+      // Now set runbook path that matches the override
+      evaluator.setRunbookPath('deploy/production.runbook.md');
+      expect(evaluator.getRunbookPath()).toBe('deploy/production.runbook.md');
+
+      // kubectl should now be allowed because override applies
+      decision = evaluator.checkCommand('kubectl get pods');
+      expect(decision.allowed).toBe(true);
+    });
+
+    it('should remove override when runbookPath is cleared', () => {
+      const policy: PolicyConfig = {
+        version: 1,
+        default: {
+          mode: 'deny',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [
+          {
+            runbook: 'deploy/*.runbook.md',
+            mode: 'execute',
+            run: {
+              allow: ['kubectl'],
+              deny: [],
+            },
+          },
+        ],
+        grants: [],
+      };
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot,
+        runbookPath: 'deploy/production.runbook.md',
+      });
+
+      // kubectl allowed with matching runbook
+      let decision = evaluator.checkCommand('kubectl get pods');
+      expect(decision.allowed).toBe(true);
+
+      // Clear runbook path
+      evaluator.setRunbookPath(undefined);
+      expect(evaluator.getRunbookPath()).toBeUndefined();
+
+      // kubectl should now be denied (back to default policy)
+      decision = evaluator.checkCommand('kubectl get pods');
+      expect(decision.allowed).toBe(false);
+    });
   });
 
   describe('createDefaultEvaluator', () => {

@@ -81,11 +81,26 @@ describe('Command Parser', () => {
       expect(result[0].executable).toBe('git');
     });
 
-    it('should handle environment variable assignment', () => {
+    it('should skip environment variable assignment and extract actual executable', () => {
       const result = extractCommands('NODE_ENV=production node app.js');
 
-      // shell-quote treats env var assignment as part of command
-      expect(result.length).toBeGreaterThan(0);
+      expect(result).toHaveLength(1);
+      expect(result[0].executable).toBe('node');
+      expect(result[0].original).toBe('NODE_ENV=production node app.js');
+    });
+
+    it('should skip multiple environment variable assignments', () => {
+      const result = extractCommands('NODE_ENV=production DEBUG=1 npm test');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].executable).toBe('npm');
+    });
+
+    it('should handle only env assignments (no executable)', () => {
+      const result = extractCommands('FOO=bar');
+
+      // No executable, just env assignment
+      expect(result).toHaveLength(0);
     });
 
     it('should return empty for empty command', () => {

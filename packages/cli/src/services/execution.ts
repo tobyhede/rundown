@@ -197,10 +197,10 @@ export async function runExecutionLoop(
         execResult = internalResult;
       } else {
         // Fallback to spawn if internal execution not supported for this subcommand
-        execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd);
+        execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbook);
       }
     } else {
-      execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd);
+      execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbook);
     }
 
     // Handle policy denial
@@ -566,20 +566,32 @@ export function deriveAction(
  *
  * Uses the global policy context to check permissions before execution.
  * If policy is enforced and the command requires permission, prompts the user.
+ * Sets the runbook path on the evaluator to enable runbook-specific overrides.
  *
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
+ * @param runbookPath - Optional runbook file path for override matching
  * @returns Execution result
  */
-async function executeCommandWithPolicyCheck(command: string, cwd: string): Promise<ExecutionResult> {
+async function executeCommandWithPolicyCheck(
+  command: string,
+  cwd: string,
+  runbookPath?: string
+): Promise<ExecutionResult> {
   // Check if policy enforcement is active
   if (!isPolicyEnforced()) {
     return executeCommand(command, cwd);
   }
 
+  // Get evaluator and set runbook path for override matching
+  const evaluator = getPolicyEvaluator();
+  if (runbookPath) {
+    evaluator.setRunbookPath(runbookPath);
+  }
+
   // Use policy-aware execution
   return executeCommandWithPolicy(command, cwd, {
-    evaluator: getPolicyEvaluator(),
+    evaluator,
     prompter: getPolicyPrompter(),
   });
 }
