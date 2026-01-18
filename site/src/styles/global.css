@@ -22,21 +22,27 @@
   }
 
   .dark {
-    --background: 0 0% 4%;
+    --background: 240 52% 4%;           /* cyber-darker #050510 */
     --foreground: 0 0% 98%;
-    --card: 0 0% 7%;
+    --card: 240 44% 7%;                 /* cyber-dark #0A0A1A */
     --card-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 15%;
+    --primary: 265 100% 65%;            /* purple #9B4DFF */
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 30% 15%;           /* muted blue-gray */
     --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 64%;
-    --accent: 0 0% 15%;
+    --muted: 240 44% 7%;                /* same as card */
+    --muted-foreground: 240 10% 60%;
+    --accent: 305 100% 50%;             /* magenta #FF00E5 */
     --accent-foreground: 0 0% 98%;
-    --border: 0 0% 20%;
-    --input: 0 0% 20%;
-    --ring: 0 0% 83%;
+    --border: 240 30% 20%;              /* blue-tinted */
+    --input: 240 30% 20%;
+    --ring: 265 100% 65%;               /* purple ring */
+  }
+
+  .dark h1,
+  .dark h2,
+  .dark h3 {
+    color: hsl(var(--accent));
   }
 
   * {
