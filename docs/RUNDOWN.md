@@ -21,6 +21,9 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
   - [File Locations](#file-locations)
   - [Session Structure](#session-structure)
   - [Runbook State Structure](#runbook-state-structure)
+- [Security Policy](#security-policy)
+  - [Default Behavior](#default-behavior)
+  - [Quick Reference](#quick-reference)
 - [CLI Commands](#cli-commands)
   - [Runbook Lifecycle](#runbook-lifecycle)
   - [State Transitions](#state-transitions)
@@ -276,6 +279,51 @@ Key fields:
 - `lastAction`: Most recent transition (`START`, `CONTINUE`, `GOTO`, `RETRY`, `COMPLETE`, `STOP`)
 - `lastResult`: Last PASS/FAIL signal (`pass` or `fail`)
 - `snapshot`: XState persisted snapshot for state restoration
+
+---
+
+## Security Policy
+
+Rundown enforces a security policy layer to control what commands runbooks can execute.
+
+### Default Behavior
+
+In `prompted` mode (default), Rundown:
+- Allows common safe commands: git, npm, node, pnpm, yarn, etc.
+- Blocks dangerous commands: sudo, rm, curl, wget, etc.
+- Prompts for unlisted commands
+
+### Quick Reference
+
+| Flag | Effect |
+|------|--------|
+| `--allow-run <cmds>` | Allow specific commands (comma-separated) |
+| `--allow-read <paths>` | Allow reading specific paths |
+| `--allow-write <paths>` | Allow writing to specific paths |
+| `--allow-env <vars>` | Allow specific environment variables |
+| `--allow-all` | Bypass all policy checks |
+| `--deny-all` | Block all commands not explicitly allowed |
+| `-y, --yes` | Auto-approve prompts |
+| `--non-interactive` | CI mode (auto-deny unlisted commands) |
+| `--policy <file>` | Use custom policy file |
+
+### Examples
+
+```bash
+# Allow specific commands for this run
+rundown run deploy.runbook.md --allow-run docker,kubectl
+
+# Allow file operations
+rundown run backup.runbook.md --allow-read /var/log --allow-write /backup
+
+# CI/CD: auto-approve with pre-approved commands
+rundown run test.runbook.md --yes --allow-run npm,jest
+
+# CI/CD: strict mode with no prompts
+rundown run test.runbook.md --non-interactive
+```
+
+See [Security Documentation](SECURITY.md) for full details.
 
 ---
 

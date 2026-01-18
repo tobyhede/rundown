@@ -43,6 +43,23 @@ The `rd` command is an alias for `rundown`.
 
 State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown/session.json` (active runbook tracking). Runbook source files are discovered from `.claude/rundown/runbooks/`. All persist across context clears.
 
+## Policy Options
+
+```bash
+rundown run <file> --allow-run git,npm    # Allow specific commands
+rundown run <file> --allow-all            # Bypass policy (trust mode)
+rundown run <file> --deny-all             # Block all commands
+rundown run <file> -y                     # Auto-approve prompts
+rundown run <file> --non-interactive      # CI mode (auto-deny)
+rundown run <file> --policy ./policy.yaml # Custom policy file
+```
+
+## Policy Configuration
+
+Policy files are discovered from: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, `rundown.config.js`, `rundown.config.cjs`, `rundown.config.mjs`, `package.json` (rundown field).
+
+See [docs/SECURITY.md](docs/SECURITY.md) for full security policy documentation.
+
 ## Environment Variables
 
 - `RUNDOWN_LOG=0` - Disable logging (enabled by default)

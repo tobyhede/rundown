@@ -32,6 +32,23 @@ Rundown transforms static documentation into interactive, stateful CLI workflows
 - **XState compilation** - Runbooks compile to state machines for reliable execution
 - **CLI control** - Simple commands to run, pass, fail, and navigate runbooks
 
+## Security
+
+Rundown includes a Deno-inspired security policy layer that provides explicit allowlist-based permission control:
+
+- **Default-deny** - Commands not in the allowlist require user confirmation
+- **Granular control** - Separate allow/deny lists for commands, file access, and environment variables
+- **Runbook overrides** - Per-runbook policy configurations for different trust levels
+- **CI-friendly** - `--yes` flag for non-interactive execution with pre-approved commands
+
+**Key CLI flags:**
+- `--allow-run <cmds>` - Allow specific commands
+- `--allow-all` / `--deny-all` - Trust or strict mode
+- `--policy <file>` - Custom policy file
+- `--non-interactive` - CI mode (auto-deny)
+
+See [Security Documentation](docs/SECURITY.md) for full configuration options.
+
 ## Get Started
 
 ### Install

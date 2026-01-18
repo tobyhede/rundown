@@ -12,6 +12,37 @@ Rundown is a monorepo managed with npm workspaces:
 - `site`: The Astro-based documentation and interactive demo site.
 - `runbooks`: A collection of pattern and example runbooks.
 
+## Security Policy Layer
+
+The security policy layer (`packages/core/src/policy/`) enforces permission controls on command execution during runbook runs.
+
+### Architecture
+
+| Module | Purpose |
+|--------|---------|
+| `schema.ts` | Zod schema for PolicyConfig, DEFAULT_POLICY |
+| `parser.ts` | Shell command parsing via shell-quote (handles pipes, `sh -c` wrappers, logical operators) |
+| `evaluator.ts` | Permission checks with picomatch glob matching |
+| `loader.ts` | Config discovery via lilconfig |
+| `prompter.ts` | Interactive prompts via @inquirer/prompts (confirm, select) |
+
+### Key Design Decisions
+
+1. **Deny takes precedence**: Deny lists are always checked before allow lists
+2. **Environment filtering**: Sensitive env vars (`*_TOKEN`, `AWS_*`, etc.) filtered by default
+3. **Runbook overrides**: Policy can vary by runbook path pattern
+4. **Session grants**: Memory-only permissions that don't persist to disk
+
+### Testing Policy Changes
+
+```bash
+# Run policy-specific tests
+npm test --workspace=packages/core -- --testPathPattern="policy"
+
+# Test CLI integration
+npm run cli -- run examples/test.runbook.md --allow-run git,npm
+```
+
 ## Development Setup
 
 ### Prerequisites
