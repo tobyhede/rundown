@@ -52,19 +52,6 @@ export function renderStepForCLI(
     lines.push(resolvedPrompt);
   }
 
-  if (item.command) {
-    let resolvedCode = item.command.code;
-    if (instanceNumber) {
-      resolvedCode = resolvedCode.replace(/\{N\}/g, instanceNumber);
-    }
-    if (substepNumber) {
-      resolvedCode = resolvedCode.replace(/\{n\}/g, substepNumber);
-    }
-    lines.push('');
-    lines.push('```bash');
-    lines.push(resolvedCode);
-    lines.push('```');
-  }
-
+  // Command is not rendered here - it's shown via printCommandExec() with colored prompt
   return lines.join('\n');
 }

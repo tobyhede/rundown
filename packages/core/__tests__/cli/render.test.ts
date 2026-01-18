@@ -3,7 +3,7 @@ import { renderStepForCLI } from '../../src/cli/render.js';
 import type { Step, Substep } from '../../src/runbook/types.js';
 
 describe('renderStepForCLI', () => {
-  it('renders step with prompts before command', () => {
+  it('renders step with heading and prompt (command shown via printCommandExec)', () => {
     const step: Step = {
       name: '1',
       description: 'Install dependencies',
@@ -14,13 +14,11 @@ describe('renderStepForCLI', () => {
 
     const result = renderStepForCLI(step);
 
-    // Check order: heading, prompt, command
-    const headingIdx = result.indexOf('## 1. Install dependencies');
-    const promptIdx = result.indexOf('Run npm install');
-    const commandIdx = result.indexOf('npm install');
-
-    expect(headingIdx).toBeLessThan(promptIdx);
-    expect(promptIdx).toBeLessThan(commandIdx);
+    // Check heading and prompt are present
+    expect(result).toContain('## 1. Install dependencies');
+    expect(result).toContain('Run npm install');
+    // Command is now shown via printCommandExec, not in rendered step
+    expect(result).not.toContain('```');
   });
 
   it('renders step without command', () => {
@@ -35,10 +33,10 @@ describe('renderStepForCLI', () => {
 
     expect(result).toContain('## 2. Review changes');
     expect(result).toContain('Review the diff and approve.');
-    expect(result).not.toContain('```bash');
+    expect(result).not.toContain('```');
   });
 
-  it('renders step without prompts', () => {
+  it('renders step without prompts (heading only)', () => {
     const step: Step = {
       name: '3',
       description: 'Run build',
@@ -49,7 +47,8 @@ describe('renderStepForCLI', () => {
     const result = renderStepForCLI(step);
 
     expect(result).toContain('## 3. Run build');
-    expect(result).toContain('npm run build');
+    // Command is now shown via printCommandExec, not in rendered step
+    expect(result).not.toContain('npm run build');
   });
 
   it('omits transitions and substeps', () => {
@@ -117,7 +116,7 @@ describe('dynamic step rendering', () => {
     expect(result).toContain('## 1. First step');
   });
 
-  it('substitutes {N} and {n} in command code', () => {
+  it('does not render command in step output (command shown via printCommandExec)', () => {
     const step: Step = {
       name: '{N}',
       description: 'Process Batch',
@@ -128,9 +127,12 @@ describe('dynamic step rendering', () => {
 
     const result = renderStepForCLI(step, '2', '5');
 
-    expect(result).toContain('process-batch --instance 2 --item 5');
-    expect(result).not.toContain('{N}');
-    expect(result).not.toContain('{n}');
+    // Heading and prompt are present
+    expect(result).toContain('## 2. Process Batch');
+    expect(result).toContain('Process the batch.');
+    // Command is not rendered here - shown via printCommandExec
+    expect(result).not.toContain('process-batch');
+    expect(result).not.toContain('```');
   });
 });
 
@@ -177,7 +179,7 @@ describe('substep rendering', () => {
     expect(result).toContain('### 2.1. First Substep');
   });
 
-  it('substitutes {N} and {n} in substep command', () => {
+  it('does not render substep command in output (shown via printCommandExec)', () => {
     const substep: Substep = {
       id: '{n}',
       description: 'Process Item',
@@ -187,6 +189,10 @@ describe('substep rendering', () => {
 
     const result = renderStepForCLI(substep, '2', '3');
 
-    expect(result).toContain('process --batch 2 --item 3');
+    // Heading is present
+    expect(result).toContain('### 2.3. Process Item');
+    // Command is not rendered - shown via printCommandExec
+    expect(result).not.toContain('process');
+    expect(result).not.toContain('```');
   });
 });

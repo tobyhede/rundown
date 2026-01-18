@@ -38,8 +38,8 @@ describe('output format integration tests', () => {
     it('shows first step details in action block', async () => {
       const result = runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
-      expect(result.stdout).toContain('Step:');
-      expect(result.stdout).toContain('1/2');
+      // Step heading and description are shown
+      expect(result.stdout).toContain('## 1.');
       expect(result.stdout).toContain('First step');
     });
   });
@@ -53,8 +53,8 @@ describe('output format integration tests', () => {
       const result = runCli('pass', workspace);
 
       expect(result.exitCode).toBe(0);
-      // Should contain separator (multiple dashes)
-      expect(result.stdout).toMatch(/^-{5,}/m);
+      // Should contain separator with step number (─── N ───)
+      expect(result.stdout).toContain('───');
       // Should contain next step info
       expect(result.stdout).toContain('Second step');
     });
@@ -69,8 +69,8 @@ describe('output format integration tests', () => {
     it('includes metadata about state progression', async () => {
       const result = runCli('pass', workspace);
 
-      // Should show we're on step 2 with format Step: 2/2
-      expect(result.stdout).toContain('Step:');
+      // Should show we're on step 2 via At: field in action block
+      expect(result.stdout).toContain('At:');
       expect(result.stdout).toContain('2/2');
     });
   });
@@ -83,8 +83,8 @@ describe('output format integration tests', () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('RETRY');
-      // Should show the step being retried
-      expect(result.stdout).toContain('Step:');
+      // Should show the step being retried via At: field
+      expect(result.stdout).toContain('At:');
       expect(result.stdout).toContain('1/');
     });
 
@@ -127,8 +127,8 @@ describe('output format integration tests', () => {
     it('shows target step details in action block', async () => {
       const result = runCli(['goto', '3'], workspace);
 
-      expect(result.stdout).toContain('Step:');
-      expect(result.stdout).toContain('3/');
+      // Step position is shown in heading
+      expect(result.stdout).toContain('## 3.');
       expect(result.stdout).toContain('Jump target');
     });
 
@@ -152,8 +152,8 @@ describe('output format integration tests', () => {
       // Metadata
       expect(result.stdout).toContain('File:');
       expect(result.stdout).toContain('simple.runbook.md');
-      // Step info block
-      expect(result.stdout).toContain('Step:');
+      // Step info via heading
+      expect(result.stdout).toContain('## 1.');
       expect(result.stdout).toContain('First step');
     });
 
@@ -253,7 +253,7 @@ describe('output format integration tests', () => {
       expect(result.exitCode).toBe(0);
       // Metadata
       expect(result.stdout).toContain('simple.runbook.md');
-      // Step info
+      // Step info (stash still uses Step: for position)
       expect(result.stdout).toContain('Step:');
       // Stashed message
       expect(result.stdout).toContain('STASHED');
@@ -287,9 +287,8 @@ describe('output format integration tests', () => {
       // Metadata
       expect(result.stdout).toContain('simple.runbook.md');
       expect(result.stdout).toContain('File:');
-      // Step block
-      expect(result.stdout).toContain('Step:');
-      expect(result.stdout).toContain('2/');
+      // Step block (heading and content)
+      expect(result.stdout).toContain('## 2.');
       expect(result.stdout).toContain('Second step');
     });
 
@@ -381,11 +380,11 @@ describe('output format integration tests', () => {
       const statusResult = runCli('status', workspace);
       const listResult = runCli('ls', workspace);
 
-      // Both should show step number in format 1/2
-      expect(statusResult.stdout).toContain('1/2');
+      // List shows step number in format 1/2
       expect(listResult.stdout).toContain('1/2');
 
-      // Status should show step description
+      // Status shows step description via heading
+      expect(statusResult.stdout).toContain('## 1.');
       expect(statusResult.stdout).toContain('First step');
     });
   });

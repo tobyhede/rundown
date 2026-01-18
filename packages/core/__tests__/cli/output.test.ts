@@ -3,6 +3,7 @@ import {
   formatPosition,
   formatStepNumber,
   printSeparator,
+  printStepSeparator,
   printMetadata,
   printActionBlock,
   printStepBlock,
@@ -81,6 +82,21 @@ describe('output formatter', () => {
     it('prints separator line', () => {
       printSeparator(writer);
       expect(writer.getLines()).toEqual(['-----']);
+    });
+  });
+
+  describe('printStepSeparator', () => {
+    it('prints separator with step number', () => {
+      printStepSeparator({ current: '2', total: 5 }, writer);
+      const output = writer.getOutput();
+      expect(output).toContain('───');
+      expect(output).toContain('2');
+    });
+
+    it('prints separator with substep number', () => {
+      printStepSeparator({ current: '1', total: 3, substep: '2' }, writer);
+      const output = writer.getOutput();
+      expect(output).toContain('1.2');
     });
   });
 
@@ -187,10 +203,30 @@ describe('output formatter', () => {
         'Result:   FAIL',
       ]);
     });
+
+    it('prints action with at field showing current position', () => {
+      printActionBlock(
+        {
+          action: 'CONTINUE',
+          from: { current: '1', total: 5 },
+          command: 'npm test',
+          result: 'PASS',
+          at: { current: '2', total: 5 },
+        },
+        writer
+      );
+      expect(writer.getLines()).toEqual([
+        'Action:   CONTINUE',
+        'From:     1',
+        'Command:  npm test',
+        'Result:   PASS',
+        'At:       2/5',
+      ]);
+    });
   });
 
   describe('printStepBlock', () => {
-    it('prints step position and content', () => {
+    it('prints step heading and prompt (no step position line)', () => {
       const step: Step = {
         name: '1',
         description: 'First step',
@@ -201,10 +237,12 @@ describe('output formatter', () => {
       printStepBlock({ current: '1', total: 3 }, step, writer);
 
       const output = writer.getOutput();
-      expect(output).toContain('Step:     1/3');
+      // Step position is now shown via separator and At: in action block, not here
+      expect(output).not.toContain('Step:');
       expect(output).toContain('## 1. First step');
       expect(output).toContain('Do something.');
-      expect(output).toContain('npm test');
+      // Command is now shown via printCommandExec, not in step block
+      expect(output).not.toContain('```');
     });
 
     it('prints dynamic step with resolved instance number', () => {
@@ -217,12 +255,13 @@ describe('output formatter', () => {
       printStepBlock({ current: '1', total: '{N}' }, step, writer);
 
       const output = writer.getOutput();
-      expect(output).toContain('Step:     1/1*');
+      // Step position is now in action block, not step block
+      expect(output).not.toContain('Step:');
       expect(output).toContain('## 1. Process Batch');
       expect(output).not.toContain('## {N}.');
     });
 
-    it('prints dynamic step with substep', () => {
+    it('prints dynamic step with substep and resolved placeholders', () => {
       const step: Step = {
         name: '{N}',
         description: 'Process Batch',
@@ -232,7 +271,8 @@ describe('output formatter', () => {
       printStepBlock({ current: '2', total: '{N}', substep: '3' }, step, writer);
 
       const output = writer.getOutput();
-      expect(output).toContain('Step:     2.3/2*');
+      // Step position is now in action block, not step block
+      expect(output).not.toContain('Step:');
       expect(output).toContain('Process item 3.');
     });
   });

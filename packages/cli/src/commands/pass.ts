@@ -5,7 +5,7 @@ import type { Command } from 'commander';
 import {
   RunbookStateManager,
   parseRunbook,
-  printSeparator,
+  printStepSeparator,
   printActionBlock,
   printRunbookComplete,
   printRunbookStoppedAtStep,
@@ -171,12 +171,27 @@ export function registerPassCommand(program: Command): void {
           ? String(prevSubstepStatesLen)
           : prevSubstep;
 
-        // Print separator and action block
-        printSeparator();
+        // Compute new display step (position after transition)
+        const newDisplayStep = isDynamic && updatedState.instance !== undefined
+          ? String(updatedState.instance)
+          : updatedState.step;
+
+        // Resolve {n} in new substep for display
+        const newDisplaySubstep = updatedState.substep === '{n}'
+          ? String(updatedState.substepStates?.length ?? 1)
+          : updatedState.substep;
+
+        // Compute positions for output
+        const prevPos = { current: displayStep, total: totalSteps, substep: prevDisplaySubstep };
+        const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
+
+        // Print separator with new step number and action block
+        printStepSeparator(newPos);
         printActionBlock({
           action,
-          from: { current: displayStep, total: totalSteps, substep: prevDisplaySubstep },
+          from: prevPos,
           result: 'PASS',
+          at: newPos,
         });
 
         // Evaluate pass condition once for use in completion/stopped blocks

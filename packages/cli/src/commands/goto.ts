@@ -12,7 +12,7 @@ import {
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
-import { printSeparator, printActionBlock } from '@rundown/core';
+import { printStepSeparator, printActionBlock } from '@rundown/core';
 import { withErrorHandling } from '../helpers/wrapper.js';
 
 /**
@@ -107,11 +107,20 @@ export function registerGotoCommand(program: Command): void {
           lastResult: undefined  // CRITICAL: Clear stale result on manual goto
         });
 
-        // Print output
-        printSeparator();
+        // Compute new position (the target of the goto)
+        const totalSteps = countNumberedSteps(steps);
+        const newPos = {
+          current: target.step,
+          total: totalSteps,
+          substep: target.substep,
+        };
+
+        // Print separator with new step number and action block
+        printStepSeparator(newPos);
         printActionBlock({
           action: `GOTO ${stepIdToString(target)}`,
-          from: { current: prevStep, total: countNumberedSteps(steps), substep: prevSubstep },
+          from: { current: prevStep, total: totalSteps, substep: prevSubstep },
+          at: newPos,
         });
 
         // Continue with execution loop

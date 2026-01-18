@@ -44,4 +44,6 @@ export interface ActionBlockData {
   result?: 'PASS' | 'FAIL';
   /** The command that was executed (display-friendly, with rd echo wrapper stripped) */
   command?: string;
+  /** The current step position after the transition (displayed as "At: n/N") */
+  at?: StepPosition;
 }

@@ -100,7 +100,8 @@ describe('integration: GOTO patterns', () => {
 
         expect(result1.stdout).toContain('GOTO 4.3');
 
-        expect(result1.stdout).toContain('Step:     4.3');
+        expect(result1.stdout).toContain('At:');
+        expect(result1.stdout).toContain('4.3');
 
   
 
@@ -144,7 +145,8 @@ describe('integration: GOTO patterns', () => {
 
         expect(result1.stdout).toContain('GOTO 1.3');
 
-        expect(result1.stdout).toContain('Step:     1.3/1*');
+        expect(result1.stdout).toContain('At:');
+        expect(result1.stdout).toContain('1.3');
 
 
 

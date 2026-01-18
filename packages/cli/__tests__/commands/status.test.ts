@@ -24,7 +24,7 @@ describe('status command', () => {
     const result = runCli('status', workspace);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('Step:');
+    expect(result.stdout).toContain('## 1.');
     expect(result.stdout).toContain('First step');
   });
 
@@ -44,7 +44,7 @@ describe('status command', () => {
 
     // Status shows step information, retryCount is internal state
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('Step:');
+    expect(result.stdout).toContain('## 1.');
   });
 
   it('shows runbook ID', async () => {

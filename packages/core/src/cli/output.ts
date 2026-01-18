@@ -15,6 +15,8 @@ import {
 } from './colors.js';
 
 const SEPARATOR = '-----';
+const SEPARATOR_CHAR = '─';
+const SEPARATOR_WIDTH = 50;
 
 /**
  * Format step position as n/N or n/* for dynamic runbooks.
@@ -65,6 +67,28 @@ export function printSeparator(writer: OutputWriter = getWriter()): void {
 }
 
 /**
+ * Print step separator with step number to stdout.
+ *
+ * Outputs a visual separator with the step number embedded: "─── 1.2 ───...".
+ * Includes a leading blank line for visual separation from command output.
+ * The separator is dimmed for visual distinction from content.
+ *
+ * @param pos - The current step position to display in the separator
+ * @param writer - OutputWriter to use (defaults to global writer)
+ */
+export function printStepSeparator(
+  pos: StepPosition,
+  writer: OutputWriter = getWriter()
+): void {
+  const stepNum = formatStepNumber(pos);
+  const prefix = `${SEPARATOR_CHAR}${SEPARATOR_CHAR}${SEPARATOR_CHAR} ${stepNum} `;
+  const remainingWidth = Math.max(0, SEPARATOR_WIDTH - prefix.length);
+  const suffix = SEPARATOR_CHAR.repeat(remainingWidth);
+  writer.writeLine('');
+  writer.writeLine(dim(`${prefix}${suffix}`));
+}
+
+/**
  * Print metadata block to stdout.
  *
  * Outputs runbook metadata including file path, state, and optional prompt status.
@@ -86,7 +110,8 @@ export function printMetadata(
 /**
  * Print action block to stdout.
  *
- * Outputs the action taken, optional source step position, and optional result.
+ * Outputs the action taken, source step position, command, result, and current position.
+ * The output is compact with no extra blank lines between fields.
  *
  * @param data - The ActionBlockData containing action details
  * @param writer - OutputWriter to use (defaults to global writer)
@@ -105,12 +130,16 @@ export function printActionBlock(
   if (data.result) {
     writer.writeLine(`Result:   ${colorizeResult(data.result)}`);
   }
+  if (data.at) {
+    writer.writeLine(`At:       ${info(formatPosition(data.at))}`);
+  }
 }
 
 /**
  * Print step or substep block to stdout.
  *
- * Outputs the step position and rendered content for the current item.
+ * Outputs the rendered content for the current item (heading, prompt).
+ * Step position is now shown via the step separator and "At:" in the action block.
  * For dynamic items, substitutes {N} and {n} with the actual instance/substep numbers.
  *
  * @param pos - The current step position
@@ -123,15 +152,14 @@ export function printStepBlock(
   writer: OutputWriter = getWriter()
 ): void {
   writer.writeLine('');
-  writer.writeLine(`Step:     ${info(formatPosition(pos))}`);
-  writer.writeLine('');
   writer.writeLine(renderStepForCLI(item, pos.current, pos.substep));
 }
 
 /**
  * Print command execution prefix to stdout.
  *
- * Outputs the command that is about to be executed with a shell prompt prefix.
+ * Outputs the command that is about to be executed with a colored shell prompt.
+ * The `$ command` line is styled with info color (cyan) to stand out from stdout.
  *
  * @param command - The shell command to display
  * @param writer - OutputWriter to use (defaults to global writer)
@@ -141,7 +169,7 @@ export function printCommandExec(
   writer: OutputWriter = getWriter()
 ): void {
   writer.writeLine('');
-  writer.writeLine(`$ ${command}`);
+  writer.writeLine(info(`$ ${command}`));
   writer.writeLine('');
 }
 

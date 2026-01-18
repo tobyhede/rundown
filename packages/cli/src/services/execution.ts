@@ -4,7 +4,7 @@ import {
   type RunbookStateManager,
   printActionBlock,
   printStepBlock,
-  printSeparator,
+  printStepSeparator,
   printCommandExec,
   printRunbookComplete,
   printRunbookStoppedAtStep,
@@ -188,7 +188,11 @@ export async function runExecutionLoop(
 
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
-    printCommandExec(itemToRender.command.code);
+    // Use display command (with rd echo wrapper stripped) for cleaner output
+    // Fall back to original command if extractDisplayCommand returns empty (e.g., "rd echo --result pass")
+    const extracted = extractDisplayCommand(itemToRender.command.code);
+    const displayCommand = extracted || itemToRender.command.code;
+    printCommandExec(displayCommand);
     let execResult: ExecutionResult;
 
     if (isInternalRdCommand(itemToRender.command.code)) {
@@ -273,13 +277,28 @@ export async function runExecutionLoop(
       ? String(prevSubstepStatesLen)
       : prevSubstep;
 
-    // Print separator and action block
-    printSeparator();
+    // Compute new display step (position after transition)
+    const newDisplayStep = isDynamicRunbook && updatedState.instance !== undefined
+      ? String(updatedState.instance)
+      : updatedState.step;
+
+    // Resolve {n} in new substep for display
+    const newDisplaySubstep = updatedState.substep === '{n}'
+      ? String(updatedState.substepStates?.length ?? 1)
+      : updatedState.substep;
+
+    // Compute positions for output
+    const prevPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
+    const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
+
+    // Print separator with new step number and action block
+    printStepSeparator(newPos);
     printActionBlock({
       action,
-      from: { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep },
-      command: extractDisplayCommand(itemToRender.command.code),
+      from: prevPos,
+      command: displayCommand,
       result: execResult.success ? 'PASS' : 'FAIL',
+      at: newPos,
     });
 
     // Handle runbook end states
