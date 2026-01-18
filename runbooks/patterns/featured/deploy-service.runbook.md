@@ -9,6 +9,7 @@ scenarios:
     commands:
       - rd run deploy-service.runbook.md
       - rd pass # 2 Announce start of deployment
+      - rd pass # 5 Announce completion of deployment
     result: COMPLETE
   prompted:
     description: Deployment with prompted confirmation at each step
@@ -27,6 +28,7 @@ scenarios:
       - rd pass  # 4.2 Run health checks (retry 2/3)
       - rd pass  # 4.2 Run health checks (retry 3/3)
       - rd pass  # 4.2 CONTINUE after retries exhausted
+      - rd pass  # 5 Announce completion of deployment
     result: COMPLETE
   stopped:
     description: Database migration fails, triggering rollback
@@ -115,6 +117,11 @@ Monitors in a `RETRY` loop
 ```bash
 rd echo --result pass --result pass --result pass npm run check:health
 ```
+
+## 5. Announce completion of deployment
+
+Post to Slack `#deployments` channel.
+Follow the existing Slack guidelines.
 
 
 ## Rollback. Rollback on Failure.
