@@ -40,7 +40,11 @@ program
   .option('--deny-all', 'Deny all operations')
   .option('--policy <file>', 'Path to policy configuration file')
   .option('-y, --yes', 'Skip confirmation prompts')
-  .option('--non-interactive', 'Non-interactive mode (no prompts, CI-friendly)');
+  .option('--non-interactive', 'Non-interactive mode (no prompts, CI-friendly)')
+  // Sandbox options
+  .option('--sandbox', 'Enable OS-level sandbox for file access enforcement')
+  .option('--no-sandbox', 'Disable sandbox enforcement (trust mode)')
+  .option('--sandbox-strict', 'Fail if sandbox is unavailable (strict mode)');
 
 // Initialize policy before subcommands
 program.hook('preSubcommand', async (thisCommand) => {

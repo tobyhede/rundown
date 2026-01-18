@@ -29,6 +29,7 @@ import {
   getPolicyEvaluator,
   getPolicyPrompter,
   isPolicyEnforced,
+  getSandboxOptions,
 } from './policy-context.js';
 
 /**
@@ -586,6 +587,7 @@ export function deriveAction(
  * Uses the global policy context to check permissions before execution.
  * If policy is enforced and the command requires permission, prompts the user.
  * Sets the runbook path on the evaluator to enable runbook-specific overrides.
+ * When sandboxing is enabled, enforces file access policies at the OS level.
  *
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
@@ -608,9 +610,14 @@ async function executeCommandWithPolicyCheck(
     evaluator.setRunbookPath(runbookPath);
   }
 
-  // Use policy-aware execution
+  // Get sandbox options
+  const sandboxOpts = getSandboxOptions();
+
+  // Use policy-aware execution with sandbox
   return executeCommandWithPolicy(command, cwd, {
     evaluator,
     prompter: getPolicyPrompter(),
+    sandbox: sandboxOpts.sandbox,
+    sandboxStrict: sandboxOpts.sandboxStrict,
   });
 }

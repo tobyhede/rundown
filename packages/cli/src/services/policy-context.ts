@@ -39,6 +39,12 @@ export interface PolicyCliOptions {
   yes?: boolean;
   /** Non-interactive mode - no prompts (--non-interactive) */
   nonInteractive?: boolean;
+  /** Enable OS-level sandbox for file access enforcement (--sandbox) */
+  sandbox?: boolean;
+  /** Fail if sandbox is unavailable (--sandbox-strict) */
+  sandboxStrict?: boolean;
+  /** Disable sandbox enforcement (--no-sandbox) */
+  noSandbox?: boolean;
 }
 
 /**
@@ -210,6 +216,35 @@ export function parsePolicyCliOptions(opts: Record<string, unknown>): PolicyCliO
     policyPath: typeof opts.policy === 'string' ? opts.policy : undefined,
     yes: opts.yes === true,
     nonInteractive: opts.nonInteractive === true,
+    sandbox: opts.sandbox === true,
+    sandboxStrict: opts.sandboxStrict === true,
+    noSandbox: opts.noSandbox === true,
+  };
+}
+
+/**
+ * Get the sandbox options from the current policy context.
+ *
+ * @returns Object with sandbox and sandboxStrict settings
+ */
+export function getSandboxOptions(): { sandbox: boolean; sandboxStrict: boolean } {
+  const context = getPolicyContext();
+  const opts = context.cliOptions;
+
+  // --no-sandbox disables sandboxing
+  if (opts.noSandbox) {
+    return { sandbox: false, sandboxStrict: false };
+  }
+
+  // --allow-all implies no sandbox (trust mode)
+  if (opts.allowAll) {
+    return { sandbox: false, sandboxStrict: false };
+  }
+
+  return {
+    // Default to true (enable sandbox) unless explicitly disabled
+    sandbox: opts.sandbox !== false,
+    sandboxStrict: opts.sandboxStrict ?? false,
   };
 }
 
