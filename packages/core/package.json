@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
     "clean": "rm -rf dist"
   },
   "keywords": [

@@ -3,6 +3,15 @@ export default {
   roots: ['<rootDir>/__tests__'],
   testMatch: ['**/*.test.ts'],
   collectCoverageFrom: ['src/**/*.ts'],
+  coverageThreshold: {
+    global: {
+      branches: 25,
+      functions: 45,
+      lines: 45,
+      statements: 45,
+    },
+  },
+  coverageReporters: ['text', 'lcov', 'html'],
   moduleFileExtensions: ['ts', 'js', 'json'],
   extensionsToTreatAsEsm: ['.ts'],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
