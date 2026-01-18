@@ -8,6 +8,7 @@ import { parseHookInput, RunbookStateSchema, StepIdSchema, ActionSchema, Transit
 const createValidState = (overrides: Record<string, unknown> = {}) => ({
   id: 'test-id',
   runbook: 'test.md',
+  runbookPath: 'test.md',
   step: '1',
   stepName: 'Test Step',
   retryCount: 0,

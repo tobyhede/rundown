@@ -32,6 +32,7 @@ interface SessionData {
 }
 
 interface CreateOptions {
+  readonly runbookPath: string;
   readonly agentId?: string;
   readonly parentRunbookId?: string;
   readonly parentStepId?: StepId;
@@ -77,7 +78,7 @@ export class RunbookStateManager {
    * @param options - Optional configuration including agentId, parent runbook info, and prompted flag
    * @returns The newly created RunbookState
    */
-  async create(runbookFile: string, runbook: Runbook, options?: CreateOptions): Promise<RunbookState> {
+  async create(runbookFile: string, runbook: Runbook, options: CreateOptions): Promise<RunbookState> {
     const id = generateId();
     const now = new Date().toISOString();
 
@@ -88,6 +89,7 @@ export class RunbookStateManager {
     const state: RunbookState = {
       id,
       runbook: runbookFile,
+      runbookPath: options.runbookPath,
       title: runbook.title,
       description: runbook.description,
       step: initialStep.name,    // Keep as '{N}' for dynamic, original name for static
@@ -98,12 +100,12 @@ export class RunbookStateManager {
       steps: [],
       pendingSteps: [],
       agentBindings: {},
-      agentId: options?.agentId,
-      parentRunbookId: options?.parentRunbookId,
-      parentStepId: options?.parentStepId,
+      agentId: options.agentId,
+      parentRunbookId: options.parentRunbookId,
+      parentStepId: options.parentStepId,
       startedAt: now,
       updatedAt: now,
-      prompted: options?.prompted
+      prompted: options.prompted
     };
 
     await this.save(state);
