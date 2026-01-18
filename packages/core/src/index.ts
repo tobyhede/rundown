@@ -35,3 +35,7 @@ export * from './cli/index.js';
 
 // Policy module
 export * from './policy/index.js';
+
+// Sandbox module
+export * from './sandbox/index.js';
+export { policyToSandboxOptions, policyConfigToSandboxOptions } from './sandbox/policy-mapper.js';

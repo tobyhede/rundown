@@ -92,6 +92,33 @@ export class PolicyEvaluator {
   }
 
   /**
+   * Get the underlying policy configuration.
+   *
+   * @returns The policy configuration
+   */
+  getPolicy(): PolicyConfig {
+    return this.policy;
+  }
+
+  /**
+   * Get the repository root path.
+   *
+   * @returns The repository root path
+   */
+  getRepoRoot(): string {
+    return this.repoRoot;
+  }
+
+  /**
+   * Get the temporary directory path.
+   *
+   * @returns The temporary directory path
+   */
+  getTmpDir(): string {
+    return this.tmpDir;
+  }
+
+  /**
    * Set the current runbook path for override matching.
    *
    * Call this before evaluating commands to enable runbook-specific policy overrides.

@@ -5,6 +5,11 @@ import {
   type PolicyPrompter,
   type PolicyDecision,
 } from '../policy/index.js';
+import {
+  executeWithSandbox,
+  isSandboxAvailable,
+} from '../sandbox/index.js';
+import { policyToSandboxOptions } from '../sandbox/policy-mapper.js';
 
 /**
  * Result of executing a shell command.
@@ -20,6 +25,8 @@ export interface ExecutionResult {
   denialReason?: string;
   /** Whether the command was denied by policy (vs execution failure) */
   policyDenied?: boolean;
+  /** Whether the command was executed in a sandbox */
+  sandboxed?: boolean;
 }
 
 /**
@@ -32,6 +39,10 @@ export interface PolicyExecutionOptions {
   prompter?: PolicyPrompter;
   /** Custom environment variables (will be filtered by policy) */
   env?: Record<string, string>;
+  /** Enable OS-level sandbox for file access enforcement (default: true on supported platforms) */
+  sandbox?: boolean;
+  /** Fail if sandbox is unavailable (default: false, falls back to unsandboxed) */
+  sandboxStrict?: boolean;
 }
 
 /**
@@ -105,9 +116,12 @@ export const POLICY_DENIED_EXIT_CODE = 126;
  * If the command requires permission and a prompter is provided,
  * prompts the user for approval.
  *
+ * When sandboxing is enabled (default on supported platforms), file access
+ * is enforced at the OS level using Landlock (Linux) or Seatbelt (macOS).
+ *
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
- * @param options - Policy options including evaluator and prompter
+ * @param options - Policy options including evaluator, prompter, and sandbox settings
  * @returns Promise resolving to ExecutionResult
  *
  * @example
@@ -118,6 +132,7 @@ export const POLICY_DENIED_EXIT_CODE = 126;
  * const result = await executeCommandWithPolicy('npm install', cwd, {
  *   evaluator,
  *   prompter,
+ *   sandbox: true,  // Enable OS-level sandboxing
  * });
  *
  * if (result.policyDenied) {
@@ -130,14 +145,14 @@ export async function executeCommandWithPolicy(
   cwd: string,
   options: PolicyExecutionOptions = {}
 ): Promise<ExecutionResult> {
-  const { evaluator, prompter, env } = options;
+  const { evaluator, prompter, env, sandbox = true, sandboxStrict = false } = options;
 
   // If no evaluator, execute without policy checks
   if (!evaluator) {
     return executeCommand(command, cwd);
   }
 
-  // Check policy
+  // Check command policy
   const decision: PolicyDecision = evaluator.checkCommand(command);
 
   if (!decision.allowed) {
@@ -169,7 +184,50 @@ export async function executeCommandWithPolicy(
   // Start with process.env, overlay any custom env, then filter
   const baseEnv = { ...process.env, ...env } as Record<string, string>;
   const filteredEnv = evaluator.filterEnvironment(baseEnv);
-  return executeCommandWithEnv(command, cwd, filteredEnv);
+
+  // Execute with sandbox if enabled
+  if (sandbox) {
+    const sandboxAvailable = await isSandboxAvailable();
+
+    if (sandboxAvailable) {
+      const sandboxOptions = policyToSandboxOptions(evaluator, {
+        cwd,
+        repoRoot: evaluator.getRepoRoot(),
+        tmpDir: evaluator.getTmpDir(),
+        allowUnsandboxed: !sandboxStrict,
+      });
+
+      const result = await executeWithSandbox(command, sandboxOptions);
+      return {
+        success: result.success,
+        exitCode: result.exitCode,
+        denialReason: result.denialReason,
+        policyDenied: result.policyDenied,
+        sandboxed: result.sandboxed,
+      };
+    }
+
+    // Sandbox not available
+    if (sandboxStrict) {
+      return {
+        success: false,
+        exitCode: POLICY_DENIED_EXIT_CODE,
+        denialReason: 'Sandbox unavailable and --sandbox-strict set. File policies cannot be enforced.',
+        policyDenied: true,
+        sandboxed: false,
+      };
+    }
+
+    // Fall through to unsandboxed execution with warning
+    console.warn('Warning: Sandbox unavailable. File access policies will not be enforced.');
+  }
+
+  // Execute without sandbox
+  const result = await executeCommandWithEnv(command, cwd, filteredEnv);
+  return {
+    ...result,
+    sandboxed: false,
+  };
 }
 
 /**
