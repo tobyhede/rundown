@@ -539,6 +539,72 @@ describe('extractStepHeader with named steps', () => {
       expect(extractStepHeader('COMPLETE')).toBeNull();
     });
   });
+
+  describe('named steps with trailing separators', () => {
+    it('strips trailing period from named step', () => {
+      expect(extractStepHeader('Rollback. Handle rollback')).toEqual({
+        name: 'Rollback',
+        isDynamic: false,
+        description: 'Handle rollback',
+      });
+    });
+
+    it('strips trailing colon from named step', () => {
+      expect(extractStepHeader('Rollback: Handle rollback')).toEqual({
+        name: 'Rollback',
+        isDynamic: false,
+        description: 'Handle rollback',
+      });
+    });
+
+    it('strips trailing em dash from named step', () => {
+      expect(extractStepHeader('Rollback— Handle rollback')).toEqual({
+        name: 'Rollback',
+        isDynamic: false,
+        description: 'Handle rollback',
+      });
+    });
+
+    it('strips trailing arrow from named step', () => {
+      expect(extractStepHeader('Rollback→ Handle rollback')).toEqual({
+        name: 'Rollback',
+        isDynamic: false,
+        description: 'Handle rollback',
+      });
+    });
+
+    it('strips trailing hyphen from named step', () => {
+      expect(extractStepHeader('Rollback- Handle rollback')).toEqual({
+        name: 'Rollback',
+        isDynamic: false,
+        description: 'Handle rollback',
+      });
+    });
+
+    it('strips trailing closing parenthesis from named step', () => {
+      expect(extractStepHeader('Rollback) Handle rollback')).toEqual({
+        name: 'Rollback',
+        isDynamic: false,
+        description: 'Handle rollback',
+      });
+    });
+
+    it('strips multiple trailing separators from named step', () => {
+      expect(extractStepHeader('Rollback.) Handle rollback')).toEqual({
+        name: 'Rollback',
+        isDynamic: false,
+        description: 'Handle rollback',
+      });
+    });
+
+    it('handles named step with trailing separator and no description', () => {
+      expect(extractStepHeader('Rollback.')).toEqual({
+        name: 'Rollback',
+        isDynamic: false,
+        description: 'Rollback',
+      });
+    });
+  });
 });
 
 describe('parseStepIdFromString with named steps', () => {

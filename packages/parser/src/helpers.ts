@@ -146,13 +146,16 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
   const words = trimmed.split(/\s+/);
   const firstName = words[0];
 
-  if (!firstName || !NAMED_IDENTIFIER_PATTERN.test(firstName)) return null;
-  if (isReservedWord(firstName)) return null;
+  // Strip trailing separator characters (like '.', ':', etc.) from the name
+  const strippedName = firstName.replace(/[.:—→\-)]+$/, '');
+
+  if (!strippedName || !NAMED_IDENTIFIER_PATTERN.test(strippedName)) return null;
+  if (isReservedWord(strippedName)) return null;
 
   const restWords = words.slice(1);
-  const description = restWords.length > 0 ? restWords.join(' ') : firstName;
+  const description = restWords.length > 0 ? restWords.join(' ') : strippedName;
 
-  return { name: firstName, isDynamic: false, description };
+  return { name: strippedName, isDynamic: false, description };
 }
 
 /**
