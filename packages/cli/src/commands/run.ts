@@ -83,8 +83,9 @@ export function registerRunCommand(program: Command): void {
             process.exit(1);
           }
 
-          const runbookPath = path.isAbsolute(file) ? path.relative(cwd, file) : file;
-          const state = await manager.create(runbookPath, runbook, {
+          const runbookPath = path.relative(cwd, filePath);
+          const state = await manager.create(file, runbook, {
+            runbookPath,
             prompted: options.prompted,
             agentId: options.agent  // Pass agent ID
           });
@@ -150,7 +151,9 @@ export function registerRunCommand(program: Command): void {
             const parentState = await manager.load(state.id);
             const parentPrompted = parentState?.prompted ?? false;
 
+            const childRunbookPath = path.relative(cwd, runbookPath);
             const childState = await manager.create(pending.runbook, runbook, {
+              runbookPath: childRunbookPath,
               agentId: options.agent,
               parentRunbookId: state.id,
               parentStepId: pending.stepId,

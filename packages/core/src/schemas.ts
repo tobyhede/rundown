@@ -144,6 +144,7 @@ const SubstepStateSchema = z.object({
 export const RunbookStateSchema = z.object({
   id: z.string(),
   runbook: z.string(),
+  runbookPath: z.string(),
   title: z.string().optional(),
   description: z.string().optional(),
   step: RunbookStepSchema, // UNIFIED: "1", "ErrorHandler", "{N}"

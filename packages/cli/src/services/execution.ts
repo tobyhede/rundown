@@ -201,10 +201,10 @@ export async function runExecutionLoop(
         execResult = internalResult;
       } else {
         // Fallback to spawn if internal execution not supported for this subcommand
-        execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbook);
+        execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbookPath);
       }
     } else {
-      execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbook);
+      execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbookPath);
     }
 
     // Handle policy denial

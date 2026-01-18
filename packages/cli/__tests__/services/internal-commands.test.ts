@@ -79,7 +79,7 @@ rd echo test
       };
 
       // Create runbook state
-      const state = await manager.create('test.runbook.md', runbook, { prompted: true });
+      const state = await manager.create('test.runbook.md', runbook, { runbookPath: 'test.runbook.md', prompted: true });
 
       // Push to make it active
       await manager.pushRunbook(state.id);

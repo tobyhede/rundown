@@ -58,7 +58,8 @@ export interface StepState {
  */
 export interface RunbookState {
   readonly id: string;
-  readonly runbook: string; // file path
+  readonly runbook: string; // runbook identifier (name or path)
+  readonly runbookPath: string; // repo-relative resolved file path
   readonly title?: string;
   readonly description?: string;
   readonly step: string;           // UNIFIED: "1", "ErrorHandler", "{N}"
