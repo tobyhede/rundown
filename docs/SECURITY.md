@@ -2,6 +2,58 @@
 
 Rundown includes a Deno-inspired security policy layer that provides explicit allowlist-based permission control for runbook execution.
 
+## Security Model
+
+Rundown provides **two layers of security**:
+
+### Layer 1: Command Policy (All Platforms)
+
+The policy engine checks which commands are allowed to run. This layer:
+
+- Blocks denied executables (rm, sudo, curl, etc.)
+- Allows approved executables (git, npm, tsc, etc.)
+- Can prompt for unknown commands
+- Parses complex shell commands including pipes, subshells, and backticks
+
+### Layer 2: Filesystem Sandbox (Linux/macOS)
+
+When sandboxing is enabled (default on supported platforms), Rundown uses OS-level mechanisms to enforce file access:
+
+| Platform | Mechanism | Requirement |
+|----------|-----------|-------------|
+| Linux | Landlock LSM | Kernel 5.13+ with Landlock enabled |
+| macOS | Seatbelt (sandbox-exec) | macOS 10.5+ |
+| Windows | Not supported | Use WSL |
+
+The sandbox enforces:
+- Read-only access to allowed paths
+- Read-write access to specific directories
+- Blocking of denied paths at the kernel level
+
+## Sandbox Usage
+
+```bash
+# Enable sandboxing (default on supported platforms)
+rundown run <file> --sandbox
+
+# Disable sandboxing (trust mode)
+rundown run <file> --no-sandbox
+
+# Fail if sandbox unavailable (strict mode)
+rundown run <file> --sandbox-strict
+```
+
+### Sandbox Limitations
+
+**Without sandbox (`--no-sandbox` or unsupported platform):**
+- File read/write policies are NOT enforced
+- Commands can access any file the user can access
+- Use only with trusted runbooks
+
+**Interpreter bypass:**
+Allowing interpreters (python, node, sh) grants unrestricted code execution.
+The sandbox limits file access, but the interpreter can execute arbitrary logic.
+
 ## Overview
 
 The security policy layer enforces a **default-deny** model:
@@ -19,9 +71,10 @@ The policy layer protects against:
 | Threat | Protection |
 |--------|------------|
 | Arbitrary command execution | Allowlist controls which commands can run |
-| Sensitive file access | Path patterns restrict read/write operations |
+| Sensitive file access | Path patterns + OS sandbox restrict read/write operations |
 | Credential leakage | Environment variable filtering blocks secrets |
 | Runbook tampering | Per-runbook overrides allow different trust levels |
+| Command injection via backticks | Parser extracts and checks commands in backticks |
 
 ### Trust Boundaries
 
@@ -39,6 +92,15 @@ The policy layer protects against:
 │  - Checks commands against allow/deny lists         │
 │  - Applies runbook-specific overrides               │
 │  - Manages session grants                           │
+│  - Extracts commands from backticks and $()         │
+└─────────────────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────┐
+│              OS-Level Sandbox                        │
+│  (Linux: Landlock | macOS: Seatbelt)                │
+│  - Enforces file read/write restrictions            │
+│  - Kernel-level enforcement (cannot be bypassed)    │
 └─────────────────────────────────────────────────────┘
                          │
                          ▼
@@ -259,8 +321,13 @@ env:
 | `--policy <file>` | Use a specific policy configuration file |
 | `-y, --yes` | Skip confirmation prompts (auto-approve) |
 | `--non-interactive` | Non-interactive mode (auto-deny, CI-friendly) |
+| `--sandbox` | Enable OS-level sandbox (default on supported platforms) |
+| `--no-sandbox` | Disable sandbox enforcement |
+| `--sandbox-strict` | Fail if sandbox is unavailable |
 
 **Note:** If both `--allow-all` and `--deny-all` are specified, `--deny-all` takes precedence.
+
+**Note:** `--allow-all` implies `--no-sandbox` (trust mode bypasses all enforcement).
 
 ### Precedence Order
 
@@ -403,3 +470,61 @@ Review your policy configuration periodically:
 2. Ensure `deny` lists include sensitive operations
 3. Review runbook overrides for appropriate trust levels
 4. Monitor session grants during development
+
+## Sandbox Troubleshooting
+
+### Linux: Checking Landlock Availability
+
+```bash
+# Check if Landlock is enabled in kernel
+cat /sys/kernel/security/lsm
+# Output should include 'landlock'
+
+# Check kernel version (requires 5.13+)
+uname -r
+```
+
+If Landlock is not available:
+- Upgrade to Linux kernel 5.13 or later
+- Ensure CONFIG_SECURITY_LANDLOCK is enabled in kernel config
+- Install a Landlock wrapper like [landrun](https://github.com/Zouuup/landrun)
+
+### macOS: Seatbelt Permissions
+
+The `sandbox-exec` command is built into macOS but may require adjustments:
+
+```bash
+# Verify sandbox-exec exists
+which sandbox-exec
+# Should output: /usr/bin/sandbox-exec
+```
+
+Common issues:
+- **SIP restrictions**: System Integrity Protection may block certain sandbox operations
+- **Entitlements**: Some apps may need specific entitlements for sandbox access
+
+### Fallback Behavior
+
+When sandbox is unavailable:
+
+| Scenario | Behavior |
+|----------|----------|
+| `--sandbox` (default) | Falls back to unsandboxed with warning |
+| `--sandbox-strict` | Fails with error, command not executed |
+| `--no-sandbox` | Executes without sandbox, no warning |
+
+### Debugging Sandbox Issues
+
+To debug sandbox-related issues:
+
+```bash
+# Run with sandbox strict to see if sandbox is available
+rundown run test.runbook.md --sandbox-strict
+
+# If it fails, check availability:
+# Linux: cat /sys/kernel/security/lsm
+# macOS: which sandbox-exec
+
+# Disable sandbox for trusted runbooks
+rundown run trusted.runbook.md --no-sandbox
+```

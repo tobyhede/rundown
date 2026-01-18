@@ -52,6 +52,9 @@ rundown run <file> --deny-all             # Block all commands
 rundown run <file> -y                     # Auto-approve prompts
 rundown run <file> --non-interactive      # CI mode (auto-deny)
 rundown run <file> --policy ./policy.yaml # Custom policy file
+rundown run <file> --sandbox              # Enable OS-level sandbox (default)
+rundown run <file> --no-sandbox           # Disable sandbox (trust mode)
+rundown run <file> --sandbox-strict       # Fail if sandbox unavailable
 ```
 
 ## Policy Configuration
