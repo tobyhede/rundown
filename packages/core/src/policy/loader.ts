@@ -132,7 +132,7 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
       // Extract policy field if from package.json
        
       const config: unknown = result.filepath.endsWith('package.json')
-        ? (result.config as { policy?: unknown }).policy ?? result.config
+        ? (result.config as { rundown?: unknown }).rundown ?? result.config
         : result.config;
 
       // Validate the configuration
@@ -269,6 +269,11 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
       '.yaml': yamlLoader,
       '.yml': yamlLoader,
       noExt: yamlLoader,
+      '.mjs': () => {
+        throw new Error(
+          'ES module config files (.mjs) require async loading. Use loadPolicy() instead of loadPolicySync().'
+        );
+      },
     },
     stopDir,
   });
@@ -279,7 +284,7 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
     if (result?.config !== undefined) {
        
       const config: unknown = result.filepath.endsWith('package.json')
-        ? (result.config as { policy?: unknown }).policy ?? result.config
+        ? (result.config as { rundown?: unknown }).rundown ?? result.config
         : result.config;
 
       const parseResult = safeParsePolicyConfig(config);
