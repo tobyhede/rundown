@@ -56,7 +56,7 @@ export function renderStepForCLI(
 
   if (showCommand && item.command) {
     lines.push('');
-    lines.push(`\`\`\`${(item.command.lang as string | undefined) ?? ''}`);
+    lines.push(`\`\`\`${String(item.command.lang ?? '')}`);
     lines.push(item.command.code);
     lines.push('```');
   }
