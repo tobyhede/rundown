@@ -71,27 +71,15 @@ export const StepIdSchema = z.object({
 export type StepId = Readonly<z.output<typeof StepIdSchema>>;
 
 /**
- * Non-recursive action types
+ * Zod schema for Action (terminal actions only)
+ *
+ * RETRY is now a property on TransitionObject, not an action type.
  */
-export const NonRetryActionSchema = z.union([
+export const ActionSchema = z.union([
   z.object({ type: z.literal('CONTINUE') }),
   z.object({ type: z.literal('COMPLETE'), message: z.string().optional() }),
   z.object({ type: z.literal('STOP'), message: z.string().optional() }),
   z.object({ type: z.literal('GOTO'), target: StepIdSchema }),
-]);
-
-export type NonRetryAction = Readonly<z.output<typeof NonRetryActionSchema>>;
-
-/**
- * Zod schema for Action
- */
-export const ActionSchema = z.union([
-  NonRetryActionSchema,
-  z.object({
-    type: z.literal('RETRY'),
-    max: z.number().int().positive(),
-    then: NonRetryActionSchema,
-  }),
 ]);
 
 export type Action = Readonly<z.output<typeof ActionSchema>>;
@@ -107,6 +95,7 @@ export type TransitionKind = z.output<typeof TransitionKindSchema>;
  */
 export const TransitionObjectSchema = z.object({
   kind: TransitionKindSchema,
+  retry: z.number().int().nonnegative().default(0),
   action: ActionSchema,
 });
 

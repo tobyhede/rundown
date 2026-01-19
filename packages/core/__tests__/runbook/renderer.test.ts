@@ -34,20 +34,8 @@ describe('renderAction', () => {
     expect(renderAction({ type: 'GOTO', target: { step: '3', substep: '2' } })).toBe('GOTO 3.2');
   });
 
-  it('renders RETRY with nested action', () => {
-    expect(renderAction({ type: 'RETRY', max: 2, then: { type: 'STOP' } })).toBe('RETRY 2 STOP');
-  });
-
   it('renders GOTO NEXT', () => {
     expect(renderAction({ type: 'GOTO', target: { step: 'NEXT' } })).toBe('GOTO NEXT');
-  });
-
-  it('renders RETRY with GOTO NEXT', () => {
-    expect(renderAction({
-      type: 'RETRY',
-      max: 3,
-      then: { type: 'GOTO', target: { step: 'NEXT' } }
-    })).toBe('RETRY 3 GOTO NEXT');
   });
 });
 
@@ -55,10 +43,19 @@ describe('renderTransitions', () => {
   it('renders pass and fail transitions', () => {
     const result = renderTransitions({
       all: true,
-      pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-      fail: { kind: 'fail', action: { type: 'STOP', message: 'failed' } }
+      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'failed' } }
     });
     expect(result).toBe('- PASS: CONTINUE\n- FAIL: STOP "failed"');
+  });
+
+  it('renders transitions with retry prefix', () => {
+    const result = renderTransitions({
+      all: true,
+      pass: { kind: 'pass', retry: 2, action: { type: 'STOP' } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+    });
+    expect(result).toBe('- PASS: RETRY 2 STOP\n- FAIL: CONTINUE');
   });
 });
 
@@ -281,12 +278,12 @@ PASS ALL: CONTINUE
 FAIL ANY: STOP`;
 
     const parsed1 = parseRunbook(original);
-    expect(parsed1[0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
+    expect(parsed1[0].transitions?.pass).toEqual({ kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
 
     const rendered = parsed1.map(renderStep).join('\n\n');
     const parsed2 = parseRunbook(rendered);
 
-    expect(parsed2[0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
+    expect(parsed2[0].transitions?.pass).toEqual({ kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
   });
 
   it('validates substep child runbooks parsing', () => {

@@ -1,23 +1,6 @@
-import { setup, assign, raise } from 'xstate';
-import { type Step, type Action, type NonRetryAction, type Transitions } from './types.js';
+import { setup, assign } from 'xstate';
+import type { Step, Action, Transitions, TransitionObject, TransitionKind, Substep } from './types.js';
 import type { StepId } from './step-id.js';
-
-/**
- * Represents an active retry loop for RETRY+GOTO patterns.
- *
- * Tracks the loop origin, target, current count, and maximum iterations.
- * Used to preserve retry state across GOTO transitions.
- */
-export interface RetryLoop {
-  /** Step that initiated the retry loop (e.g., "2") */
-  originStep: string;
-  /** Step to loop back to (e.g., "1") */
-  targetStep: string;
-  /** Current iteration count (1, 2, ...) */
-  count: number;
-  /** Maximum allowed iterations */
-  max: number;
-}
 
 /**
  * Context passed through the XState runbook state machine.
@@ -26,8 +9,6 @@ export interface RetryLoop {
  * retry counts, current substep, and runbook variables.
  */
 export interface RunbookContext {
-  /** Active retry loop for RETRY+GOTO patterns */
-  activeRetryLoop?: RetryLoop;
   /** Current retry count for the active step */
   retryCount: number;
   /** Maximum retries allowed for current RETRY action (source of truth for retry limits) */
@@ -53,14 +34,12 @@ export interface RunbookContext {
  * - FAIL: Mark the current step as failed, triggering the FAIL transition
  * - RETRY: Increment retry count and re-enter the current step
  * - GOTO: Jump directly to a specific step by ID
- *   - internal?: true marks the GOTO as internally raised (e.g., by RETRY+GOTO)
- *     and suppresses lastAction update to preserve the originating action
  */
 export type RunbookEvent =
   | { type: 'PASS' }
   | { type: 'FAIL' }
   | { type: 'RETRY' }
-  | { type: 'GOTO'; target: StepId; internal?: true };
+  | { type: 'GOTO'; target: StepId };
 
 /**
  * DEFAULT Transitions according to RUNDOWN-SPEC 1.0.0
@@ -69,8 +48,8 @@ export type RunbookEvent =
  */
 const DEFAULT_TRANSITIONS: Transitions = {
   all: true,
-  pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-  fail: { kind: 'fail', action: { type: 'STOP' } }
+  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
 };
 
 /** Clears dynamic instance flags to prevent stale state */
@@ -145,13 +124,7 @@ function buildSimpleGotoAssign(options: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 }): any {
   return assign({
-    lastAction: ({ event, context }: { event: RunbookEvent; context: RunbookContext }) => {
-      // Skip lastAction update if GOTO is internal (raised by RETRY+GOTO)
-      // to preserve the original 'RETRY' action
-      if (event.type === 'GOTO' && event.internal) {
-        return context.lastAction;
-      }
-      // For external GOTOs or other events, use the provided value
+    lastAction: ({ event }: { event: RunbookEvent }) => {
       return typeof options.lastAction === 'function'
         ? options.lastAction({ event })
         : options.lastAction;
@@ -177,73 +150,39 @@ function isNumberedStep(step: Step): boolean {
   return /^\d+$/.test(step.name);
 }
 
-// XState requires any for transition builder (snapshot types not fully typed)
-function actionToTransition(
-  action: Action,
+/**
+ * Build XState transition config from a TransitionObject.
+ * Handles retry property uniformly for all transitions.
+ */
+function buildTransition(
+  transition: { retry: number; action: Action },
   currentStateId: string,
   stepName: string,
   substepId: string | undefined,
   steps: Step[]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): any {
-  if (action.type === 'RETRY') {
-    const thenAction = action.then;
+  const { retry, action } = transition;
 
-    // RETRY with GOTO: use raise to delegate navigation
-    if (thenAction.type === 'GOTO') {
-      const resolved = resolveSimpleGotoTarget(thenAction.target, stepName, substepId, steps);
-      if (!resolved) {
-        return { target: 'STOPPED' };
-      }
-
-      return [
-        {
-          // Guard: allow retry if loop not started OR count < max
-          guard: ({ context }: { context: RunbookContext }) =>
-            !context.activeRetryLoop || context.activeRetryLoop.count < action.max,
-          actions: [
-            assign({
-              lastAction: 'RETRY',
-              activeRetryLoop: ({ context }: { context: RunbookContext }) => ({
-                originStep: stepName,
-                targetStep: thenAction.target.step,
-                count: (context.activeRetryLoop?.count ?? 0) + 1,
-                max: action.max
-              }),
-              retryCount: ({ context }: { context: RunbookContext }) =>
-                (context.activeRetryLoop?.count ?? 0) + 1,
-              retryMax: action.max
-            }),
-            raise({ type: 'GOTO', target: thenAction.target, internal: true } as RunbookEvent)
-          ]
-        },
-        {
-          // Exhausted: clear loop, STOP
-          actions: assign({
-            lastAction: 'STOP',
-            activeRetryLoop: undefined
-          }),
-          target: 'STOPPED'
-        }
-      ];
-    }
-
-    // Non-GOTO RETRY: existing behavior (stay at current step)
+  if (retry > 0) {
+    // Has retry: [retry guard -> stay, exhausted -> action]
     return [
       {
-        guard: ({ context }: { context: RunbookContext }) => context.retryCount < action.max,
+        guard: ({ context }: { context: RunbookContext }) =>
+          context.retryCount < retry,
         actions: assign({
           lastAction: 'RETRY',
-          retryCount: ({ context }) => (context.retryCount as number) + 1,
-          retryMax: action.max
+          retryCount: ({ context }) => context.retryCount + 1,
+          retryMax: retry
         }),
         target: currentStateId
       },
-      nonRetryActionToTransition(action.then, stepName, substepId, steps)
+      buildActionTransition(action, stepName, substepId, steps)
     ];
   }
 
-  return nonRetryActionToTransition(action, stepName, substepId, steps);
+  // No retry: execute action directly
+  return buildActionTransition(action, stepName, substepId, steps);
 }
 
 /**
@@ -280,9 +219,11 @@ function findNextStateId(stepName: string, substepId: string | undefined, steps:
   return 'COMPLETE';
 }
 
-// XState requires any for transition builder (snapshot types not fully typed)
-function nonRetryActionToTransition(
-  action: NonRetryAction,
+/**
+ * Build XState transition config from a terminal Action.
+ */
+function buildActionTransition(
+  action: Action,
   stepName: string,
   substepId: string | undefined,
   steps: Step[]
@@ -521,9 +462,9 @@ export function compileRunbookToMachine(steps: Step[]) {
   allStates.forEach(config => {
     // Extract retryMax from transitions (check both PASS and FAIL)
     const retryMaxFromTransitions =
-      config.transitions.pass.action.type === 'RETRY' ? config.transitions.pass.action.max :
-      config.transitions.fail.action.type === 'RETRY' ? config.transitions.fail.action.max :
-      undefined;
+      config.transitions.pass.retry > 0 ? config.transitions.pass.retry :
+      config.transitions.fail.retry > 0 ? config.transitions.fail.retry :
+      0;
 
     // Build per-state GOTO transitions
     const buildGotoTransitionsForState = allStates.map((target) => {
@@ -565,9 +506,21 @@ export function compileRunbookToMachine(steps: Step[]) {
     states[config.id] = {
       on: {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        PASS: actionToTransition(config.transitions.pass.action, config.id, config.stepName, config.substepId, steps),
+        PASS: buildTransition(
+          config.transitions.pass,
+          config.id,
+          config.stepName,
+          config.substepId,
+          steps
+        ),
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        FAIL: actionToTransition(config.transitions.fail.action, config.id, config.stepName, config.substepId, steps),
+        FAIL: buildTransition(
+          config.transitions.fail,
+          config.id,
+          config.stepName,
+          config.substepId,
+          steps
+        ),
         RETRY: {
           actions: assign({
             lastAction: 'RETRY',
@@ -590,7 +543,6 @@ export function compileRunbookToMachine(steps: Step[]) {
     id: 'runbook',
     initial: allStates.length > 0 ? allStates[0].id : 'step_1',
     context: {
-      activeRetryLoop: undefined,
       retryCount: 0,
       retryMax: undefined,
       substep: undefined,

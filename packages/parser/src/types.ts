@@ -28,7 +28,9 @@ export class RunbookSyntaxError extends Error {
 export interface ParsedConditional {
   /** Transition type: preserves original keyword (pass, fail, yes, no) */
   type: 'pass' | 'fail' | 'yes' | 'no';
-  /** The action to take when this condition is met */
+  /** Retry count (0 = no retry, N = stay at step N times before action) */
+  retry: number;
+  /** The action to take after retries exhausted (or immediately if retry=0) */
   action: Action;
   /** Optional aggregation modifier for substep evaluation (ALL or ANY) */
   modifier: AggregationModifier;

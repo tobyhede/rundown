@@ -1,4 +1,5 @@
-import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation, evaluateNonRetryAction } from '../../src/runbook/transition-handler.js';
+import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation } from '../../src/runbook/transition-handler.js';
+import type { Step } from '../../src/runbook/types.js';
 import type { SubstepState } from '../../src/runbook/types.js';
 
 describe('GOTO NEXT action handling', () => {
@@ -32,15 +33,6 @@ describe('GOTO NEXT action handling', () => {
     const result = evaluateFailCondition(step, 0);
     expect(result.action).toBe('goto');
     expect(result.gotoTarget).toEqual({ step: 'NEXT' });
-  });
-});
-
-describe('evaluateNonRetryAction', () => {
-  it('returns message for COMPLETE action with message', () => {
-    const action: any = { type: 'COMPLETE', message: 'Done!' };
-    const result = evaluateNonRetryAction(action);
-    expect(result.action).toBe('complete');
-    expect(result.message).toBe('Done!');
   });
 });
 
@@ -165,23 +157,6 @@ describe('evaluateFailCondition edge cases', () => {
     expect(result.action).toBe('stopped');
     expect(result.message).toBe('No FAIL condition defined for step');
   });
-
-  it('returns stopped for unknown FAIL action type', () => {
-    const step: any = {
-      name: '1',
-      description: 'Test',
-      isDynamic: false,
-      transitions: {
-        all: true,
-        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-        fail: { kind: 'fail', action: { type: 'UNKNOWN_ACTION' } }
-      }
-    };
-
-    const result = evaluateFailCondition(step, 0);
-    expect(result.action).toBe('stopped');
-    expect(result.message).toBe('Unknown FAIL action');
-  });
 });
 
 describe('evaluatePassCondition edge cases', () => {
@@ -190,38 +165,6 @@ describe('evaluatePassCondition edge cases', () => {
       name: '1',
       description: 'Test step without transitions',
       isDynamic: false,
-    };
-
-    const result = evaluatePassCondition(step);
-    expect(result.action).toBe('continue');
-  });
-
-  it('returns continue for unknown PASS action type', () => {
-    const step: any = {
-      name: '1',
-      description: 'Test',
-      isDynamic: false,
-      transitions: {
-        all: true,
-        pass: { kind: 'pass', action: { type: 'UNKNOWN_ACTION' } },
-        fail: { kind: 'fail', action: { type: 'STOP' } }
-      }
-    };
-
-    const result = evaluatePassCondition(step);
-    expect(result.action).toBe('continue');
-  });
-
-  it('returns continue for RETRY action in PASS condition', () => {
-    const step: any = {
-      name: '1',
-      description: 'Test',
-      isDynamic: false,
-      transitions: {
-        all: true,
-        pass: { kind: 'pass', action: { type: 'RETRY', max: 3, then: { type: 'STOP' } } },
-        fail: { kind: 'fail', action: { type: 'STOP' } }
-      }
     };
 
     const result = evaluatePassCondition(step);
@@ -264,117 +207,73 @@ describe('evaluateSubstepAggregation edge cases', () => {
     expect(result?.action).toBe('stopped');
     expect(result?.message).toBe('All failed');
   });
+});
 
-  it('handles RETRY action in aggregation (returns retry)', () => {
-    const retryTransitions = {
-      all: true,
-      pass: { kind: 'pass' as const, action: { type: 'RETRY' as const, max: 3, then: { type: 'STOP' as const } } },
-      fail: { kind: 'fail' as const, action: { type: 'STOP' as const } }
+describe('evaluateFailCondition with retry property', () => {
+  it('returns retry when retry > 0 and count < retry', () => {
+    const step: Step = {
+      name: '1',
+      isDynamic: false,
+      description: 'Test',
+      transitions: {
+        all: true,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 2, action: { type: 'GOTO' as const, target: { step: '3' } } }
+      }
     };
 
-    const states: SubstepState[] = [
-      { id: '1', status: 'done', result: 'pass' }
-    ];
+    const result = evaluateFailCondition(step, 0);
+    expect(result.action).toBe('retry');
+    expect(result.newRetryCount).toBe(1);
+  });
 
-    const result = evaluateSubstepAggregation(states, retryTransitions);
-    expect(result?.action).toBe('retry');
+  it('returns action when retries exhausted', () => {
+    const step: Step = {
+      name: '1',
+      isDynamic: false,
+      description: 'Test',
+      transitions: {
+        all: true,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 2, action: { type: 'GOTO' as const, target: { step: '3' } } }
+      }
+    };
+
+    const result = evaluateFailCondition(step, 2);
+    expect(result.action).toBe('goto');
+    expect(result.gotoTarget).toEqual({ step: '3' });
   });
 });
 
-describe('evaluateFailCondition with RETRY exhaustion', () => {
-  it('returns GOTO when retries exhausted with GOTO action', () => {
-    const step = {
-      name: '1',
-      description: 'Test',
-      isDynamic: false,
-      transitions: {
-        all: true as const,
-        pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, action: { type: 'RETRY' as const, max: 2, then: { type: 'GOTO' as const, target: { step: '5' } } } }
-      }
+describe('evaluateSubstepAggregation with retry property', () => {
+  it('returns retry when substep aggregation triggers transition with retry configured', () => {
+    const substepStates = [
+      { id: 'a', status: 'done' as const, result: 'fail' as const },
+      { id: 'b', status: 'done' as const, result: 'pass' as const }
+    ];
+    const transitions = {
+      all: true,
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } }
     };
 
-    const result = evaluateFailCondition(step, 2);
-    expect(result).toEqual({ action: 'goto', gotoTarget: { step: '5' } });
+    const result = evaluateSubstepAggregation(substepStates, transitions, 0);
+    expect(result?.action).toBe('retry');
+    expect(result?.newRetryCount).toBe(1);
   });
 
-  it('returns continue when retries exhausted with CONTINUE action', () => {
-    const step = {
-      name: '1',
-      description: 'Test',
-      isDynamic: false,
-      transitions: {
-        all: true as const,
-        pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, action: { type: 'RETRY' as const, max: 1, then: { type: 'CONTINUE' as const } } }
-      }
+  it('returns action when substep aggregation retry exhausted', () => {
+    const substepStates = [
+      { id: 'a', status: 'done' as const, result: 'fail' as const },
+      { id: 'b', status: 'done' as const, result: 'pass' as const }
+    ];
+    const transitions = {
+      all: true,
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } }
     };
 
-    const result = evaluateFailCondition(step, 1);
-    expect(result).toEqual({ action: 'continue' });
-  });
-
-  it('returns stopped with message when retries exhausted with STOP', () => {
-    const step = {
-      name: '1',
-      description: 'Test',
-      isDynamic: false,
-      transitions: {
-        all: true as const,
-        pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, action: { type: 'RETRY' as const, max: 3, then: { type: 'STOP' as const, message: 'Build failed' } } }
-      }
-    };
-
-    const result = evaluateFailCondition(step, 3);
-    expect(result).toEqual({ action: 'stopped', message: 'Build failed' });
-  });
-
-  it('returns complete when RETRY exhausts to COMPLETE action', () => {
-    const step = {
-      name: '1',
-      description: 'Test',
-      isDynamic: false,
-      transitions: {
-        all: true as const,
-        pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, action: { type: 'RETRY' as const, max: 2, then: { type: 'COMPLETE' as const } } }
-      }
-    };
-
-    const result = evaluateFailCondition(step, 2);
-    expect(result).toEqual({ action: 'complete' });
-  });
-
-  it('returns retry when not yet exhausted', () => {
-    const step = {
-      name: '1',
-      description: 'Test',
-      isDynamic: false,
-      transitions: {
-        all: true as const,
-        pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, action: { type: 'RETRY' as const, max: 3, then: { type: 'STOP' as const } } }
-      }
-    };
-
-    const result = evaluateFailCondition(step, 1);
-    expect(result).toEqual({ action: 'retry', newRetryCount: 2 });
-  });
-
-  it('returns message when RETRY exhausts to COMPLETE with message', () => {
-    const step = {
-      name: '1',
-      description: 'Test',
-      isDynamic: false,
-      transitions: {
-        all: true as const,
-        pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, action: { type: 'RETRY' as const, max: 2, then: { type: 'COMPLETE' as const, message: 'Gave up after retries' } } }
-      }
-    };
-    const result = evaluateFailCondition(step, 2);
-    expect(result.action).toBe('complete');
-    expect(result.message).toBe('Gave up after retries');
+    const result = evaluateSubstepAggregation(substepStates, transitions, 2);
+    expect(result?.action).toBe('stopped');
   });
 });

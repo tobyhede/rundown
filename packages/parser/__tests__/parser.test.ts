@@ -200,6 +200,7 @@ Do something.
     const steps = parseRunbook(markdown);
     expect(steps[0].transitions?.pass).toEqual({
       kind: 'pass',
+      retry: 0,
       action: { type: 'GOTO', target: { step: '2', substep: '1' } }
     });
   });
@@ -269,10 +270,10 @@ Do work.
 More work.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'CONTINUE' } });
-    expect(steps[0].substeps![0].transitions?.fail).toEqual({ kind: 'fail', action: { type: 'STOP', message: 'BLOCKED' } });
-    expect(steps[0].substeps![1].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'COMPLETE' } });
-    expect(steps[0].substeps![1].transitions?.fail).toEqual({ kind: 'fail', action: { type: 'GOTO', target: { step: '1', substep: '1' } } });
+    expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', retry: 0, action: { type: 'CONTINUE' } });
+    expect(steps[0].substeps![0].transitions?.fail).toEqual({ kind: 'fail', retry: 0, action: { type: 'STOP', message: 'BLOCKED' } });
+    expect(steps[0].substeps![1].transitions?.pass).toEqual({ kind: 'pass', retry: 0, action: { type: 'COMPLETE' } });
+    expect(steps[0].substeps![1].transitions?.fail).toEqual({ kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1', substep: '1' } } });
   });
 
   it('single substep gets transitions not step', () => {
@@ -285,8 +286,8 @@ More work.
 Do work.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', action: { type: 'CONTINUE' } });
-    expect(steps[0].substeps![0].transitions?.fail).toEqual({ kind: 'fail', action: { type: 'STOP' } });
+    expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', retry: 0, action: { type: 'CONTINUE' } });
+    expect(steps[0].substeps![0].transitions?.fail).toEqual({ kind: 'fail', retry: 0, action: { type: 'STOP' } });
   });
 });
 
@@ -305,6 +306,7 @@ describe('substep GOTO validation', () => {
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps![0].transitions?.fail).toEqual({
       kind: 'fail',
+      retry: 0,
       action: { type: 'GOTO', target: { step: '1', substep: '2' } }
     });
   });

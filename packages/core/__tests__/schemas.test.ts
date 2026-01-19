@@ -181,17 +181,12 @@ describe('Action schema-derived type', () => {
     }
   });
 
-  it('parses RETRY with nested action', () => {
-    const parsed = ActionSchema.parse({
+  it('rejects RETRY as an action (retry is now a transition property)', () => {
+    expect(() => ActionSchema.parse({
       type: 'RETRY',
       max: 3,
       then: { type: 'STOP', message: 'Failed after retries' }
-    });
-    expect(parsed.type).toBe('RETRY');
-    if (parsed.type === 'RETRY') {
-      expect(parsed.max).toBe(3);
-      expect(parsed.then.type).toBe('STOP');
-    }
+    })).toThrow();
   });
 
   it('rejects standalone NEXT action (use GOTO NEXT)', () => {
@@ -208,29 +203,34 @@ describe('Transitions schema-derived type', () => {
   it('parses all:true (pass all) transitions', () => {
     const parsed = TransitionsSchema.parse({
       all: true,
-      pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-      fail: { kind: 'fail', action: { type: 'STOP' } }
+      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
     });
     expect(parsed.all).toBe(true);
     expect(parsed.pass.action.type).toBe('CONTINUE');
     expect(parsed.fail.action.type).toBe('STOP');
+    expect(parsed.pass.retry).toBe(0);
+    expect(parsed.fail.retry).toBe(0);
   });
 
   it('parses all:false (pass any) transitions', () => {
     const parsed = TransitionsSchema.parse({
       all: false,
-      pass: { kind: 'pass', action: { type: 'COMPLETE' } },
-      fail: { kind: 'fail', action: { type: 'RETRY', max: 2, then: { type: 'STOP' } } }
+      pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+      fail: { kind: 'fail', retry: 2, action: { type: 'STOP' } }
     });
     expect(parsed.all).toBe(false);
+    expect(parsed.pass.retry).toBe(0);
+    expect(parsed.fail.retry).toBe(2);
   });
 
   it('parses transitions with GOTO action', () => {
     const parsed = TransitionsSchema.parse({
       all: true,
-      pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '3' } } },
-      fail: { kind: 'fail', action: { type: 'STOP', message: 'Failed' } }
+      pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'Failed' } }
     });
     expect(parsed.pass.action.type).toBe('GOTO');
+    expect(parsed.pass.retry).toBe(0);
   });
 });

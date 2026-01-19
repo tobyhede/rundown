@@ -12,4 +12,4 @@ export {
   type PolicyExecutionOptions,
 } from './executor.js';
 export { renderRunbook, renderStep } from './renderer/renderer.js';
-export { evaluateFailCondition, evaluatePassCondition, evaluateNonRetryAction } from './transition-handler.js';
+export { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';

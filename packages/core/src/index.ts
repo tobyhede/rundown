@@ -13,7 +13,6 @@ export {
   // Schema-first exports
   StepIdSchema,
   ActionSchema,
-  NonRetryActionSchema,
   TransitionsSchema,
 } from './schemas.js';
 

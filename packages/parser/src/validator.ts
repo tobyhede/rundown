@@ -448,8 +448,4 @@ export function validateAction(
       return;
     }
   }
-
-  if (action.type === 'RETRY') {
-    validateAction(action.then, currentSubstepId, steps, currentStepObj, errors, isCurrentSubstepDynamic);
-  }
 }

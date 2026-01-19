@@ -649,22 +649,6 @@ describe('validator strict rules', () => {
     });
   });
 
-  describe('RETRY recursive validation', () => {
-    it('validates action inside RETRY then', () => {
-      const steps = [mockStep({
-        name: '1',
-        isDynamic: false,
-        transitions: {
-          all: true,
-          pass: { kind: 'pass', action: { type: 'RETRY', max: 3, then: { type: 'GOTO', target: { step: '99' } } } },
-          fail: { kind: 'fail', action: { type: 'STOP' } }
-        }
-      })];
-      const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('does not exist'))).toBe(true);
-    });
-  });
-
   describe('GOTO substep of dynamic step', () => {
     it('suggests using GOTO step instead of substep for dynamic steps', () => {
       const steps = [

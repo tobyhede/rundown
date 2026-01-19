@@ -1,29 +1,18 @@
-import { type Step, type Action, type Transitions, type Substep, type Runbook, type NonRetryAction } from '../types.js';
+import { type Step, type Action, type Transitions, type TransitionObject, type Substep, type Runbook } from '../types.js';
 import { stepIdToString } from '../step-id.js';
 
 /**
- * Render an Action to its DSL string representation.
+ * Render an Action to DSL string.
  *
- * Converts an Action object back to its Rundown DSL format
- * (e.g., "CONTINUE", "GOTO 2", "RETRY 3 STOP").
- *
- * @param action - The Action to render
+ * @param action - The action to render (CONTINUE, COMPLETE, STOP, GOTO)
  * @returns The DSL string representation of the action
  */
 export function renderAction(action: Action): string {
-  if (action.type === 'RETRY') {
-    const actionStr = renderNonRetryAction(action.then);
-    return `RETRY ${String(action.max)} ${actionStr}`;
-  }
-  return renderNonRetryAction(action);
-}
-
-function renderNonRetryAction(action: NonRetryAction): string {
   switch (action.type) {
     case 'CONTINUE':
       return 'CONTINUE';
     case 'COMPLETE':
-      return 'COMPLETE';
+      return action.message ? `COMPLETE "${action.message}"` : 'COMPLETE';
     case 'STOP':
       return action.message ? `STOP "${action.message}"` : 'STOP';
     case 'GOTO':
@@ -32,18 +21,26 @@ function renderNonRetryAction(action: NonRetryAction): string {
 }
 
 /**
- * Render Transitions to Markdown list items.
+ * Render a single transition with its retry prefix if configured.
+ */
+function renderTransitionAction(transition: TransitionObject): string {
+  const actionStr = renderAction(transition.action);
+  if (transition.retry > 0) {
+    return `RETRY ${transition.retry} ${actionStr}`;
+  }
+  return actionStr;
+}
+
+/**
+ * Render transitions block with retry prefix when configured.
  *
- * Converts a Transitions object to Markdown format with
- * PASS and FAIL conditions as list items.
- *
- * @param transitions - The Transitions object to render
+ * @param transitions - The transitions to render
  * @returns Markdown string with PASS/FAIL list items
  */
 export function renderTransitions(transitions: Transitions): string {
   const lines: string[] = [];
-  lines.push(`- PASS: ${renderAction(transitions.pass.action)}`);
-  lines.push(`- FAIL: ${renderAction(transitions.fail.action)}`);
+  lines.push(`- PASS: ${renderTransitionAction(transitions.pass)}`);
+  lines.push(`- FAIL: ${renderTransitionAction(transitions.fail)}`);
   return lines.join('\n');
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import type { NonRetryAction, StepNumber, Action, SubtaskState, Substep } from '../../src/runbook/types.js';
+import type { StepNumber, Action, SubtaskState, Substep } from '../../src/runbook/types.js';
 
 describe('SubtaskState type', () => {
   it('has required fields', () => {
@@ -15,71 +15,48 @@ describe('SubtaskState type', () => {
   });
 });
 
-describe('Action type', () => {
-  it('RETRY action should have max and then properties', () => {
-    const retryAction: Action = {
-      type: 'RETRY',
-      max: 3,
-      then: { type: 'STOP', message: 'Build failed' }
-    };
+describe('Action type (terminal actions only)', () => {
+  it('rejects RETRY as an action type (retry is now a transition property)', () => {
+    // Action is now terminal-only: CONTINUE, COMPLETE, STOP, GOTO
+    // RETRY is extracted as a property on TransitionObject
+    const continueAction: Action = { type: 'CONTINUE' };
+    const completeAction: Action = { type: 'COMPLETE', message: 'Done' };
+    const stopAction: Action = { type: 'STOP', message: 'Failed' };
+    const gotoAction: Action = { type: 'GOTO', target: { step: '2' } };
 
-    expect(retryAction.type).toBe('RETRY');
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (retryAction.type === 'RETRY') {
-      expect(retryAction.max).toBe(3);
-      expect(retryAction.then).toEqual({ type: 'STOP', message: 'Build failed' });
-    }
-  });
-
-  it('RETRY then can be GOTO', () => {
-    const retryAction: Action = {
-      type: 'RETRY',
-      max: 2,
-      then: { type: 'GOTO', target: { step: 5 as StepNumber, substep: undefined } }
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (retryAction.type === 'RETRY') {
-      expect(retryAction.then.type).toBe('GOTO');
-    }
-  });
-
-  it('RETRY then can be CONTINUE', () => {
-    const retryAction: Action = {
-      type: 'RETRY',
-      max: 1,
-      then: { type: 'CONTINUE' }
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (retryAction.type === 'RETRY') {
-      expect(retryAction.then.type).toBe('CONTINUE');
-    }
+    expect(continueAction.type).toBe('CONTINUE');
+    expect(completeAction.type).toBe('COMPLETE');
+    expect(stopAction.type).toBe('STOP');
+    expect(gotoAction.type).toBe('GOTO');
   });
 });
 
 describe('GOTO action type', () => {
   it('uses target: StepId instead of step: StepNumber', () => {
     // This test documents the expected shape after the refactor
-    const gotoAction: NonRetryAction = {
+    const gotoAction: Action = {
       type: 'GOTO',
       target: { step: 2 as StepNumber, substep: '1' }
     };
 
     // Type assertion - if this compiles, the type is correct
     expect(gotoAction.type).toBe('GOTO');
-    expect(gotoAction.target.step).toBe(2);
-    expect(gotoAction.target.substep).toBe('1');
+    if (gotoAction.type === 'GOTO') {
+      expect(gotoAction.target.step).toBe(2);
+      expect(gotoAction.target.substep).toBe('1');
+    }
   });
 
   it('allows GOTO without substep', () => {
-    const gotoAction: NonRetryAction = {
+    const gotoAction: Action = {
       type: 'GOTO',
       target: { step: 3 as StepNumber }
     };
 
-    expect(gotoAction.target.step).toBe(3);
-    expect(gotoAction.target.substep).toBeUndefined();
+    if (gotoAction.type === 'GOTO') {
+      expect(gotoAction.target.step).toBe(3);
+      expect(gotoAction.target.substep).toBeUndefined();
+    }
   });
 });
 
@@ -111,10 +88,10 @@ describe('Substep interface', () => {
       isDynamic: false,
       transitions: {
         all: true,
-        pass: { type: 'CONTINUE' },
-        fail: { type: 'STOP', message: 'BLOCKED' }
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'BLOCKED' } }
       }
     };
-    expect(substep.transitions?.pass.type).toBe('CONTINUE');
+    expect(substep.transitions?.pass.action.type).toBe('CONTINUE');
   });
 });

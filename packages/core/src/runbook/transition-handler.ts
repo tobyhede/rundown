@@ -1,4 +1,4 @@
-import type { Step, SubstepState, Action, NonRetryAction, StepId, Transitions } from './types.js';
+import type { Step, SubstepState, Action, StepId, Transitions } from './types.js';
 
 /**
  * Result of evaluating a step condition (PASS or FAIL).
@@ -22,10 +22,37 @@ export interface ConditionResult {
 }
 
 /**
+ * Evaluate a transition with its retry property.
+ *
+ * Common logic for handling retry on any transition (pass or fail, step or substep).
+ *
+ * @param transition - The transition object with retry and action
+ * @param currentRetryCount - Current retry count
+ * @returns A ConditionResult indicating the action to take
+ */
+function evaluateTransition(
+  transition: { retry: number; action: Action },
+  currentRetryCount: number
+): ConditionResult {
+  const { retry, action } = transition;
+
+  // Check if we should retry
+  if (retry > 0 && currentRetryCount < retry) {
+    return {
+      action: 'retry',
+      newRetryCount: currentRetryCount + 1
+    };
+  }
+
+  // Retries exhausted (or no retries) - execute the action
+  return evaluateAction(action);
+}
+
+/**
  * Evaluate the FAIL condition for a step.
  *
  * Determines the appropriate action when a step fails based on its
- * defined FAIL transition (RETRY, STOP, GOTO, CONTINUE, or COMPLETE).
+ * defined FAIL transition with retry property.
  *
  * @param step - The step whose FAIL condition to evaluate
  * @param currentRetryCount - The current retry count for this step
@@ -42,87 +69,28 @@ export function evaluateFailCondition(
     };
   }
 
-  const failAction = step.transitions.fail.action;
-
-  switch (failAction.type) {
-    case 'RETRY': {
-      const newCount = currentRetryCount + 1;
-
-      if (newCount > failAction.max) {
-        return evaluateNonRetryAction(failAction.then);
-      }
-
-      return {
-        action: 'retry',
-        newRetryCount: newCount
-      };
-    }
-
-    case 'STOP':
-      return {
-        action: 'stopped',
-        message: failAction.message
-      };
-
-    case 'GOTO':
-      return {
-        action: 'goto',
-        gotoTarget: failAction.target
-      };
-
-    case 'CONTINUE':
-      return { action: 'continue' };
-
-    case 'COMPLETE':
-      return { action: 'complete', message: failAction.message };
-
-    default:
-      return {
-        action: 'stopped',
-        message: 'Unknown FAIL action'
-      };
-  }
+  return evaluateTransition(step.transitions.fail, currentRetryCount);
 }
 
 /**
  * Evaluate the PASS condition for a step.
  *
  * Determines the appropriate action when a step passes based on its
- * defined PASS transition (COMPLETE, GOTO, STOP, CONTINUE, or RETRY).
+ * defined PASS transition with retry property.
  *
  * @param step - The step whose PASS condition to evaluate
+ * @param currentRetryCount - Current retry count (defaults to 0)
  * @returns A ConditionResult indicating the action to take
  */
-export function evaluatePassCondition(step: Step): ConditionResult {
+export function evaluatePassCondition(
+  step: Step,
+  currentRetryCount: number = 0
+): ConditionResult {
   if (!step.transitions) {
     return { action: 'continue' };
   }
 
-  const passAction = step.transitions.pass.action;
-
-  switch (passAction.type) {
-    case 'COMPLETE':
-      return { action: 'complete', message: passAction.message };
-
-    case 'GOTO':
-      return {
-        action: 'goto',
-        gotoTarget: passAction.target
-      };
-
-    case 'STOP':
-      return {
-        action: 'stopped',
-        message: passAction.message
-      };
-
-    case 'CONTINUE':
-    case 'RETRY':
-      return { action: 'continue' };
-
-    default:
-      return { action: 'continue' };
-  }
+  return evaluateTransition(step.transitions.pass, currentRetryCount);
 }
 
 /**
@@ -135,11 +103,13 @@ export function evaluatePassCondition(step: Step): ConditionResult {
  *
  * @param substepStates - The current state of all substeps
  * @param transitions - The transitions defining aggregation behavior (all/any)
+ * @param currentRetryCount - Current retry count (defaults to 0)
  * @returns A ConditionResult if all substeps are done, null otherwise
  */
 export function evaluateSubstepAggregation(
   substepStates: readonly SubstepState[],
-  transitions: Transitions
+  transitions: Transitions,
+  currentRetryCount: number = 0
 ): ConditionResult | null {
   const allDone = substepStates.every(s => s.status === 'done');
   if (!allDone) return null;
@@ -147,24 +117,30 @@ export function evaluateSubstepAggregation(
   const passCount = substepStates.filter(s => s.result === 'pass').length;
 
   if (transitions.all) {
+    // ALL mode: Pass if all passed, fail if any failed
     const anyFailed = substepStates.some(s => s.result === 'fail');
-    if (anyFailed) return evaluateAction(transitions.fail.action);
-    return evaluateAction(transitions.pass.action);
+    if (anyFailed) {
+      return evaluateTransition(transitions.fail, currentRetryCount);
+    }
+    return evaluateTransition(transitions.pass, currentRetryCount);
   } else {
-    if (passCount > 0) return evaluateAction(transitions.pass.action);
-    return evaluateAction(transitions.fail.action);
+    // ANY mode: Pass if any passed, fail only if all failed
+    if (passCount > 0) {
+      return evaluateTransition(transitions.pass, currentRetryCount);
+    }
+    return evaluateTransition(transitions.fail, currentRetryCount);
   }
 }
 
 /**
- * Evaluate a non-retry transition action.
+ * Evaluate a terminal action.
  *
  * Handles evaluation of CONTINUE, STOP, COMPLETE, or GOTO actions.
  *
- * @param action - The non-retry action to evaluate
+ * @param action - The action to evaluate (CONTINUE, STOP, COMPLETE, GOTO)
  * @returns A ConditionResult indicating the action to take
  */
-export function evaluateNonRetryAction(action: NonRetryAction): ConditionResult {
+function evaluateAction(action: Action): ConditionResult {
   switch (action.type) {
     case 'CONTINUE':
       return { action: 'continue' };
@@ -174,10 +150,23 @@ export function evaluateNonRetryAction(action: NonRetryAction): ConditionResult 
       return { action: 'complete', message: action.message };
     case 'GOTO':
       return { action: 'goto', gotoTarget: action.target };
+    default:
+      // Handle unknown action types (should not occur with valid schema)
+      const _exhaustive: never = action;
+      return _exhaustive;
   }
 }
 
-function evaluateAction(action: Action): ConditionResult {
-  if (action.type === 'RETRY') return { action: 'retry' };
-  return evaluateNonRetryAction(action);
+/**
+ * Evaluate a non-retry transition action.
+ *
+ * Handles evaluation of CONTINUE, STOP, COMPLETE, or GOTO actions.
+ * This is an alias to evaluateAction for backwards compatibility.
+ *
+ * @param action - The non-retry action to evaluate
+ * @returns A ConditionResult indicating the action to take
+ * @deprecated Use evaluateAction instead
+ */
+export function evaluateNonRetryAction(action: Action): ConditionResult {
+  return evaluateAction(action);
 }

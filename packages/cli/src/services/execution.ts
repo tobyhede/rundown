@@ -475,13 +475,13 @@ export function isValidResult(r: string): r is 'pass' | 'fail' {
  */
 export function getStepRetryMax(item: Step | Substep): number {
   if (!item.transitions) return 0;
-  // Check FAIL transition first
-  if (item.transitions.fail.action.type === 'RETRY') {
-    return item.transitions.fail.action.max;
+  // Check FAIL transition first (more common to have retry on FAIL)
+  if (item.transitions.fail.retry > 0) {
+    return item.transitions.fail.retry;
   }
   // Also check PASS transition
-  if (item.transitions.pass.action.type === 'RETRY') {
-    return item.transitions.pass.action.max;
+  if (item.transitions.pass.retry > 0) {
+    return item.transitions.pass.retry;
   }
   return 0; // No retry configured
 }

@@ -12,107 +12,6 @@ describe('parseAction GOTO NEXT', () => {
     const result = parseAction('NEXT');
     expect(result).toEqual({ type: 'GOTO', target: { step: 'NEXT' } });
   });
-
-  it('parses RETRY 3 GOTO NEXT', () => {
-    const result = parseAction('RETRY 3 GOTO NEXT');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 3,
-      then: { type: 'GOTO', target: { step: 'NEXT' } }
-    });
-  });
-});
-
-describe('parseAction RETRY with exhaustion', () => {
-  it('parses RETRY (bare) as RETRY 1 STOP', () => {
-    const result = parseAction('RETRY');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 1,
-      then: { type: 'STOP' }
-    });
-  });
-
-  it('parses RETRY 3 as RETRY 3 STOP', () => {
-    const result = parseAction('RETRY 3');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 3,
-      then: { type: 'STOP' }
-    });
-  });
-
-  it('parses RETRY "message" as RETRY 1 STOP with message', () => {
-    const result = parseAction('RETRY "Build failed"');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 1,
-      then: { type: 'STOP', message: 'Build failed' }
-    });
-  });
-
-  it('parses RETRY 3 "message" as RETRY 3 STOP with message', () => {
-    const result = parseAction('RETRY 3 "Build failed"');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 3,
-      then: { type: 'STOP', message: 'Build failed' }
-    });
-  });
-
-  it('parses RETRY 3 STOP "message"', () => {
-    const result = parseAction('RETRY 3 STOP "Build failed"');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 3,
-      then: { type: 'STOP', message: 'Build failed' }
-    });
-  });
-
-  it('parses RETRY 3 GOTO 2', () => {
-    const result = parseAction('RETRY 3 GOTO 2');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 3,
-      then: { type: 'GOTO', target: { step: '2', substep: undefined } }
-    });
-  });
-
-  it('parses RETRY GOTO 2 as RETRY 1 GOTO 2', () => {
-    const result = parseAction('RETRY GOTO 2');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 1,
-      then: { type: 'GOTO', target: { step: '2', substep: undefined } }
-    });
-  });
-
-  it('parses RETRY CONTINUE as RETRY 1 CONTINUE', () => {
-    const result = parseAction('RETRY CONTINUE');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 1,
-      then: { type: 'CONTINUE' }
-    });
-  });
-
-  it('parses RETRY 5 CONTINUE', () => {
-    const result = parseAction('RETRY 5 CONTINUE');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 5,
-      then: { type: 'CONTINUE' }
-    });
-  });
-
-  it('parses RETRY 2 COMPLETE', () => {
-    const result = parseAction('RETRY 2 COMPLETE');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 2,
-      then: { type: 'COMPLETE' }
-    });
-  });
 });
 
 describe('parseAction GOTO with substep', () => {
@@ -293,6 +192,7 @@ describe('parseConditional with YES/NO', () => {
     const result = parseConditional('YES: CONTINUE');
     expect(result).toEqual({
       type: 'yes',
+      retry: 0,
       action: { type: 'CONTINUE' },
       modifier: null,
       raw: 'CONTINUE',
@@ -303,6 +203,7 @@ describe('parseConditional with YES/NO', () => {
     const result = parseConditional('NO: STOP');
     expect(result).toEqual({
       type: 'no',
+      retry: 0,
       action: { type: 'STOP' },
       modifier: null,
       raw: 'STOP',
@@ -313,8 +214,8 @@ describe('parseConditional with YES/NO', () => {
 describe('convertToTransitions with YES/NO', () => {
   it('should preserve yes kind in transitions', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'yes', action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
-      { type: 'no', action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+      { type: 'yes', retry: 0, action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
+      { type: 'no', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
     expect(result!.pass.kind).toBe('yes');
@@ -323,8 +224,8 @@ describe('convertToTransitions with YES/NO', () => {
 
   it('should preserve pass kind in transitions', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'pass', action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
-      { type: 'fail', action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
     expect(result!.pass.kind).toBe('pass');
@@ -846,6 +747,7 @@ describe('parseAction GOTO NEXT with target', () => {
 describe('validateNEXTUsage with dynamic substeps', () => {
   const makeConditional = (action: { type: string; target?: { step: string } }): ParsedConditional => ({
     type: 'pass',
+    retry: 0,
     action: action as any,
     modifier: null,
     raw: 'test'
@@ -1070,17 +972,6 @@ describe('formatAction', () => {
   it('formats GOTO with named target', () => {
     expect(formatAction({ type: 'GOTO', target: { step: 'ErrorHandler' } })).toBe('GOTO ErrorHandler');
   });
-
-  it('formats RETRY with max', () => {
-    expect(formatAction({ type: 'RETRY', max: 3, then: { type: 'STOP' } })).toBe('RETRY 3');
-  });
-
-  it('formats RETRY without max as "RETRY"', () => {
-    // Tests the falsy-max branch in formatAction. Schema requires max >= 1, so
-    // max: 0 is impossible at runtime. Cast to any to bypass type checking and
-    // verify formatAction handles this defensively (treats falsy max as absent).
-    expect(formatAction({ type: 'RETRY', max: 0, then: { type: 'STOP' } } as any)).toBe('RETRY');
-  });
 });
 
 describe('parseAction error cases', () => {
@@ -1111,10 +1002,6 @@ describe('parseAction error cases', () => {
   it('returns null for GOTO with reserved word target', () => {
     expect(parseAction('GOTO CONTINUE')).toBeNull();
   });
-
-  it('throws for nested RETRY (RETRY in RETRY)', () => {
-    expect(() => parseAction('RETRY 3 RETRY 2')).toThrow('RETRY actions cannot contain another RETRY');
-  });
 });
 
 describe('parseConditional error cases', () => {
@@ -1138,24 +1025,24 @@ describe('parseConditional error cases', () => {
 describe('convertToTransitions aggregation conflicts', () => {
   it('throws for conflicting ALL/ALL modifiers', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
-      { type: 'fail', action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
     ];
     expect(() => convertToTransitions(conditionals)).toThrow('Invalid aggregation combination');
   });
 
   it('throws for conflicting ANY/ANY modifiers', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ANY', raw: 'CONTINUE' },
-      { type: 'fail', action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ANY', raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
     ];
     expect(() => convertToTransitions(conditionals)).toThrow('Invalid aggregation combination');
   });
 
   it('accepts valid PASS ALL + FAIL ANY (pessimistic)', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
-      { type: 'fail', action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
     expect(result).not.toBeNull();
@@ -1164,8 +1051,8 @@ describe('convertToTransitions aggregation conflicts', () => {
 
   it('accepts valid PASS ANY + FAIL ALL (optimistic)', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ANY', raw: 'CONTINUE' },
-      { type: 'fail', action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ANY', raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
     expect(result).not.toBeNull();
@@ -1174,8 +1061,8 @@ describe('convertToTransitions aggregation conflicts', () => {
 
   it('defaults to all=true with only PASS modifier ALL', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
-      { type: 'fail', action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
     expect(result!.all).toBe(true);
@@ -1183,8 +1070,8 @@ describe('convertToTransitions aggregation conflicts', () => {
 
   it('defaults to all=false with only PASS modifier ANY', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ANY', raw: 'CONTINUE' },
-      { type: 'fail', action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ANY', raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
     expect(result!.all).toBe(false);
@@ -1192,8 +1079,8 @@ describe('convertToTransitions aggregation conflicts', () => {
 
   it('defaults to all=true with only FAIL modifier ANY', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'pass', action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
-      { type: 'fail', action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
     expect(result!.all).toBe(true);
@@ -1201,8 +1088,8 @@ describe('convertToTransitions aggregation conflicts', () => {
 
   it('defaults to all=false with only FAIL modifier ALL', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'pass', action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
-      { type: 'fail', action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
     expect(result!.all).toBe(false);
@@ -1214,7 +1101,7 @@ describe('convertToTransitions aggregation conflicts', () => {
 
   it('provides default STOP for missing fail action', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'pass', action: { type: 'COMPLETE' }, modifier: null, raw: 'COMPLETE' },
+      { type: 'pass', retry: 0, action: { type: 'COMPLETE' }, modifier: null, raw: 'COMPLETE' },
     ];
     const result = convertToTransitions(conditionals);
     expect(result).not.toBeNull();
@@ -1223,7 +1110,7 @@ describe('convertToTransitions aggregation conflicts', () => {
 
   it('provides default CONTINUE for missing pass action', () => {
     const conditionals: ParsedConditional[] = [
-      { type: 'fail', action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
     expect(result).not.toBeNull();
@@ -1232,32 +1119,10 @@ describe('convertToTransitions aggregation conflicts', () => {
 });
 
 describe('validateNEXTUsage with RETRY containing NEXT', () => {
-  const makeConditionalWithRetry = (): ParsedConditional => ({
-    type: 'pass',
-    action: {
-      type: 'RETRY',
-      max: 3,
-      then: { type: 'GOTO', target: { step: 'NEXT' } }
-    } as any,
-    modifier: null,
-    raw: 'test'
-  });
-
-  it('allows RETRY with NEXT fallback in dynamic context', () => {
-    expect(() => {
-      validateNEXTUsage(
-        [makeConditionalWithRetry()],
-        true,  // dynamic step
-        false
-      );
-    }).not.toThrow();
-  });
-
   it('rejects RETRY with NEXT fallback in static context', () => {
     expect(() => {
       validateNEXTUsage(
-        [makeConditionalWithRetry()],
-        false, // NOT dynamic
+        [{ type: 'fail', retry: 2, action: { type: 'GOTO', target: { step: 'NEXT' } }, modifier: null, raw: 'RETRY 2 NEXT' }],
         false
       );
     }).toThrow('NEXT action is only allowed in dynamic contexts');
@@ -1345,48 +1210,12 @@ describe('extractSubstepHeader edge cases', () => {
   });
 });
 
-describe('parseAction RETRY fallback edge cases', () => {
-  it('parses RETRY with quoted message as STOP message', () => {
-    const result = parseAction('RETRY 3 "failed after retries"');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 3,
-      then: { type: 'STOP', message: 'failed after retries' }
-    });
-  });
-
-  it('parses RETRY with COMPLETE fallback with message', () => {
-    const result = parseAction('RETRY 2 COMPLETE "done"');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 2,
-      then: { type: 'COMPLETE', message: 'done' }
-    });
-  });
-
-  it('parses RETRY with STOP fallback with message', () => {
-    const result = parseAction('RETRY 2 STOP "error"');
-    expect(result).toEqual({
-      type: 'RETRY',
-      max: 2,
-      then: { type: 'STOP', message: 'error' }
-    });
-  });
-
-  it('returns null for RETRY COMPLETE with unclosed quote', () => {
-    expect(parseAction('RETRY 3 COMPLETE "unclosed')).toBeNull();
-  });
-
-  it('returns null for RETRY STOP with unclosed quote', () => {
-    expect(parseAction('RETRY 3 STOP "unclosed')).toBeNull();
-  });
-});
-
 describe('parseConditional with modifier', () => {
   it('parses PASS ALL: CONTINUE', () => {
     const result = parseConditional('PASS ALL: CONTINUE');
     expect(result).toEqual({
       type: 'pass',
+      retry: 0,
       action: { type: 'CONTINUE' },
       modifier: 'ALL',
       raw: 'CONTINUE',
@@ -1397,9 +1226,45 @@ describe('parseConditional with modifier', () => {
     const result = parseConditional('FAIL ANY: STOP');
     expect(result).toEqual({
       type: 'fail',
+      retry: 0,
       action: { type: 'STOP' },
       modifier: 'ANY',
       raw: 'STOP',
+    });
+  });
+});
+
+describe('ParsedConditional with retry property', () => {
+  it('parseConditional extracts retry as property', () => {
+    const result = parseConditional('FAIL: RETRY 2 GOTO 3');
+    expect(result).toEqual({
+      type: 'fail',
+      retry: 2,
+      action: { type: 'GOTO', target: { step: '3', substep: undefined } },
+      modifier: null,
+      raw: 'RETRY 2 GOTO 3'
+    });
+  });
+
+  it('parseConditional handles NEXT shorthand', () => {
+    const result = parseConditional('PASS: NEXT');
+    expect(result).toEqual({
+      type: 'pass',
+      retry: 0,
+      action: { type: 'GOTO', target: { step: 'NEXT' } },
+      modifier: null,
+      raw: 'NEXT'
+    });
+  });
+
+  it('parseConditional handles RETRY with NEXT', () => {
+    const result = parseConditional('FAIL: RETRY 2 NEXT');
+    expect(result).toEqual({
+      type: 'fail',
+      retry: 2,
+      action: { type: 'GOTO', target: { step: 'NEXT' } },
+      modifier: null,
+      raw: 'RETRY 2 NEXT'
     });
   });
 });

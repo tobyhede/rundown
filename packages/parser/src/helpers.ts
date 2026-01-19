@@ -5,7 +5,6 @@ import {
 } from './types.js';
 import {
   type Action,
-  type NonRetryAction,
   type Transitions
 } from './schemas.js';
 import { MAX_STEP_NUMBER } from './schemas.js';
@@ -266,9 +265,8 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
  * - STOP / STOP "message" - Abort runbook
  * - GOTO target - Jump to specified step/substep
  * - NEXT - Shorthand for GOTO NEXT (dynamic steps only)
- * - RETRY / RETRY n / RETRY n action - Retry with optional max count and fallback
  *
- * @param text - The action string to parse (e.g., "GOTO 2.1", "RETRY 3 STOP")
+ * @param text - The action string to parse (e.g., "GOTO 2.1", "CONTINUE")
  * @returns Parsed Action object, or null if text is not a recognized action
  */
 export function parseAction(text: string): Action | null {
@@ -329,92 +327,41 @@ export function parseAction(text: string): Action | null {
     return { type: 'GOTO', target: { step: 'NEXT' as const } };
   }
 
-  if (trimmed === 'RETRY') {
-    return { type: 'RETRY', max: 1, then: { type: 'STOP' } };
-  }
-
-  if (trimmed.startsWith('RETRY ')) {
-    const rest = trimmed.slice(6).trim();
-    return parseRetryWithArgs(rest);
-  }
-
   return null;
 }
 
-function parseRetryWithArgs(rest: string): Action | null {
-  let max = 1;
+/**
+ * Parse RETRY syntax and extract retry count with fallback action.
+ * Internal helper for parsing conditional strings with RETRY.
+ *
+ * @param rest - The string after "RETRY" keyword
+ * @returns Object with retry count and fallback action, or null if invalid
+ */
+function parseRetryWithArgs(rest: string): { retry: number; action: Action } | null {
+  let retry = 1;
   let remaining = rest;
 
   const numberMatch = /^(\d+)(?:\s+(.*))?$/.exec(remaining);
   if (numberMatch) {
-    max = parseInt(numberMatch[1], 10);
+    retry = parseInt(numberMatch[1], 10);
     remaining = (numberMatch[2] || '').trim();
   }
 
   if (!remaining) {
-    return { type: 'RETRY', max, then: { type: 'STOP' } };
+    return { retry, action: { type: 'STOP' } };
   }
 
   if (remaining.startsWith('"') && remaining.endsWith('"')) {
     const message = remaining.slice(1, -1);
-    return { type: 'RETRY', max, then: { type: 'STOP', message } };
+    return { retry, action: { type: 'STOP', message } };
   }
 
-  const thenAction = parseNonRetryAction(remaining);
-  if (!thenAction) {
+  const action = parseAction(remaining);
+  if (!action) {
     return null;
   }
 
-  return { type: 'RETRY', max, then: thenAction };
-}
-
-function parseNonRetryAction(input: string): NonRetryAction | null {
-  const trimmed = input.trim();
-
-  if (trimmed.startsWith('RETRY')) {
-    throw new RunbookSyntaxError('Recursion error: RETRY actions cannot contain another RETRY (Rule 5)');
-  }
-
-  if (trimmed === 'CONTINUE') {
-    return { type: 'CONTINUE' };
-  }
-
-  if (trimmed === 'COMPLETE') {
-    return { type: 'COMPLETE' };
-  }
-
-  if (trimmed.startsWith('COMPLETE ')) {
-    try {
-      const message = parseQuotedOrIdentifier(trimmed.slice(9));
-      return { type: 'COMPLETE', message };
-    } catch {
-      return null;
-    }
-  }
-
-  if (trimmed === 'STOP') {
-    return { type: 'STOP' };
-  }
-
-  if (trimmed.startsWith('STOP ')) {
-    try {
-      const message = parseQuotedOrIdentifier(trimmed.slice(5));
-      return { type: 'STOP', message };
-    } catch {
-      return null;
-    }
-  }
-
-  if (trimmed.startsWith('GOTO ')) {
-    const targetStr = trimmed.slice(5).trim();
-    const target = parseStepIdFromString(targetStr);
-    if (!target) {
-      return null;
-    }
-    return { type: 'GOTO', target };
-  }
-
-  return null;
+  return { retry, action };
 }
 
 function parseConditionalPrefix(rest: string, type: 'pass' | 'fail' | 'yes' | 'no'): ParsedConditional | null {
@@ -428,11 +375,31 @@ function parseConditionalPrefix(rest: string, type: 'pass' | 'fail' | 'yes' | 'n
   }
 
   const actionStr = stripSeparator(remaining);
-  const action = parseAction(actionStr);
+
+  // Try to parse as RETRY first
+  let retry = 0;
+  let action: Action | null = null;
+
+  if (actionStr.startsWith('RETRY')) {
+    if (actionStr === 'RETRY') {
+      retry = 1;
+      action = { type: 'STOP' };
+    } else if (actionStr.startsWith('RETRY ')) {
+      const retryResult = parseRetryWithArgs(actionStr.slice(6).trim());
+      if (retryResult) {
+        retry = retryResult.retry;
+        action = retryResult.action;
+      }
+    }
+  } else {
+    action = parseAction(actionStr);
+  }
+
   if (!action) {
     return null;
   }
-  return { type, action, modifier, raw: actionStr };
+
+  return { type, retry, action, modifier, raw: actionStr };
 }
 
 /**
@@ -509,14 +476,11 @@ function resolveAggregationMode(
 /**
  * Check if an action contains a NEXT target
  */
-function containsNEXT(action: Action | NonRetryAction): boolean {
+function containsNEXT(action: Action): boolean {
   if (action.type === 'GOTO' && 'target' in action) {
     // GOTO NEXT without a qualifier is a bare NEXT action
     // GOTO NEXT <target> (with qualifier) is allowed everywhere
     return action.target.step === 'NEXT' && !action.target.qualifier;
-  }
-  if (action.type === 'RETRY' && 'then' in action) {
-    return containsNEXT(action.then);
   }
   return false;
 }
@@ -568,7 +532,9 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   }
 
   let passAction: Action | null = null;
+  let passRetry = 0;
   let failAction: Action | null = null;
+  let failRetry = 0;
   let passModifier: AggregationModifier = null;
   let failModifier: AggregationModifier = null;
   let passKind: 'pass' | 'yes' = 'pass';
@@ -579,10 +545,12 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
     // 'fail' and 'no' are equivalent (failure conditions)
     if (conditional.type === 'pass' || conditional.type === 'yes') {
       passAction = conditional.action;
+      passRetry = conditional.retry;
       passModifier = conditional.modifier;
       passKind = conditional.type;
     } else {
       failAction = conditional.action;
+      failRetry = conditional.retry;
       failModifier = conditional.modifier;
       failKind = conditional.type;
     }
@@ -593,24 +561,24 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   if (passAction && failAction) {
     return {
       all,
-      pass: { kind: passKind, action: passAction },
-      fail: { kind: failKind, action: failAction },
+      pass: { kind: passKind, retry: passRetry, action: passAction },
+      fail: { kind: failKind, retry: failRetry, action: failAction },
     };
   }
 
   if (passAction && !failAction) {
     return {
       all,
-      pass: { kind: passKind, action: passAction },
-      fail: { kind: 'fail', action: { type: 'STOP' } },
+      pass: { kind: passKind, retry: passRetry, action: passAction },
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     };
   }
 
   if (!passAction && failAction) {
     return {
       all,
-      pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-      fail: { kind: failKind, action: failAction },
+      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+      fail: { kind: failKind, retry: failRetry, action: failAction },
     };
   }
 
@@ -697,7 +665,7 @@ export function escapeForShellSingleQuote(content: string): string {
  * suitable for display or logging.
  *
  * @param action - The Action object to format
- * @returns String representation of the action (e.g., "GOTO 2", "RETRY 3", "COMPLETE", "STOP \"message\"")
+ * @returns String representation of the action (e.g., "GOTO 2", "COMPLETE", "STOP \"message\"")
  */
 export function formatAction(action: Action): string {
   switch (action.type) {
@@ -709,8 +677,6 @@ export function formatAction(action: Action): string {
       return action.message ? `STOP "${action.message}"` : 'STOP';
     case 'GOTO':
       return `GOTO ${action.target.step}`;
-    case 'RETRY':
-      return action.max ? `RETRY ${String(action.max)}` : 'RETRY';
     default:
       return 'UNKNOWN';
   }

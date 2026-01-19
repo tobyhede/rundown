@@ -19,8 +19,8 @@ describe('runbook compiler', () => {
               isDynamic: false,
               transitions: {
                 all: true,
-                pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '{N}', substep: '1' } } }
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '{N}', substep: '1' } } }
               }
             }
           ]
@@ -39,8 +39,8 @@ describe('runbook compiler', () => {
           description: 'Dynamic step',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: 'NEXT' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -94,8 +94,8 @@ describe('runbook compiler', () => {
           description: 'Dynamic step',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: 'NEXT' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -122,8 +122,8 @@ describe('runbook compiler', () => {
               description: 'Dynamic substep',
               transitions: {
                 all: true,
-                pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
-                fail: { kind: 'fail', action: { type: 'STOP' } }
+                pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: 'NEXT' } } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
               }
             }
           ]
@@ -151,8 +151,8 @@ describe('runbook compiler', () => {
               description: 'Static substep',
               transitions: {
                 all: true,
-                pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
-                fail: { kind: 'fail', action: { type: 'STOP' } }
+                pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: 'NEXT' } } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
               }
             }
           ]
@@ -181,8 +181,8 @@ describe('runbook compiler', () => {
               description: 'Dynamic substep',
               transitions: {
                 all: true,
-                pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
-                fail: { kind: 'fail', action: { type: 'STOP' } }
+                pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: 'NEXT' } } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
               }
             }
           ]
@@ -218,7 +218,7 @@ describe('runbook compiler', () => {
                     target: { step: 'NEXT', qualifier: { step: '{N}', substep: '{n}' } }
                   }
                 },
-                fail: { kind: 'fail', action: { type: 'STOP' } }
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
               }
             }
           ]
@@ -253,7 +253,7 @@ describe('runbook compiler', () => {
                     target: { step: 'NEXT', qualifier: { step: '{N}' } }
                   }
                 },
-                fail: { kind: 'fail', action: { type: 'STOP' } }
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
               }
             }
           ]
@@ -289,7 +289,7 @@ describe('runbook compiler', () => {
                     target: { step: 'NEXT', qualifier: { step: '1', substep: '{n}' } }
                   }
                 },
-                fail: { kind: 'fail', action: { type: 'STOP' } }
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
               }
             }
           ]
@@ -315,8 +315,8 @@ describe('runbook compiler', () => {
           description: 'Setup',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         },
         {
@@ -343,8 +343,8 @@ describe('runbook compiler', () => {
           description: 'First',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         },
         {
@@ -377,8 +377,8 @@ describe('runbook compiler', () => {
           description: 'Dynamic step without substeps',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
-            fail: { kind: 'fail', action: { type: 'GOTO', target: { step: 'Recovery' } } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: 'NEXT' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: 'Recovery' } } }
           }
         },
         {
@@ -387,8 +387,8 @@ describe('runbook compiler', () => {
           description: 'Recovery step',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}' } } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '{N}' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -415,8 +415,8 @@ describe('runbook compiler', () => {
           description: 'Static setup step',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         },
         {
@@ -425,8 +425,8 @@ describe('runbook compiler', () => {
           description: 'Dynamic step',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: 'NEXT' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -453,8 +453,8 @@ describe('runbook compiler', () => {
           description: 'Static step with invalid GOTO NEXT',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: 'NEXT' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -484,8 +484,8 @@ describe('runbook compiler', () => {
           description: 'Step 1',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         },
         {
@@ -518,8 +518,8 @@ describe('runbook compiler', () => {
               isDynamic: false,
               transitions: {
                 all: true,
-                pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', action: { type: 'STOP' } }
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
               }
             }
           ]
@@ -567,8 +567,8 @@ describe('runbook compiler', () => {
           description: 'Step 1',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -588,8 +588,8 @@ describe('runbook compiler', () => {
           description: 'Step 1',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'COMPLETE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -609,8 +609,8 @@ describe('runbook compiler', () => {
           description: 'Step 1',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'GOTO', target: { step: 'ErrorHandler' } } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: 'ErrorHandler' } } }
           }
         },
         {
@@ -635,8 +635,8 @@ describe('runbook compiler', () => {
           description: 'Step 1',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '3' } } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2', substep: '3' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         },
         {
@@ -666,10 +666,11 @@ describe('runbook compiler', () => {
           description: 'Step 1',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: {
               kind: 'fail',
-              action: { type: 'RETRY', max: 3, then: { type: 'STOP' } }
+              retry: 3,
+              action: { type: 'STOP' }
             }
           }
         }
@@ -691,8 +692,8 @@ describe('runbook compiler', () => {
           description: 'Dynamic step',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT' } } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: 'NEXT' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -754,8 +755,8 @@ describe('runbook compiler', () => {
               description: 'First substep',
               transitions: {
                 all: true,
-                pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}', substep: '3' } } },
-                fail: { kind: 'fail', action: { type: 'STOP' } }
+                pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '{N}', substep: '3' } } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
               }
             },
             { id: '2', isDynamic: false, description: 'Second substep' },
@@ -787,8 +788,8 @@ describe('runbook compiler', () => {
               description: 'Substep',
               transitions: {
                 all: true,
-                pass: { kind: 'pass', action: { type: 'COMPLETE' } },
-                fail: { kind: 'fail', action: { type: 'STOP' } }
+                pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
               }
             }
           ]
@@ -817,8 +818,8 @@ describe('runbook compiler', () => {
               description: 'Substep',
               transitions: {
                 all: true,
-                pass: { kind: 'pass', action: { type: 'STOP' } },
-                fail: { kind: 'fail', action: { type: 'STOP' } }
+                pass: { kind: 'pass', retry: 0, action: { type: 'STOP' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
               }
             }
           ]
@@ -835,31 +836,6 @@ describe('runbook compiler', () => {
     });
   });
 
-  describe('RetryLoop context', () => {
-    it('includes activeRetryLoop in initial context', () => {
-      const steps: Step[] = [
-        {
-          name: '1',
-          isDynamic: false,
-          description: 'Test step',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
-          }
-        }
-      ];
-
-      const machine = compileRunbookToMachine(steps);
-      const actor = createActor(machine);
-      actor.start();
-
-      const snapshot = actor.getSnapshot();
-      expect(snapshot.context).toHaveProperty('activeRetryLoop');
-      expect(snapshot.context.activeRetryLoop).toBeUndefined();
-    });
-  });
-
   describe('resolveSimpleGotoTarget helper', () => {
     it('resolves numeric step target to correct state ID', () => {
       // This tests the behavior indirectly through GOTO action
@@ -870,8 +846,8 @@ describe('runbook compiler', () => {
           description: 'Step 1',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2' } } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         },
         {
@@ -880,8 +856,8 @@ describe('runbook compiler', () => {
           description: 'Step 2',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'COMPLETE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -897,8 +873,85 @@ describe('runbook compiler', () => {
     });
   });
 
+  describe('RETRY as transition property', () => {
+    it('stays at current step during retry, then executes action', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 2, action: { type: 'GOTO', target: { step: '2' } } }
+          }
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Step 2',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // First FAIL: stay at step 1 (retry 1/2)
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step_1');
+      expect(actor.getSnapshot().context.retryCount).toBe(1);
+
+      // Second FAIL: stay at step 1 (retry 2/2)
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step_1');
+      expect(actor.getSnapshot().context.retryCount).toBe(2);
+
+      // Third FAIL: exhausted, GOTO step 2
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step_2');
+      expect(actor.getSnapshot().context.retryCount).toBe(0);
+    });
+
+    it('works the same for PASS with retry', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 2, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // First PASS: stay (retry 1/2)
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_1');
+
+      // Second PASS: stay (retry 2/2)
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_1');
+
+      // Third PASS: exhausted, COMPLETE
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('COMPLETE');
+    });
+  });
+
   describe('RETRY with GOTO (loop pattern)', () => {
-    it('executes GOTO and sets activeRetryLoop on first RETRY+GOTO pass', () => {
+    it('stays at step during retries, then executes GOTO when exhausted', () => {
       const steps: Step[] = [
         {
           name: '1',
@@ -906,8 +959,8 @@ describe('runbook compiler', () => {
           description: 'Run Tests',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '3' } } },
-            fail: { kind: 'fail', action: { type: 'CONTINUE' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
           }
         },
         {
@@ -918,9 +971,10 @@ describe('runbook compiler', () => {
             all: true,
             pass: {
               kind: 'pass',
-              action: { type: 'RETRY', max: 2, then: { type: 'GOTO', target: { step: '1' } } }
+              retry: 2,
+              action: { type: 'GOTO', target: { step: '1' } }
             },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         },
         {
@@ -929,8 +983,8 @@ describe('runbook compiler', () => {
           description: 'Commit Changes',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'COMPLETE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -943,18 +997,23 @@ describe('runbook compiler', () => {
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step_2');
 
-      // Step 2 PASS -> RETRY GOTO 1 (should go to step 1, set activeRetryLoop)
+      // Step 2 PASS -> RETRY GOTO 1 (should stay at step 2 for retry 1/2)
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_2');
+      expect(actor.getSnapshot().context.retryCount).toBe(1);
+      expect(actor.getSnapshot().context.lastAction).toBe('RETRY');
+
+      // Step 2 PASS again -> RETRY GOTO 1 (should stay at step 2 for retry 2/2)
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_2');
+      expect(actor.getSnapshot().context.retryCount).toBe(2);
+
+      // Step 2 PASS again -> exhausted, execute GOTO to step 1
       actor.send({ type: 'PASS' });
       const snapshot = actor.getSnapshot();
-
       expect(snapshot.value).toBe('step_1');
-      expect(snapshot.context.activeRetryLoop).toEqual({
-        originStep: '2',
-        targetStep: '1',
-        count: 1,
-        max: 2
-      });
-      expect(snapshot.context.lastAction).toBe('RETRY');
+      expect(snapshot.context.retryCount).toBe(0);
+      expect(snapshot.context.lastAction).toBe('GOTO 1');
     });
 
     it('STOPs when RETRY+GOTO exhausts retries', () => {
@@ -965,8 +1024,8 @@ describe('runbook compiler', () => {
           description: 'Run Tests',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '3' } } },
-            fail: { kind: 'fail', action: { type: 'CONTINUE' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
           }
         },
         {
@@ -977,9 +1036,10 @@ describe('runbook compiler', () => {
             all: true,
             pass: {
               kind: 'pass',
-              action: { type: 'RETRY', max: 2, then: { type: 'GOTO', target: { step: '1' } } }
+              retry: 2,
+              action: { type: 'GOTO', target: { step: '1' } }
             },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         },
         {
@@ -988,8 +1048,8 @@ describe('runbook compiler', () => {
           description: 'Commit Changes',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'COMPLETE' } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
           }
         }
       ];
@@ -1000,22 +1060,26 @@ describe('runbook compiler', () => {
 
       // Step 1 FAIL -> step 2
       actor.send({ type: 'FAIL' });
-      // Step 2 PASS -> RETRY (1/2) GOTO 1
+      // Step 2 PASS -> RETRY (1/2), stay at step 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_2');
+      expect(actor.getSnapshot().context.retryCount).toBe(1);
+
+      // Step 2 PASS -> RETRY (2/2), stay at step 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_2');
+      expect(actor.getSnapshot().context.retryCount).toBe(2);
+
+      // Step 2 PASS -> retries exhausted, execute GOTO to step 1
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_1');
 
       // Step 1 FAIL -> step 2
       actor.send({ type: 'FAIL' });
-      // Step 2 PASS -> RETRY (2/2) GOTO 1
+      // Step 2 PASS -> fresh RETRY cycle, RETRY (1/2), stay at step 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step_1');
-      expect(actor.getSnapshot().context.activeRetryLoop?.count).toBe(2);
-
-      // Step 1 FAIL -> step 2
-      actor.send({ type: 'FAIL' });
-      // Step 2 PASS -> retries exhausted, STOP
-      actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step_2');
+      expect(actor.getSnapshot().context.retryCount).toBe(1);
     });
   });
 });
