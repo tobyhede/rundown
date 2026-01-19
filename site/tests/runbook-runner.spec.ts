@@ -7,7 +7,7 @@ test.describe('RunbookRunner', () => {
 
     // 2. Wait for WebContainer to boot (Status: Ready)
     // The status text is in a span with text 'Ready'
-    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
     // 3. Select the 'auto-execution' scenario
     // Buttons are rendered for each scenario key

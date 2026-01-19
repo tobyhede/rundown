@@ -2,6 +2,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests',
+  timeout: 120000, // 2 min per test (WebContainer is slow)
+  expect: {
+    timeout: 10000, // 10s for assertions (override per-assertion as needed)
+  },
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

@@ -11,6 +11,7 @@
     "build:site": "npm run build -w site",
     "build:all": "npm run build && npm run build -w site",
     "test": "npm run test -w packages/parser && npm run test -w packages/core && npm run test -w packages/cli",
+    "test:pw": "npm run test -w site",
     "test:coverage": "npm run test:coverage -w packages/parser && npm run test:coverage -w packages/core && npm run test:coverage -w packages/cli",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

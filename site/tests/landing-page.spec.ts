@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Landing Page Scenarios', () => {
+  test.describe.configure({ mode: 'serial' });
+
   test.beforeEach(async ({ page }) => {
     // 1. Navigate to the landing page
     await page.goto('/');
