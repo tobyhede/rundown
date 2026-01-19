@@ -106,6 +106,7 @@ export const SessionStateSchema = z.object({
  */
 export const CommandSchema = z.object({
   code: z.string(),
+  lang: z.string().optional(),
 });
 
 export type ValidatedSessionState = z.infer<typeof SessionStateSchema>;

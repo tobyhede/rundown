@@ -98,7 +98,8 @@ Please look at this example.
     const steps = parseRunbook(markdown);
     // prompt blocks become rd prompt commands
     expect(steps[0].command).toEqual({
-      code: "rd prompt 'Please look at this example.'"
+      code: "rd prompt 'Please look at this example.'",
+      lang: 'prompt'
     });
     expect(steps[0].prompt).toBeUndefined();  // No prompt text from prompt blocks
   });
@@ -128,7 +129,8 @@ npm run example --flag value
     const steps = parseRunbook(md);
     // prompt block becomes command, text before it becomes prompt
     expect(steps[0].command).toEqual({
-      code: "rd prompt 'npm run example --flag value'"
+      code: "rd prompt 'npm run example --flag value'",
+      lang: 'prompt'
     });
     expect(steps[0].prompt).toBe('Show this to agent.');  // Text BEFORE code block
   });
@@ -142,7 +144,8 @@ echo 'hello world'
 `;
     const steps = parseRunbook(md);
     expect(steps[0].command).toEqual({
-      code: "rd prompt 'echo '\\''hello world'\\'''"
+      code: "rd prompt 'echo '\\''hello world'\\'''",
+      lang: 'prompt'
     });
   });
 
@@ -160,8 +163,27 @@ npm run build
     const steps = parseRunbook(md);
     expect(steps[0].command).toEqual({
       code: 'npm run build',
+      lang: 'bash'
     });
     // No need to check prompted - field doesn't exist anymore
+  });
+
+  it('captures language tag from code blocks', () => {
+    const markdown = `## 1. Bash
+\`\`\`bash
+echo "hello"
+\`\`\`
+
+## 2. Shell
+\`\`\`shell
+echo "hello"
+\`\`\`
+`;
+    const steps = parseRunbook(markdown);
+    // @ts-expect-error - testing new lang property
+    expect(steps[0].command?.lang).toBe('bash');
+    // @ts-expect-error - testing new lang property
+    expect(steps[1].command?.lang).toBe('shell');
   });
 });
 

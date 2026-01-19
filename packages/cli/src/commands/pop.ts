@@ -70,7 +70,7 @@ export function registerPopCommand(program: Command): void {
         // currentStep is guaranteed to exist from array index
          
         if (currentStep) {
-          printStepBlock({ current: state.step, total: totalSteps, substep: state.substep }, currentStep);
+          printStepBlock({ current: state.step, total: totalSteps, substep: state.substep }, currentStep, !!state.prompted);
         }
       });
     });

@@ -12,12 +12,14 @@ type RenderableItem = Step | Substep;
  * @param item - The Step or Substep to render
  * @param instanceNumber - For dynamic steps/substeps, the current instance number (replaces {N})
  * @param substepNumber - For dynamic substeps, the current substep number (replaces {n})
+ * @param showCommand - Whether to include the command code block in the output
  * @returns Markdown string suitable for CLI output
  */
 export function renderStepForCLI(
   item: Readonly<RenderableItem>,
   instanceNumber?: string,
-  substepNumber?: string
+  substepNumber?: string,
+  showCommand?: boolean
 ): string {
   const lines: string[] = [];
 
@@ -50,6 +52,13 @@ export function renderStepForCLI(
     }
     lines.push('');
     lines.push(resolvedPrompt);
+  }
+
+  if (showCommand && item.command) {
+    lines.push('');
+    lines.push(`\`\`\`${item.command.lang || ''}`);
+    lines.push(item.command.code);
+    lines.push('```');
   }
 
   // Command is not rendered here - it's shown via printCommandExec() with colored prompt

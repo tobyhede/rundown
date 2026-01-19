@@ -171,7 +171,7 @@ export function registerStatusCommand(program: Command): void {
 
         // Print step block
         if (currentStep) {
-          printStepBlock({ current: displayStep, total: totalSteps, substep: state.substep }, currentStep, writer);
+          printStepBlock({ current: displayStep, total: totalSteps, substep: state.substep }, currentStep, !!state.prompted, writer);
         }
 
         // Show pending steps and agent bindings

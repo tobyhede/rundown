@@ -247,6 +247,15 @@ npm run dangerous-command
       expect(result.stdout).toContain('Execute command');
     });
 
+    it('renders command as code block in prompted mode', async () => {
+      const result = runCli('run --prompted runbooks/with-commands.runbook.md', workspace);
+
+      // The command from runbooks/with-commands.runbook.md step 1 is 'rd echo --result pass'
+      expect(result.stdout).toContain('```bash');
+      expect(result.stdout).toContain('rd echo --result pass');
+      expect(result.stdout).toContain('```');
+    });
+
     it('executes with correct working directory', async () => {
       // Command uses rd echo, which succeeds
       const result = runCli('run runbooks/with-commands.runbook.md', workspace);
