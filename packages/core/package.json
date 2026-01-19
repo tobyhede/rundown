@@ -34,7 +34,7 @@
     "directory": "packages/core"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.12.0"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.10.1",

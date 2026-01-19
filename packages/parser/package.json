@@ -33,6 +33,9 @@
     "url": "git+https://github.com/tobyhede/rundown.git",
     "directory": "packages/parser"
   },
+  "engines": {
+    "node": ">=20.12.0"
+  },
   "dependencies": {
     "js-yaml": "^4.1.1",
     "mdast-util-from-markdown": "^2.0.2",
