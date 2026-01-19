@@ -59,7 +59,9 @@ npm install -g @rundown/cli
 
 ### Create Your First Runbook
 
-Create a runbook file `deploy.runbook.md`:
+Create a runbook file `deploy.runbook.md`.
+
+This example uses `rd echo` to simulate commands so you can run it immediately without any setup.
 
 ````markdown
 ---
@@ -71,7 +73,7 @@ name: Deploy to Production
 - FAIL: STOP
 
 ```bash
-npm test
+rd echo npm test
 ```
 
 ## 2. Build Application
@@ -79,7 +81,7 @@ npm test
 - FAIL: STOP
 
 ```bash
-npm run build
+rd echo npm run build
 ```
 
 ## 3. Deploy
@@ -87,7 +89,7 @@ npm run build
 - FAIL: STOP
 
 ```bash
-npm run deploy
+rd echo npm run deploy
 ```
 ````
 
@@ -96,6 +98,8 @@ Run the runbook:
 ```bash
 rundown run deploy.runbook.md
 ```
+
+**To make this real:** Simply remove `rd echo` from the code blocks to execute the actual `npm` commands.
 
 ## Commands
 
