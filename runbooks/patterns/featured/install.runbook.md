@@ -8,7 +8,7 @@ scenarios:
   full-install:
     description: Complete installation and verification
     commands:
-      - rd run --prompted install-rundown.runbook.md
+      - rd run --prompted install.runbook.md
       - rd pass  # 1.1 Verify Node.js
       - rd pass  # 2.1 Install globally
       - rd pass  # 2.2 Verify installation
@@ -19,7 +19,7 @@ scenarios:
   minimal-install:
     description: Installation only
     commands:
-      - rd run --prompted install-rundown.runbook.md
+      - rd run --prompted install.runbook.md
       - rd pass  # 1.1 Verify Node.js
       - rd pass  # 2.1 Install globally
       - rd pass  # 2.2 Verify installation
@@ -28,7 +28,7 @@ scenarios:
   prerequisites-fail:
     description: Fail early if Node.js prerequisite not met
     commands:
-      - rd run --prompted install-rundown.runbook.md
+      - rd run --prompted install.runbook.md
       - rd fail
     result: STOP
 ---
