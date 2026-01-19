@@ -834,4 +834,29 @@ describe('runbook compiler', () => {
       expect(snapshot.context.nextSubstepInstance).toBeUndefined();
     });
   });
+
+  describe('RetryLoop context', () => {
+    it('includes activeRetryLoop in initial context', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Test step',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context).toHaveProperty('activeRetryLoop');
+      expect(snapshot.context.activeRetryLoop).toBeUndefined();
+    });
+  });
 });

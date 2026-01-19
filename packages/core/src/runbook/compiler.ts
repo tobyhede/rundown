@@ -3,12 +3,31 @@ import { type Step, type Action, type NonRetryAction, type Transitions } from '.
 import type { StepId } from './step-id.js';
 
 /**
+ * Represents an active retry loop for RETRY+GOTO patterns.
+ *
+ * Tracks the loop origin, target, current count, and maximum iterations.
+ * Used to preserve retry state across GOTO transitions.
+ */
+export interface RetryLoop {
+  /** Step that initiated the retry loop (e.g., "2") */
+  originStep: string;
+  /** Step to loop back to (e.g., "1") */
+  targetStep: string;
+  /** Current iteration count (1, 2, ...) */
+  count: number;
+  /** Maximum allowed iterations */
+  max: number;
+}
+
+/**
  * Context passed through the XState runbook state machine.
  *
  * Maintains runtime state that persists across transitions including
  * retry counts, current substep, and runbook variables.
  */
 export interface RunbookContext {
+  /** Active retry loop for RETRY+GOTO patterns */
+  activeRetryLoop?: RetryLoop;
   /** Current retry count for the active step */
   retryCount: number;
   /** Maximum retries allowed for current RETRY action (source of truth for retry limits) */
@@ -23,6 +42,8 @@ export interface RunbookContext {
   variables: Record<string, boolean | number | string>;
   /** Last action taken by the state machine (source of truth for transition type) */
   lastAction?: string;
+  /** Message from STOP/COMPLETE actions */
+  lastMessage?: string;
 }
 
 /**
@@ -455,6 +476,7 @@ export function compileRunbookToMachine(steps: Step[]) {
     id: 'runbook',
     initial: allStates.length > 0 ? allStates[0].id : 'step_1',
     context: {
+      activeRetryLoop: undefined,
       retryCount: 0,
       retryMax: undefined,
       substep: undefined,
@@ -462,6 +484,7 @@ export function compileRunbookToMachine(steps: Step[]) {
       nextSubstepInstance: undefined,
       variables: {},
       lastAction: undefined,
+      lastMessage: undefined,
     },
     states: {
       ...states,
