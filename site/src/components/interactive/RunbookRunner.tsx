@@ -342,8 +342,8 @@ export function RunbookRunner({
                 reset();
               }}
               className={`px-3 py-1.5 text-xs font-mono rounded-md border transition-all whitespace-normal text-left ${selectedScenario === key
-                  ? 'bg-foreground/90 text-background border-foreground/90'
-                  : 'bg-background border-border text-muted-foreground hover:text-foreground hover:border-foreground/50'
+                ? 'bg-foreground/90 text-background border-foreground/90'
+                : 'bg-background border-border text-muted-foreground hover:text-foreground hover:border-foreground/50'
                 }`}
             >
               {key}
