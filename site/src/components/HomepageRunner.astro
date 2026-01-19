@@ -1,5 +1,6 @@
 ---
 import { RunbookRunner } from './interactive/RunbookRunner';
+import HighlightedSource from './HighlightedSource.astro';
 import { promises as fs } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 import path from 'node:path';
@@ -17,19 +18,20 @@ const filename = 'this-is-rundown.runbook.md';
 const scenarios = frontmatter.scenarios || {};
 ---
 
-<section class="container mx-auto px-4 py-8 max-w-7xl">
+<section id="body" class="container mx-auto px-4 py-8 max-w-7xl">
   <!-- Two-column layout -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
     <!-- Left: Source -->
-    <div class="flex flex-col">
-      <h2 class="text-lg font-semibold text-foreground mb-4">Rundown</h2>
-      <pre
-        class="bg-muted border border-border rounded-lg p-4 overflow-auto flex-1 text-sm font-mono text-foreground whitespace-pre-wrap"><code set:text={bodyContent} /></pre>
+    <div id="source" class="flex flex-col">
+      <h2 id="source-heading" class="text-lg font-semibold text-foreground mb-4">Rundown</h2>
+      <div class="flex-1 overflow-auto">
+        <HighlightedSource code={bodyContent} class="h-full" />
+      </div>
     </div>
 
     <!-- Right: Interactive Runner -->
-    <div class="flex flex-col">
-      <h2 class="text-lg font-semibold text-foreground mb-4">Run</h2>
+    <div id="runner" class="flex flex-col">
+      <h2 id="runner-heading" class="text-lg font-semibold text-foreground mb-4">Run</h2>
       <div class="flex-1">
         <RunbookRunner
           client:load

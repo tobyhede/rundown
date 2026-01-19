@@ -1,0 +1,47 @@
+---
+import { Code } from 'astro:components';
+
+interface Props {
+  code: string;
+  class?: string;
+}
+
+const { code, class: className = '' } = Astro.props;
+---
+
+<div class:list={['highlighted-source', className]}>
+  <Code
+    code={code}
+    lang="md"
+    themes={{
+      light: 'github-light',
+      dark: 'github-dark'
+    }}
+    defaultColor={false}
+  />
+</div>
+
+<style is:global>
+  .highlighted-source .astro-code {
+    background-color: hsl(var(--muted)) !important;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.5rem;
+    padding: 1rem;
+    overflow: auto;
+    font-size: 0.875rem;
+    white-space: pre-wrap;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  /* Light mode: use Shiki light theme colors */
+  .highlighted-source .astro-code span {
+    color: var(--shiki-light) !important;
+    background-color: transparent !important;
+  }
+
+  /* Dark mode: use Shiki dark theme colors */
+  html.dark .highlighted-source .astro-code span {
+    color: var(--shiki-dark) !important;
+    background-color: transparent !important;
+  }
+</style>
