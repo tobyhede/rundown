@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import type { SandboxOptions, SandboxAvailability } from '../../src/sandbox/types.js';
+import type { SandboxOptions, SandboxAvailability as _SandboxAvailability } from '../../src/sandbox/types.js';
 
 // Mock the dynamic imports
 jest.unstable_mockModule('../../src/sandbox/linux.js', () => ({
@@ -18,7 +18,7 @@ jest.unstable_mockModule('../../src/runbook/executor.js', () => ({
  * Helper to run a test with a mocked platform value.
  * Uses try/finally to ensure platform is restored even if test throws.
  */
-async function withPlatform<T>(platform: string, fn: () => T | Promise<T>): Promise<T> {
+async function _withPlatform<T>(platform: string, fn: () => T | Promise<T>): Promise<T> {
   const original = process.platform;
   Object.defineProperty(process, 'platform', { value: platform, configurable: true });
   try {
@@ -45,7 +45,7 @@ describe('Sandbox Index', () => {
     jest.clearAllMocks();
     // Reset module cache for sandbox/index.js to get fresh imports
     jest.resetModules();
-    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
   });
 
   afterEach(() => {

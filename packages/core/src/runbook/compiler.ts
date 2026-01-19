@@ -158,7 +158,7 @@ function buildSimpleGotoAssign(options: {
     },
     retryCount: options.isGotoToSelf
       ? ({ context }: { context: RunbookContext }) =>
-        (context.retryCount as number) + 1
+        context.retryCount + 1
       : 0,
     substep: options.resolvedSubstepId,
     ...CLEAR_NEXT_FLAGS
@@ -434,6 +434,7 @@ function nonRetryActionToTransition(
 
         return {
           target: computedTarget,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           actions: buildSimpleGotoAssign({
             lastAction: formatGotoAction(action.target),
             resolvedSubstepId,
@@ -458,6 +459,7 @@ function nonRetryActionToTransition(
 
       return {
         target: computedTarget,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         actions: buildSimpleGotoAssign({
           lastAction: formatGotoAction(action.target),
           resolvedSubstepId,
@@ -545,6 +547,7 @@ export function compileRunbookToMachine(steps: Step[]) {
           return targetStep === target.stepName && event.target.substep === target.substepId;
         },
         target: target.id,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         actions: buildSimpleGotoAssign({
           lastAction: ({ event }: { event: RunbookEvent }) => {
             if (event.type !== 'GOTO') return undefined;

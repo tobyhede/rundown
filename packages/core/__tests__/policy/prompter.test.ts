@@ -21,7 +21,7 @@ describe('PolicyPrompter', () => {
   const mockConfirm = confirm as jest.MockedFunction<typeof confirm>;
 
   beforeEach(() => {
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => { /* noop */ });
     mockSelect.mockReset();
     mockConfirm.mockReset();
   });

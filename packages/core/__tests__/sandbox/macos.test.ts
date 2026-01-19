@@ -22,7 +22,7 @@ const { existsSync, writeFileSync, unlinkSync } = await import('fs');
  * Helper to run a test with a mocked platform value.
  * Uses try/finally to ensure platform is restored even if test throws.
  */
-async function withPlatform<T>(platform: string, fn: () => T | Promise<T>): Promise<T> {
+async function _withPlatform<T>(platform: string, fn: () => T | Promise<T>): Promise<T> {
   const original = process.platform;
   Object.defineProperty(process, 'platform', { value: platform, configurable: true });
   try {
@@ -132,13 +132,13 @@ describe('SeatbeltSandbox', () => {
     it('executes command successfully', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => {});
-      (unlinkSync as jest.Mock).mockImplementation(() => {});
+      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => callback(0));
+            process.nextTick(() => { callback(0); });
           }
           return mockChild;
         }),
@@ -158,13 +158,13 @@ describe('SeatbeltSandbox', () => {
     it('handles non-zero exit code', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => {});
-      (unlinkSync as jest.Mock).mockImplementation(() => {});
+      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => callback(1));
+            process.nextTick(() => { callback(1); });
           }
           return mockChild;
         }),
@@ -182,13 +182,13 @@ describe('SeatbeltSandbox', () => {
     it('handles null exit code', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => {});
-      (unlinkSync as jest.Mock).mockImplementation(() => {});
+      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | null | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => callback(null));
+            process.nextTick(() => { callback(null); });
           }
           return mockChild;
         }),
@@ -206,13 +206,13 @@ describe('SeatbeltSandbox', () => {
     it('handles process error event', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => {});
-      (unlinkSync as jest.Mock).mockImplementation(() => {});
+      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'error') {
-            process.nextTick(() => callback(new Error('spawn failed')));
+            process.nextTick(() => { callback(new Error('spawn failed')); });
           }
           return mockChild;
         }),
@@ -232,7 +232,7 @@ describe('SeatbeltSandbox', () => {
     it('cleans up profile file even when unlinkSync throws', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => {});
+      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
       (unlinkSync as jest.Mock).mockImplementation(() => {
         throw new Error('unlink failed');
       });
@@ -240,7 +240,7 @@ describe('SeatbeltSandbox', () => {
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => callback(0));
+            process.nextTick(() => { callback(0); });
           }
           return mockChild;
         }),
@@ -258,13 +258,13 @@ describe('SeatbeltSandbox', () => {
     it('generates profile with escaped paths', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => {});
-      (unlinkSync as jest.Mock).mockImplementation(() => {});
+      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => callback(0));
+            process.nextTick(() => { callback(0); });
           }
           return mockChild;
         }),
@@ -293,13 +293,13 @@ describe('SeatbeltSandbox', () => {
     it('spawns sandbox-exec with correct arguments', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => {});
-      (unlinkSync as jest.Mock).mockImplementation(() => {});
+      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => callback(0));
+            process.nextTick(() => { callback(0); });
           }
           return mockChild;
         }),

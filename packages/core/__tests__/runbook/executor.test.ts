@@ -74,7 +74,7 @@ describe('executeCommandWithPolicy', () => {
   let consoleWarnSpy: jest.SpiedFunction<typeof console.warn>;
 
   beforeEach(() => {
-    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
   });
 
   afterEach(() => {
@@ -153,7 +153,7 @@ describe('executeCommandWithPolicy', () => {
     const evaluator = new PolicyEvaluator(policy);
     const mockPrompter = createMockPrompter({ granted: true });
 
-    const result = await executeCommandWithPolicy(
+    const _result = await executeCommandWithPolicy(
       'some-command',
       process.cwd(),
       { evaluator, prompter: mockPrompter as PolicyPrompter, sandbox: false }
@@ -237,7 +237,7 @@ describe('executeCommandWithEnv', () => {
     const result = await executeCommandWithEnv(
       'node -e "process.exit(process.env.TEST_VAR === \'hello\' ? 0 : 1)"',
       process.cwd(),
-      { TEST_VAR: 'hello', PATH: process.env.PATH || '' }
+      { TEST_VAR: 'hello', PATH: process.env.PATH ?? '' }
     );
 
     expect(result.success).toBe(true);

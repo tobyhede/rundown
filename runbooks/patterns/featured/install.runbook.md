@@ -64,7 +64,6 @@ Install the Mintlify CLI and set up a local documentation preview environment.
 ## 1 Prerequisites
 
 ### 1.1 Verify Node.js
-
 - PASS: CONTINUE
 - FAIL: STOP "Node.js v20.17.0 or higher is required"
 
