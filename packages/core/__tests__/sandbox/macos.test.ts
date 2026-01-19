@@ -1,0 +1,307 @@
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import type { SandboxOptions } from '../../src/sandbox/types.js';
+
+// Mock child_process
+jest.unstable_mockModule('child_process', () => ({
+  spawn: jest.fn(),
+}));
+
+// Mock fs
+jest.unstable_mockModule('fs', () => ({
+  existsSync: jest.fn(),
+  writeFileSync: jest.fn(),
+  unlinkSync: jest.fn(),
+}));
+
+// Import after mocking
+const { SeatbeltSandbox } = await import('../../src/sandbox/macos.js');
+const { spawn } = await import('child_process');
+const { existsSync, writeFileSync, unlinkSync } = await import('fs');
+
+describe('SeatbeltSandbox', () => {
+  const originalPlatform = process.platform;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
+  });
+
+  describe('getAvailability', () => {
+    it('returns unavailable on non-darwin platform', async () => {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      const sandbox = new SeatbeltSandbox();
+
+      const availability = await sandbox.getAvailability();
+
+      expect(availability.available).toBe(false);
+      expect(availability.mechanism).toBe('none');
+      expect(availability.reason).toContain('only available on macOS');
+      expect(availability.platform).toBe('linux');
+    });
+
+    it('returns unavailable when sandbox-exec not found', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(false);
+
+      const sandbox = new SeatbeltSandbox();
+      const availability = await sandbox.getAvailability();
+
+      expect(availability.available).toBe(false);
+      expect(availability.mechanism).toBe('none');
+      expect(availability.reason).toContain('sandbox-exec not found');
+    });
+
+    it('returns available when on darwin and sandbox-exec exists', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+
+      const sandbox = new SeatbeltSandbox();
+      const availability = await sandbox.getAvailability();
+
+      expect(availability.available).toBe(true);
+      expect(availability.mechanism).toBe('seatbelt');
+      expect(availability.platform).toBe('darwin');
+      expect(availability.supportsReadRestrictions).toBe(true);
+      expect(availability.supportsWriteRestrictions).toBe(true);
+    });
+
+    it('caches availability result', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+
+      const sandbox = new SeatbeltSandbox();
+      await sandbox.getAvailability();
+      await sandbox.getAvailability();
+
+      // existsSync should only be called once due to caching
+      expect(existsSync).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('isAvailable', () => {
+    it('returns true when available', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+
+      const sandbox = new SeatbeltSandbox();
+      const result = await sandbox.isAvailable();
+
+      expect(result).toBe(true);
+    });
+
+    it('returns false when unavailable', async () => {
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+      const sandbox = new SeatbeltSandbox();
+      const result = await sandbox.isAvailable();
+
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('execute', () => {
+    const mockOptions: SandboxOptions = {
+      cwd: '/test/cwd',
+      repoRoot: '/test/repo',
+      readOnlyPaths: ['/test/read'],
+      readWritePaths: ['/test/write'],
+      denyPaths: [],
+    };
+
+    it('executes command successfully', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {});
+      (unlinkSync as jest.Mock).mockImplementation(() => {});
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            setTimeout(() => callback(0), 0);
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      const result = await sandbox.execute('echo hello', mockOptions);
+
+      expect(result.success).toBe(true);
+      expect(result.exitCode).toBe(0);
+      expect(result.sandboxed).toBe(true);
+      expect(writeFileSync).toHaveBeenCalled();
+      expect(unlinkSync).toHaveBeenCalled();
+    });
+
+    it('handles non-zero exit code', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {});
+      (unlinkSync as jest.Mock).mockImplementation(() => {});
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            setTimeout(() => callback(1), 0);
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      const result = await sandbox.execute('exit 1', mockOptions);
+
+      expect(result.success).toBe(false);
+      expect(result.exitCode).toBe(1);
+      expect(result.sandboxed).toBe(true);
+    });
+
+    it('handles null exit code', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {});
+      (unlinkSync as jest.Mock).mockImplementation(() => {});
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | null | Error) => void) => {
+          if (event === 'close') {
+            setTimeout(() => callback(null), 0);
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      const result = await sandbox.execute('command', mockOptions);
+
+      // null exit code should default to 1
+      expect(result.exitCode).toBe(1);
+      expect(result.success).toBe(false);
+    });
+
+    it('handles process error event', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {});
+      (unlinkSync as jest.Mock).mockImplementation(() => {});
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'error') {
+            setTimeout(() => callback(new Error('spawn failed')), 0);
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      const result = await sandbox.execute('invalid-command', mockOptions);
+
+      expect(result.success).toBe(false);
+      expect(result.exitCode).toBe(1);
+      expect(result.sandboxed).toBe(true);
+      expect(result.policyDenied).toBe(true);
+      expect(result.denialReason).toContain('spawn failed');
+    });
+
+    it('cleans up profile file even when unlinkSync throws', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {});
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        throw new Error('unlink failed');
+      });
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            setTimeout(() => callback(0), 0);
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      // Should not throw despite unlinkSync failure
+      const result = await sandbox.execute('echo hello', mockOptions);
+
+      expect(result.success).toBe(true);
+      expect(unlinkSync).toHaveBeenCalled();
+    });
+
+    it('generates profile with escaped paths', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {});
+      (unlinkSync as jest.Mock).mockImplementation(() => {});
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            setTimeout(() => callback(0), 0);
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const optionsWithSpecialChars: SandboxOptions = {
+        cwd: '/test/cwd',
+        repoRoot: '/test/repo',
+        readOnlyPaths: ['/path/with"quote'],
+        readWritePaths: ['/path/with"double"quotes'],
+        denyPaths: [],
+      };
+
+      const sandbox = new SeatbeltSandbox();
+      await sandbox.execute('echo hello', optionsWithSpecialChars);
+
+      // Verify writeFileSync was called with escaped paths
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('.sb'),
+        expect.stringContaining('\\"'),
+        expect.any(Object)
+      );
+    });
+
+    it('spawns sandbox-exec with correct arguments', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {});
+      (unlinkSync as jest.Mock).mockImplementation(() => {});
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            setTimeout(() => callback(0), 0);
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      await sandbox.execute('echo test', mockOptions);
+
+      expect(spawn).toHaveBeenCalledWith(
+        '/usr/bin/sandbox-exec',
+        expect.arrayContaining(['-f', expect.stringContaining('.sb'), '/bin/sh', '-c', 'echo test']),
+        expect.objectContaining({
+          cwd: '/test/cwd',
+          stdio: 'inherit',
+        })
+      );
+    });
+  });
+});

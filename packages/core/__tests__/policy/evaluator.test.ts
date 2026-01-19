@@ -268,6 +268,65 @@ describe('PolicyEvaluator', () => {
       decision = evaluator.checkCommand('unknown-command');
       expect(decision.allowed).toBe(true);
     });
+
+    it('should allow read paths after session grant', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
+
+      // Initially requires prompt for path outside repo
+      let decision = evaluator.checkPath('/etc/passwd', 'read');
+      expect(decision.requiresPrompt).toBe(true);
+
+      // Add session grant for read path
+      evaluator.addSessionGrant('read', '/etc/**');
+
+      // Now allowed
+      decision = evaluator.checkPath('/etc/passwd', 'read');
+      expect(decision.allowed).toBe(true);
+      expect(decision.reason).toBe('Path allowed by session grant');
+    });
+
+    it('should allow write paths after session grant', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
+
+      // Initially requires prompt for path outside repo
+      let decision = evaluator.checkPath('/var/log/test.log', 'write');
+      expect(decision.requiresPrompt).toBe(true);
+
+      // Add session grant for write path
+      evaluator.addSessionGrant('write', '/var/log/**');
+
+      // Now allowed
+      decision = evaluator.checkPath('/var/log/test.log', 'write');
+      expect(decision.allowed).toBe(true);
+      expect(decision.reason).toBe('Path allowed by session grant');
+    });
+
+    it('should allow env vars after session grant', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
+
+      // Initially denied (API_KEY blocked)
+      let decision = evaluator.checkEnv('API_KEY');
+      expect(decision.allowed).toBe(false);
+
+      // Add session grant for env
+      evaluator.addSessionGrant('env', 'API_KEY');
+
+      // Now allowed
+      decision = evaluator.checkEnv('API_KEY');
+      expect(decision.allowed).toBe(true);
+      expect(decision.reason).toBe('Environment variable allowed by session grant');
+    });
+
+    it('should not match session grant with wrong type', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
+
+      // Add a run session grant
+      evaluator.addSessionGrant('run', 'test-command');
+
+      // Should not affect env check
+      const decision = evaluator.checkEnv('test-command');
+      expect(decision.allowed).toBe(false);
+    });
   });
 
   describe('runbook overrides', () => {
@@ -422,6 +481,277 @@ describe('PolicyEvaluator', () => {
 
       const decision = evaluator.checkCommand('git status');
       expect(decision.allowed).toBe(true);
+    });
+  });
+
+  describe('policy grants', () => {
+    it('should apply grants from policy config', () => {
+      const policy: PolicyConfig = {
+        version: 1,
+        default: {
+          mode: 'deny',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [],
+        grants: [
+          { type: 'run', pattern: 'custom-tool', scope: 'session', grantedAt: new Date().toISOString() },
+        ],
+      };
+      const evaluator = new PolicyEvaluator(policy, { repoRoot });
+
+      const decision = evaluator.checkCommand('custom-tool --version');
+      expect(decision.allowed).toBe(true);
+    });
+
+    it('should handle empty grants array', () => {
+      const policy: PolicyConfig = {
+        version: 1,
+        default: {
+          mode: 'prompted',
+          run: { allow: ['git'], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [],
+        grants: [],
+      };
+      const evaluator = new PolicyEvaluator(policy, { repoRoot });
+
+      // Should still work without grants
+      const decision = evaluator.checkCommand('git status');
+      expect(decision.allowed).toBe(true);
+    });
+
+    it('should apply read grants from policy config', () => {
+      const policy: PolicyConfig = {
+        version: 1,
+        default: {
+          mode: 'deny',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [],
+        grants: [
+          { type: 'read', pattern: '/custom/path/**', scope: 'session', grantedAt: new Date().toISOString() },
+        ],
+      };
+      const evaluator = new PolicyEvaluator(policy, { repoRoot });
+
+      const decision = evaluator.checkPath('/custom/path/file.txt', 'read');
+      expect(decision.allowed).toBe(true);
+    });
+  });
+
+  describe('edge cases', () => {
+    it('should deny command that cannot be parsed', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
+
+      // Empty command should not be parseable
+      const decision = evaluator.checkCommand('');
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toContain('Could not parse command');
+    });
+
+    it('should use process.cwd when repoRoot not provided', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, {});
+
+      expect(evaluator.getRepoRoot()).toBe(process.cwd());
+    });
+
+    it('should use os.tmpdir when tmpDir not provided', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, {});
+
+      expect(evaluator.getTmpDir()).toBe(os.tmpdir());
+    });
+
+    it('should return policy via getPolicy()', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
+
+      expect(evaluator.getPolicy()).toBe(DEFAULT_POLICY);
+    });
+
+    it('should handle checkPath denyAll flag', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, {
+        repoRoot,
+        denyAll: true,
+      });
+
+      const decision = evaluator.checkPath('/any/path', 'read');
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toContain('--deny-all');
+    });
+
+    it('should handle checkPath allowAll flag', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, {
+        repoRoot,
+        allowAll: true,
+      });
+
+      const decision = evaluator.checkPath('/any/path', 'read');
+      expect(decision.allowed).toBe(true);
+      expect(decision.reason).toContain('--allow-all');
+    });
+
+    it('should handle checkEnv denyAll flag', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, {
+        repoRoot,
+        denyAll: true,
+      });
+
+      const decision = evaluator.checkEnv('PATH');
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toContain('--deny-all');
+    });
+
+    it('should handle checkEnv allowAll flag', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, {
+        repoRoot,
+        allowAll: true,
+      });
+
+      const decision = evaluator.checkEnv('SECRET_TOKEN');
+      expect(decision.allowed).toBe(true);
+      expect(decision.reason).toContain('--allow-all');
+    });
+
+    it('should handle env CLI grants', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, {
+        repoRoot,
+        cliGrants: {
+          env: ['CUSTOM_*'],
+        },
+      });
+
+      const decision = evaluator.checkEnv('CUSTOM_VAR');
+      expect(decision.allowed).toBe(true);
+      expect(decision.reason).toBe('Environment variable allowed by CLI grant');
+    });
+
+    it('should handle path in execute mode when not in allow list', () => {
+      const policy: PolicyConfig = {
+        version: 1,
+        default: {
+          mode: 'execute',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [],
+        grants: [],
+      };
+      const evaluator = new PolicyEvaluator(policy, { repoRoot });
+
+      // In execute mode, should be allowed even when not in allow list
+      const decision = evaluator.checkPath('/random/path/file.txt', 'read');
+      expect(decision.allowed).toBe(true);
+    });
+
+    it('should handle env in execute mode when not in allow list', () => {
+      const policy: PolicyConfig = {
+        version: 1,
+        default: {
+          mode: 'execute',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [],
+        grants: [],
+      };
+      const evaluator = new PolicyEvaluator(policy, { repoRoot });
+
+      // In execute mode, should be allowed even when not in allow list
+      const decision = evaluator.checkEnv('RANDOM_VAR');
+      expect(decision.allowed).toBe(true);
+    });
+
+    it('should handle override without specific rules (only mode)', () => {
+      const policy: PolicyConfig = {
+        version: 1,
+        default: {
+          mode: 'deny',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [
+          {
+            runbook: 'test/*.md',
+            mode: 'execute',
+            // No run/read/write/env rules
+          },
+        ],
+        grants: [],
+      };
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot,
+        runbookPath: 'test/example.md',
+      });
+
+      // Should use override mode (execute) but no extra rules
+      const decision = evaluator.checkCommand('any-command');
+      expect(decision.allowed).toBe(true);
+    });
+
+    it('should skip undefined values in filterEnvironment', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
+      const env: NodeJS.ProcessEnv = {
+        PATH: '/usr/bin',
+        UNDEFINED_VAR: undefined,
+      };
+
+      const filtered = evaluator.filterEnvironment(env);
+
+      expect(filtered.PATH).toBe('/usr/bin');
+      expect('UNDEFINED_VAR' in filtered).toBe(false);
+    });
+  });
+
+  describe('CLI grants precedence', () => {
+    it('CLI grants take precedence for commands', () => {
+      // CLI grant should allow even if default mode would deny
+      const policy: PolicyConfig = {
+        version: 1,
+        default: {
+          mode: 'deny',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [],
+        grants: [],
+      };
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot,
+        cliGrants: { run: ['special-tool'] },
+      });
+
+      const decision = evaluator.checkCommand('special-tool');
+      expect(decision.allowed).toBe(true);
+    });
+
+    it('CLI grants with session grants both work', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, {
+        repoRoot,
+        cliGrants: { run: ['cli-tool'] },
+      });
+
+      // Add session grant for different command
+      evaluator.addSessionGrant('run', 'session-tool');
+
+      // Both should be allowed
+      expect(evaluator.checkCommand('cli-tool').allowed).toBe(true);
+      expect(evaluator.checkCommand('session-tool').allowed).toBe(true);
     });
   });
 });

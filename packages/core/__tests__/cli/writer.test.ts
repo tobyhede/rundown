@@ -67,6 +67,56 @@ describe('TestWriter', () => {
       expect(writer.getLines('stdout')).toEqual(['stdout line']);
       expect(writer.getLines('stderr')).toEqual(['stderr line']);
     });
+
+    it('returns all lines when no stream specified', () => {
+      writer.writeLine('out1');
+      writer.writeError('err1');
+      writer.writeLine('out2');
+      const lines = writer.getLines();
+      expect(lines).toEqual(['out1', 'err1', 'out2']);
+    });
+
+    it('trims and filters empty lines', () => {
+      writer.writeLine('  spaced  ');
+      writer.writeLine('');
+      writer.writeLine('normal');
+      const lines = writer.getLines();
+      expect(lines).toEqual(['spaced', 'normal']);
+    });
+  });
+
+  describe('write', () => {
+    it('captures text without newline', () => {
+      writer.write('no newline');
+      expect(writer.getOutput()).toBe('no newline');
+    });
+
+    it('defaults to stdout stream', () => {
+      writer.write('text');
+      expect(writer.getStdout()).toBe('text');
+      expect(writer.getStderr()).toBe('');
+    });
+  });
+
+  describe('writeLines', () => {
+    it('writes each line to specified stream', () => {
+      writer.writeLines(['line1', 'line2'], 'stderr');
+      expect(writer.getStderr()).toBe('line1\nline2\n');
+      expect(writer.getStdout()).toBe('');
+    });
+  });
+
+  describe('getRawOutput', () => {
+    it('returns captured entries for detailed assertions', () => {
+      writer.writeLine('text', 'stdout');
+      writer.writeError('error');
+
+      const raw = writer.getRawOutput();
+
+      expect(raw).toHaveLength(2);
+      expect(raw[0]).toEqual({ text: 'text\n', stream: 'stdout' });
+      expect(raw[1]).toEqual({ text: 'error\n', stream: 'stderr' });
+    });
   });
 });
 

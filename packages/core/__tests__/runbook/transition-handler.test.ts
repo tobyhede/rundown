@@ -153,6 +153,134 @@ describe('evaluateFailCondition', () => {
   });
 });
 
+describe('evaluateFailCondition edge cases', () => {
+  it('returns stopped when step has no transitions', () => {
+    const step = {
+      name: '1',
+      description: 'Test step without transitions',
+      isDynamic: false,
+    };
+
+    const result = evaluateFailCondition(step, 0);
+    expect(result.action).toBe('stopped');
+    expect(result.message).toBe('No FAIL condition defined for step');
+  });
+
+  it('returns stopped for unknown FAIL action type', () => {
+    const step: any = {
+      name: '1',
+      description: 'Test',
+      isDynamic: false,
+      transitions: {
+        all: true,
+        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', action: { type: 'UNKNOWN_ACTION' } }
+      }
+    };
+
+    const result = evaluateFailCondition(step, 0);
+    expect(result.action).toBe('stopped');
+    expect(result.message).toBe('Unknown FAIL action');
+  });
+});
+
+describe('evaluatePassCondition edge cases', () => {
+  it('returns continue when step has no transitions', () => {
+    const step = {
+      name: '1',
+      description: 'Test step without transitions',
+      isDynamic: false,
+    };
+
+    const result = evaluatePassCondition(step);
+    expect(result.action).toBe('continue');
+  });
+
+  it('returns continue for unknown PASS action type', () => {
+    const step: any = {
+      name: '1',
+      description: 'Test',
+      isDynamic: false,
+      transitions: {
+        all: true,
+        pass: { kind: 'pass', action: { type: 'UNKNOWN_ACTION' } },
+        fail: { kind: 'fail', action: { type: 'STOP' } }
+      }
+    };
+
+    const result = evaluatePassCondition(step);
+    expect(result.action).toBe('continue');
+  });
+
+  it('returns continue for RETRY action in PASS condition', () => {
+    const step: any = {
+      name: '1',
+      description: 'Test',
+      isDynamic: false,
+      transitions: {
+        all: true,
+        pass: { kind: 'pass', action: { type: 'RETRY', max: 3, then: { type: 'STOP' } } },
+        fail: { kind: 'fail', action: { type: 'STOP' } }
+      }
+    };
+
+    const result = evaluatePassCondition(step);
+    expect(result.action).toBe('continue');
+  });
+
+  it('returns stopped for STOP action with message', () => {
+    const step: any = {
+      name: '1',
+      description: 'Test',
+      isDynamic: false,
+      transitions: {
+        all: true,
+        pass: { kind: 'pass', action: { type: 'STOP', message: 'Halted on pass' } },
+        fail: { kind: 'fail', action: { type: 'STOP' } }
+      }
+    };
+
+    const result = evaluatePassCondition(step);
+    expect(result.action).toBe('stopped');
+    expect(result.message).toBe('Halted on pass');
+  });
+});
+
+describe('evaluateSubstepAggregation edge cases', () => {
+  const passAnyTransitions = {
+    all: false,
+    pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
+    fail: { kind: 'fail' as const, action: { type: 'STOP' as const, message: 'All failed' } }
+  };
+
+  it('returns fail in ANY mode when all substeps have zero passes', () => {
+    const states: SubstepState[] = [
+      { id: '1', status: 'done', result: 'fail' },
+      { id: '2', status: 'done', result: 'fail' },
+      { id: '3', status: 'done', result: 'fail' }
+    ];
+
+    const result = evaluateSubstepAggregation(states, passAnyTransitions);
+    expect(result?.action).toBe('stopped');
+    expect(result?.message).toBe('All failed');
+  });
+
+  it('handles RETRY action in aggregation (returns retry)', () => {
+    const retryTransitions = {
+      all: true,
+      pass: { kind: 'pass' as const, action: { type: 'RETRY' as const, max: 3, then: { type: 'STOP' as const } } },
+      fail: { kind: 'fail' as const, action: { type: 'STOP' as const } }
+    };
+
+    const states: SubstepState[] = [
+      { id: '1', status: 'done', result: 'pass' }
+    ];
+
+    const result = evaluateSubstepAggregation(states, retryTransitions);
+    expect(result?.action).toBe('retry');
+  });
+});
+
 describe('evaluateFailCondition with RETRY exhaustion', () => {
   it('returns GOTO when retries exhausted with GOTO action', () => {
     const step = {

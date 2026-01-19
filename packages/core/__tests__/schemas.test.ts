@@ -53,6 +53,37 @@ describe('parseHookInput', () => {
       expect(result.data.user_message).toBe('fix the bug');
     }
   });
+
+  it('returns error for invalid JSON', () => {
+    const result = parseHookInput('{ invalid json }');
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Invalid JSON input');
+    }
+  });
+
+  it('returns error for schema validation failure', () => {
+    // Missing required fields 'hook_event_name' and 'cwd'
+    const result = parseHookInput('{}');
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Invalid input');
+    }
+  });
+
+  it('extracts error message from Error instance', () => {
+    // Malformed JSON triggers JSON.parse error with message
+    const result = parseHookInput('not json at all');
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Invalid JSON input');
+      // Should contain the actual JSON parse error message
+      expect(result.error.length).toBeGreaterThan('Invalid JSON input: '.length);
+    }
+  });
 });
 
 describe('RunbookStateSchema - step name validation', () => {
