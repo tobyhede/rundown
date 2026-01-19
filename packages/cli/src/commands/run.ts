@@ -14,7 +14,7 @@ import {
   printMetadata,
   printActionBlock,
   type PendingStep,
-} from '@rundown/core';
+} from '@turboshovel/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import {

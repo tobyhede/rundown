@@ -1,5 +1,5 @@
 {
-  "name": "@rundown/core",
+  "name": "@turboshovel/core",
   "version": "1.0.0",
   "description": "Core runbook state management and execution for Rundown",
   "type": "module",
@@ -38,7 +38,7 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^7.10.1",
-    "@rundown/parser": "*",
+    "@turboshovel/parser": "*",
     "js-yaml": "^4.1.1",
     "lilconfig": "^3.1.3",
     "picomatch": "^4.0.3",

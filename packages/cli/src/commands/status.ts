@@ -14,7 +14,7 @@ import {
   countNumberedSteps,
   type ActionBlockData,
   type RunbookMetadata,
-} from '@rundown/core';
+} from '@turboshovel/core';
 import { getCwd, getStepTotal, findRunbookFile } from '../helpers/context.js';
 import {
   getStepRetryMax,

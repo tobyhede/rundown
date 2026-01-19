@@ -8,7 +8,7 @@
 
 import {
   type ExecutionResult,
-} from '@rundown/core';
+} from '@turboshovel/core';
 import {
   executeEchoLogic,
   toExecutionResult,

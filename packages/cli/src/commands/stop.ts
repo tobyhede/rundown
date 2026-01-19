@@ -6,7 +6,7 @@ import {
   printMetadata,
   printRunbookStopped,
   printNoActiveRunbook,
-} from '@rundown/core';
+} from '@turboshovel/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';

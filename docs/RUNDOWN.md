@@ -74,7 +74,7 @@ The CLI is an orchestration and control interface. Claude executes the actual wo
 ## Installation
 
 ```bash
-npm install -g @rundown/cli
+npm install -g @turboshovel/cli
 ```
 
 Verify installation:

@@ -12,7 +12,7 @@
 import {
   RunbookStateManager,
   type ExecutionResult,
-} from '@rundown/core';
+} from '@turboshovel/core';
 import { isValidResult } from '../services/execution.js';
 
 /**

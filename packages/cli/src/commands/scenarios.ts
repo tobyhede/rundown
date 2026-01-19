@@ -9,7 +9,7 @@ import {
   info,
   dim,
   colorizeStatus,
-} from '@rundown/core';
+} from '@turboshovel/core';
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';

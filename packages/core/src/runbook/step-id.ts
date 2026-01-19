@@ -1,1 +1,1 @@
-export * from '@rundown/parser';
+export * from '@turboshovel/parser';

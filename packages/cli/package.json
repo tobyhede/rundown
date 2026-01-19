@@ -1,5 +1,5 @@
 {
-  "name": "@rundown/cli",
+  "name": "@turboshovel/cli",
   "version": "1.0.0",
   "description": "Runbook orchestration CLI",
   "type": "module",
@@ -35,8 +35,8 @@
     "node": ">=20.12.0"
   },
   "dependencies": {
-    "@rundown/core": "*",
-    "@rundown/parser": "*",
+    "@turboshovel/core": "*",
+    "@turboshovel/parser": "*",
     "commander": "^14.0.2",
     "js-yaml": "^4.1.1",
     "minimatch": "^10.1.1",

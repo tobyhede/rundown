@@ -8,7 +8,7 @@ import {
   printMetadata,
   printRunbookComplete,
   printNoActiveRunbook,
-} from '@rundown/core';
+} from '@turboshovel/core';
 import { getCwd } from '../helpers/context.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { buildMetadata } from '../services/execution.js';
