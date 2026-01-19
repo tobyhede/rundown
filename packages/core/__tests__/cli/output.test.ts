@@ -13,6 +13,9 @@ import {
   printRunbookStoppedAtStep,
   printRunbookStashed,
   printNoActiveRunbook,
+  printNoRunbooks,
+  printPolicyDenied,
+  printRunbookListEntry,
   TestWriter,
   setColorEnabled,
   resetColorCache,
@@ -317,6 +320,52 @@ describe('output formatter', () => {
     it('prints no active runbook message', () => {
       printNoActiveRunbook(writer);
       expect(writer.getLines()).toEqual(['No active runbook.']);
+    });
+  });
+
+  describe('printNoRunbooks', () => {
+    it('prints no runbooks message', () => {
+      printNoRunbooks(writer);
+      expect(writer.getLines()).toEqual(['No runbooks.']);
+    });
+  });
+
+  describe('printPolicyDenied', () => {
+    it('prints policy denied with command and reason', () => {
+      printPolicyDenied('rm -rf /', 'Command not in allow list', writer);
+      const lines = writer.getLines();
+      expect(lines).toContain('Policy Denied: rm -rf /');
+      expect(lines).toContain('Reason:   Command not in allow list');
+    });
+
+    it('includes blank lines for visual separation', () => {
+      printPolicyDenied('dangerous-cmd', 'Blocked by policy', writer);
+      const output = writer.getOutput();
+      // Should start and end with newlines for visual separation
+      expect(output).toMatch(/^\n/);
+      expect(output).toMatch(/\n$/);
+    });
+  });
+
+  describe('printRunbookListEntry', () => {
+    it('prints entry without title', () => {
+      printRunbookListEntry('wf-123', 'running', '2/5', 'runbooks/build.md', undefined, writer);
+      const output = writer.getOutput();
+      expect(output).toContain('wf-123');
+      expect(output).toContain('running');
+      expect(output).toContain('2/5');
+      expect(output).toContain('runbooks/build.md');
+      expect(output).not.toContain('[');
+    });
+
+    it('prints entry with title', () => {
+      printRunbookListEntry('wf-456', 'stopped', '3/10', 'runbooks/deploy.md', 'Deploy Production', writer);
+      const output = writer.getOutput();
+      expect(output).toContain('wf-456');
+      expect(output).toContain('stopped');
+      expect(output).toContain('3/10');
+      expect(output).toContain('runbooks/deploy.md');
+      expect(output).toContain('[Deploy Production]');
     });
   });
 });

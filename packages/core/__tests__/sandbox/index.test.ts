@@ -14,6 +14,20 @@ jest.unstable_mockModule('../../src/runbook/executor.js', () => ({
   executeCommand: jest.fn(),
 }));
 
+/**
+ * Helper to run a test with a mocked platform value.
+ * Uses try/finally to ensure platform is restored even if test throws.
+ */
+async function withPlatform<T>(platform: string, fn: () => T | Promise<T>): Promise<T> {
+  const original = process.platform;
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  try {
+    return await fn();
+  } finally {
+    Object.defineProperty(process, 'platform', { value: original, configurable: true });
+  }
+}
+
 describe('Sandbox Index', () => {
   const originalPlatform = process.platform;
   let consoleWarnSpy: jest.SpiedFunction<typeof console.warn>;
@@ -35,6 +49,7 @@ describe('Sandbox Index', () => {
   });
 
   afterEach(() => {
+    // Safety net: restore platform even if withPlatform helper isn't used
     Object.defineProperty(process, 'platform', {
       value: originalPlatform,
       configurable: true,

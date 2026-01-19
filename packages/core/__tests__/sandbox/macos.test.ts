@@ -18,6 +18,20 @@ const { SeatbeltSandbox } = await import('../../src/sandbox/macos.js');
 const { spawn } = await import('child_process');
 const { existsSync, writeFileSync, unlinkSync } = await import('fs');
 
+/**
+ * Helper to run a test with a mocked platform value.
+ * Uses try/finally to ensure platform is restored even if test throws.
+ */
+async function withPlatform<T>(platform: string, fn: () => T | Promise<T>): Promise<T> {
+  const original = process.platform;
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  try {
+    return await fn();
+  } finally {
+    Object.defineProperty(process, 'platform', { value: original, configurable: true });
+  }
+}
+
 describe('SeatbeltSandbox', () => {
   const originalPlatform = process.platform;
 
@@ -26,6 +40,7 @@ describe('SeatbeltSandbox', () => {
   });
 
   afterEach(() => {
+    // Safety net: restore platform even if withPlatform helper isn't used
     Object.defineProperty(process, 'platform', {
       value: originalPlatform,
       configurable: true,
@@ -123,7 +138,7 @@ describe('SeatbeltSandbox', () => {
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            setTimeout(() => callback(0), 0);
+            process.nextTick(() => callback(0));
           }
           return mockChild;
         }),
@@ -149,7 +164,7 @@ describe('SeatbeltSandbox', () => {
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            setTimeout(() => callback(1), 0);
+            process.nextTick(() => callback(1));
           }
           return mockChild;
         }),
@@ -173,7 +188,7 @@ describe('SeatbeltSandbox', () => {
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | null | Error) => void) => {
           if (event === 'close') {
-            setTimeout(() => callback(null), 0);
+            process.nextTick(() => callback(null));
           }
           return mockChild;
         }),
@@ -197,7 +212,7 @@ describe('SeatbeltSandbox', () => {
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'error') {
-            setTimeout(() => callback(new Error('spawn failed')), 0);
+            process.nextTick(() => callback(new Error('spawn failed')));
           }
           return mockChild;
         }),
@@ -225,7 +240,7 @@ describe('SeatbeltSandbox', () => {
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            setTimeout(() => callback(0), 0);
+            process.nextTick(() => callback(0));
           }
           return mockChild;
         }),
@@ -249,7 +264,7 @@ describe('SeatbeltSandbox', () => {
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            setTimeout(() => callback(0), 0);
+            process.nextTick(() => callback(0));
           }
           return mockChild;
         }),
@@ -284,7 +299,7 @@ describe('SeatbeltSandbox', () => {
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            setTimeout(() => callback(0), 0);
+            process.nextTick(() => callback(0));
           }
           return mockChild;
         }),

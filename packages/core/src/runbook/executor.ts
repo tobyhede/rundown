@@ -105,7 +105,12 @@ export function executeCommand(command: string, cwd: string): Promise<ExecutionR
 
 /**
  * Exit code used when command is denied by policy.
- * Standard Unix code for "command cannot execute" (permission denied).
+ *
+ * Uses POSIX standard exit code 126 which indicates "command found but not executable"
+ * (typically due to permission denied). This is the conventional code used by shells
+ * when a command cannot be invoked due to permissions.
+ *
+ * @see https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_08_02
  */
 export const POLICY_DENIED_EXIT_CODE = 126;
 

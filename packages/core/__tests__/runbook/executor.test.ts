@@ -8,6 +8,22 @@ import {
 } from '../../src/runbook/executor.js';
 import { PolicyEvaluator } from '../../src/policy/evaluator.js';
 import { DEFAULT_POLICY, type PolicyConfig } from '../../src/policy/schema.js';
+import type { PolicyPrompter } from '../../src/policy/prompter.js';
+
+/**
+ * Creates a mock PolicyPrompter for testing.
+ * Uses Pick to select only the methods needed by executeCommandWithPolicy.
+ */
+function createMockPrompter(
+  requestPermissionResult: { granted: boolean }
+): Pick<PolicyPrompter, 'requestPermission' | 'requestPersistablePermission' | 'confirmDangerous' | 'reset'> {
+  return {
+    requestPermission: jest.fn<PolicyPrompter['requestPermission']>().mockResolvedValue(requestPermissionResult),
+    requestPersistablePermission: jest.fn<PolicyPrompter['requestPersistablePermission']>(),
+    confirmDangerous: jest.fn<PolicyPrompter['confirmDangerous']>(),
+    reset: jest.fn<PolicyPrompter['reset']>(),
+  };
+}
 
 describe('executeCommand', () => {
   it('returns success true for exit code 0', async () => {
@@ -135,17 +151,12 @@ describe('executeCommandWithPolicy', () => {
       },
     };
     const evaluator = new PolicyEvaluator(policy);
-    const mockPrompter = {
-      requestPermission: jest.fn().mockResolvedValue({ granted: true }),
-      requestPersistablePermission: jest.fn(),
-      confirmDangerous: jest.fn(),
-      reset: jest.fn(),
-    };
+    const mockPrompter = createMockPrompter({ granted: true });
 
     const result = await executeCommandWithPolicy(
       'some-command',
       process.cwd(),
-      { evaluator, prompter: mockPrompter as any, sandbox: false }
+      { evaluator, prompter: mockPrompter as PolicyPrompter, sandbox: false }
     );
 
     expect(mockPrompter.requestPermission).toHaveBeenCalled();
@@ -164,17 +175,12 @@ describe('executeCommandWithPolicy', () => {
       },
     };
     const evaluator = new PolicyEvaluator(policy);
-    const mockPrompter = {
-      requestPermission: jest.fn().mockResolvedValue({ granted: false }),
-      requestPersistablePermission: jest.fn(),
-      confirmDangerous: jest.fn(),
-      reset: jest.fn(),
-    };
+    const mockPrompter = createMockPrompter({ granted: false });
 
     const result = await executeCommandWithPolicy(
       'some-command',
       process.cwd(),
-      { evaluator, prompter: mockPrompter as any, sandbox: false }
+      { evaluator, prompter: mockPrompter as PolicyPrompter, sandbox: false }
     );
 
     expect(result.policyDenied).toBe(true);
@@ -250,7 +256,9 @@ describe('executeCommandWithEnv', () => {
 });
 
 describe('POLICY_DENIED_EXIT_CODE', () => {
-  it('is 126 (permission denied)', () => {
+  it('is 126 (POSIX "command not executable" convention)', () => {
+    // 126 is the POSIX standard exit code for "command found but not executable"
+    // typically due to permission denied - see IEEE Std 1003.1-2017 Shell Command Language
     expect(POLICY_DENIED_EXIT_CODE).toBe(126);
   });
 });
