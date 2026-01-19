@@ -37,7 +37,7 @@ export async function setupRundown(container: WebContainer): Promise<void> {
     return;
   }
 
-  // Fetch pre-built snapshot (includes node_modules with @rundown/cli)
+  // Fetch pre-built snapshot (includes node_modules with @turboshovel/cli)
   const response = await fetch('/rundown-snapshot.bin');
   if (!response.ok) {
     throw new Error(`Failed to fetch snapshot: ${response.status} ${response.statusText}`);
@@ -173,7 +173,7 @@ export async function runRdCommand(
   onOutput?: (chunk: string) => void
 ): Promise<{ output: string; exitCode: number }> {
   // Use node to run the CLI script directly (avoids execute permission issues)
-  const cliPath = './node_modules/@rundown/cli/dist/cli.js';
+  const cliPath = './node_modules/@turboshovel/cli/dist/cli.js';
   console.log(`[WebContainer] Running rd via node: ${cliPath} ${args.join(' ')}`);
   return runCommand(container, 'node', [cliPath, ...args], 10000, onOutput);
 }
