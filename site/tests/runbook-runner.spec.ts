@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('RunbookRunner', () => {
   test('executes auto-execution scenario correctly', async ({ page }) => {
     // 1. Navigate to the pattern page
-    await page.goto('/patterns/code-blocks');
+    await page.goto('/explore/code-blocks');
 
     // 2. Wait for WebContainer to boot (Status: Ready)
     // The status text is in a span with text 'Ready'

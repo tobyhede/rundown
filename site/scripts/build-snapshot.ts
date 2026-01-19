@@ -1,8 +1,8 @@
 /**
- * Build-time script to create a WebContainer snapshot with @rundown/cli pre-installed.
+ * Build-time script to create a WebContainer snapshot with @turboshovel/cli pre-installed.
  * This eliminates the 5-15 second npm install at runtime.
  *
- * Uses local packages when @rundown/cli is not published to npm.
+ * Uses local packages when @turboshovel/cli is not published to npm.
  */
 import { snapshot } from '@webcontainer/snapshot';
 import { execSync } from 'child_process';
@@ -27,7 +27,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, '..', '..');
 
 async function buildSnapshot() {
-  console.log('Creating WebContainer snapshot with @rundown/cli...');
+  console.log('Creating WebContainer snapshot with @turboshovel/cli...');
 
   // 1. Create temp directory
   const tempDir = mkdtempSync(join(tmpdir(), 'rundown-env-'));
@@ -61,7 +61,7 @@ async function buildSnapshot() {
 
       for (const pkg of ['parser', 'core', 'cli']) {
         const pkgDir = join(packagesDir, pkg);
-        console.log(`Packing @rundown/${pkg}...`);
+        console.log(`Packing @turboshovel/${pkg}...`);
         const output = execSync('npm pack --json', {
           cwd: pkgDir,
           encoding: 'utf-8',
@@ -76,9 +76,9 @@ async function buildSnapshot() {
         name: 'rundown-demo',
         type: 'module',
         dependencies: {
-          '@rundown/parser': `file:${tarballs[0]}`,
-          '@rundown/core': `file:${tarballs[1]}`,
-          '@rundown/cli': `file:${tarballs[2]}`,
+          '@turboshovel/parser': `file:${tarballs[0]}`,
+          '@turboshovel/core': `file:${tarballs[1]}`,
+          '@turboshovel/cli': `file:${tarballs[2]}`,
         },
       };
       writeFileSync(
@@ -100,7 +100,7 @@ async function buildSnapshot() {
         name: 'rundown-demo',
         type: 'module',
         dependencies: {
-          '@rundown/cli': 'latest',
+          '@turboshovel/cli': 'latest',
         },
       };
       writeFileSync(
@@ -108,7 +108,7 @@ async function buildSnapshot() {
         JSON.stringify(packageJson, null, 2)
       );
 
-      console.log('Installing @rundown/cli from npm...');
+      console.log('Installing @turboshovel/cli from npm...');
       execSync('npm install', { cwd: tempDir, stdio: 'inherit' });
     }
 
