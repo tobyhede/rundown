@@ -16,7 +16,7 @@ test.describe('Landing Page Scenarios', () => {
     // Select 'rundown' scenario
     await page.getByRole('button', { name: 'rundown' }).click();
 
-    const nextStepButton = page.getByRole('button', { name: 'Next' });
+    const nextStepButton = page.getByRole('button', { name: 'Next' }).first();
 
     // rundown has 7 commands: run + 6 passes
     for (let i = 0; i < 7; i++) {
@@ -38,7 +38,7 @@ test.describe('Landing Page Scenarios', () => {
     // Select 'retry' scenario
     await page.getByRole('button', { name: 'retry' }).click();
 
-    const nextStepButton = page.getByRole('button', { name: 'Next' });
+    const nextStepButton = page.getByRole('button', { name: 'Next' }).first();
 
     // retry has 11 commands
     for (let i = 0; i < 11; i++) {
@@ -59,7 +59,7 @@ test.describe('Landing Page Scenarios', () => {
     // Select 'start' scenario
     await page.getByRole('button', { name: 'start' }).click();
 
-    const nextStepButton = page.getByRole('button', { name: 'Next' });
+    const nextStepButton = page.getByRole('button', { name: 'Next' }).first();
 
     // start has 3 commands: run, goto, pass
     for (let i = 0; i < 3; i++) {
