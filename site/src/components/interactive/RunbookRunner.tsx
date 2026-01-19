@@ -72,6 +72,7 @@ export function RunbookRunner({
 
   const hasAutoStarted = useRef(false);
   const previousScenario = useRef<string | null>(null);
+  const isResetting = useRef(false);
 
   const [runbookStep, setRunbookStep] = useState<string>('—');
   const [runbookTotal, setRunbookTotal] = useState<string>('—');
@@ -230,7 +231,8 @@ export function RunbookRunner({
         const lines = cleanChunk.split('\n');
 
         for (const line of lines) {
-          const stepMatch = line.match(/Step:\s+([0-9.\/\{N\}]+)/);
+          // CLI outputs "At: X/Y" for step position
+          const stepMatch = line.match(/At:\s+(\d+\/\d+)/);
           if (stepMatch) {
             const parts = stepMatch[1].split('/');
             setRunbookStep(parts[0]);
@@ -267,6 +269,12 @@ export function RunbookRunner({
       return;
     }
 
+    // Don't auto-execute while reset is in progress
+    if (isResetting.current) {
+      previousScenario.current = selectedScenario;
+      return;
+    }
+
     if (
       selectedScenario !== previousScenario.current &&
       status === 'ready' &&
@@ -278,6 +286,17 @@ export function RunbookRunner({
   }, [selectedScenario, status, currentStep, executeStep]);
 
   const reset = useCallback(async () => {
+    // Set flag to prevent auto-execute during reset
+    isResetting.current = true;
+
+    // Reset internal state first (synchronous)
+    resetInternalState();
+    if (status === 'error') {
+      setStatus('ready');
+      setError(null);
+    }
+
+    // Then clean runbook state (async)
     if (container) {
       try {
         await cleanRundownState(container);
@@ -286,11 +305,8 @@ export function RunbookRunner({
       }
     }
 
-    resetInternalState();
-    if (status === 'error') {
-      setStatus('ready');
-      setError(null);
-    }
+    // Clear the flag after reset is complete
+    isResetting.current = false;
   }, [container, status, resetInternalState]);
 
   const scenario = scenarios[selectedScenario];
@@ -394,28 +410,49 @@ export function RunbookRunner({
 
       {/* Footer Progress & Status */}
       <div className="mt-4 flex items-center justify-between text-[10px] font-mono border-t border-border pt-4">
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground uppercase tracking-tighter">Step</span>
-          <span className="text-foreground font-bold">
-            {runbookStep}/{runbookTotal}
-          </span>
-        </div>
-
         <div className="flex items-center gap-6">
-          {runbookResult && (
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground uppercase tracking-tighter">Result</span>
-              <span className="text-foreground font-bold">
-                {runbookResult}
-              </span>
-            </div>
-          )}
-
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground uppercase tracking-tighter">Expected</span>
-            <span className="text-foreground font-bold">{scenario?.result}</span>
+            <span className="text-muted-foreground uppercase tracking-tighter">Step</span>
+            <span className="text-foreground font-bold">
+              {runbookStep}/{runbookTotal}
+            </span>
           </div>
+
+          {runbookResult && (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground uppercase tracking-tighter">Result</span>
+                <span className="text-foreground font-bold">
+                  {runbookResult}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground uppercase tracking-tighter">Expected</span>
+                <span className="text-foreground font-bold">{scenario?.result || '—'}</span>
+              </div>
+            </>
+          )}
         </div>
+
+        {!compact && (
+          <div className="flex gap-2">
+            <button
+              onClick={executeStep}
+              disabled={!canRun}
+              className="h-9 px-4 bg-foreground text-background font-medium text-sm rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-foreground/90 transition-colors"
+            >
+              {isComplete ? 'Complete' : 'Next'}
+            </button>
+            <button
+              onClick={reset}
+              disabled={status === 'running' || (currentStep === 0 && !error)}
+              className="h-9 px-3 border border-border bg-background text-foreground text-sm rounded-md hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Reset
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
