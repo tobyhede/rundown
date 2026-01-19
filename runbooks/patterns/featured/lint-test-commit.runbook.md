@@ -1,37 +1,38 @@
 ---
-name: Lint, Test, & Commit
-description: Lint, Test and Fix in a loop until `PASS`, then commit.
+name: Lint-Test-Commit
+description: Lint Test and Fix in a loop until `PASS`, then commit.
 tags:
   - featured
 scenarios:
   completed:
-    description:
+    description: Lint, Test, & Commit
     commands:
       - rd run --prompted lint-test-commit.runbook.md
-      - rd pass  # 1 Run Tests
-      - rd pass  # 3 Commit Changes
+      - rd pass  # 1 Run Lint Checks - CONTINUE
+      - rd pass  # 2 Run Tests - CONTINUE
+      - rd pass  # 3 Commit - CONTINUE
     result: COMPLETE
-  flaky-test-retry:
-    description: Tests fail initially, but pass after recovery and retry
-    skip: true  # TODO: Fix RETRY state tracking - completion not recorded after RETRY GOTO sequence
+  via-fix-test:
+    description: Lint, Test failure with Fix, then Commit
     commands:
       - rd run --prompted lint-test-commit.runbook.md
-      - rd fail  # 1 Run Tests - CONTINUE
-      - rd pass  # 2 Recovery and Fix - RETRY (1/2) GOTO 1
-      - rd pass  # 1 Run Tests - GOTO 3
+      - rd pass  # 1 Run Lint Checks - CONTINUE
+      - rd fail  # 2 Run Tests - GOTO FixTest
+      - rd pass  # FixTest - GOTO 2
+      - rd pass  # 2 Run Tests - CONTINUE
       - rd pass  # 3 Commit Changes - COMPLETE
     result: COMPLETE
-  impossible-fix:
-    description: Tests continue to fail despite recovery attempts
-    skip: true  # TODO: Fix RETRY state tracking - completion not recorded after RETRY GOTO sequence
+  stopped:
+    description:  Lint failure with Fix, Test failure and fix until STOP
     commands:
       - rd run --prompted lint-test-commit.runbook.md
-      - rd fail  # 1 Run Tests - CONTINUE
-      - rd pass  # 2 Recovery and Fix - RETRY (1/2) GOTO 1
-      - rd fail  # 1 Run Tests - CONTINUE
-      - rd pass  # 2 Recovery and Fix - RETRY (2/2) GOTO 1
-      - rd fail  # 1 Run Tests - CONTINUE
-      - rd fail  # 2 Recovery and Fix - retries exhausted, STOP
+      - rd fail  # 1 Run Lint Checks - GOTO FixLint
+      - rd pass  # FixLint - GOTO 1
+      - rd pass  # 1 Run Lint Checks - CONTINUE
+      - rd fail  # 2 Run Tests - GOTO FixTest
+      - rd pass  # FixTest - GOTO 2
+      - rd fail  # 2 Run Tests - GOTO FixTest
+      - rd fail  # FixTest - STOP
     result: STOP
 ---
 
@@ -41,7 +42,7 @@ Lint, Test and Fix in a loop until `PASS`, then commit.
 
 
 ## 1. Run Lint Checks
-- FAIL: GOTO FIX_LINT
+- FAIL: GOTO FixLint
 
 Run the test suite to verify the implementation.
 
@@ -51,13 +52,14 @@ rd echo npm lint
 
 
 ## 2. Run Tests
-- FAIL: GOTO FIX_TESTS
+- FAIL: GOTO FixTest
 
 Run the test suite to verify the implementation.
 
 ```bash
 rd echo npm test
 ```
+
 
 ## 3. Commit Changes
 - PASS: COMPLETE
@@ -69,7 +71,7 @@ rd echo git commit -m 'feat: implement new logic'
 ```
 
 
-## FIX_LINT. Fix lint issues.
+## FixLint. Fix lint issues.
 
 - YES: GOTO 1
 - NO: STOP "Unable to fix lint issues"
@@ -77,12 +79,12 @@ rd echo git commit -m 'feat: implement new logic'
 Follow the project guidelines and address all lint issues.
 
 
-## FIX_TESTS. Fix all failing tests.
+## FixTest. Fix all failing tests.
 
 - YES: GOTO 2
-- NO: STOP "Unable to fix lint issues"
+- NO: STOP "Unable to fix failing test/s"
 
-Follow the project guidelines and address all lint issues.
+Fix all failing tests
 
 
 

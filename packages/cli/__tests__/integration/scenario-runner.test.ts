@@ -282,11 +282,6 @@ describe('scenario runner', () => {
 
     for (const { file, scenarios } of patterns) {
       for (const [name, scenario] of Object.entries(scenarios)) {
-        // Skip scenarios marked with skip: true
-        if (scenario.skip) {
-          continue;
-        }
-
         // Reset workspace for each scenario
         await workspace.cleanup();
         workspace = await createTestWorkspace();

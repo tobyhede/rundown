@@ -133,6 +133,10 @@ describe('colors', () => {
       expect(colorizeStatus('complete')).toContain('\x1b[32m');
     });
 
+    it('colors stop status red', () => {
+      expect(colorizeStatus('stop')).toContain('\x1b[31m');
+    });
+
     it('colors stopped status red', () => {
       expect(colorizeStatus('stopped')).toContain('\x1b[31m');
     });

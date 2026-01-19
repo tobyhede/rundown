@@ -1,5 +1,5 @@
 import { setup, assign } from 'xstate';
-import type { Step, Action, Transitions, TransitionObject, TransitionKind, Substep } from './types.js';
+import type { Step, Action, Transitions } from './types.js';
 import type { StepId } from './step-id.js';
 
 /**
@@ -74,39 +74,6 @@ function formatGotoAction(target: StepId): string {
   }
   return `GOTO ${target.step}`;
 }
-
-/**
- * Resolve a simple GOTO target (non-NEXT, non-dynamic) to state ID.
- *
- * @param target - The StepId target
- * @param stepName - Current step name
- * @param substepId - Current substep ID
- * @param steps - All runbook steps
- * @returns Object with stateId and substep, or null if invalid
- */
-function resolveSimpleGotoTarget(
-  target: StepId,
-  stepName: string,
-  substepId: string | undefined,
-  steps: Step[]
-): { stateId: string; substep?: string; isGotoToSelf: boolean } | null {
-  const targetStepObj = steps.find(s => s.name === target.step);
-  if (!targetStepObj) {
-    return null;
-  }
-
-  const resolvedSubstepId = target.substep ?? (targetStepObj.substeps?.[0]?.id);
-  const computedTarget = formatStateId(targetStepObj.name, resolvedSubstepId);
-  const currentStateId = formatStateId(stepName, substepId);
-  const isGotoToSelf = computedTarget === currentStateId;
-
-  return {
-    stateId: computedTarget,
-    substep: resolvedSubstepId,
-    isGotoToSelf
-  };
-}
-
 type GotoAssignValue<T> = T | ((args: { event: RunbookEvent }) => T);
 
 /**
@@ -172,7 +139,7 @@ function buildTransition(
           context.retryCount < retry,
         actions: assign({
           lastAction: 'RETRY',
-          retryCount: ({ context }) => context.retryCount + 1,
+          retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
           retryMax: retry
         }),
         target: currentStateId

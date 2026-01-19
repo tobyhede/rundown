@@ -26,7 +26,7 @@ export function renderAction(action: Action): string {
 function renderTransitionAction(transition: TransitionObject): string {
   const actionStr = renderAction(transition.action);
   if (transition.retry > 0) {
-    return `RETRY ${transition.retry} ${actionStr}`;
+    return `RETRY ${String(transition.retry)} ${actionStr}`;
   }
   return actionStr;
 }

@@ -84,7 +84,7 @@ export function evaluateFailCondition(
  */
 export function evaluatePassCondition(
   step: Step,
-  currentRetryCount: number = 0
+  currentRetryCount = 0
 ): ConditionResult {
   if (!step.transitions) {
     return { action: 'continue' };
@@ -109,7 +109,7 @@ export function evaluatePassCondition(
 export function evaluateSubstepAggregation(
   substepStates: readonly SubstepState[],
   transitions: Transitions,
-  currentRetryCount: number = 0
+  currentRetryCount = 0
 ): ConditionResult | null {
   const allDone = substepStates.every(s => s.status === 'done');
   if (!allDone) return null;
@@ -150,10 +150,11 @@ function evaluateAction(action: Action): ConditionResult {
       return { action: 'complete', message: action.message };
     case 'GOTO':
       return { action: 'goto', gotoTarget: action.target };
-    default:
+    default: {
       // Handle unknown action types (should not occur with valid schema)
       const _exhaustive: never = action;
       return _exhaustive;
+    }
   }
 }
 

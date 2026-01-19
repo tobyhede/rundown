@@ -41,6 +41,7 @@ describe('GOTO action type', () => {
 
     // Type assertion - if this compiles, the type is correct
     expect(gotoAction.type).toBe('GOTO');
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- testing type narrowing
     if (gotoAction.type === 'GOTO') {
       expect(gotoAction.target.step).toBe(2);
       expect(gotoAction.target.substep).toBe('1');
@@ -53,6 +54,7 @@ describe('GOTO action type', () => {
       target: { step: 3 as StepNumber }
     };
 
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- testing type narrowing
     if (gotoAction.type === 'GOTO') {
       expect(gotoAction.target.step).toBe(3);
       expect(gotoAction.target.substep).toBeUndefined();

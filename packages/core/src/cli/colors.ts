@@ -144,6 +144,7 @@ export function colorizeStatus(status: string): string {
     case 'complete':
     case 'completed':
       return success(status);
+    case 'stop':
     case 'stopped':
     case 'failed':
       return failure(status);
