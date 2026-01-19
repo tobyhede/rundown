@@ -324,9 +324,8 @@ export function RunbookRunner({
 
   return (
     <div
-      className={`bg-muted rounded-lg border border-border ${
-        compact ? 'p-4' : 'p-6 flex flex-col h-full'
-      }`}
+      className={`bg-muted rounded-lg border border-border ${compact ? 'p-4' : 'p-6 flex flex-col h-full'
+        }`}
     >
       {/* Scenario Selection */}
       <div className="mb-6">
@@ -342,11 +341,10 @@ export function RunbookRunner({
                 setSelectedScenario(key);
                 reset();
               }}
-              className={`px-3 py-1.5 text-xs font-mono rounded-md border transition-all whitespace-normal text-left ${
-                selectedScenario === key
-                  ? 'bg-foreground text-background border-foreground'
+              className={`px-3 py-1.5 text-xs font-mono rounded-md border transition-all whitespace-normal text-left ${selectedScenario === key
+                  ? 'bg-foreground/90 text-background border-foreground/90'
                   : 'bg-background border-border text-muted-foreground hover:text-foreground hover:border-foreground/50'
-              }`}
+                }`}
             >
               {key}
             </button>
@@ -371,14 +369,14 @@ export function RunbookRunner({
           <button
             onClick={executeStep}
             disabled={!canRun}
-            className="h-9 px-4 bg-foreground text-background font-medium text-sm rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-foreground/90 transition-colors"
+            className="h-9 px-4 text-sm btn-primary"
           >
-            {isComplete ? 'Complete' : 'Next Step'}
+            {isComplete ? 'Complete' : 'Next'}
           </button>
           <button
             onClick={reset}
             disabled={status === 'running' || (currentStep === 0 && !error)}
-            className="h-9 px-3 border border-border bg-background text-foreground text-sm rounded-md hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="h-9 px-3 text-sm btn-secondary"
           >
             Reset
           </button>
@@ -394,16 +392,15 @@ export function RunbookRunner({
 
       {/* Terminal Output Container */}
       <div
-        className={`bg-background rounded-md p-4 border border-border overflow-hidden relative ${
-          compact ? 'h-[250px]' : 'flex-1 min-h-[400px]'
-        }`}
+        className={`bg-background rounded-md p-4 border border-border overflow-hidden relative ${compact ? 'h-[250px]' : 'flex-1 min-h-[400px]'
+          }`}
       >
         <div ref={terminalRef} className="h-full w-full" />
 
         {/* Placeholder/Loading State Overlay */}
         {(!container || status === 'booting' || status === 'loading') && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 z-10 text-muted-foreground font-mono text-xs">
-             <p>{statusText}</p>
+            <p>{statusText}</p>
           </div>
         )}
       </div>
@@ -440,14 +437,14 @@ export function RunbookRunner({
             <button
               onClick={executeStep}
               disabled={!canRun}
-              className="h-9 px-4 bg-foreground text-background font-medium text-sm rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-foreground/90 transition-colors"
+              className="h-9 px-4 text-sm btn-primary"
             >
               {isComplete ? 'Complete' : 'Next'}
             </button>
             <button
               onClick={reset}
               disabled={status === 'running' || (currentStep === 0 && !error)}
-              className="h-9 px-3 border border-border bg-background text-foreground text-sm rounded-md hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="h-9 px-3 text-sm btn-secondary"
             >
               Reset
             </button>

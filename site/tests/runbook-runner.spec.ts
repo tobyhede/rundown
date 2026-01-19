@@ -11,9 +11,9 @@ test.describe('RunbookRunner', () => {
     // 3. Select the 'auto-execution' scenario
     await page.getByRole('button', { name: 'auto-execution' }).click();
 
-    // 4. Click 'Next Step' to start the auto-execution scenario
+    // 4. Click 'Next' to start the auto-execution scenario
     // The scenario has only 1 command (rd run without --prompted) which runs to completion
-    await page.getByRole('button', { name: 'Next Step' }).click();
+    await page.getByRole('button', { name: 'Next' }).click();
 
     // 5. Wait for execution to finish
     // We expect the result 'COMPLETE' to appear in the footer

@@ -16,14 +16,14 @@ test.describe('Landing Page Scenarios', () => {
     // Select 'rundown' scenario
     await page.getByRole('button', { name: 'rundown' }).click();
 
-    const nextStepButton = page.getByRole('button', { name: 'Next Step' });
-    
+    const nextStepButton = page.getByRole('button', { name: 'Next' });
+
     // rundown has 7 commands: run + 6 passes
     for (let i = 0; i < 7; i++) {
       await nextStepButton.click();
       // Wait for ready state after each command, except possibly the last one if it finishes quickly
       if (i < 6) {
-         await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15000 });
+        await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15000 });
       }
     }
 
@@ -38,13 +38,13 @@ test.describe('Landing Page Scenarios', () => {
     // Select 'retry' scenario
     await page.getByRole('button', { name: 'retry' }).click();
 
-    const nextStepButton = page.getByRole('button', { name: 'Next Step' });
-    
+    const nextStepButton = page.getByRole('button', { name: 'Next' });
+
     // retry has 11 commands
     for (let i = 0; i < 11; i++) {
       await nextStepButton.click();
       if (i < 10) {
-         await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15000 });
+        await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15000 });
       }
     }
 
@@ -59,13 +59,13 @@ test.describe('Landing Page Scenarios', () => {
     // Select 'start' scenario
     await page.getByRole('button', { name: 'start' }).click();
 
-    const nextStepButton = page.getByRole('button', { name: 'Next Step' });
-    
+    const nextStepButton = page.getByRole('button', { name: 'Next' });
+
     // start has 3 commands: run, goto, pass
     for (let i = 0; i < 3; i++) {
       await nextStepButton.click();
       if (i < 2) {
-         await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15000 });
+        await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15000 });
       }
     }
 

@@ -3,8 +3,8 @@ const githubUrl = 'https://github.com/tobyhede/rundown';
 const quickstartUrl = 'https://github.com/tobyhede/rundown#get-started';
 ---
 
-<section class="flex flex-col items-center justify-center text-center px-4 py-12">
-  <div class="mb-8">
+<section id="header" class="flex flex-col items-center justify-center text-center px-4 py-12">
+  <div id="logo" class="mb-8">
     <img
       src="/logo.png"
       alt="Rundown Logo"
@@ -13,20 +13,20 @@ const quickstartUrl = 'https://github.com/tobyhede/rundown#get-started';
     />
   </div>
 
-  <h1 class="text-2xl md:text-3xl text-foreground mb-3 max-w-3xl">
+  <h1 id="heading" class="text-2xl md:text-3xl text-foreground mb-3 max-w-3xl">
     Run your Markdown
   </h1>
 
-  <p class="text-lg text-muted-foreground mb-8 max-w-2xl">
+  <p id="tagline" class="text-lg text-muted-foreground mb-8 max-w-2xl">
     Transform static documentation into interactive, stateful workflows that enforce your process.
   </p>
 
-  <div class="flex flex-col sm:flex-row gap-4">
+  <div id="buttons" class="flex flex-col sm:flex-row gap-4">
     <a
       href={quickstartUrl}
       target="_blank"
       rel="noopener noreferrer"
-      class="w-48 flex justify-center items-center h-10 px-8 bg-foreground text-background font-medium rounded-md hover:bg-foreground/90 transition-colors"
+      class="w-48 flex justify-center items-center h-10 px-8 btn-primary"
     >
       Get Started
     </a>
@@ -40,7 +40,7 @@ const quickstartUrl = 'https://github.com/tobyhede/rundown#get-started';
   </div>
 
   <!-- Install snippet -->
-  <div class="mt-6 w-full max-w-md">
+  <div id="snippet" class="mt-6 w-full max-w-md">
     <div class="flex items-center justify-between bg-muted border border-border rounded-lg px-4 py-3">
       <code class="text-foreground font-mono text-sm">
         <span class="text-muted-foreground">❯</span> npm install -g @rundown/cli
