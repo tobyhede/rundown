@@ -15,6 +15,7 @@ export const MAX_STEP_NUMBER = 999999;
  */
 export const CommandSchema = z.object({
   code: z.string(),
+  lang: z.string().optional(),
 });
 
 /**

@@ -299,11 +299,17 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
 
       if (isExecutableCodeBlock(codeNode.lang)) {
         // bash/sh/shell → direct command
-        cmd = { code: codeNode.value.trim() };
+        cmd = {
+          code: codeNode.value.trim(),
+          lang: codeNode.lang?.split(/\s+/)[0]
+        };
       } else if (isPromptCodeBlock(codeNode.lang)) {
         // prompt → rd prompt command (outputs with fences)
         const escaped = escapeForShellSingleQuote(codeNode.value.trim());
-        cmd = { code: `rd prompt '${escaped}'` };
+        cmd = {
+          code: `rd prompt '${escaped}'`,
+          lang: 'prompt'
+        };
       }
       // Other code blocks (json, etc.) are ignored - not valid in runbooks
 

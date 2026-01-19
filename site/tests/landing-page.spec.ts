@@ -18,6 +18,7 @@ test.describe('Landing Page Scenarios', () => {
 
     const nextStepButton = page.getByRole('button', { name: 'Next' }).first();
 
+
     // rundown has 7 commands: run + 6 passes
     for (let i = 0; i < 7; i++) {
       await nextStepButton.click();

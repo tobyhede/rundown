@@ -237,7 +237,7 @@ describe('output formatter', () => {
         prompt: 'Do something.',
         command: { code: 'npm test' },
       };
-      printStepBlock({ current: '1', total: 3 }, step, writer);
+      printStepBlock({ current: '1', total: 3 }, step, undefined, writer);
 
       const output = writer.getOutput();
       // Step position is now shown via separator and At: in action block, not here
@@ -255,7 +255,7 @@ describe('output formatter', () => {
         isDynamic: true,
         prompt: 'Process the batch.',
       };
-      printStepBlock({ current: '1', total: '{N}' }, step, writer);
+      printStepBlock({ current: '1', total: '{N}' }, step, undefined, writer);
 
       const output = writer.getOutput();
       // Step position is now in action block, not step block
@@ -271,7 +271,7 @@ describe('output formatter', () => {
         isDynamic: true,
         prompt: 'Process item {n}.',
       };
-      printStepBlock({ current: '2', total: '{N}', substep: '3' }, step, writer);
+      printStepBlock({ current: '2', total: '{N}', substep: '3' }, step, undefined, writer);
 
       const output = writer.getOutput();
       // Step position is now in action block, not step block

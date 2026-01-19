@@ -179,7 +179,7 @@ export async function runExecutionLoop(
       : state.substep;
 
     // Print step/substep block with resolved instance number
-    printStepBlock({ current: displayStep, total: totalSteps, substep: displaySubstep }, itemToRender);
+    printStepBlock({ current: displayStep, total: totalSteps, substep: displaySubstep }, itemToRender, prompted);
 
     // If CLI prompted mode, OR no command
     // Use itemToRender which may be a substep with its own command

@@ -144,15 +144,17 @@ export function printActionBlock(
  *
  * @param pos - The current step position
  * @param item - The Step or Substep to render and display
+ * @param showCommand - Whether to show the command as a code block (for prompted mode)
  * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printStepBlock(
   pos: StepPosition,
   item: Step | Substep,
+  showCommand?: boolean,
   writer: OutputWriter = getWriter()
 ): void {
   writer.writeLine('');
-  writer.writeLine(renderStepForCLI(item, pos.current, pos.substep));
+  writer.writeLine(renderStepForCLI(item, pos.current, pos.substep, showCommand));
 }
 
 /**

@@ -15,6 +15,7 @@ export {
  */
 export interface Command {
   readonly code: string;
+  readonly lang?: string;
 }
 
 /**

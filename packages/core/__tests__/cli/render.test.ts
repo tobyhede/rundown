@@ -195,4 +195,32 @@ describe('substep rendering', () => {
     expect(result).not.toContain('process');
     expect(result).not.toContain('```');
   });
+
+  it('renders command as code block when showCommand is true', () => {
+    const step: Step = {
+      name: '1',
+      description: 'Run tests',
+      isDynamic: false,
+      command: { code: 'npm test', lang: 'bash' } as any,
+    };
+
+    // @ts-expect-error - testing new showCommand parameter
+    const result = renderStepForCLI(step, undefined, undefined, true);
+
+    expect(result).toContain('```bash\nnpm test\n```');
+  });
+
+  it('renders command with different language tag when showCommand is true', () => {
+    const step: Step = {
+      name: '1',
+      description: 'Run python script',
+      isDynamic: false,
+      command: { code: 'print("hello")', lang: 'python' } as any,
+    };
+
+    // @ts-expect-error - testing new showCommand parameter
+    const result = renderStepForCLI(step, undefined, undefined, true);
+
+    expect(result).toContain('```python\nprint("hello")\n```');
+  });
 });
