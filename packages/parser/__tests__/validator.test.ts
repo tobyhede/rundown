@@ -486,4 +486,205 @@ describe('validator strict rules', () => {
       expect(errors.some(e => e.message.includes('no dynamic substep'))).toBe(true);
     });
   });
+
+  describe('empty runbook', () => {
+    it('rejects empty steps array', () => {
+      const errors = validateRunbook([]);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].message).toContain('at least one step');
+    });
+  });
+
+  describe('multiple dynamic steps', () => {
+    it('rejects multiple dynamic step templates', () => {
+      const steps = [
+        mockStep({ name: '{N}', isDynamic: true, description: 'First dynamic' }),
+        mockStep({ name: '{N}', isDynamic: true, description: 'Second dynamic' }),
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('exactly one dynamic step template'))).toBe(true);
+    });
+  });
+
+  describe('numeric step sequencing', () => {
+    it('rejects non-sequential numeric steps', () => {
+      const steps = [
+        mockStep({ name: '1', isDynamic: false, description: 'First' }),
+        mockStep({ name: '3', isDynamic: false, description: 'Third (skipping 2)' }),
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('must be sequential'))).toBe(true);
+    });
+  });
+
+  describe('GOTO to non-existent step', () => {
+    it('rejects GOTO to non-existent numeric step', () => {
+      const steps = [mockStep({
+        name: '1',
+        isDynamic: false,
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '99' } } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      })];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('does not exist'))).toBe(true);
+    });
+  });
+
+  describe('GOTO to step without substeps', () => {
+    it('rejects GOTO to substep when step has no substeps', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          isDynamic: false,
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }),
+        mockStep({ name: '2', isDynamic: false, description: 'No substeps' })
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('has no substeps'))).toBe(true);
+    });
+
+    it('rejects GOTO to named step substep when step has no substeps', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          isDynamic: false,
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: '1' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }),
+        mockStep({ name: 'ErrorHandler', isDynamic: false, description: 'No substeps' })
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('has no substeps'))).toBe(true);
+    });
+  });
+
+  describe('GOTO {N}.{n} validation', () => {
+    it('rejects GOTO {N}.{n} when no dynamic step exists', () => {
+      const steps = [mockStep({
+        name: '1',
+        isDynamic: false,
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}', substep: '{n}' } } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      })];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('no dynamic step exists'))).toBe(true);
+    });
+
+    it('rejects GOTO {N}.{n} when dynamic step has no dynamic substep', () => {
+      const steps = [
+        mockStep({
+          name: '{N}',
+          isDynamic: true,
+          substeps: [{ id: '1', isDynamic: false, description: 'Static substep' }],
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}', substep: '{n}' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        })
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('no dynamic substep'))).toBe(true);
+    });
+  });
+
+  describe('GOTO NEXT qualified patterns', () => {
+    it('rejects GOTO NEXT {N}.{n} when no dynamic step exists', () => {
+      const steps = [mockStep({
+        name: '1',
+        isDynamic: false,
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT', qualifier: { step: '{N}', substep: '{n}' } } } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      })];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('no dynamic step exists'))).toBe(true);
+    });
+
+    it('rejects GOTO NEXT X.{n} when step X does not exist', () => {
+      const steps = [mockStep({
+        name: '1',
+        isDynamic: false,
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT', qualifier: { step: 'NonExistent', substep: '{n}' } } } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      })];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('does not exist'))).toBe(true);
+    });
+
+    it('accepts GOTO NEXT ErrorHandler (qualified without substep)', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          isDynamic: false,
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NEXT', qualifier: { step: 'ErrorHandler' } } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }),
+        mockStep({ name: 'ErrorHandler', isDynamic: false }),
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.filter(e => e.message.includes('GOTO NEXT'))).toHaveLength(0);
+    });
+  });
+
+  describe('RETRY recursive validation', () => {
+    it('validates action inside RETRY then', () => {
+      const steps = [mockStep({
+        name: '1',
+        isDynamic: false,
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', action: { type: 'RETRY', max: 3, then: { type: 'GOTO', target: { step: '99' } } } },
+          fail: { kind: 'fail', action: { type: 'STOP' } }
+        }
+      })];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('does not exist'))).toBe(true);
+    });
+  });
+
+  describe('GOTO substep of dynamic step', () => {
+    it('suggests using GOTO step instead of substep for dynamic steps', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          isDynamic: false,
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '{N}', substep: '99' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }),
+        mockStep({
+          name: '{N}',
+          isDynamic: true,
+          substeps: [{ id: '1', isDynamic: false, description: 'Sub' }]
+        }),
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('requires dynamic step context'))).toBe(true);
+    });
+  });
 });

@@ -538,3 +538,211 @@ Handle errors`;
     expect(() => parseRunbook(md)).toThrow();
   });
 });
+
+describe('parser validation edge cases', () => {
+  describe('substep-parent mismatch', () => {
+    it('rejects substep with numeric prefix when parent is dynamic', () => {
+      const md = `## {N} Dynamic step
+### 1.1 Wrong prefix substep
+Do work.`;
+      expect(() => parseRunbook(md)).toThrow(/uses numeric prefix but parent step is dynamic/);
+    });
+
+    it('rejects substep with {N} prefix when parent is static', () => {
+      const md = `## 1 Static step
+### {N}.1 Wrong prefix substep
+Do work.`;
+      expect(() => parseRunbook(md)).toThrow(/uses \{N\} prefix but parent step .* is static/);
+    });
+
+    it('rejects substep referencing wrong parent step', () => {
+      const md = `## 1 First step
+### 2.1 Wrong parent substep
+Do work.`;
+      expect(() => parseRunbook(md)).toThrow(/does not belong to step/);
+    });
+  });
+
+  describe('duplicate substep IDs', () => {
+    it('rejects duplicate substep IDs in same step', () => {
+      const md = `## 1 Step
+### 1.1 First substep
+### 1.1 Duplicate substep`;
+      expect(() => parseRunbook(md)).toThrow(/Duplicate substep ID/);
+    });
+  });
+
+  describe('mixed substep types', () => {
+    it('rejects mixing static and dynamic substeps', () => {
+      const md = `## 1 Step
+### 1.1 Static substep
+Do something.
+### 1.{n} Dynamic substep
+Do something else.`;
+      expect(() => parseRunbook(md)).toThrow(/Cannot mix static and dynamic substeps/);
+    });
+
+    it('rejects mixing dynamic and static substeps', () => {
+      const md = `## 1 Step
+### 1.{n} Dynamic substep
+Do something.
+### 1.2 Static substep
+Do something else.`;
+      expect(() => parseRunbook(md)).toThrow(/Cannot mix static and dynamic substeps/);
+    });
+  });
+
+  describe('multiple code blocks', () => {
+    it('rejects multiple code blocks in step', () => {
+      const md = `## 1 Step
+\`\`\`bash
+echo first
+\`\`\`
+
+\`\`\`bash
+echo second
+\`\`\``;
+      expect(() => parseRunbook(md)).toThrow(/Multiple code blocks per step not allowed/);
+    });
+  });
+
+  describe('transition ordering', () => {
+    it('rejects transitions after prompt text in step', () => {
+      const md = `## 1 Step
+
+This is prompt text that appears first.
+
+- PASS: CONTINUE
+- FAIL: STOP`;
+      expect(() => parseRunbook(md)).toThrow(/Transitions must appear immediately after the step header/);
+    });
+
+    it('rejects transitions after content in step', () => {
+      const md = `## 1 Step
+
+\`\`\`bash
+npm test
+\`\`\`
+
+- PASS: CONTINUE
+- FAIL: STOP`;
+      expect(() => parseRunbook(md)).toThrow(/Transitions must appear immediately after the step header/);
+    });
+
+    it('rejects transitions after prompt text in substep', () => {
+      const md = `## 1 Step
+### 1.1 Substep
+
+This is prompt text.
+
+- PASS: CONTINUE
+- FAIL: STOP`;
+      expect(() => parseRunbook(md)).toThrow(/Transitions must appear immediately after the substep header/);
+    });
+
+    it('rejects transitions after content in substep', () => {
+      const md = `## 1 Step
+### 1.1 Substep
+
+\`\`\`bash
+npm test
+\`\`\`
+
+- PASS: CONTINUE
+- FAIL: STOP`;
+      expect(() => parseRunbook(md)).toThrow(/Transitions must appear immediately after the substep header/);
+    });
+  });
+
+  describe('text after content', () => {
+    it('rejects text after runbooks in substep', () => {
+      const md = `## 1 Step
+### 1.1 Substep
+- PASS: CONTINUE
+- FAIL: STOP
+
+- setup.runbook.md
+
+This text appears after runbooks - invalid.`;
+      expect(() => parseRunbook(md)).toThrow(/Prompt text must appear before code blocks or runbooks/);
+    });
+  });
+
+  describe('preamble handling', () => {
+    it('captures preamble text before first step', () => {
+      const md = `# My Runbook
+
+This is preamble text that describes the runbook.
+
+## 1 First step
+- PASS: COMPLETE
+
+Do the work.`;
+      // This should parse without error - preamble is allowed
+      const steps = parseRunbook(md);
+      expect(steps).toHaveLength(1);
+    });
+  });
+
+  describe('list transitions handling', () => {
+    it('parses list-based transitions correctly', () => {
+      const md = `## 1 Step
+
+- PASS: CONTINUE
+- FAIL: STOP
+
+Do the work.`;
+      const steps = parseRunbook(md);
+      expect(steps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
+      expect(steps[0].transitions?.fail.action).toEqual({ type: 'STOP' });
+    });
+
+    it('rejects list transitions after code block', () => {
+      const md = `## 1 Step
+
+\`\`\`bash
+npm test
+\`\`\`
+
+- PASS: CONTINUE
+- FAIL: STOP`;
+      expect(() => parseRunbook(md)).toThrow(/Transitions must appear immediately after the step header/);
+    });
+  });
+
+  describe('H1 and H4+ headers', () => {
+    it('rejects H1 header that looks like a step', () => {
+      const md = `# 1. This looks like a step but uses H1`;
+      expect(() => parseRunbook(md)).toThrow(/H1 headers.*cannot be used as step headers/);
+    });
+
+    it('rejects H4 headers', () => {
+      const md = `## 1 Step
+#### 1.1.1 Too deep`;
+      expect(() => parseRunbook(md)).toThrow(/H4\+ headings are not allowed/);
+    });
+  });
+
+  describe('list item ordering', () => {
+    it('rejects list items after transitions in substep', () => {
+      const md = `## 1 Step
+### 1.1 Substep
+- PASS: CONTINUE
+- FAIL: STOP
+
+- some other list item (not a runbook)`;
+      expect(() => parseRunbook(md)).toThrow(/Prompt text must appear before code blocks or runbooks/);
+    });
+
+    it('rejects list items after content in step', () => {
+      const md = `## 1 Step
+
+\`\`\`bash
+npm test
+\`\`\`
+
+- some list item that is not a transition`;
+      expect(() => parseRunbook(md)).toThrow(/Prompt text must appear before code blocks, substeps, or runbooks/);
+    });
+  });
+});

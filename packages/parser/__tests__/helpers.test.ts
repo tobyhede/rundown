@@ -870,3 +870,536 @@ describe('validateNEXTUsage with dynamic substeps', () => {
     }).toThrow('NEXT action is only allowed in dynamic contexts');
   });
 });
+
+// Phase 2: Step-ID function tests
+import { stepIdToString, stepIdEquals } from '../src/step-id.js';
+
+describe('stepIdToString', () => {
+  it('formats numeric step', () => {
+    expect(stepIdToString({ step: '1' })).toBe('1');
+  });
+
+  it('formats step with substep', () => {
+    expect(stepIdToString({ step: '1', substep: '2' })).toBe('1.2');
+  });
+
+  it('formats named step', () => {
+    expect(stepIdToString({ step: 'ErrorHandler' })).toBe('ErrorHandler');
+  });
+
+  it('formats named step with substep', () => {
+    expect(stepIdToString({ step: 'ErrorHandler', substep: 'Recover' })).toBe('ErrorHandler.Recover');
+  });
+
+  it('formats dynamic step', () => {
+    expect(stepIdToString({ step: '{N}' })).toBe('{N}');
+  });
+
+  it('formats dynamic step with substep', () => {
+    expect(stepIdToString({ step: '{N}', substep: '{n}' })).toBe('{N}.{n}');
+  });
+
+  it('formats NEXT target', () => {
+    expect(stepIdToString({ step: 'NEXT' })).toBe('NEXT');
+  });
+});
+
+describe('stepIdEquals', () => {
+  it('returns true for equal numeric steps', () => {
+    expect(stepIdEquals({ step: '1' }, { step: '1' })).toBe(true);
+  });
+
+  it('returns false for different steps', () => {
+    expect(stepIdEquals({ step: '1' }, { step: '2' })).toBe(false);
+  });
+
+  it('returns true for equal steps with substeps', () => {
+    expect(stepIdEquals({ step: '1', substep: '2' }, { step: '1', substep: '2' })).toBe(true);
+  });
+
+  it('returns false when one has substep and one does not', () => {
+    expect(stepIdEquals({ step: '1', substep: '2' }, { step: '1' })).toBe(false);
+  });
+
+  it('returns false for different substeps', () => {
+    expect(stepIdEquals({ step: '1', substep: '1' }, { step: '1', substep: '2' })).toBe(false);
+  });
+
+  it('handles undefined substeps correctly', () => {
+    expect(stepIdEquals({ step: '1', substep: undefined }, { step: '1' })).toBe(true);
+  });
+
+  it('returns true for equal named steps', () => {
+    expect(stepIdEquals({ step: 'ErrorHandler' }, { step: 'ErrorHandler' })).toBe(true);
+  });
+
+  it('returns true for equal NEXT targets', () => {
+    expect(stepIdEquals({ step: 'NEXT' }, { step: 'NEXT' })).toBe(true);
+  });
+});
+
+describe('parseStepIdFromString edge cases', () => {
+  describe('quoted strings', () => {
+    it('returns null for quoted step name (names must be identifiers)', () => {
+      expect(parseStepIdFromString('"Step Name"')).toBeNull();
+    });
+  });
+
+  describe('requireSeparator option', () => {
+    it('parses {N}.1 with separator requirement when followed by space', () => {
+      const result = parseStepIdFromString('{N}.1 Description', { requireSeparator: true });
+      expect(result).toEqual({ step: '{N}', substep: '1' });
+    });
+
+    it('parses {N}.{n} with separator requirement when followed by colon', () => {
+      const result = parseStepIdFromString('{N}.{n}:text', { requireSeparator: true });
+      expect(result).toEqual({ step: '{N}', substep: '{n}' });
+    });
+
+    it('parses {N}.abc without explicit separator since abc is a valid identifier', () => {
+      // Valid identifiers match before requireSeparator check
+      const result = parseStepIdFromString('{N}.abc', { requireSeparator: true });
+      expect(result).toEqual({ step: '{N}', substep: 'abc' });
+    });
+
+    it('parses {N}.Name with separator when followed by space', () => {
+      const result = parseStepIdFromString('{N}.Name Description', { requireSeparator: true });
+      expect(result).toEqual({ step: '{N}', substep: 'Name' });
+    });
+  });
+
+  describe('malformed dynamic patterns', () => {
+    it('returns null for malformed {N}abc (no dot separator)', () => {
+      expect(parseStepIdFromString('{N}abc')).toBeNull();
+    });
+
+    it('returns null for {N}123 without dot', () => {
+      expect(parseStepIdFromString('{N}123')).toBeNull();
+    });
+  });
+
+  describe('zero step/substep validation', () => {
+    it('returns null for step 0', () => {
+      expect(parseStepIdFromString('0')).toBeNull();
+    });
+
+    it('returns null for substep 0 in numeric step', () => {
+      expect(parseStepIdFromString('1.0')).toBeNull();
+    });
+
+    it('returns null for substep 0 in dynamic step', () => {
+      expect(parseStepIdFromString('{N}.0')).toBeNull();
+    });
+
+    it('returns null for substep 0 in named step', () => {
+      expect(parseStepIdFromString('ErrorHandler.0')).toBeNull();
+    });
+  });
+
+  describe('NEXT edge cases', () => {
+    it('returns null for NEXT.1 (NEXT cannot have substep notation)', () => {
+      expect(parseStepIdFromString('NEXT.1')).toBeNull();
+    });
+
+    it('returns null for NEXT.Substep', () => {
+      expect(parseStepIdFromString('NEXT.Substep')).toBeNull();
+    });
+  });
+
+  describe('bare {n} rejection', () => {
+    it('rejects bare {n} as step (only valid as substep)', () => {
+      expect(parseStepIdFromString('{n}')).toBeNull();
+    });
+  });
+
+  describe('empty input', () => {
+    it('returns null for empty string', () => {
+      expect(parseStepIdFromString('')).toBeNull();
+    });
+  });
+
+  describe('{N}.numeric substep', () => {
+    it('parses {N}.1 as dynamic step with numeric substep', () => {
+      expect(parseStepIdFromString('{N}.1')).toEqual({ step: '{N}', substep: '1' });
+    });
+
+    it('parses {N}.99 as dynamic step with numeric substep', () => {
+      expect(parseStepIdFromString('{N}.99')).toEqual({ step: '{N}', substep: '99' });
+    });
+  });
+
+  describe('invalid {N}.xxx patterns', () => {
+    it('returns null for {N}.@invalid (invalid character)', () => {
+      expect(parseStepIdFromString('{N}.@invalid')).toBeNull();
+    });
+
+    it('returns null for {N}.-dash (starts with dash)', () => {
+      expect(parseStepIdFromString('{N}.-dash')).toBeNull();
+    });
+  });
+});
+
+// Phase 3: formatAction, parseAction error cases, parseConditional error cases
+import { formatAction, convertToTransitions } from '../src/helpers.js';
+
+describe('formatAction', () => {
+  it('formats CONTINUE', () => {
+    expect(formatAction({ type: 'CONTINUE' })).toBe('CONTINUE');
+  });
+
+  it('formats COMPLETE without message', () => {
+    expect(formatAction({ type: 'COMPLETE' })).toBe('COMPLETE');
+  });
+
+  it('formats COMPLETE with message', () => {
+    expect(formatAction({ type: 'COMPLETE', message: 'all done' })).toBe('COMPLETE "all done"');
+  });
+
+  it('formats STOP without message', () => {
+    expect(formatAction({ type: 'STOP' })).toBe('STOP');
+  });
+
+  it('formats STOP with message', () => {
+    expect(formatAction({ type: 'STOP', message: 'BLOCKED' })).toBe('STOP "BLOCKED"');
+  });
+
+  it('formats GOTO with numeric target', () => {
+    expect(formatAction({ type: 'GOTO', target: { step: '2' } })).toBe('GOTO 2');
+  });
+
+  it('formats GOTO with named target', () => {
+    expect(formatAction({ type: 'GOTO', target: { step: 'ErrorHandler' } })).toBe('GOTO ErrorHandler');
+  });
+
+  it('formats RETRY with max', () => {
+    expect(formatAction({ type: 'RETRY', max: 3, then: { type: 'STOP' } })).toBe('RETRY 3');
+  });
+
+  it('formats RETRY without max as "RETRY"', () => {
+    // This tests the case where max is undefined/falsy
+    expect(formatAction({ type: 'RETRY', max: 0, then: { type: 'STOP' } } as any)).toBe('RETRY');
+  });
+});
+
+describe('parseAction error cases', () => {
+  it('returns null for unrecognized action', () => {
+    expect(parseAction('UNKNOWN')).toBeNull();
+  });
+
+  it('returns null for gibberish', () => {
+    expect(parseAction('foobar123')).toBeNull();
+  });
+
+  it('returns null for RETRY with invalid fallback action', () => {
+    expect(parseAction('RETRY 3 INVALID')).toBeNull();
+  });
+
+  it('returns null for COMPLETE with unclosed quote', () => {
+    expect(parseAction('COMPLETE "unclosed')).toBeNull();
+  });
+
+  it('returns null for STOP with unclosed quote', () => {
+    expect(parseAction('STOP "unclosed')).toBeNull();
+  });
+
+  it('returns null for GOTO with invalid target', () => {
+    expect(parseAction('GOTO @invalid')).toBeNull();
+  });
+
+  it('returns null for GOTO with reserved word target', () => {
+    expect(parseAction('GOTO CONTINUE')).toBeNull();
+  });
+
+  it('throws for nested RETRY (RETRY in RETRY)', () => {
+    expect(() => parseAction('RETRY 3 RETRY 2')).toThrow('RETRY actions cannot contain another RETRY');
+  });
+});
+
+describe('parseConditional error cases', () => {
+  it('throws for PASS with invalid action', () => {
+    expect(() => parseConditional('PASS: UNKNOWN')).toThrow('Invalid PASS transition');
+  });
+
+  it('throws for FAIL with invalid action', () => {
+    expect(() => parseConditional('FAIL: INVALID')).toThrow('Invalid FAIL transition');
+  });
+
+  it('throws for YES with invalid action', () => {
+    expect(() => parseConditional('YES: BADACTION')).toThrow('Invalid YES transition');
+  });
+
+  it('throws for NO with invalid action', () => {
+    expect(() => parseConditional('NO: NOTVALID')).toThrow('Invalid NO transition');
+  });
+});
+
+describe('convertToTransitions aggregation conflicts', () => {
+  it('throws for conflicting ALL/ALL modifiers', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
+      { type: 'fail', action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
+    ];
+    expect(() => convertToTransitions(conditionals)).toThrow('Invalid aggregation combination');
+  });
+
+  it('throws for conflicting ANY/ANY modifiers', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ANY', raw: 'CONTINUE' },
+      { type: 'fail', action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
+    ];
+    expect(() => convertToTransitions(conditionals)).toThrow('Invalid aggregation combination');
+  });
+
+  it('accepts valid PASS ALL + FAIL ANY (pessimistic)', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
+      { type: 'fail', action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result).not.toBeNull();
+    expect(result!.all).toBe(true);
+  });
+
+  it('accepts valid PASS ANY + FAIL ALL (optimistic)', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ANY', raw: 'CONTINUE' },
+      { type: 'fail', action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result).not.toBeNull();
+    expect(result!.all).toBe(false);
+  });
+
+  it('defaults to all=true with only PASS modifier ALL', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
+      { type: 'fail', action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result!.all).toBe(true);
+  });
+
+  it('defaults to all=false with only PASS modifier ANY', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'CONTINUE' }, modifier: 'ANY', raw: 'CONTINUE' },
+      { type: 'fail', action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result!.all).toBe(false);
+  });
+
+  it('defaults to all=true with only FAIL modifier ANY', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
+      { type: 'fail', action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result!.all).toBe(true);
+  });
+
+  it('defaults to all=false with only FAIL modifier ALL', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
+      { type: 'fail', action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result!.all).toBe(false);
+  });
+
+  it('returns null for empty conditionals array', () => {
+    expect(convertToTransitions([])).toBeNull();
+  });
+
+  it('provides default STOP for missing fail action', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'COMPLETE' }, modifier: null, raw: 'COMPLETE' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result).not.toBeNull();
+    expect(result!.fail.action).toEqual({ type: 'STOP' });
+  });
+
+  it('provides default CONTINUE for missing pass action', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'fail', action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result).not.toBeNull();
+    expect(result!.pass.action).toEqual({ type: 'CONTINUE' });
+  });
+});
+
+describe('validateNEXTUsage with RETRY containing NEXT', () => {
+  const makeConditionalWithRetry = (): ParsedConditional => ({
+    type: 'pass',
+    action: {
+      type: 'RETRY',
+      max: 3,
+      then: { type: 'GOTO', target: { step: 'NEXT' } }
+    } as any,
+    modifier: null,
+    raw: 'test'
+  });
+
+  it('allows RETRY with NEXT fallback in dynamic context', () => {
+    expect(() => {
+      validateNEXTUsage(
+        [makeConditionalWithRetry()],
+        true,  // dynamic step
+        false
+      );
+    }).not.toThrow();
+  });
+
+  it('rejects RETRY with NEXT fallback in static context', () => {
+    expect(() => {
+      validateNEXTUsage(
+        [makeConditionalWithRetry()],
+        false, // NOT dynamic
+        false
+      );
+    }).toThrow('NEXT action is only allowed in dynamic contexts');
+  });
+});
+
+describe('isExecutableCodeBlock edge cases', () => {
+  it('returns false for null input', () => {
+    expect(isExecutableCodeBlock(null)).toBe(false);
+  });
+
+  it('returns false for undefined input', () => {
+    expect(isExecutableCodeBlock(undefined)).toBe(false);
+  });
+
+  it('returns false for empty string', () => {
+    expect(isExecutableCodeBlock('')).toBe(false);
+  });
+
+  it('returns true for bash with attributes', () => {
+    expect(isExecutableCodeBlock('bash filename="test.sh"')).toBe(true);
+  });
+
+  it('returns false for unknown language', () => {
+    expect(isExecutableCodeBlock('python')).toBe(false);
+  });
+});
+
+import { isExecutableCodeBlock, extractSubstepHeader } from '../src/helpers.js';
+
+describe('extractSubstepHeader edge cases', () => {
+  it('returns null for empty string', () => {
+    expect(extractSubstepHeader('')).toBeNull();
+  });
+
+  it('returns null for string without dot', () => {
+    expect(extractSubstepHeader('NoDot')).toBeNull();
+  });
+
+  it('returns null for string starting with dot', () => {
+    expect(extractSubstepHeader('.1 Something')).toBeNull();
+  });
+
+  it('returns null for invalid step reference', () => {
+    expect(extractSubstepHeader('@invalid.1 Something')).toBeNull();
+  });
+
+  it('returns null for nothing after dot', () => {
+    expect(extractSubstepHeader('1.')).toBeNull();
+  });
+
+  it('returns null for invalid substep id', () => {
+    expect(extractSubstepHeader('1.@invalid Something')).toBeNull();
+  });
+
+  it('extracts agent type from parentheses at end', () => {
+    const result = extractSubstepHeader('1.1 Run tests (test-agent)');
+    expect(result).toEqual({
+      stepRef: '1',
+      id: '1',
+      description: 'Run tests',
+      isDynamic: false,
+      agentType: 'test-agent',
+    });
+  });
+
+  it('extracts agent type without description', () => {
+    const result = extractSubstepHeader('1.1 (code-agent)');
+    expect(result).toEqual({
+      stepRef: '1',
+      id: '1',
+      description: '',
+      isDynamic: false,
+      agentType: 'code-agent',
+    });
+  });
+
+  it('parses substep with no description after id', () => {
+    const result = extractSubstepHeader('1.1');
+    expect(result).toEqual({
+      stepRef: '1',
+      id: '1',
+      description: '',
+      isDynamic: false,
+      agentType: undefined,
+    });
+  });
+});
+
+describe('parseAction RETRY fallback edge cases', () => {
+  it('parses RETRY with quoted message as STOP message', () => {
+    const result = parseAction('RETRY 3 "failed after retries"');
+    expect(result).toEqual({
+      type: 'RETRY',
+      max: 3,
+      then: { type: 'STOP', message: 'failed after retries' }
+    });
+  });
+
+  it('parses RETRY with COMPLETE fallback with message', () => {
+    const result = parseAction('RETRY 2 COMPLETE "done"');
+    expect(result).toEqual({
+      type: 'RETRY',
+      max: 2,
+      then: { type: 'COMPLETE', message: 'done' }
+    });
+  });
+
+  it('parses RETRY with STOP fallback with message', () => {
+    const result = parseAction('RETRY 2 STOP "error"');
+    expect(result).toEqual({
+      type: 'RETRY',
+      max: 2,
+      then: { type: 'STOP', message: 'error' }
+    });
+  });
+
+  it('returns null for RETRY COMPLETE with unclosed quote', () => {
+    expect(parseAction('RETRY 3 COMPLETE "unclosed')).toBeNull();
+  });
+
+  it('returns null for RETRY STOP with unclosed quote', () => {
+    expect(parseAction('RETRY 3 STOP "unclosed')).toBeNull();
+  });
+});
+
+describe('parseConditional with modifier', () => {
+  it('parses PASS ALL: CONTINUE', () => {
+    const result = parseConditional('PASS ALL: CONTINUE');
+    expect(result).toEqual({
+      type: 'pass',
+      action: { type: 'CONTINUE' },
+      modifier: 'ALL',
+      raw: 'CONTINUE',
+    });
+  });
+
+  it('parses FAIL ANY: STOP', () => {
+    const result = parseConditional('FAIL ANY: STOP');
+    expect(result).toEqual({
+      type: 'fail',
+      action: { type: 'STOP' },
+      modifier: 'ANY',
+      raw: 'STOP',
+    });
+  });
+});

@@ -168,6 +168,14 @@ describe('StepIdSchema with named steps', () => {
     expect(StepIdSchema.safeParse({ step: 'NEXT', substep: '1' }).success).toBe(false);
   });
 
+  it('rejects NEXT with both qualifier AND substep', () => {
+    expect(StepIdSchema.safeParse({
+      step: 'NEXT',
+      qualifier: { step: '{N}' },
+      substep: '1'
+    }).success).toBe(false);
+  });
+
   it('rejects invalid identifier (starts with digit)', () => {
     expect(StepIdSchema.safeParse({ step: '123abc' }).success).toBe(false);
   });
