@@ -214,7 +214,7 @@ function actionToTransition(
                 (context.activeRetryLoop?.count ?? 0) + 1,
               retryMax: action.max
             }),
-            raise({ type: 'GOTO', target: thenAction.target, internal: true })
+            raise({ type: 'GOTO', target: thenAction.target, internal: true } as RunbookEvent)
           ]
         },
         {
