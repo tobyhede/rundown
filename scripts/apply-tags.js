@@ -9,9 +9,9 @@ const CATEGORIES = {
   // Navigation (GOTO)
   navigation: [
     'goto-*.runbook.md',
-    'dynamic-navigation.runbook.md' 
+    'dynamic-navigation.runbook.md'
   ],
-  
+
   // Composition (Agents & Sub-workflows)
   composition: [
     'agent-*.runbook.md',
@@ -54,7 +54,7 @@ const CATEGORIES = {
   // Substeps (Structure)
   substeps: [
     'nested-*.runbook.md',
-    'substep-*.runbook.md', 
+    'substep-*.runbook.md',
     'static-step-mixed-substeps.runbook.md'
   ],
 
@@ -71,8 +71,9 @@ const CATEGORIES = {
   // Featured Runbooks
   featured: [
     'code-review.runbook.md',
-    'dev-test-retry.runbook.md',
-    'deploy-service.runbook.md'
+    'lint-test-commit.runbook.md',
+    'deploy-service.runbook.md',
+    'install.runbook.md'
   ],
 
   // Tests
@@ -130,7 +131,7 @@ function getFiles(dir) {
 function processFiles() {
   const allFiles = getFiles(PATTERNS_DIR);
   const files = allFiles.filter(f => f.endsWith('.runbook.md'));
-  
+
   console.log(`Processing ${files.length} files...`);
 
   for (const filePath of files) {
@@ -158,13 +159,13 @@ function processFiles() {
 
       // Reconstruct Tags line
       const tagsLine = "tags:\n" + newTags.map(t => "  - " + t).join("\n");
-      
+
       // Replace or Add tags
       if (fmContent.includes('tags:')) {
-         // robustly replace existing tags block
-         fmContent = fmContent.replace(/tags:\s*(\n\s*-[^\n]*)+/g, tagsLine);
-         // Handle inline tags
-         fmContent = fmContent.replace(/tags:\s*\[.*\]/g, tagsLine);
+        // robustly replace existing tags block
+        fmContent = fmContent.replace(/tags:\s*(\n\s*-[^\n]*)+/g, tagsLine);
+        // Handle inline tags
+        fmContent = fmContent.replace(/tags:\s*\[.*\]/g, tagsLine);
       } else {
         fmContent += "\n" + tagsLine;
       }

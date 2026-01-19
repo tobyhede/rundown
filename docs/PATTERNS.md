@@ -1,10 +1,10 @@
 <!-- GENERATED FILE - DO NOT EDIT DIRECTLY -->
-<!-- Source: runbooks/patterns/INDEX.md -->
+<!-- Source: runbooks/patterns/README.md -->
 <!-- Regenerate: npm run docs:patterns -->
 
 # Rundown Patterns
 
-Common patterns for Rundown runbooks. See [MATRIX.md](./MATRIX.md) for complete coverage matrix and [SPEC.md](../../docs/SPEC.md) for syntax reference.
+Common patterns for Rundown runbooks. See [SPEC.md](../../docs/SPEC.md) for syntax reference.
 
 ## Scenario Naming Taxonomy
 
@@ -3062,6 +3062,5 @@ Process.
 
 ## See Also
 
-- [MATRIX.md](./MATRIX.md) - Complete coverage matrix
 - [SPEC.md](../../docs/SPEC.md) - Full specification
 - [FORMAT.md](../../docs/FORMAT.md) - BNF grammar

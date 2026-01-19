@@ -1,21 +1,21 @@
 ---
-name: Dev/Test with Retry
-description: Development workflow with automatic retries and failure recovery.
+name: Lint, Test, & Commit
+description: Lint, Test and Fix in a loop until `PASS`, then commit.
 tags:
   - featured
 scenarios:
-  first-pass:
-    description: Tests pass on the first attempt
+  completed:
+    description:
     commands:
-      - rd run --prompted dev-test-retry.runbook.md
-      - rd pass  # 1 Run Tests - GOTO 3
-      - rd pass  # 3 Commit Changes - COMPLETE
+      - rd run --prompted lint-test-commit.runbook.md
+      - rd pass  # 1 Run Tests
+      - rd pass  # 3 Commit Changes
     result: COMPLETE
   flaky-test-retry:
     description: Tests fail initially, but pass after recovery and retry
     skip: true  # TODO: Fix RETRY state tracking - completion not recorded after RETRY GOTO sequence
     commands:
-      - rd run --prompted dev-test-retry.runbook.md
+      - rd run --prompted lint-test-commit.runbook.md
       - rd fail  # 1 Run Tests - CONTINUE
       - rd pass  # 2 Recovery and Fix - RETRY (1/2) GOTO 1
       - rd pass  # 1 Run Tests - GOTO 3
@@ -25,7 +25,7 @@ scenarios:
     description: Tests continue to fail despite recovery attempts
     skip: true  # TODO: Fix RETRY state tracking - completion not recorded after RETRY GOTO sequence
     commands:
-      - rd run --prompted dev-test-retry.runbook.md
+      - rd run --prompted lint-test-commit.runbook.md
       - rd fail  # 1 Run Tests - CONTINUE
       - rd pass  # 2 Recovery and Fix - RETRY (1/2) GOTO 1
       - rd fail  # 1 Run Tests - CONTINUE
@@ -35,14 +35,23 @@ scenarios:
     result: STOP
 ---
 
-# Dev/Test Loop
+# Lint, Test & Commit
 
-A workflow for implementing features and ensuring tests pass with recovery.
+Lint, Test and Fix in a loop until `PASS`, then commit.
 
-## 1. Run Tests
 
-- PASS: GOTO 3
-- FAIL: CONTINUE
+## 1. Run Lint Checks
+- FAIL: GOTO FIX_LINT
+
+Run the test suite to verify the implementation.
+
+```bash
+rd echo npm lint
+```
+
+
+## 2. Run Tests
+- FAIL: GOTO FIX_TESTS
 
 Run the test suite to verify the implementation.
 
@@ -50,23 +59,30 @@ Run the test suite to verify the implementation.
 rd echo npm test
 ```
 
-## 2. Recovery and Fix
-
-- PASS: RETRY 2 GOTO 1
-- FAIL: STOP "Unable to fix tests after multiple attempts."
-
-Attempt to fix the environment or the code.
-
-```bash
-rd echo npm run fix:auto
-```
-
 ## 3. Commit Changes
-
-- PASS: COMPLETE "Feature implemented and verified."
+- PASS: COMPLETE
 
 Commit the changes to the repository.
 
 ```bash
 rd echo git commit -m 'feat: implement new logic'
 ```
+
+
+## FIX_LINT. Fix lint issues.
+
+- YES: GOTO 1
+- NO: STOP "Unable to fix lint issues"
+
+Follow the project guidelines and address all lint issues.
+
+
+## FIX_TESTS. Fix all failing tests.
+
+- YES: GOTO 2
+- NO: STOP "Unable to fix lint issues"
+
+Follow the project guidelines and address all lint issues.
+
+
+
