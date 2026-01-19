@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { parseAction, extractRunbookList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, validateNEXTUsage, type ParsedConditional } from '../src/index.js';
+import { formatAction, isExecutableCodeBlock } from '../src/helpers.js';
 
 describe('parseAction GOTO NEXT', () => {
   it('parses GOTO NEXT as action', () => {
@@ -1040,7 +1041,6 @@ describe('parseStepIdFromString edge cases', () => {
 });
 
 // Phase 3: formatAction, parseAction error cases, parseConditional error cases
-import { formatAction, convertToTransitions } from '../src/helpers.js';
 
 describe('formatAction', () => {
   it('formats CONTINUE', () => {
@@ -1076,7 +1076,9 @@ describe('formatAction', () => {
   });
 
   it('formats RETRY without max as "RETRY"', () => {
-    // This tests the case where max is undefined/falsy
+    // Tests the falsy-max branch in formatAction. Schema requires max >= 1, so
+    // max: 0 is impossible at runtime. Cast to any to bypass type checking and
+    // verify formatAction handles this defensively (treats falsy max as absent).
     expect(formatAction({ type: 'RETRY', max: 0, then: { type: 'STOP' } } as any)).toBe('RETRY');
   });
 });
@@ -1283,8 +1285,6 @@ describe('isExecutableCodeBlock edge cases', () => {
     expect(isExecutableCodeBlock('python')).toBe(false);
   });
 });
-
-import { isExecutableCodeBlock, extractSubstepHeader } from '../src/helpers.js';
 
 describe('extractSubstepHeader edge cases', () => {
   it('returns null for empty string', () => {
