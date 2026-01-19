@@ -53,12 +53,14 @@ export interface RunbookContext {
  * - FAIL: Mark the current step as failed, triggering the FAIL transition
  * - RETRY: Increment retry count and re-enter the current step
  * - GOTO: Jump directly to a specific step by ID
+ *   - internal?: true marks the GOTO as internally raised (e.g., by RETRY+GOTO)
+ *     and suppresses lastAction update to preserve the originating action
  */
 export type RunbookEvent =
   | { type: 'PASS' }
   | { type: 'FAIL' }
   | { type: 'RETRY' }
-  | { type: 'GOTO'; target: StepId };
+  | { type: 'GOTO'; target: StepId; internal?: true };
 
 /**
  * DEFAULT Transitions according to RUNDOWN-SPEC 1.0.0
@@ -131,6 +133,7 @@ type GotoAssignValue<T> = T | ((args: { event: RunbookEvent }) => T);
 /**
  * Build assign action for simple GOTO transitions.
  * Handles retry count increment for GOTO-to-self and clears next instance flags.
+ * Skips lastAction update when GOTO is internal (raised by RETRY) to preserve the originating action.
  *
  * @param options - Configuration for lastAction, resolvedSubstepId, and isGotoToSelf
  * @returns XState assign action
@@ -142,7 +145,17 @@ function buildSimpleGotoAssign(options: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 }): any {
   return assign({
-    lastAction: options.lastAction,
+    lastAction: ({ event, context }: { event: RunbookEvent; context: RunbookContext }) => {
+      // Skip lastAction update if GOTO is internal (raised by RETRY+GOTO)
+      // to preserve the original 'RETRY' action
+      if (event.type === 'GOTO' && event.internal) {
+        return context.lastAction;
+      }
+      // For external GOTOs or other events, use the provided value
+      return typeof options.lastAction === 'function'
+        ? options.lastAction({ event })
+        : options.lastAction;
+    },
     retryCount: options.isGotoToSelf
       ? ({ context }: { context: RunbookContext }) =>
         (context.retryCount as number) + 1
@@ -174,6 +187,48 @@ function actionToTransition(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): any {
   if (action.type === 'RETRY') {
+    const thenAction = action.then;
+
+    // RETRY with GOTO: use raise to delegate navigation
+    if (thenAction.type === 'GOTO') {
+      const resolved = resolveSimpleGotoTarget(thenAction.target, stepName, substepId, steps);
+      if (!resolved) {
+        return { target: 'STOPPED' };
+      }
+
+      return [
+        {
+          // Guard: allow retry if loop not started OR count < max
+          guard: ({ context }: { context: RunbookContext }) =>
+            !context.activeRetryLoop || context.activeRetryLoop.count < action.max,
+          actions: [
+            assign({
+              lastAction: 'RETRY',
+              activeRetryLoop: ({ context }: { context: RunbookContext }) => ({
+                originStep: stepName,
+                targetStep: thenAction.target.step,
+                count: (context.activeRetryLoop?.count ?? 0) + 1,
+                max: action.max
+              }),
+              retryCount: ({ context }: { context: RunbookContext }) =>
+                (context.activeRetryLoop?.count ?? 0) + 1,
+              retryMax: action.max
+            }),
+            raise({ type: 'GOTO', target: thenAction.target, internal: true })
+          ]
+        },
+        {
+          // Exhausted: clear loop, STOP
+          actions: assign({
+            lastAction: 'STOP',
+            activeRetryLoop: undefined
+          }),
+          target: 'STOPPED'
+        }
+      ];
+    }
+
+    // Non-GOTO RETRY: existing behavior (stay at current step)
     return [
       {
         guard: ({ context }: { context: RunbookContext }) => context.retryCount < action.max,

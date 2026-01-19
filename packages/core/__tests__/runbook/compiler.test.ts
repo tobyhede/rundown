@@ -896,4 +896,126 @@ describe('runbook compiler', () => {
       expect(snapshot.value).toBe('step_2');
     });
   });
+
+  describe('RETRY with GOTO (loop pattern)', () => {
+    it('executes GOTO and sets activeRetryLoop on first RETRY+GOTO pass', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Run Tests',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '3' } } },
+            fail: { kind: 'fail', action: { type: 'CONTINUE' } }
+          }
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Recovery and Fix',
+          transitions: {
+            all: true,
+            pass: {
+              kind: 'pass',
+              action: { type: 'RETRY', max: 2, then: { type: 'GOTO', target: { step: '1' } } }
+            },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '3',
+          isDynamic: false,
+          description: 'Commit Changes',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Step 1 FAIL -> CONTINUE to step 2
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step_2');
+
+      // Step 2 PASS -> RETRY GOTO 1 (should go to step 1, set activeRetryLoop)
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+
+      expect(snapshot.value).toBe('step_1');
+      expect(snapshot.context.activeRetryLoop).toEqual({
+        originStep: '2',
+        targetStep: '1',
+        count: 1,
+        max: 2
+      });
+      expect(snapshot.context.lastAction).toBe('RETRY');
+    });
+
+    it('STOPs when RETRY+GOTO exhausts retries', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Run Tests',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '3' } } },
+            fail: { kind: 'fail', action: { type: 'CONTINUE' } }
+          }
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Recovery and Fix',
+          transitions: {
+            all: true,
+            pass: {
+              kind: 'pass',
+              action: { type: 'RETRY', max: 2, then: { type: 'GOTO', target: { step: '1' } } }
+            },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '3',
+          isDynamic: false,
+          description: 'Commit Changes',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Step 1 FAIL -> step 2
+      actor.send({ type: 'FAIL' });
+      // Step 2 PASS -> RETRY (1/2) GOTO 1
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_1');
+
+      // Step 1 FAIL -> step 2
+      actor.send({ type: 'FAIL' });
+      // Step 2 PASS -> RETRY (2/2) GOTO 1
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_1');
+      expect(actor.getSnapshot().context.activeRetryLoop?.count).toBe(2);
+
+      // Step 1 FAIL -> step 2
+      actor.send({ type: 'FAIL' });
+      // Step 2 PASS -> retries exhausted, STOP
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+  });
 });
