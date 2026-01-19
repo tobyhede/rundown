@@ -859,4 +859,41 @@ describe('runbook compiler', () => {
       expect(snapshot.context.activeRetryLoop).toBeUndefined();
     });
   });
+
+  describe('resolveSimpleGotoTarget helper', () => {
+    it('resolves numeric step target to correct state ID', () => {
+      // This tests the behavior indirectly through GOTO action
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Step 2',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', action: { type: 'STOP' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' });
+      const snapshot = actor.getSnapshot();
+
+      expect(snapshot.value).toBe('step_2');
+    });
+  });
 });

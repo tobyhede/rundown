@@ -1,4 +1,4 @@
-import { setup, assign } from 'xstate';
+import { setup, assign, raise } from 'xstate';
 import { type Step, type Action, type NonRetryAction, type Transitions } from './types.js';
 import type { StepId } from './step-id.js';
 
@@ -92,6 +92,64 @@ function formatGotoAction(target: StepId): string {
     return `GOTO ${target.step}.${target.substep}`;
   }
   return `GOTO ${target.step}`;
+}
+
+/**
+ * Resolve a simple GOTO target (non-NEXT, non-dynamic) to state ID.
+ *
+ * @param target - The StepId target
+ * @param stepName - Current step name
+ * @param substepId - Current substep ID
+ * @param steps - All runbook steps
+ * @returns Object with stateId and substep, or null if invalid
+ */
+function resolveSimpleGotoTarget(
+  target: StepId,
+  stepName: string,
+  substepId: string | undefined,
+  steps: Step[]
+): { stateId: string; substep?: string; isGotoToSelf: boolean } | null {
+  const targetStepObj = steps.find(s => s.name === target.step);
+  if (!targetStepObj) {
+    return null;
+  }
+
+  const resolvedSubstepId = target.substep ?? (targetStepObj.substeps?.[0]?.id);
+  const computedTarget = formatStateId(targetStepObj.name, resolvedSubstepId);
+  const currentStateId = formatStateId(stepName, substepId);
+  const isGotoToSelf = computedTarget === currentStateId;
+
+  return {
+    stateId: computedTarget,
+    substep: resolvedSubstepId,
+    isGotoToSelf
+  };
+}
+
+type GotoAssignValue<T> = T | ((args: { event: RunbookEvent }) => T);
+
+/**
+ * Build assign action for simple GOTO transitions.
+ * Handles retry count increment for GOTO-to-self and clears next instance flags.
+ *
+ * @param options - Configuration for lastAction, resolvedSubstepId, and isGotoToSelf
+ * @returns XState assign action
+ */
+function buildSimpleGotoAssign(options: {
+  lastAction: GotoAssignValue<string | undefined>;
+  resolvedSubstepId: GotoAssignValue<string | undefined>;
+  isGotoToSelf: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+}): any {
+  return assign({
+    lastAction: options.lastAction,
+    retryCount: options.isGotoToSelf
+      ? ({ context }: { context: RunbookContext }) =>
+        (context.retryCount as number) + 1
+      : 0,
+    substep: options.resolvedSubstepId,
+    ...CLEAR_NEXT_FLAGS
+  });
 }
 
 /**
@@ -321,13 +379,10 @@ function nonRetryActionToTransition(
 
         return {
           target: computedTarget,
-          actions: assign({
+          actions: buildSimpleGotoAssign({
             lastAction: formatGotoAction(action.target),
-            retryCount: isGotoToSelf
-              ? ({ context }) => (context.retryCount as number) + 1
-              : 0,
-            substep: resolvedSubstepId,
-            ...CLEAR_NEXT_FLAGS
+            resolvedSubstepId,
+            isGotoToSelf
           })
         };
       }
@@ -348,13 +403,10 @@ function nonRetryActionToTransition(
 
       return {
         target: computedTarget,
-        actions: assign({
+        actions: buildSimpleGotoAssign({
           lastAction: formatGotoAction(action.target),
-          retryCount: isGotoToSelf
-            ? ({ context }) => (context.retryCount as number) + 1
-            : 0,
-          substep: resolvedSubstepId,
-          ...CLEAR_NEXT_FLAGS
+          resolvedSubstepId,
+          isGotoToSelf
         })
       };
     }
@@ -408,38 +460,6 @@ export function compileRunbookToMachine(steps: Step[]) {
     }
   });
 
-  // Generate GOTO transitions for all possible target states
-  const gotoTransitions = allStates.map((target) => ({
-    guard: ({ event }: { event: RunbookEvent }) => {
-      if (event.type !== 'GOTO') return false;
-
-      const targetStep = event.target.step;
-
-      // If target is just a step name, it matches the first state of that step
-      if (!event.target.substep) {
-        // Find first state for this step
-        const firstStateForStep = allStates.find(s => s.stepName === targetStep);
-        return target.id === firstStateForStep?.id;
-      }
-
-      // Exact match for step and substep
-      return targetStep === target.stepName && event.target.substep === target.substepId;
-    },
-    target: target.id,
-    actions: assign({
-      lastAction: ({ event }: { event: RunbookEvent }) => {
-        if (event.type !== 'GOTO') return undefined;
-        const step = event.target.step;
-        const substep = event.target.substep;
-        return substep ? `GOTO ${step}.${substep}` : `GOTO ${step}`;
-      },
-      retryCount: 0,
-      substep: ({ event }: { event: RunbookEvent }) =>
-        event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
-      ...CLEAR_NEXT_FLAGS
-    })
-  }));
-
   // Build the machine states
   allStates.forEach(config => {
     // Extract retryMax from transitions (check both PASS and FAIL)
@@ -447,6 +467,42 @@ export function compileRunbookToMachine(steps: Step[]) {
       config.transitions.pass.action.type === 'RETRY' ? config.transitions.pass.action.max :
       config.transitions.fail.action.type === 'RETRY' ? config.transitions.fail.action.max :
       undefined;
+
+    // Build per-state GOTO transitions
+    const buildGotoTransitionsForState = allStates.map((target) => {
+      // Compute isGotoToSelf at build time since target and config are known
+      const isGotoToSelf = target.id === config.id;
+
+      return {
+        guard: ({ event }: { event: RunbookEvent }) => {
+          if (event.type !== 'GOTO') return false;
+
+          const targetStep = event.target.step;
+
+          // If target is just a step name, it matches the first state of that step
+          if (!event.target.substep) {
+            // Find first state for this step
+            const firstStateForStep = allStates.find(s => s.stepName === targetStep);
+            return target.id === firstStateForStep?.id;
+          }
+
+          // Exact match for step and substep
+          return targetStep === target.stepName && event.target.substep === target.substepId;
+        },
+        target: target.id,
+        actions: buildSimpleGotoAssign({
+          lastAction: ({ event }: { event: RunbookEvent }) => {
+            if (event.type !== 'GOTO') return undefined;
+            const step = event.target.step;
+            const substep = event.target.substep ?? target.substepId;
+            return substep ? `GOTO ${step}.${substep}` : `GOTO ${step}`;
+          },
+          resolvedSubstepId: ({ event }: { event: RunbookEvent }) =>
+            event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
+          isGotoToSelf
+        })
+      };
+    });
 
     states[config.id] = {
       on: {
@@ -462,7 +518,7 @@ export function compileRunbookToMachine(steps: Step[]) {
           }),
           target: config.id
         },
-        GOTO: gotoTransitions
+        GOTO: buildGotoTransitionsForState
       }
     };
   });
