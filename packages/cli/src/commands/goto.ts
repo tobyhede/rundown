@@ -8,6 +8,7 @@ import {
   parseStepIdFromString,
   stepIdToString,
   countNumberedSteps,
+  printNoActiveRunbook,
 } from '@rundown-org/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
@@ -28,15 +29,16 @@ export function registerGotoCommand(program: Command): void {
     .action(async (stepArg: string, options: { json?: boolean }) => {
       await withErrorHandling(async () => {
         const output = new OutputManager({ json: options.json });
+        const writer = output.getWriter();
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive();
 
         if (!state) {
           if (output.isJson()) {
-            output.getWriter().writeJson({ success: false, error: 'No active runbook' });
+            writer.writeJson({ success: false, error: 'No active runbook' });
           } else {
-            console.log('No active runbook');
+            printNoActiveRunbook(writer);
           }
           return;
         }
