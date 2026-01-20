@@ -38,14 +38,14 @@ export function registerCompleteCommand(program: Command): void {
           if (output.isJson()) {
             writer.writeJson({ success: false, action: 'complete', message: 'No active runbook' });
           } else {
-            printNoActiveRunbook();
+            printNoActiveRunbook(writer);
           }
           return;
         }
 
         // Print metadata
         if (!output.isJson()) {
-          printMetadata(buildMetadata(state));
+          printMetadata(buildMetadata(state), writer);
         }
 
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);
@@ -64,8 +64,8 @@ export function registerCompleteCommand(program: Command): void {
         if (output.isJson()) {
           writer.writeJson({ success: true, action: 'complete', message: completionMessage });
         } else {
-          printRunbookComplete(message);
+          printRunbookComplete(message, writer);
         }
-      });
+      }, { json: options.json });
     });
 }
