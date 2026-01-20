@@ -25,7 +25,7 @@ export async function runCli(args: string[]): Promise<CliResult> {
       // Try stdout first (some commands write JSON errors to stdout)
       if (execError.stdout) {
         try {
-          const data = JSON.parse(execError.stdout);
+          const data = JSON.parse(execError.stdout) as { error?: string };
           return { success: false, error: data.error, data };
         } catch { /* not JSON */ }
       }
@@ -33,13 +33,13 @@ export async function runCli(args: string[]): Promise<CliResult> {
       // Try stderr (withErrorHandling writes JSON errors here)
       if (execError.stderr) {
         try {
-          const data = JSON.parse(execError.stderr);
+          const data = JSON.parse(execError.stderr) as { error?: string };
           return { success: false, error: data.error, data };
         } catch { /* not JSON */ }
       }
 
       // Fall back to raw stderr/stdout as error message
-      const message = execError.stderr || execError.stdout || '';
+      const message = execError.stderr ?? execError.stdout ?? '';
       if (message) {
         return { success: false, error: message.trim() };
       }

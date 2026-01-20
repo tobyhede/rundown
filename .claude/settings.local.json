@@ -4,7 +4,8 @@
       "Skill(turboshovel:verifying-by-consensus)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Skill(cipherpowers:verify)"
+      "Skill(cipherpowers:verify)",
+      "Bash(git checkout:*)"
     ]
   }
 }

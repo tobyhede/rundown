@@ -60,7 +60,7 @@ export function registerCompleteCommand(program: Command): void {
         });
         await manager.popRunbook(options.agent);
 
-        const completionMessage = message || 'Runbook completed successfully';
+        const completionMessage = message ?? 'Runbook completed successfully';
         if (output.isJson()) {
           writer.writeJson({ success: true, action: 'complete', message: completionMessage });
         } else {

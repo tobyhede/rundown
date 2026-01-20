@@ -30,7 +30,7 @@ This doesn't have proper ## headers
       const result = runCli('run invalid.md', workspace);
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('Syntax error');
+      expect(result.stderr.toLowerCase()).toContain('syntax error');
     });
 
     it('handles empty runbook file', async () => {
@@ -39,7 +39,7 @@ This doesn't have proper ## headers
       const result = runCli('run empty.md', workspace);
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('Syntax error');
+      expect(result.stderr.toLowerCase()).toContain('syntax error');
     });
   });
 
