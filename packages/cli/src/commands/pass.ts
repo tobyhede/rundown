@@ -21,17 +21,15 @@ import {
   extractRetryMax,
   isRunbookComplete,
   isRunbookStopped,
+  handleNextInstanceFlags,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputManager } from '../services/output-manager.js';
 
 /**
  * Registers the 'pass' command for marking steps as passed.
  * @param program - Commander program instance to register the command on
  */
-import {
-  handleNextInstanceFlags,
-} from '../services/execution.js';
-import { OutputManager } from '../services/output-manager.js';
 
 export function registerPassCommand(program: Command): void {
   program
