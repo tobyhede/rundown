@@ -179,6 +179,6 @@ export function registerGotoCommand(program: Command): void {
         if (loopResult === 'stopped') {
           process.exit(1);
         }
-      });
+      }, { json: options.json });
     });
 }
