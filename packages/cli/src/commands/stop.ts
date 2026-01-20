@@ -44,7 +44,7 @@ export function registerStopCommand(program: Command): void {
           await manager.popRunbook(options.agent);
 
           if (output.isJson()) {
-            output.getWriter().writeJson({ success: true, action: 'stopped', message });
+            output.getWriter().writeJson({ success: true, action: 'stopped', message: message ?? 'Runbook stopped' });
           } else {
             // Print metadata
             printMetadata(buildMetadata(state));

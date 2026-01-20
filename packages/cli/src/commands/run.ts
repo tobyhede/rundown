@@ -6,6 +6,7 @@ import * as path from 'path';
 import {
   RunbookStateManager,
   parseRunbookDocument,
+  RunbookSyntaxError,
   stepIdToString,
   parseStepIdFromString,
   isNodeError,
