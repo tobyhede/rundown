@@ -14,6 +14,7 @@ import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
 import { printStepSeparator, printActionBlock } from '@rundown-org/core';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputManager } from '../services/output-manager.js';
 
 /**
  * Registers the 'goto' command for jumping to specific steps.
@@ -23,33 +24,51 @@ export function registerGotoCommand(program: Command): void {
   program
     .command('goto <step>')
     .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
-    .action(async (stepArg: string) => {
+    .option('--json', 'Output as JSON for programmatic use')
+    .action(async (stepArg: string, options: { json?: boolean }) => {
       await withErrorHandling(async () => {
+        const output = new OutputManager({ json: options.json });
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive();
 
         if (!state) {
-          console.log('No active runbook');
+          if (output.isJson()) {
+            output.getWriter().writeJson({ success: false, error: 'No active runbook' });
+          } else {
+            console.log('No active runbook');
+          }
           return;
         }
         // Parse target with StepId
         const target = parseStepIdFromString(stepArg);
         if (!target) {
-          console.error(`Error: Invalid step target: ${stepArg}`);
-          console.error('Format: N (step) or N.M (step.substep)');
+          if (output.isJson()) {
+            output.getWriter().writeJson({ success: false, error: `Invalid step target: ${stepArg}. Format: N (step) or N.M (step.substep)` });
+          } else {
+            console.error(`Error: Invalid step target: ${stepArg}`);
+            console.error('Format: N (step) or N.M (step.substep)');
+          }
           process.exit(1);
         }
 
         // Reject NEXT via CLI
         if (target.step === 'NEXT') {
-          console.error('Error: GOTO NEXT is only valid as a runbook transition, not via CLI');
+          if (output.isJson()) {
+            output.getWriter().writeJson({ success: false, error: 'GOTO NEXT is only valid as a runbook transition, not via CLI' });
+          } else {
+            console.error('Error: GOTO NEXT is only valid as a runbook transition, not via CLI');
+          }
           process.exit(1);
         }
 
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);
         if (!runbookPath) {
-          console.error(`Error: Runbook file ${state.runbook} not found`);
+          if (output.isJson()) {
+            output.getWriter().writeJson({ success: false, error: `Runbook file ${state.runbook} not found` });
+          } else {
+            console.error(`Error: Runbook file ${state.runbook} not found`);
+          }
           process.exit(1);
         }
         const content = await fs.readFile(runbookPath, 'utf8');
@@ -60,7 +79,11 @@ export function registerGotoCommand(program: Command): void {
           // Look up step by name (includes numeric names like "1", "2")
           const stepIndex = steps.findIndex(s => s.name === target.step);
           if (stepIndex === -1) {
-            console.error(`Error: Step "${target.step}" does not exist`);
+            if (output.isJson()) {
+              output.getWriter().writeJson({ success: false, error: `Step "${target.step}" does not exist` });
+            } else {
+              console.error(`Error: Step "${target.step}" does not exist`);
+            }
             process.exit(1);
           }
 
@@ -68,16 +91,28 @@ export function registerGotoCommand(program: Command): void {
           if (target.substep) {
             const step = steps[stepIndex];
             if (!step.substeps || step.substeps.length === 0) {
-              console.error(`Error: Step ${stepIdToString({ step: target.step })} has no substeps`);
+              if (output.isJson()) {
+                output.getWriter().writeJson({ success: false, error: `Step ${stepIdToString({ step: target.step })} has no substeps` });
+              } else {
+                console.error(`Error: Step ${stepIdToString({ step: target.step })} has no substeps`);
+              }
               process.exit(1);
             }
             if (step.substeps.some(s => s.isDynamic)) {
-              console.error(`Error: Cannot goto substep of dynamic step. Use: rd goto ${target.step}`);
+              if (output.isJson()) {
+                output.getWriter().writeJson({ success: false, error: `Cannot goto substep of dynamic step. Use: rd goto ${target.step}` });
+              } else {
+                console.error(`Error: Cannot goto substep of dynamic step. Use: rd goto ${target.step}`);
+              }
               process.exit(1);
             }
             const substepExists = step.substeps.some(s => s.id === target.substep);
             if (!substepExists) {
-              console.error(`Error: Substep ${stepIdToString(target)} does not exist`);
+              if (output.isJson()) {
+                output.getWriter().writeJson({ success: false, error: `Substep ${stepIdToString(target)} does not exist` });
+              } else {
+                console.error(`Error: Substep ${stepIdToString(target)} does not exist`);
+              }
               process.exit(1);
             }
           }
@@ -86,7 +121,11 @@ export function registerGotoCommand(program: Command): void {
         // Create XState actor
         const actor = await manager.createActor(state.id, steps);
         if (!actor) {
-          console.error('Error: Failed to initialize runbook engine');
+          if (output.isJson()) {
+            output.getWriter().writeJson({ success: false, error: 'Failed to initialize runbook engine' });
+          } else {
+            console.error('Error: Failed to initialize runbook engine');
+          }
           process.exit(1);
         }
 
@@ -114,6 +153,16 @@ export function registerGotoCommand(program: Command): void {
           total: totalSteps,
           substep: target.substep,
         };
+
+        if (output.isJson()) {
+          output.getWriter().writeJson({
+            success: true,
+            action: 'goto',
+            from: { current: prevStep, total: totalSteps, substep: prevSubstep },
+            to: { current: target.step, total: totalSteps, substep: target.substep },
+          });
+          return;
+        }
 
         // Print separator with new step number and action block
         printStepSeparator(newPos);
