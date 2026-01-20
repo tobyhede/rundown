@@ -22,6 +22,7 @@ import {
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
+import { OutputManager } from '../services/output-manager.js';
 
 /**
  * Create an event emitter for a runbook execution.
@@ -107,6 +108,9 @@ export function registerRunCommand(program: Command): void {
     .option('--prompted', 'Prompted mode: show commands without auto-executing')
     .option('--json', 'Output execution events as JSON')
     .action(async (file: string | undefined, options: { step?: string; agent?: string; prompted?: boolean; json?: boolean }) => {
+      // OutputManager for non-loop JSON output (step_queued, agent_bound)
+      const output = new OutputManager({ json: options.json });
+
       try {
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
@@ -121,8 +125,7 @@ export function registerRunCommand(program: Command): void {
 
           const stepId = parseStepIdFromString(options.step);
           if (!stepId) {
-            console.error(`Error: Invalid step ID format: ${options.step}`);
-            console.error('Expected format: "3" or "3.1"');
+            console.error(`Error: Invalid step ID format: ${options.step}. Expected format: "3" or "3.1"`);
             process.exit(1);
           }
 
@@ -133,8 +136,12 @@ export function registerRunCommand(program: Command): void {
 
           await manager.pushPendingStep(state.id, pendingStep);
 
-          const runbookInfo = file ? ` with runbook ${file}` : '';
-          console.log(`Step ${stepIdToString(stepId)} queued for agent binding${runbookInfo}`);
+          if (output.isJson()) {
+            output.getWriter().writeJson({ action: 'step_queued', stepId: stepIdToString(stepId), runbook: file });
+          } else {
+            const runbookInfo = file ? ` with runbook ${file}` : '';
+            console.log(`Step ${stepIdToString(stepId)} queued for agent binding${runbookInfo}`);
+          }
           return;
         }
 
@@ -143,8 +150,7 @@ export function registerRunCommand(program: Command): void {
           const filePath = await resolveRunbookFile(cwd, file);
 
           if (!filePath) {
-            console.error(`Error: Runbook not found: ${file}`);
-            console.error(`Try 'rd ls --all' to list available runbooks.`);
+            console.error(`Error: Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`);
             process.exit(1);
           }
 
@@ -207,7 +213,12 @@ export function registerRunCommand(program: Command): void {
           }
 
           await manager.bindAgent(state.id, options.agent, pending.stepId);
-          console.log(`Agent ${options.agent} bound to step ${stepIdToString(pending.stepId)}`);
+
+          if (output.isJson()) {
+            output.getWriter().writeJson({ action: 'agent_bound', agent: options.agent, stepId: stepIdToString(pending.stepId) });
+          } else {
+            console.log(`Agent ${options.agent} bound to step ${stepIdToString(pending.stepId)}`);
+          }
 
           if (pending.runbook) {
             const runbookPath = await resolveRunbookFile(cwd, pending.runbook);
