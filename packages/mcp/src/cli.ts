@@ -17,8 +17,8 @@ export async function runCli(args: string[]): Promise<CliResult> {
   try {
     const { stdout } = await execFileAsync('npx', ['--no', 'rundown', ...args, '--json'], { timeout: 30000 });
 
-    // Check if stdout exists and try to parse it
-    if (stdout && stdout.trim()) {
+    // Check if stdout has content and try to parse it
+    if (stdout.trim()) {
       try {
         return { success: true, data: JSON.parse(stdout) };
       } catch {

@@ -10,8 +10,8 @@ import { runCli } from './cli.js';
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const packageJson = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
-const VERSION = packageJson.version;
+const packageJson = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8')) as { version: string };
+const VERSION: string = packageJson.version;
 
 interface McpResponse {
   [key: string]: unknown;
@@ -23,7 +23,7 @@ const toResponse = (r: { data?: unknown; error?: string }): McpResponse => ({
 });
 
 function createServer(): McpServer {
-  const server = new McpServer({ name: 'rundown', version: VERSION });
+  const server = new McpServer({ name: 'rundown', version: VERSION } as { name: string; version: string });
 
   server.registerTool('validate', {
     description: 'Check runbook syntax',
