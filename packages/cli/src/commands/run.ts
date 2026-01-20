@@ -9,8 +9,6 @@ import {
   RunbookSyntaxError,
   stepIdToString,
   parseStepIdFromString,
-  isNodeError,
-  getErrorMessage,
   printMetadata,
   printActionBlock,
   type PendingStep,
@@ -21,6 +19,8 @@ import {
   runExecutionLoop,
   buildMetadata,
 } from '../services/execution.js';
+import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputManager } from '../services/output-manager.js';
 
 /**
  * Registers the 'run' command for starting runbooks.
@@ -33,24 +33,23 @@ export function registerRunCommand(program: Command): void {
     .option('--step <stepId>', 'Mark step as started (adds to pending queue)')
     .option('--agent <agentId>', 'Bind agent to pending step')
     .option('--prompted', 'Prompted mode: show commands without auto-executing')
-    .action(async (file: string | undefined, options: { step?: string; agent?: string; prompted?: boolean }) => {
-      try {
+    .option('--json', 'Output as JSON')
+    .action(async (file: string | undefined, options: { step?: string; agent?: string; prompted?: boolean; json?: boolean }) => {
+      await withErrorHandling(async () => {
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
+        const output = new OutputManager({ json: options.json });
 
         // Mode 1: --step - Push step to pending queue
         if (options.step && !options.agent) {
           const state = await manager.getActive();
           if (!state) {
-            console.error('Error: No active runbook');
-            process.exit(1);
+            throw new Error('No active runbook');
           }
 
           const stepId = parseStepIdFromString(options.step);
           if (!stepId) {
-            console.error(`Error: Invalid step ID format: ${options.step}`);
-            console.error('Expected format: "3" or "3.1"');
-            process.exit(1);
+            throw new Error(`Invalid step ID format: ${options.step}. Expected format: "3" or "3.1"`);
           }
 
           const pendingStep: PendingStep = {
@@ -59,6 +58,11 @@ export function registerRunCommand(program: Command): void {
           };
 
           await manager.pushPendingStep(state.id, pendingStep);
+
+          if (output.isJson()) {
+            output.getWriter().writeJson({ action: 'step_queued', stepId: stepIdToString(stepId), runbook: file });
+            return;
+          }
 
           const runbookInfo = file ? ` with runbook ${file}` : '';
           console.log(`Step ${stepIdToString(stepId)} queued for agent binding${runbookInfo}`);
@@ -70,17 +74,14 @@ export function registerRunCommand(program: Command): void {
           const filePath = await resolveRunbookFile(cwd, file);
 
           if (!filePath) {
-            console.error(`Error: Runbook not found: ${file}`);
-            console.error(`Try 'rd ls --all' to list available runbooks.`);
-            process.exit(1);
+            throw new Error(`Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`);
           }
 
           const content = await fs.readFile(filePath, 'utf8');
           const runbook = parseRunbookDocument(content, path.basename(filePath));
 
           if (runbook.steps.length === 0) {
-            console.error('Error: Runbook has no steps');
-            process.exit(1);
+            throw new Error('Runbook has no steps');
           }
 
           const runbookPath = path.relative(cwd, filePath);
@@ -98,8 +99,19 @@ export function registerRunCommand(program: Command): void {
             await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
           }
 
+          const metadata = buildMetadata(state);
+
+          if (output.isJson()) {
+            output.getWriter().writeJson({
+              action: 'started',
+              runbook: metadata,
+              currentStep: { index: state.step }
+            });
+            return;
+          }
+
           // Print metadata and action
-          printMetadata(buildMetadata(state));
+          printMetadata(metadata);
           printActionBlock({ action: 'START' });
 
           // Update lastAction
@@ -110,7 +122,7 @@ export function registerRunCommand(program: Command): void {
           const result = await runExecutionLoop(manager, state.id, [...runbook.steps], cwd, !!options.prompted, undefined);
 
           if (result === 'stopped') {
-            process.exit(1);
+            throw new Error('Runbook stopped');
           }
           return;
         }
@@ -119,32 +131,33 @@ export function registerRunCommand(program: Command): void {
         if (options.agent) {
           const state = await manager.getActive();
           if (!state) {
-            console.error('Error: No active runbook');
-            process.exit(1);
+            throw new Error('No active runbook');
           }
 
           const pending = await manager.popPendingStep(state.id);
           if (!pending) {
-            console.error('Error: No pending step to bind');
-            process.exit(1);
+            throw new Error('No pending step to bind');
           }
 
           await manager.bindAgent(state.id, options.agent, pending.stepId);
-          console.log(`Agent ${options.agent} bound to step ${stepIdToString(pending.stepId)}`);
+
+          if (output.isJson()) {
+            output.getWriter().writeJson({ action: 'agent_bound', agent: options.agent, stepId: stepIdToString(pending.stepId) });
+          } else {
+            console.log(`Agent ${options.agent} bound to step ${stepIdToString(pending.stepId)}`);
+          }
 
           if (pending.runbook) {
             const runbookPath = await resolveRunbookFile(cwd, pending.runbook);
             if (!runbookPath) {
-              console.error(`Error: Runbook file not found: ${pending.runbook}`);
-              process.exit(1);
+              throw new Error(`Runbook file not found: ${pending.runbook}`);
             }
 
             const content = await fs.readFile(runbookPath, 'utf8');
             const runbook = parseRunbookDocument(content, path.basename(runbookPath));
 
             if (runbook.steps.length === 0) {
-              console.error('Error: Child runbook has no steps');
-              process.exit(1);
+              throw new Error('Child runbook has no steps');
             }
 
             // Inherit prompted flag from parent runbook
@@ -166,8 +179,20 @@ export function registerRunCommand(program: Command): void {
 
             await manager.pushRunbook(childState.id, options.agent);
 
+            const childMetadata = buildMetadata(childState);
+
+            if (output.isJson()) {
+              output.getWriter().writeJson({
+                action: 'child_runbook_started',
+                agent: options.agent,
+                childRunbook: childMetadata,
+                currentStep: { index: childState.step }
+              });
+              return;
+            }
+
             // Print metadata and action
-            printMetadata(buildMetadata(childState));
+            printMetadata(childMetadata);
             printActionBlock({ action: 'START' });
 
             // Update lastAction
@@ -177,26 +202,15 @@ export function registerRunCommand(program: Command): void {
             const result = await runExecutionLoop(manager, childState.id, [...runbook.steps], cwd, parentPrompted, options.agent);
 
             if (result === 'stopped') {
-              process.exit(1);
+              throw new Error('Runbook stopped');
             }
           }
           return;
         }
 
         if (!file && !options.step && !options.agent) {
-          console.error('Error: Runbook file, --step, or --agent option required');
-          process.exit(1);
+          throw new Error('Runbook file, --step, or --agent option required');
         }
-      } catch (error) {
-        if (isNodeError(error) && error.code === 'ENOENT') {
-          console.error(`Error: Runbook not found: ${file ?? 'unknown'}`);
-          console.error(`Try 'rd ls --all' to list available runbooks.`);
-        } else if (error instanceof RunbookSyntaxError) {
-          console.error(`Syntax error: ${error.message}`);
-        } else {
-          console.error(`Error: ${getErrorMessage(error)}`);
-        }
-        process.exit(1);
-      }
+      }, { json: options.json });
     });
 }
