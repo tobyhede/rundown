@@ -31,6 +31,7 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import {
   handleNextInstanceFlags,
 } from '../services/execution.js';
+import { OutputManager } from '../services/output-manager.js';
 
 export function registerPassCommand(program: Command): void {
   program
@@ -38,8 +39,10 @@ export function registerPassCommand(program: Command): void {
     .aliases(['yes', 'ok'])
     .description('Mark current step as passed (triggers PASS transition)')
     .option('--agent <agentId>', 'Specify agent completing step')
-    .action(async (options: { agent?: string }) => {
+    .option('--json', 'Output as JSON')
+    .action(async (options: { agent?: string; json?: boolean }) => {
       await withErrorHandling(async () => {
+        const output = new OutputManager({ json: options.json });
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
         let state = await manager.getActive(options.agent);
@@ -57,7 +60,11 @@ export function registerPassCommand(program: Command): void {
         }
 
         if (!state) {
-          console.log('No active runbook');
+          if (output.isJson()) {
+            output.getWriter().writeJson({ success: false, error: 'No active runbook' });
+          } else {
+            console.log('No active runbook');
+          }
           return;
         }
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);
@@ -91,16 +98,26 @@ export function registerPassCommand(program: Command): void {
               status: 'done',
               result
             });
-            console.log(`Agent ${options.agent} marked as pass`);
 
             const updated = await manager.load(state.id);
             const bindings = Object.values(updated?.agentBindings ?? {});
             const runningCount = bindings.filter((b) => b.status === 'running').length;
 
-            if (runningCount > 0) {
-              console.log(`${String(runningCount)} agent(s) still running`);
+            if (output.isJson()) {
+              output.getWriter().writeJson({
+                success: true,
+                action: 'agent_completed',
+                agent: options.agent,
+                result,
+                agentsRunning: runningCount
+              });
             } else {
-              console.log('All agents complete');
+              console.log(`Agent ${options.agent} marked as pass`);
+              if (runningCount > 0) {
+                console.log(`${String(runningCount)} agent(s) still running`);
+              } else {
+                console.log('All agents complete');
+              }
             }
             return;
           }
@@ -185,14 +202,16 @@ export function registerPassCommand(program: Command): void {
         const prevPos = { current: displayStep, total: totalSteps, substep: prevDisplaySubstep };
         const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
 
-        // Print separator with new step number and action block
-        printStepSeparator(newPos);
-        printActionBlock({
-          action,
-          from: prevPos,
-          result: 'PASS',
-          at: newPos,
-        });
+        if (!output.isJson()) {
+          // Print separator with new step number and action block
+          printStepSeparator(newPos);
+          printActionBlock({
+            action,
+            from: prevPos,
+            result: 'PASS',
+            at: newPos,
+          });
+        }
 
         // Evaluate pass condition once for use in completion/stopped blocks
         const passResult = evaluatePassCondition(currentStep);
@@ -203,7 +222,17 @@ export function registerPassCommand(program: Command): void {
             step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true }
           });
-          printRunbookComplete(passResult.message);
+
+          if (output.isJson()) {
+            output.getWriter().writeJson({
+              success: true,
+              action: 'complete',
+              from: prevPos,
+              to: newPos
+            });
+          } else {
+            printRunbookComplete(passResult.message);
+          }
 
           // If this was a child runbook with agent, update parent's agent binding
           if (options.agent && state.parentRunbookId) {
@@ -220,11 +249,35 @@ export function registerPassCommand(program: Command): void {
 
         if (isStopped) {
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
-          printRunbookStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevDisplaySubstep }, passResult.message);
+
+          if (output.isJson()) {
+            output.getWriter().writeJson({
+              success: true,
+              action: 'stopped',
+              from: prevPos,
+              to: newPos
+            });
+          } else {
+            printRunbookStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevDisplaySubstep }, passResult.message);
+          }
           process.exit(1);
         }
 
         // Continue with execution loop
+        if (output.isJson()) {
+          output.getWriter().writeJson({
+            success: true,
+            action: 'continue',
+            from: prevPos,
+            to: newPos,
+            nextStep: {
+              current: newDisplayStep,
+              total: totalSteps,
+              substep: newDisplaySubstep
+            }
+          });
+        }
+
         const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent);
         if (loopResult === 'stopped') {
           process.exit(1);
