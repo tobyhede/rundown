@@ -16,7 +16,6 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "cli": "node packages/cli/dist/cli.js",
-    "docs:patterns": "node scripts/build-patterns.js",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish"
