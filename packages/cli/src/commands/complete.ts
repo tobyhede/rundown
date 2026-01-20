@@ -13,6 +13,7 @@ import { getCwd } from '../helpers/context.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputManager } from '../services/output-manager.js';
 
 /**
  * Registers the 'complete' command for marking runbooks as complete.
@@ -24,19 +25,28 @@ export function registerCompleteCommand(program: Command): void {
     .description('Mark current runbook as complete')
     .argument('[message]', 'Completion message')
     .option('--agent <agentId>', 'Complete runbook in agent-specific stack')
-    .action(async (message: string | undefined, options: { agent?: string }) => {
+    .option('--json', 'Output as JSON for programmatic use')
+    .action(async (message: string | undefined, options: { agent?: string; json?: boolean }) => {
       await withErrorHandling(async () => {
+        const output = new OutputManager({ json: options.json });
+        const writer = output.getWriter();
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive(options.agent);
 
         if (!state) {
-          printNoActiveRunbook();
+          if (output.isJson()) {
+            writer.writeJson({ success: false, action: 'complete', message: 'No active runbook' });
+          } else {
+            printNoActiveRunbook();
+          }
           return;
         }
 
         // Print metadata
-        printMetadata(buildMetadata(state));
+        if (!output.isJson()) {
+          printMetadata(buildMetadata(state));
+        }
 
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);
         if (!runbookPath) {
@@ -49,7 +59,13 @@ export function registerCompleteCommand(program: Command): void {
           variables: { ...state.variables, completed: true }
         });
         await manager.popRunbook(options.agent);
-        printRunbookComplete(message);
+
+        const completionMessage = message || 'Runbook completed successfully';
+        if (output.isJson()) {
+          writer.writeJson({ success: true, action: 'complete', message: completionMessage });
+        } else {
+          printRunbookComplete(message);
+        }
       });
     });
 }
