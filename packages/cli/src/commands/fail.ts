@@ -23,6 +23,7 @@ import {
   isRunbookStopped,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputManager } from '../services/output-manager.js';
 
 /**
  * Registers the 'fail' command for marking steps as failed.
@@ -38,8 +39,10 @@ export function registerFailCommand(program: Command): void {
     .alias('no')
     .description('Mark current step as failed (triggers FAIL transition)')
     .option('--agent <agentId>', 'Specify agent completing step')
-    .action(async (options: { agent?: string }) => {
+    .option('--json', 'Output as JSON')
+    .action(async (options: { agent?: string; json?: boolean }) => {
       await withErrorHandling(async () => {
+        const output = new OutputManager({ json: options.json });
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
         let state = await manager.getActive(options.agent);
@@ -57,7 +60,11 @@ export function registerFailCommand(program: Command): void {
         }
 
         if (!state) {
-          console.log('No active runbook');
+          if (output.isJson()) {
+            output.getWriter().writeJson({ error: 'No active runbook' });
+          } else {
+            console.log('No active runbook');
+          }
           return;
         }
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);
@@ -108,16 +115,25 @@ export function registerFailCommand(program: Command): void {
               status: 'done',
               result: 'fail'
             });
-            console.log(`Agent ${options.agent} marked as fail`);
 
             const updated = await manager.load(state.id);
             const bindings = Object.values(updated?.agentBindings ?? {});
             const runningCount = bindings.filter((b: { status: string }) => b.status === 'running').length;
 
-            if (runningCount > 0) {
-              console.log(`${String(runningCount)} agent(s) still running`);
+            if (output.isJson()) {
+              output.getWriter().writeJson({
+                agent: options.agent,
+                result: 'fail',
+                agentsRunning: runningCount,
+                allComplete: runningCount === 0
+              });
             } else {
-              console.log('All agents complete');
+              console.log(`Agent ${options.agent} marked as fail`);
+              if (runningCount > 0) {
+                console.log(`${String(runningCount)} agent(s) still running`);
+              } else {
+                console.log('All agents complete');
+              }
             }
             return;
           }
@@ -201,14 +217,16 @@ export function registerFailCommand(program: Command): void {
         const prevPos = { current: displayStep, total: totalSteps, substep: prevDisplaySubstep };
         const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
 
-        // Print separator with new step number and action block
-        printStepSeparator(newPos);
-        printActionBlock({
-          action,
-          from: prevPos,
-          result: 'FAIL',
-          at: newPos,
-        });
+        if (!output.isJson()) {
+          // Print separator with new step number and action block
+          printStepSeparator(newPos);
+          printActionBlock({
+            action,
+            from: prevPos,
+            result: 'FAIL',
+            at: newPos,
+          });
+        }
 
         // Evaluate fail condition once to get message
         // Use state.retryCount (pre-transition value) to correctly determine message
@@ -217,7 +235,17 @@ export function registerFailCommand(program: Command): void {
         // Handle stopped
         if (isStopped) {
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
-          printRunbookStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevDisplaySubstep }, failResult.message);
+          
+          if (output.isJson()) {
+            output.getWriter().writeJson({
+              success: false,
+              action: 'stopped',
+              from: prevPos,
+              to: newPos
+            });
+          } else {
+            printRunbookStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevDisplaySubstep }, failResult.message);
+          }
 
           // If this was a child runbook with agent, update parent's agent binding
           if (options.agent && state.parentRunbookId) {
@@ -237,7 +265,17 @@ export function registerFailCommand(program: Command): void {
             step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true }
           });
-          printRunbookComplete(failResult.message);
+          
+          if (output.isJson()) {
+            output.getWriter().writeJson({
+              success: false,
+              action: 'complete',
+              from: prevPos,
+              to: newPos
+            });
+          } else {
+            printRunbookComplete(failResult.message);
+          }
 
           // If this was a child runbook with agent, update parent's agent binding
           if (options.agent && state.parentRunbookId) {
@@ -252,6 +290,20 @@ export function registerFailCommand(program: Command): void {
         }
 
         // Continue with execution loop
+        if (output.isJson()) {
+          output.getWriter().writeJson({
+            success: false,
+            action: 'continue',
+            from: prevPos,
+            to: newPos,
+            nextStep: {
+              current: newDisplayStep,
+              total: totalSteps,
+              substep: newDisplaySubstep
+            }
+          });
+        }
+
         const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent);
         if (loopResult === 'stopped') {
           process.exit(1);
