@@ -10,7 +10,7 @@ import {
   printStepBlock,
   countNumberedSteps,
   type ActionBlockData,
-} from '@turboshovel/core';
+} from '@rundown-org/core';
 import { getCwd, findRunbookFile } from '../helpers/context.js';
 import {
   getStepRetryMax,

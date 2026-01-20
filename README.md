@@ -10,8 +10,8 @@
   <a href="https://github.com/tobyhede/rundown/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="Rundown is released under the MIT license." />
   </a>
-  <a href="https://www.npmjs.com/package/@turboshovel/cli">
-    <img src="https://img.shields.io/npm/v/@turboshovel/cli.svg" alt="Current npm package version." />
+  <a href="https://www.npmjs.com/package/@rundown-org/cli">
+    <img src="https://img.shields.io/npm/v/@rundown-org/cli.svg" alt="Current npm package version." />
   </a>
 </p>
 
@@ -54,7 +54,7 @@ See [Security Documentation](docs/SECURITY.md) for full configuration options.
 ### Install
 
 ```bash
-npm install -g @turboshovel/cli
+npm install -g @rundown-org/cli
 ```
 
 ### Create Your First Runbook
@@ -130,9 +130,9 @@ The `rd` command is an alias for `rundown`.
 
 | Package | Description |
 |---------|-------------|
-| [@turboshovel/parser](packages/parser) | Markdown runbook parser |
-| [@turboshovel/core](packages/core) | Runbook state management and XState compilation |
-| [@turboshovel/cli](packages/cli) | Command-line interface |
+| [@rundown-org/parser](packages/parser) | Markdown runbook parser |
+| [@rundown-org/core](packages/core) | Runbook state management and XState compilation |
+| [@rundown-org/cli](packages/cli) | Command-line interface |
 
 ## Documentation
 

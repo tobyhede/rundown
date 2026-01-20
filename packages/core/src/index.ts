@@ -1,4 +1,4 @@
-// @turboshovel/core - Shared runbook and configuration library
+// @rundown-org/core - Shared runbook and configuration library
 
 // Core types and schemas
 export * from './types.js';

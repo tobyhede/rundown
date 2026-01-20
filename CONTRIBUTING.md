@@ -197,9 +197,9 @@ Releases are managed with [Changesets](https://github.com/changesets/changesets)
 ### Package Versioning
 
 All three npm packages use **fixed versioning** - they release together with the same version number:
-- `@turboshovel/parser`
-- `@turboshovel/core`
-- `@turboshovel/cli`
+- `@rundown-org/parser`
+- `@rundown-org/core`
+- `@rundown-org/cli`
 
 The `site` package is private and never published to npm.
 

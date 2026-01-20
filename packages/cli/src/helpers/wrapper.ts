@@ -3,8 +3,8 @@ import {
   getErrorMessage,
   RundownError,
   Errors,
-} from '@turboshovel/core';
-import { RunbookSyntaxError } from '@turboshovel/parser';
+} from '@rundown-org/core';
+import { RunbookSyntaxError } from '@rundown-org/parser';
 
 /**
  * Options for error handling behavior.

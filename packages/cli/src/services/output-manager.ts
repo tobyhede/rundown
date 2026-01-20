@@ -1,5 +1,5 @@
-import type { OutputWriter } from '@turboshovel/core';
-import { ConsoleWriter } from '@turboshovel/core';
+import type { OutputWriter } from '@rundown-org/core';
+import { ConsoleWriter } from '@rundown-org/core';
 import type { Column } from '../helpers/table-formatter.js';
 import { formatTable } from '../helpers/table-formatter.js';
 

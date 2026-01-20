@@ -1,7 +1,7 @@
 // src/runbook/types.ts
 
-export * from '@turboshovel/parser';
-import { type StepId } from '@turboshovel/parser';
+export * from '@rundown-org/parser';
+import { type StepId } from '@rundown-org/parser';
 
 /**
  * A step queued for agent binding, optionally with a child runbook.

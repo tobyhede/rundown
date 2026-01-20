@@ -6,7 +6,7 @@ import {
   printMetadata,
   printRunbookStashed,
   printNoActiveRunbook,
-} from '@turboshovel/core';
+} from '@rundown-org/core';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';

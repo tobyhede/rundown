@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Command } from 'commander';
-import { parseRunbookDocument, validateRunbook, type ValidationError, type Step } from '@turboshovel/parser';
+import { parseRunbookDocument, validateRunbook, type ValidationError, type Step } from '@rundown-org/parser';
 import { OutputManager } from '../services/output-manager.js';
 
 function formatErrors(errors: ValidationError[]): string {

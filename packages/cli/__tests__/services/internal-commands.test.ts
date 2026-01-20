@@ -6,7 +6,7 @@ import {
   isInternalRdCommand,
   executeRdCommandInternal,
 } from '../../src/services/internal-commands.js';
-import { RunbookStateManager, parseRunbook, type Runbook } from '@turboshovel/core';
+import { RunbookStateManager, parseRunbook, type Runbook } from '@rundown-org/core';
 
 describe('internal-commands', () => {
   describe('isInternalRdCommand()', () => {

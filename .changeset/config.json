@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [["@turboshovel/parser", "@turboshovel/core", "@turboshovel/cli"]],
+  "fixed": [["@rundown-org/parser", "@rundown-org/core", "@rundown-org/cli"]],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

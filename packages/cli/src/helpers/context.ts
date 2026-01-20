@@ -2,7 +2,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { parseRunbook, countNumberedSteps } from '@turboshovel/core';
+import { parseRunbook, countNumberedSteps } from '@rundown-org/core';
 import { resolveRunbookFile } from './resolve-runbook.js';
 
 /**

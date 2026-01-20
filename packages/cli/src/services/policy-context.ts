@@ -15,7 +15,7 @@ import {
   PolicyEvaluator as Evaluator,
   PolicyPrompter as Prompter,
   DEFAULT_POLICY,
-} from '@turboshovel/core';
+} from '@rundown-org/core';
 
 /**
  * CLI policy options from command line flags.

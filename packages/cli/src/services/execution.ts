@@ -20,7 +20,7 @@ import {
   evaluateFailCondition,
   countNumberedSteps,
   extractDisplayCommand,
-} from '@turboshovel/core';
+} from '@rundown-org/core';
 import {
   isInternalRdCommand,
   executeRdCommandInternal,

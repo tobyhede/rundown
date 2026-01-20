@@ -23,12 +23,14 @@ const scenarios = frontmatter.scenarios || {};
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
     <!-- Left: Source -->
     <div id="source" class="flex flex-col">
-      <h2 id="source-heading" class="text-lg font-semibold text-foreground mb-4">Rundown</h2>
+      <h2 id="source-heading" class="text-lg font-semibold text-foreground mb-4">1. Define your Process</h2>
       <div class="flex items-start gap-3 mb-4 p-3 bg-muted/50 border border-border rounded-md text-sm text-muted-foreground">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
         </svg>
-        <span>The runbook source — steps, commands, and prompts defined in markdown.</span>
+        <span>
+          Write simple Markdown to define steps, commands, and rules. The runbook is your single source of truth.
+          </span>
       </div>
       <div class="flex-1 overflow-auto">
         <HighlightedSource code={bodyContent} class="h-full" />
@@ -37,12 +39,12 @@ const scenarios = frontmatter.scenarios || {};
 
     <!-- Right: Interactive Runner -->
     <div id="runner" class="flex flex-col">
-      <h2 id="runner-heading" class="text-lg font-semibold text-foreground mb-4">Run</h2>
+      <h2 id="runner-heading" class="text-lg font-semibold text-foreground mb-4">2. Run the CLI</h2>
       <div class="flex items-start gap-3 mb-4 p-3 bg-muted/50 border border-border rounded-md text-sm text-muted-foreground">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
         </svg>
-        <span>Run the demo live — interact with the terminal and try different scenarios.</span>
+        <span>The CLI executes your markdown, guiding agents (and humans) step-by-step through the process.</span>
       </div>
       <div class="flex-1">
         <RunbookRunner

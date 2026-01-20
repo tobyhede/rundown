@@ -1,7 +1,7 @@
 // packages/cli/src/commands/prune.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager } from '@turboshovel/core';
+import { RunbookStateManager } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputManager } from '../services/output-manager.js';

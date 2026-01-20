@@ -1,5 +1,5 @@
 {
-  "name": "@turboshovel/parser",
+  "name": "@rundown-org/parser",
   "version": "1.0.0",
   "description": "Markdown runbook parser for Rundown",
   "type": "module",

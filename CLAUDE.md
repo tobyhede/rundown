@@ -4,14 +4,14 @@ Rundown is a format for defining executable runbooks using Markdown.
 
 ## Packages
 
-- `@turboshovel/parser` - Markdown runbook parser
-- `@turboshovel/core` - Runbook state management and XState compilation
-- `@turboshovel/cli` - Command-line interface (`rundown`, `rd`)
+- `@rundown-org/parser` - Markdown runbook parser
+- `@rundown-org/core` - Runbook state management and XState compilation
+- `@rundown-org/cli` - Command-line interface (`rundown`, `rd`)
 
 ## Installation
 
 ```bash
-npm install -g @turboshovel/cli
+npm install -g @rundown-org/cli
 ```
 
 ## Commands

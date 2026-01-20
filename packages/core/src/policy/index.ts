@@ -12,7 +12,7 @@
  *   loadPolicy,
  *   PolicyEvaluator,
  *   PolicyPrompter,
- * } from '@turboshovel/core/policy';
+ * } from '@rundown-org/core/policy';
  *
  * // Load policy from config file
  * const { policy } = await loadPolicy();

@@ -2,7 +2,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { extractFrontmatter, nameFromFilename } from '@turboshovel/parser';
+import { extractFrontmatter, nameFromFilename } from '@rundown-org/parser';
 import { getBundledRunbooksPath } from '../helpers/bundled-runbooks.js';
 
 /**

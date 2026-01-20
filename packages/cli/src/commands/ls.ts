@@ -3,7 +3,7 @@
 import type { Command } from 'commander';
 import {
   RunbookStateManager,
-} from '@turboshovel/core';
+} from '@rundown-org/core';
 import { discoverRunbooks } from '../services/discovery.js';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';

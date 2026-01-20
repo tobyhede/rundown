@@ -1,5 +1,5 @@
 import { z } from 'zod';
-export * from '@turboshovel/parser';
+export * from '@rundown-org/parser';
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -113,7 +113,7 @@ export type ValidatedSessionState = z.infer<typeof SessionStateSchema>;
 
 import {
   StepIdSchema
-} from '@turboshovel/parser';
+} from '@rundown-org/parser';
 
 /**
  * For RunbookState.step - always a string: "1", "ErrorHandler", "{N}"

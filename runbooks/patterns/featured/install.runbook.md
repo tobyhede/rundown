@@ -68,7 +68,7 @@ node --version
 Install the Rundown CLI globally using npm.
 
 ```bash
-npm i -g @turboshovel/cli
+npm i -g @rundown-org/cli
 ```
 
 ### 2.2 Verify installation
