@@ -13,7 +13,11 @@
   <a href="https://www.npmjs.com/package/@rundown-org/cli">
     <img src="https://img.shields.io/npm/v/@rundown-org/cli.svg" alt="Current npm package version." />
   </a>
+  <a href="https://coderabbit.ai">
+    <img src="https://img.shields.io/coderabbit/prs/github/tobyhede/rundown" alt="CodeRabbit Reviews." />
+  </a>
 </p>
+
 
 ## Why Rundown?
 

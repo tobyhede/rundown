@@ -14,8 +14,9 @@
     --secondary-foreground: 0 0% 9%;
     --muted: 0 0% 96%;
     --muted-foreground: 0 0% 45%;
-    --accent: 0 0% 96%;
-    --accent-foreground: 0 0% 9%;
+    --accent: 305 100% 50%;             /* magenta #FF00E5 */
+    --accent-foreground: 0 0% 98%;
+    --logo-glow: none;
     --border: 0 0% 90%;
     --input: 0 0% 90%;
     --ring: 0 0% 9%;
@@ -34,6 +35,7 @@
     --muted-foreground: 240 10% 60%;
     --accent: 305 100% 50%;             /* magenta #FF00E5 */
     --accent-foreground: 0 0% 98%;
+    --logo-glow: 0 0 60px hsl(var(--accent) / 0.3), 0 0 100px hsl(var(--accent) / 0.15);
     --border: 240 30% 20%;              /* blue-tinted */
     --input: 240 30% 20%;
     --ring: 265 100% 65%;               /* purple ring */
