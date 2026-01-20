@@ -21,6 +21,7 @@ import {
   extractRetryMax,
   isRunbookComplete,
   isRunbookStopped,
+  handleNextInstanceFlags,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputManager } from '../services/output-manager.js';
@@ -29,9 +30,6 @@ import { OutputManager } from '../services/output-manager.js';
  * Registers the 'fail' command for marking steps as failed.
  * @param program - Commander program instance to register the command on
  */
-import {
-  handleNextInstanceFlags,
-} from '../services/execution.js';
 
 export function registerFailCommand(program: Command): void {
   program
@@ -151,7 +149,6 @@ export function registerFailCommand(program: Command): void {
 
         // Main step fail - send FAIL event to actor
         // Capture prev state BEFORE mutation
-        const _prevStep = state.step;  // Used only for debugging/logging if needed
         const prevSubstep = state.substep;
         const isDynamic = steps.length > 0 && steps[0].isDynamic;
         // '{N}' indicates dynamic runbook with unbounded iterations
