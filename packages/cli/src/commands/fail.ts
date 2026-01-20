@@ -95,7 +95,11 @@ export function registerFailCommand(program: Command): void {
             if (failResult.action === 'retry') {
               actor.send({ type: 'FAIL' });
               await manager.updateFromActor(state.id, actor, steps);
-              console.log(`Agent ${options.agent} retrying step ${stepName}`);
+              if (output.isJson()) {
+                output.getWriter().writeJson({ action: 'retry', agent: options.agent, step: stepName });
+              } else {
+                console.log(`Agent ${options.agent} retrying step ${stepName}`);
+              }
               // Continue with execution loop for retry
               const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent);
               if (loopResult === 'stopped') process.exit(1);
@@ -103,7 +107,11 @@ export function registerFailCommand(program: Command): void {
             } else if (failResult.action === 'goto') {
               actor.send({ type: 'FAIL' });
               const updated = await manager.updateFromActor(state.id, actor, steps);
-              console.log(`Agent ${options.agent} failed, runbook jumped to step ${updated.step}`);
+              if (output.isJson()) {
+                output.getWriter().writeJson({ action: 'goto', agent: options.agent, step: updated.step });
+              } else {
+                console.log(`Agent ${options.agent} failed, runbook jumped to step ${updated.step}`);
+              }
               // Continue with execution loop after GOTO
               const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent);
               if (loopResult === 'stopped') process.exit(1);
@@ -308,6 +316,6 @@ export function registerFailCommand(program: Command): void {
         if (loopResult === 'stopped') {
           process.exit(1);
         }
-      });
+      }, { json: options.json });
     });
 }
