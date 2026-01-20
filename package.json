@@ -7,12 +7,12 @@
     "site"
   ],
   "scripts": {
-    "build": "npm run build -w packages/parser && npm run build -w packages/core && npm run build -w packages/cli && npm run build -w packages/claude-code-plugin",
+    "build": "npm run build -w packages/parser && npm run build -w packages/core && npm run build -w packages/cli && npm run build -w packages/claude-code-plugin && npm run build -w packages/mcp",
     "build:site": "npm run build -w site",
     "build:all": "npm run build && npm run build -w site",
-    "test": "npm run test -w packages/parser && npm run test -w packages/core && npm run test -w packages/cli && npm run test -w packages/claude-code-plugin",
+    "test": "npm run test -w packages/parser && npm run test -w packages/core && npm run test -w packages/cli && npm run test -w packages/claude-code-plugin && npm run test -w packages/mcp",
     "test:pw": "npm run test -w site",
-    "test:coverage": "npm run test:coverage -w packages/parser && npm run test:coverage -w packages/core && npm run test:coverage -w packages/cli && npm run test:coverage -w packages/claude-code-plugin",
+    "test:coverage": "npm run test:coverage -w packages/parser && npm run test:coverage -w packages/core && npm run test:coverage -w packages/cli && npm run test:coverage -w packages/claude-code-plugin && npm run test:coverage -w packages/mcp",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "cli": "node packages/cli/dist/cli.js",
