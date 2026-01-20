@@ -10,6 +10,7 @@ import {
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputManager } from '../services/output-manager.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -21,25 +22,38 @@ export function registerStopCommand(program: Command): void {
     .description('Abort current runbook')
     .argument('[message]', 'Stop message')
     .option('--agent <agentId>', 'Stop runbook in agent-specific stack')
-    .action(async (message: string | undefined, options: { agent?: string }) => {
-      await withErrorHandling(async () => {
-        const cwd = getCwd();
-        const manager = new RunbookStateManager(cwd);
-        const state = await manager.getActive(options.agent);
-        if (!state) {
-          printNoActiveRunbook();
-          return;
-        }
+    .option('--json', 'Output as JSON for programmatic use')
+    .action(async (message: string | undefined, options: { agent?: string; json?: boolean }) => {
+      await withErrorHandling(
+        async () => {
+          const cwd = getCwd();
+          const output = new OutputManager({ json: options.json });
+          const manager = new RunbookStateManager(cwd);
+          const state = await manager.getActive(options.agent);
+          if (!state) {
+            if (output.isJson()) {
+              output.getWriter().writeJson({ success: false, action: 'stopped', message: 'No active runbook' });
+            } else {
+              printNoActiveRunbook();
+            }
+            return;
+          }
 
-        // Print metadata
-        printMetadata(buildMetadata(state));
+          // Delete and clear
+          await manager.delete(state.id);
+          await manager.popRunbook(options.agent);
 
-        // Delete and clear
-        await manager.delete(state.id);
-        await manager.popRunbook(options.agent);
+          if (output.isJson()) {
+            output.getWriter().writeJson({ success: true, action: 'stopped', message });
+          } else {
+            // Print metadata
+            printMetadata(buildMetadata(state));
 
-        // Print terminal message
-        printRunbookStopped(message);
-      });
+            // Print terminal message
+            printRunbookStopped(message);
+          }
+        },
+        { json: options.json }
+      );
     });
 }
