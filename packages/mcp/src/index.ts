@@ -2,7 +2,16 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
 import { runCli } from './cli.js';
+
+// Read version from package.json
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageJson = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
+const VERSION = packageJson.version;
 
 interface McpResponse {
   [key: string]: unknown;
@@ -14,7 +23,7 @@ const toResponse = (r: { data?: unknown; error?: string }): McpResponse => ({
 });
 
 function createServer(): McpServer {
-  const server = new McpServer({ name: 'rundown', version: '1.0.0' });
+  const server = new McpServer({ name: 'rundown', version: VERSION });
 
   server.registerTool('validate', {
     description: 'Check runbook syntax',

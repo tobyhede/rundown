@@ -16,7 +16,19 @@ export interface CliResult {
 export async function runCli(args: string[]): Promise<CliResult> {
   try {
     const { stdout } = await execFileAsync('npx', ['rundown', ...args, '--json'], { timeout: 30000 });
-    return { success: true, data: JSON.parse(stdout) };
+
+    // Check if stdout exists and try to parse it
+    if (stdout && stdout.trim()) {
+      try {
+        return { success: true, data: JSON.parse(stdout) };
+      } catch {
+        // If parsing fails, return the raw stdout as data
+        return { success: true, data: stdout };
+      }
+    }
+
+    // Empty stdout is still success
+    return { success: true, data: undefined };
   } catch (error: unknown) {
     // execFile error includes stdout and stderr
     if (error && typeof error === 'object') {
