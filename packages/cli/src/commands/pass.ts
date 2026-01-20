@@ -279,7 +279,7 @@ export function registerPassCommand(program: Command): void {
 
           if (output.isJson()) {
             output.getWriter().writeJson({
-              success: true,
+              success: false,
               action: 'stopped',
               from: prevPos,
               to: newPos

@@ -99,7 +99,7 @@ export function registerFailCommand(program: Command): void {
                 console.log(`Agent ${options.agent} retrying step ${stepName}`);
               }
               // Continue with execution loop for retry
-              const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent);
+              const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, options.json);
               if (loopResult === 'stopped') process.exit(1);
               return;
             } else if (failResult.action === 'goto') {
@@ -111,7 +111,7 @@ export function registerFailCommand(program: Command): void {
                 console.log(`Agent ${options.agent} failed, runbook jumped to step ${updated.step}`);
               }
               // Continue with execution loop after GOTO
-              const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent);
+              const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, options.json);
               if (loopResult === 'stopped') process.exit(1);
               return;
             }
@@ -309,7 +309,7 @@ export function registerFailCommand(program: Command): void {
           });
         }
 
-        const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent);
+        const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, options.json);
         if (loopResult === 'stopped') {
           process.exit(1);
         }

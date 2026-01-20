@@ -15,7 +15,7 @@ export interface CliResult {
  */
 export async function runCli(args: string[]): Promise<CliResult> {
   try {
-    const { stdout } = await execFileAsync('npx', ['rundown', ...args, '--json'], { timeout: 30000 });
+    const { stdout } = await execFileAsync('npx', ['--no', 'rundown', ...args, '--json'], { timeout: 30000 });
 
     // Check if stdout exists and try to parse it
     if (stdout && stdout.trim()) {
