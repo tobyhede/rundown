@@ -62,6 +62,10 @@ export interface StepEnteredPayload {
   readonly description?: string;
   readonly prompt?: string;
   readonly hasCommand: boolean;
+  /** Command code for rendering in prompted mode */
+  readonly commandCode?: string;
+  /** Command language (e.g., 'bash', 'sh') */
+  readonly commandLang?: string;
   readonly isSubstep: boolean;
   /** Whether runbook is in prompted mode (affects command display) */
   readonly prompted: boolean;

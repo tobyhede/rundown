@@ -20,8 +20,8 @@ import {
   evaluateFailCondition,
   countNumberedSteps,
   extractDisplayCommand,
+  type ExecutionEventEmitter,
 } from '@rundown-org/core';
-import type { ExecutionEventEmitter } from '@rundown-org/core/events';
 import {
   isInternalRdCommand,
   executeRdCommandInternal,
@@ -190,6 +190,8 @@ export async function runExecutionLoop(
         description: itemToRender.description,
         prompt: itemToRender.prompt,
         hasCommand: !!itemToRender.command,
+        commandCode: itemToRender.command?.code,
+        commandLang: itemToRender.command?.lang,
         isSubstep,
         prompted,  // CRITICAL: Pass prompted flag for correct command display
       });
@@ -212,7 +214,7 @@ export async function runExecutionLoop(
     const displayCommand = extracted || itemToRender.command.code;
     if (emitter) {
       emitter.emit('COMMAND_STARTED', {
-        command: itemToRender.command!.code,
+        command: itemToRender.command.code,
         displayCommand,
         position: { current: displayStep, total: totalSteps, substep: displaySubstep },
       });
@@ -238,7 +240,7 @@ export async function runExecutionLoop(
     if (emitter) {
       const cmdPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
       emitter.emit('COMMAND_COMPLETED', {
-        command: itemToRender.command!.code,
+        command: itemToRender.command.code,
         success: execResult.success,
         exitCode: execResult.exitCode,
         position: cmdPosition,
@@ -252,13 +254,13 @@ export async function runExecutionLoop(
     if (execResult.policyDenied) {
       if (emitter) {
         emitter.emit('POLICY_DENIED', {
-          command: itemToRender.command!.code,
+          command: itemToRender.command.code,
           reason: execResult.denialReason ?? 'Permission denied',
           position: { current: displayStep, total: totalSteps, substep: displaySubstep },
         });
       } else {
         // Temporary fallback only when emitter is not provided.
-        printPolicyDenied(itemToRender.command!.code, execResult.denialReason ?? 'Permission denied');
+        printPolicyDenied(itemToRender.command.code, execResult.denialReason ?? 'Permission denied');
       }
       return 'stopped';
     }

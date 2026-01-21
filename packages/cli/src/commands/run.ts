@@ -11,16 +11,46 @@ import {
   parseStepIdFromString,
   isNodeError,
   getErrorMessage,
-  printMetadata,
-  printActionBlock,
   type PendingStep,
+  type RunbookState,
+  // Event system imports
+  ExecutionEventEmitter,
+  CLISubscriber,
+  getWriter,
 } from '@rundown-org/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
-import {
-  runExecutionLoop,
-  buildMetadata,
-} from '../services/execution.js';
+import { runExecutionLoop } from '../services/execution.js';
+
+/**
+ * Create an event emitter for a runbook execution.
+ * OUTPUT PARITY: Uses runbookState.runbook for "File:" line (matches buildMetadata).
+ */
+function createEmitter(
+  runbookState: RunbookState,
+  _agentId: string | undefined // reserved for future use
+): ExecutionEventEmitter {
+  return new ExecutionEventEmitter(
+    runbookState.id,
+    { name: runbookState.runbook, path: runbookState.runbookPath }
+  );
+}
+
+/**
+ * Emit RUNBOOK_STARTED event with metadata.
+ */
+function emitRunbookStarted(
+  emitter: ExecutionEventEmitter,
+  runbookState: RunbookState,
+  prompted: boolean
+): void {
+  emitter.emit('RUNBOOK_STARTED', {
+    title: runbookState.title,
+    description: runbookState.description,
+    prompted,
+    statePath: `.claude/rundown/runs/${runbookState.id}.json`,
+  });
+}
 
 /**
  * Registers the 'run' command for starting runbooks.
@@ -98,16 +128,19 @@ export function registerRunCommand(program: Command): void {
             await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
           }
 
-          // Print metadata and action
-          printMetadata(buildMetadata(state));
-          printActionBlock({ action: 'START' });
-
           // Update lastAction
           await manager.update(state.id, { lastAction: 'START' });
 
-          // Run execution loop (chains command steps automatically)
-          // For new runbooks started without --agent, use default stack (no agentId)
-          const result = await runExecutionLoop(manager, state.id, [...runbook.steps], cwd, !!options.prompted, undefined);
+          // Create emitter and attach CLI subscriber for parent runbook
+          const emitter = createEmitter(state, undefined);
+          const cliSubscriber = new CLISubscriber(getWriter());
+          emitter.subscribe(cliSubscriber.handle);
+
+          // Emit RUNBOOK_STARTED (replaces printMetadata + printActionBlock)
+          emitRunbookStarted(emitter, state, !!options.prompted);
+
+          // Run execution loop with emitter
+          const result = await runExecutionLoop(manager, state.id, [...runbook.steps], cwd, !!options.prompted, undefined, emitter);
 
           if (result === 'stopped') {
             process.exit(1);
@@ -166,15 +199,25 @@ export function registerRunCommand(program: Command): void {
 
             await manager.pushRunbook(childState.id, options.agent);
 
-            // Print metadata and action
-            printMetadata(buildMetadata(childState));
-            printActionBlock({ action: 'START' });
-
             // Update lastAction
             await manager.update(childState.id, { lastAction: 'START' });
 
-            // Run execution loop (chains command steps automatically)
-            const result = await runExecutionLoop(manager, childState.id, [...runbook.steps], cwd, parentPrompted, options.agent);
+            // Create emitter for CHILD runbook (uses childState, NOT state!)
+            // - childState.id (child's runbook ID)
+            // - childState.runbook (child's runbook identifier)
+            // - childState.runbookPath (child's resolved path)
+            // - childState.parentRunbookId (parent's ID, set during create)
+            // - childState.parentStepId (parent's step that spawned this child)
+            // - options.agent (child's agent ID)
+            const emitter = createEmitter(childState, options.agent);
+            const cliSubscriber = new CLISubscriber(getWriter());
+            emitter.subscribe(cliSubscriber.handle);
+
+            // Emit RUNBOOK_STARTED for child (replaces printMetadata + printActionBlock)
+            emitRunbookStarted(emitter, childState, parentPrompted);
+
+            // Run execution loop with emitter
+            const result = await runExecutionLoop(manager, childState.id, [...runbook.steps], cwd, parentPrompted, options.agent, emitter);
 
             if (result === 'stopped') {
               process.exit(1);
