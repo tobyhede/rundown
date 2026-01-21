@@ -253,11 +253,18 @@ export async function runExecutionLoop(
 
     // Handle policy denial
     if (execResult.policyDenied) {
+      const policyPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
       if (emitter) {
         emitter.emit('POLICY_DENIED', {
           command: itemToRender.command.code,
           reason: execResult.denialReason ?? 'Permission denied',
-          position: { current: displayStep, total: totalSteps, substep: displaySubstep },
+          position: policyPosition,
+        });
+        // Emit RUNBOOK_STOPPED so JSON output shows correct terminal state
+        emitter.emit('RUNBOOK_STOPPED', {
+          position: policyPosition,
+          reason: 'policy_denied',
+          message: `Command blocked by policy: ${execResult.denialReason ?? 'Permission denied'}`,
         });
       } else {
         // Temporary fallback only when emitter is not provided.
