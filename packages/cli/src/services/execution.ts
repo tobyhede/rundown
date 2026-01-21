@@ -333,15 +333,26 @@ export async function runExecutionLoop(
     const prevPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
     const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
 
-    // Print separator with new step number and action block
-    printStepSeparator(newPos);
-    printActionBlock({
-      action,
-      from: prevPos,
-      command: displayCommand,
-      result: execResult.success ? 'PASS' : 'FAIL',
-      at: newPos,
-    });
+    // Emit STEP_TRANSITIONED event or fallback to printing
+    if (emitter) {
+      emitter.emit('STEP_TRANSITIONED', {
+        action,
+        from: prevPos,
+        to: newPos,
+        result: execResult.success ? 'PASS' : 'FAIL',
+        command: displayCommand,
+      });
+    } else {
+      // Temporary fallback only when emitter is not provided.
+      printStepSeparator(newPos);
+      printActionBlock({
+        action,
+        from: prevPos,
+        command: displayCommand,
+        result: execResult.success ? 'PASS' : 'FAIL',
+        at: newPos,
+      });
+    }
 
     // Handle runbook end states
     if (isComplete) {
