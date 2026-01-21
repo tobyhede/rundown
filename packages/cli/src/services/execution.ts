@@ -181,8 +181,23 @@ export async function runExecutionLoop(
       ? String(state.substepStates?.length ?? 1)
       : state.substep;
 
-    // Print step/substep block with resolved instance number
-    printStepBlock({ current: displayStep, total: totalSteps, substep: displaySubstep }, itemToRender, prompted);
+    // Emit STEP_ENTERED event or print step/substep block
+    const stepPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
+    if (emitter) {
+      const isSubstep = 'id' in itemToRender;
+      emitter.emit('STEP_ENTERED', {
+        position: stepPosition,
+        stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as Step).name,
+        description: itemToRender.description,
+        prompt: itemToRender.prompt,
+        hasCommand: !!itemToRender.command,
+        isSubstep,
+        prompted,  // CRITICAL: Pass prompted flag for correct command display
+      });
+    } else {
+      // Temporary fallback only when emitter is not provided.
+      printStepBlock(stepPosition, itemToRender, prompted);
+    }
 
     // If CLI prompted mode, OR no command
     // Use itemToRender which may be a substep with its own command
