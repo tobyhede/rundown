@@ -235,6 +235,20 @@ export async function runExecutionLoop(
       execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbookPath);
     }
 
+    // Emit COMMAND_COMPLETED event
+    if (emitter) {
+      const cmdPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
+      emitter.emit('COMMAND_COMPLETED', {
+        command: itemToRender.command!.code,
+        success: execResult.success,
+        exitCode: execResult.exitCode,
+        position: cmdPosition,
+        policyDenied: execResult.policyDenied,
+        denialReason: execResult.denialReason,
+        sandboxed: execResult.sandboxed,
+      });
+    }
+
     // Handle policy denial
     if (execResult.policyDenied) {
       printPolicyDenied(itemToRender.command.code, execResult.denialReason ?? 'Permission denied');
