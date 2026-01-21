@@ -21,6 +21,7 @@ import {
   countNumberedSteps,
   extractDisplayCommand,
 } from '@rundown-org/core';
+import type { ExecutionEventEmitter } from '@rundown-org/core/events';
 import {
   isInternalRdCommand,
   executeRdCommandInternal,
@@ -122,6 +123,7 @@ export async function handleNextInstanceFlags(
  * @param cwd - Current working directory for command execution
  * @param prompted - Whether to run in prompted mode (no auto-execution)
  * @param agentId - Optional agent ID for agent-specific runbook stacks
+ * @param emitter - Optional event emitter for execution events
  * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only step reached
  */
 export async function runExecutionLoop(
@@ -130,7 +132,8 @@ export async function runExecutionLoop(
   steps: Step[],
   cwd: string,
   prompted: boolean,
-  agentId?: string
+  agentId?: string,
+  emitter?: ExecutionEventEmitter
 ): Promise<'done' | 'stopped' | 'waiting'> {
   // Note: state is loaded here and reloaded at end of each loop iteration.
   // Some immutable properties (parentRunbookId, agentId) are accessed from
