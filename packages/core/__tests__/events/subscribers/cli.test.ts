@@ -1,0 +1,99 @@
+import { describe, it, expect, beforeEach } from '@jest/globals';
+import { CLISubscriber } from '../../../src/events/subscribers/cli.js';
+import { TestWriter, resetColorCache, setColorEnabled } from '../../../src/cli/index.js';
+import type { RunbookEventV1 } from '../../../src/events/types.js';
+
+describe('CLISubscriber', () => {
+  let writer: TestWriter;
+  let subscriber: CLISubscriber;
+
+  beforeEach(() => {
+    writer = new TestWriter();
+    resetColorCache();
+    setColorEnabled(false);
+    subscriber = new CLISubscriber(writer);
+  });
+
+  const makeEvent = <T extends RunbookEventV1['type']>(
+    type: T,
+    payload: Extract<RunbookEventV1, { type: T }>['payload']
+  ): RunbookEventV1 =>
+    ({
+      v: '1',
+      type,
+      ts: new Date().toISOString(),
+      runbookId: 'wf-test',
+      runbook: { name: 'test' },
+      seq: 1,
+      payload,
+    }) as RunbookEventV1;
+
+  it('renders RUNBOOK_STARTED event with metadata', () => {
+    subscriber.handle(
+      makeEvent('RUNBOOK_STARTED', {
+        title: 'Test',
+        prompted: false,
+        statePath: '.claude/rundown/runs/wf-test.json',
+      })
+    );
+    const output = writer.getOutput();
+    expect(output).toContain('File:');
+    expect(output).toContain('State:');
+    expect(output).toContain('Action:');
+    expect(output).toContain('START');
+  });
+
+  it('renders STEP_ENTERED with prompted flag', () => {
+    subscriber.handle(
+      makeEvent('STEP_ENTERED', {
+        position: { current: '1', total: 5 },
+        stepName: '1',
+        description: 'Test step',
+        hasCommand: true,
+        isSubstep: false,
+        prompted: true,
+      })
+    );
+    const output = writer.getOutput();
+    expect(output).toContain('Test step');
+  });
+
+  it('renders STEP_TRANSITIONED event', () => {
+    subscriber.handle(
+      makeEvent('STEP_TRANSITIONED', {
+        action: 'CONTINUE',
+        from: { current: '1', total: 5 },
+        to: { current: '2', total: 5 },
+        result: 'PASS',
+      })
+    );
+    const output = writer.getOutput();
+    expect(output).toContain('Action:');
+    expect(output).toContain('CONTINUE');
+    expect(output).toContain('PASS');
+  });
+
+  it('renders RUNBOOK_COMPLETED event', () => {
+    subscriber.handle(
+      makeEvent('RUNBOOK_COMPLETED', {
+        message: 'All done!',
+        finalPosition: { current: '5', total: 5 },
+      })
+    );
+    const output = writer.getOutput();
+    expect(output).toContain('Runbook:');
+    expect(output).toContain('COMPLETE');
+  });
+
+  it('renders POLICY_DENIED event', () => {
+    subscriber.handle(
+      makeEvent('POLICY_DENIED', {
+        command: 'rm -rf /',
+        reason: 'Dangerous command',
+        position: { current: '1', total: 1 },
+      })
+    );
+    const output = writer.getOutput();
+    expect(output).toContain('Policy Denied');
+  });
+});
