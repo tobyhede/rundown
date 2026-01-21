@@ -5,12 +5,13 @@ import {
   printActionBlock,
   printStepBlock,
   printRunbookComplete,
-  printRunbookStopped,
+  printRunbookStoppedAtStep,
   printCommandExec,
   printPolicyDenied,
   printStepSeparator,
 } from '../../cli/output.js';
 import type { RunbookMetadata, ActionBlockData } from '../../cli/types.js';
+import type { Step, Substep } from '../../runbook/types.js';
 import { getWriter } from '../../cli/context.js';
 
 /**
@@ -44,7 +45,7 @@ export class CLISubscriber {
    *
    * @param event - The event to handle
    */
-  handle(event: RunbookEventV1): void {
+  handle = (event: RunbookEventV1): void => {
     switch (event.type) {
       case 'RUNBOOK_STARTED':
         this.handleRunbookStarted(event as RunbookEventV1 & { type: 'RUNBOOK_STARTED' });
@@ -77,12 +78,12 @@ export class CLISubscriber {
   }
 
   private handleRunbookStarted(event: RunbookEventV1 & { type: 'RUNBOOK_STARTED' }): void {
-    const { payload } = event;
+    const { payload, runbook } = event;
 
-    // Print metadata
+    // Print metadata - use runbook name/path for file, statePath for state
     const meta: RunbookMetadata = {
-      file: payload.statePath,
-      state: 'running',
+      file: runbook.name ?? runbook.path ?? 'unknown',
+      state: payload.statePath,
       prompted: payload.prompted,
     };
     printMetadata(meta, this.writer);
@@ -96,21 +97,22 @@ export class CLISubscriber {
 
   private handleStepEntered(event: RunbookEventV1 & { type: 'STEP_ENTERED' }): void {
     const { payload } = event;
+    const { position, stepName, description, prompt, hasCommand, isSubstep, prompted } = payload;
 
-    // Print step separator with position
-    printStepSeparator(payload.position, this.writer);
+    // Create minimal step/substep object for rendering
+    const item: Partial<Step> & Partial<Substep> = {
+      description,
+      prompt,
+      command: hasCommand ? { code: '', lang: 'bash' } : undefined,
+    };
+    if (isSubstep) {
+      (item as Substep).id = stepName;
+    } else {
+      (item as Step).name = stepName;
+    }
 
-    // Print step block - note: we don't have access to the actual Step object,
-    // so we'd need to render from the description
-    // For now, output the description/prompt if available
-    if (payload.description) {
-      this.writer.writeLine('');
-      this.writer.writeLine(payload.description);
-    }
-    if (payload.prompt) {
-      this.writer.writeLine('');
-      this.writer.writeLine(payload.prompt);
-    }
+    // Pass `prompted` flag to control command display
+    printStepBlock(position, item as Step | Substep, prompted, this.writer);
   }
 
   private handleCommandStarted(event: RunbookEventV1 & { type: 'COMMAND_STARTED' }): void {
@@ -147,7 +149,7 @@ export class CLISubscriber {
   }
 
   private handleRunbookStopped(event: RunbookEventV1 & { type: 'RUNBOOK_STOPPED' }): void {
-    printRunbookStopped(event.payload.message, this.writer);
+    printRunbookStoppedAtStep(event.payload.position, event.payload.message, this.writer);
   }
 
   private handleErrorOccurred(event: RunbookEventV1 & { type: 'ERROR_OCCURRED' }): void {
