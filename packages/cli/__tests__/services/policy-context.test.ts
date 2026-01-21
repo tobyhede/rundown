@@ -1,4 +1,4 @@
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 // Mock core dependencies using unstable_mockModule for ESM
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -97,7 +97,7 @@ describe('policy context service', () => {
     });
 
     it('logs warnings', async () => {
-      const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
       (core.loadPolicy as jest.Mock).mockResolvedValue({
         policy: { allow: [], deny: [] },
         isDefault: true,

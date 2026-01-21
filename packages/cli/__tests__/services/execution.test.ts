@@ -8,7 +8,7 @@ import {
   handleNextInstanceFlags,
 } from '../../src/services/execution.js';
 // We mock RunbookStateManager
-import type { RunbookStateManager, Step, Substep, RunbookState } from '@rundown-org/core';
+import type { RunbookStateManager, Step, RunbookState } from '@rundown-org/core';
 
 describe('execution service', () => {
   describe('isRunbookComplete', () => {
@@ -139,15 +139,19 @@ describe('execution service', () => {
   });
 
   describe('handleNextInstanceFlags', () => {
+    let mockUpdate: jest.Mock;
+    let mockAddDynamicSubstep: jest.Mock;
     let mockManager: jest.Mocked<RunbookStateManager>;
     let mockState: RunbookState;
 
     beforeEach(() => {
+      mockUpdate = jest.fn();
+      mockAddDynamicSubstep = jest.fn();
       mockManager = {
-        update: jest.fn(),
-        addDynamicSubstep: jest.fn(),
+        update: mockUpdate,
+        addDynamicSubstep: mockAddDynamicSubstep,
       } as unknown as jest.Mocked<RunbookStateManager>;
-      
+
       mockState = {
         step: '{N}',
         instance: 1,
@@ -163,7 +167,7 @@ describe('execution service', () => {
 
     it('increments instance when nextInstance is true', async () => {
       const snapshot = { context: { nextInstance: true } };
-      mockManager.update.mockResolvedValue({ ...mockState, instance: 2 });
+      mockUpdate.mockResolvedValue({ ...mockState, instance: 2 });
 
       await handleNextInstanceFlags(
         snapshot,
@@ -175,7 +179,7 @@ describe('execution service', () => {
         false
       );
 
-      expect(mockManager.update).toHaveBeenCalledWith('run-1', {
+      expect(mockUpdate).toHaveBeenCalledWith('run-1', {
         instance: 2,
         substep: '1'
       });
@@ -192,7 +196,7 @@ describe('execution service', () => {
         true, // isComplete
         false
       );
-      expect(mockManager.update).not.toHaveBeenCalled();
+      expect(mockUpdate).not.toHaveBeenCalled();
     });
 
     it('handles nextSubstepInstance', async () => {
@@ -201,8 +205,8 @@ describe('execution service', () => {
         { name: '{N}', isDynamic: true, substeps: [{ isDynamic: true }] }
       ] as unknown as Step[];
 
-      mockManager.addDynamicSubstep.mockResolvedValue('sub-2');
-      mockManager.update.mockResolvedValue({ ...mockState, substep: 'sub-2' });
+      mockAddDynamicSubstep.mockResolvedValue('sub-2');
+      mockUpdate.mockResolvedValue({ ...mockState, substep: 'sub-2' });
 
       await handleNextInstanceFlags(
         snapshot,
@@ -214,8 +218,8 @@ describe('execution service', () => {
         false
       );
 
-      expect(mockManager.addDynamicSubstep).toHaveBeenCalledWith('run-1');
-      expect(mockManager.update).toHaveBeenCalledWith('run-1', {
+      expect(mockAddDynamicSubstep).toHaveBeenCalledWith('run-1');
+      expect(mockUpdate).toHaveBeenCalledWith('run-1', {
         substep: 'sub-2'
       });
     });
@@ -225,7 +229,7 @@ describe('execution service', () => {
        const steps = [
          { name: '{N}', isDynamic: true, substeps: [{ isDynamic: false }] } // No dynamic substep
        ] as unknown as Step[];
- 
+
        await handleNextInstanceFlags(
          snapshot,
          mockState,
@@ -235,8 +239,8 @@ describe('execution service', () => {
          false,
          false
        );
- 
-       expect(mockManager.addDynamicSubstep).not.toHaveBeenCalled();
+
+       expect(mockAddDynamicSubstep).not.toHaveBeenCalled();
     });
   });
 });
