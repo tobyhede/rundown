@@ -251,7 +251,16 @@ export async function runExecutionLoop(
 
     // Handle policy denial
     if (execResult.policyDenied) {
-      printPolicyDenied(itemToRender.command.code, execResult.denialReason ?? 'Permission denied');
+      if (emitter) {
+        emitter.emit('POLICY_DENIED', {
+          command: itemToRender.command!.code,
+          reason: execResult.denialReason ?? 'Permission denied',
+          position: { current: displayStep, total: totalSteps, substep: displaySubstep },
+        });
+      } else {
+        // Temporary fallback only when emitter is not provided.
+        printPolicyDenied(itemToRender.command!.code, execResult.denialReason ?? 'Permission denied');
+      }
       return 'stopped';
     }
 
@@ -400,7 +409,17 @@ export async function runExecutionLoop(
       await manager.update(runbookId, {
         variables: { ...currentVars, stopped: true }
       });
-      printRunbookStoppedAtStep({ current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep }, stopMessage);
+      const stopPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
+      if (emitter) {
+        emitter.emit('RUNBOOK_STOPPED', {
+          message: stopMessage,
+          position: stopPos,
+          reason: 'fail_transition',
+        });
+      } else {
+        // Temporary fallback only when emitter is not provided.
+        printRunbookStoppedAtStep(stopPos, stopMessage);
+      }
 
       // If this was a child runbook with agent, update parent's agent binding
 
