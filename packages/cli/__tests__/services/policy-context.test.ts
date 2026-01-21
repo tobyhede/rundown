@@ -54,6 +54,12 @@ describe('policy context service', () => {
       const parsed = parsePolicyCliOptions({});
       expect(parsed.allowRun).toBeUndefined();
       expect(parsed.allowAll).toBe(false);
+      expect(parsed.sandbox).toBeUndefined();
+    });
+
+    it('handles sandbox flags', () => {
+      expect(parsePolicyCliOptions({ sandbox: true }).sandbox).toBe(true);
+      expect(parsePolicyCliOptions({ sandbox: false }).sandbox).toBe(false);
     });
 
     it('returns undefined for invalid types', () => {
@@ -119,6 +125,7 @@ describe('policy context service', () => {
     it('returns false if allowAll is set', async () => {
        (core.loadPolicy as jest.Mock).mockResolvedValue({
         policy: { allow: [], deny: [] },
+        warnings: [],
       });
       await initializePolicyContext({ allowAll: true });
       expect(isPolicyEnforced()).toBe(false);
@@ -131,6 +138,13 @@ describe('policy context service', () => {
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(true);
       expect(opts.sandboxStrict).toBe(false);
+    });
+
+    it('returns true for sandbox when initialized with empty options', async () => {
+       (core.loadPolicy as jest.Mock).mockResolvedValue({ policy: {} });
+      await initializePolicyContext({}); // No flags
+      const opts = getSandboxOptions();
+      expect(opts.sandbox).toBe(true);
     });
 
     it('returns false for sandbox if noSandbox is true', async () => {
