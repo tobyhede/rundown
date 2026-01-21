@@ -88,7 +88,6 @@ export async function handleNextInstanceFlags(
         instance: nextInstanceNum,
         substep: '1'
       });
-      console.log(`Instance ${String(currentInstance)} complete. Starting instance ${String(nextInstanceNum)}...`);
     }
   }
 
