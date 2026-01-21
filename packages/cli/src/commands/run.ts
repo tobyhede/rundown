@@ -16,6 +16,7 @@ import {
   // Event system imports
   ExecutionEventEmitter,
   CLISubscriber,
+  JSONSubscriber,
   getWriter,
 } from '@rundown-org/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
@@ -63,7 +64,8 @@ export function registerRunCommand(program: Command): void {
     .option('--step <stepId>', 'Mark step as started (adds to pending queue)')
     .option('--agent <agentId>', 'Bind agent to pending step')
     .option('--prompted', 'Prompted mode: show commands without auto-executing')
-    .action(async (file: string | undefined, options: { step?: string; agent?: string; prompted?: boolean }) => {
+    .option('--json', 'Output execution events as JSON')
+    .action(async (file: string | undefined, options: { step?: string; agent?: string; prompted?: boolean; json?: boolean }) => {
       try {
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
@@ -131,16 +133,26 @@ export function registerRunCommand(program: Command): void {
           // Update lastAction
           await manager.update(state.id, { lastAction: 'START' });
 
-          // Create emitter and attach CLI subscriber for parent runbook
+          // Create emitter and attach subscriber based on --json flag
           const emitter = createEmitter(state, undefined);
-          const cliSubscriber = new CLISubscriber(getWriter());
-          emitter.subscribe(cliSubscriber.handle);
+          const jsonSubscriber = options.json ? new JSONSubscriber() : undefined;
+          if (jsonSubscriber) {
+            emitter.subscribe(jsonSubscriber.handle);
+          } else {
+            const cliSubscriber = new CLISubscriber(getWriter());
+            emitter.subscribe(cliSubscriber.handle);
+          }
 
           // Emit RUNBOOK_STARTED (replaces printMetadata + printActionBlock)
           emitRunbookStarted(emitter, state, !!options.prompted);
 
           // Run execution loop with emitter
           const result = await runExecutionLoop(manager, state.id, [...runbook.steps], cwd, !!options.prompted, undefined, emitter);
+
+          // Output JSON summary if --json flag was used
+          if (jsonSubscriber) {
+            console.log(JSON.stringify(jsonSubscriber.getSummary(), null, 2));
+          }
 
           if (result === 'stopped') {
             process.exit(1);
@@ -203,21 +215,25 @@ export function registerRunCommand(program: Command): void {
             await manager.update(childState.id, { lastAction: 'START' });
 
             // Create emitter for CHILD runbook (uses childState, NOT state!)
-            // - childState.id (child's runbook ID)
-            // - childState.runbook (child's runbook identifier)
-            // - childState.runbookPath (child's resolved path)
-            // - childState.parentRunbookId (parent's ID, set during create)
-            // - childState.parentStepId (parent's step that spawned this child)
-            // - options.agent (child's agent ID)
             const emitter = createEmitter(childState, options.agent);
-            const cliSubscriber = new CLISubscriber(getWriter());
-            emitter.subscribe(cliSubscriber.handle);
+            const jsonSubscriber = options.json ? new JSONSubscriber() : undefined;
+            if (jsonSubscriber) {
+              emitter.subscribe(jsonSubscriber.handle);
+            } else {
+              const cliSubscriber = new CLISubscriber(getWriter());
+              emitter.subscribe(cliSubscriber.handle);
+            }
 
             // Emit RUNBOOK_STARTED for child (replaces printMetadata + printActionBlock)
             emitRunbookStarted(emitter, childState, parentPrompted);
 
             // Run execution loop with emitter
             const result = await runExecutionLoop(manager, childState.id, [...runbook.steps], cwd, parentPrompted, options.agent, emitter);
+
+            // Output JSON summary if --json flag was used
+            if (jsonSubscriber) {
+              console.log(JSON.stringify(jsonSubscriber.getSummary(), null, 2));
+            }
 
             if (result === 'stopped') {
               process.exit(1);
