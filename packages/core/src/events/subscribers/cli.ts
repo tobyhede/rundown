@@ -100,19 +100,14 @@ export class CLISubscriber {
     const { position, stepName, description, prompt, hasCommand, isSubstep, prompted } = payload;
 
     // Create minimal step/substep object for rendering
-    const item: Partial<Step> & Partial<Substep> = {
-      description,
-      prompt,
-      command: hasCommand ? { code: '', lang: 'bash' } : undefined,
-    };
-    if (isSubstep) {
-      (item as Substep).id = stepName;
-    } else {
-      (item as Step).name = stepName;
-    }
+    // Use type assertion to create object with readonly properties
+    const item = (isSubstep
+      ? { id: stepName, description, prompt, command: hasCommand ? { code: '', lang: 'bash' } : undefined }
+      : { name: stepName, description, prompt, command: hasCommand ? { code: '', lang: 'bash' } : undefined }
+    ) as Step | Substep;
 
     // Pass `prompted` flag to control command display
-    printStepBlock(position, item as Step | Substep, prompted, this.writer);
+    printStepBlock(position, item, prompted, this.writer);
   }
 
   private handleCommandStarted(event: RunbookEventV1 & { type: 'COMMAND_STARTED' }): void {
