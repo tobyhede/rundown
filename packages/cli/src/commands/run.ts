@@ -1,4 +1,4 @@
-// packages/cli/src/commands/start.ts
+// packages/cli/src/commands/run.ts
 
 import type { Command } from 'commander';
 import * as fs from 'fs/promises';

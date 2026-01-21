@@ -66,17 +66,22 @@ async function handleSessionCommand(args: string[]): Promise<void> {
   }
 
   const [command, ...params] = args;
-  const cwd = params[params.length - 1] || '.';
-  const session = new Session(cwd);
+
+  // Helper to extract cwd - defaults to process.cwd() if not provided
+  const getCwd = (expectedParams: number): string => {
+    return params.length > expectedParams ? params[params.length - 1] : process.cwd();
+  };
 
   try {
     switch (command) {
       case 'get': {
-        if (params.length < 2) {
+        // Usage: get <key> [cwd] - key is required, cwd is optional
+        if (params.length < 1) {
           console.error('Usage: hooks-app session get <key> [cwd]');
           process.exit(1);
         }
         const [key] = params;
+        const session = new Session(getCwd(1));
         if (!isSessionStateKey(key)) {
           console.error(`Invalid session key: ${key}`);
           process.exit(1);
@@ -87,11 +92,13 @@ async function handleSessionCommand(args: string[]): Promise<void> {
       }
 
       case 'set': {
-        if (params.length < 3) {
+        // Usage: set <key> <value> [cwd] - key and value are required, cwd is optional
+        if (params.length < 2) {
           console.error('Usage: hooks-app session set <key> <value> [cwd]');
           process.exit(1);
         }
         const [key, value] = params;
+        const session = new Session(getCwd(2));
         if (!isSessionStateKey(key)) {
           console.error(`Invalid session key: ${key}`);
           process.exit(1);
@@ -121,11 +128,13 @@ async function handleSessionCommand(args: string[]): Promise<void> {
       }
 
       case 'append': {
-        if (params.length < 3) {
+        // Usage: append <key> <value> [cwd] - key and value are required, cwd is optional
+        if (params.length < 2) {
           console.error('Usage: hooks-app session append <key> <value> [cwd]');
           process.exit(1);
         }
         const [key, value] = params;
+        const session = new Session(getCwd(2));
         if (!isArrayKey(key)) {
           console.error(`Invalid array key: ${key} (must be edited_files or file_extensions)`);
           process.exit(1);
@@ -135,11 +144,13 @@ async function handleSessionCommand(args: string[]): Promise<void> {
       }
 
       case 'contains': {
-        if (params.length < 3) {
+        // Usage: contains <key> <value> [cwd] - key and value are required, cwd is optional
+        if (params.length < 2) {
           console.error('Usage: hooks-app session contains <key> <value> [cwd]');
           process.exit(1);
         }
         const [key, value] = params;
+        const session = new Session(getCwd(2));
         if (!isArrayKey(key)) {
           console.error(`Invalid array key: ${key} (must be edited_files or file_extensions)`);
           process.exit(1);
@@ -150,6 +161,8 @@ async function handleSessionCommand(args: string[]): Promise<void> {
       }
 
       case 'clear': {
+        // Usage: clear [cwd] - cwd is optional
+        const session = new Session(getCwd(0));
         await session.clear();
         break;
       }

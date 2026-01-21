@@ -56,7 +56,7 @@ Apply inline fixes.
 
 ### {N}.7 Complete
 
-```
+```text
 STATUS: OK
 TASK: {N}
 ```

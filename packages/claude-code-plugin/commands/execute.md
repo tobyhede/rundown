@@ -9,7 +9,7 @@ Execute implementation plans with workflow orchestration.
 
 ## Usage
 
-```
+```bash
 /rundown:execute <plan-file>
 ```
 

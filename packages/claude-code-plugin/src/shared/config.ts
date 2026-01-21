@@ -34,8 +34,16 @@ const KNOWN_ACTIONS = ['CONTINUE', 'BLOCK', 'STOP'];
  * @throws Error if any pattern is not a string
  */
 export function validateFilePatterns(gateConfig: GateConfig): void {
-  if (!gateConfig.file_patterns || gateConfig.file_patterns.length === 0) {
+  if (!gateConfig.file_patterns) {
     return; // No patterns to validate
+  }
+
+  if (!Array.isArray(gateConfig.file_patterns)) {
+    throw new Error('Invalid file patterns: expected string[]');
+  }
+
+  if (gateConfig.file_patterns.length === 0) {
+    return; // Empty array is valid
   }
 
   for (const pattern of gateConfig.file_patterns) {

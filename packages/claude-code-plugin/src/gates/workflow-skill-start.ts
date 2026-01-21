@@ -1,5 +1,5 @@
-import { type HookInput, type GateResult } from '../shared/index.js';
-import { execSync } from 'child_process';
+import { type HookInput, type GateResult, logger } from '../shared/index.js';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -22,9 +22,15 @@ export function execute(input: HookInput): Promise<GateResult> {
   const workflow = findSkillWorkflow(skillName, input.cwd);
   if (!workflow) return Promise.resolve({});
 
-  // Start workflow via CLI
+  // Validate workflow path to prevent command injection and path traversal
+  if (!/^[\w./-]+$/.test(workflow) || workflow.includes('..')) {
+    void logger.warn('Invalid workflow path rejected', { workflow, skill: skillName });
+    return Promise.resolve({});
+  }
+
+  // Start workflow via CLI (using execFileSync to prevent shell injection)
   try {
-    execSync(`rundown run ${workflow}`, { cwd: input.cwd, stdio: 'pipe' });
+    execFileSync('rundown', ['run', workflow], { cwd: input.cwd, stdio: 'pipe' });
     return Promise.resolve({
       additionalContext: `Started workflow: ${workflow}`
     });

@@ -199,11 +199,10 @@ async function updateSessionState(input: HookInput): Promise<void> {
         if (input.file_path) {
           await session.append('edited_files', input.file_path);
 
-          // Extract and track file extension
-          // Edge case: ext !== input.file_path prevents tracking entire filename
-          // as extension when file has no dot (e.g., "README")
-          const ext = input.file_path.split('.').pop();
-          if (ext && ext !== input.file_path) {
+          // Extract file extension using basename to handle paths with dots
+          const baseName = path.basename(input.file_path);
+          const ext = baseName.split('.').pop();
+          if (ext && ext !== baseName) {
             await session.append('file_extensions', ext);
           }
         }

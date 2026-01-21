@@ -6,7 +6,7 @@ workflow: execute-plan.runbook.md
 
 # Executing Plans
 
-## Overview`
+## Overview
 
 Load plan, review critically, execute tasks in batches, report for review between batches.
 

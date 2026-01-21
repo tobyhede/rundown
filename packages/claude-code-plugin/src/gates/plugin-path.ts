@@ -39,20 +39,19 @@ When you see file references like \`@\${CLAUDE_PLUGIN_ROOT}skills/...\`, resolve
 
 /**
  * Compute plugin root from this file's location
- * This file is at: plugin/core/src/gates/plugin-path.ts
- * Plugin root is: plugin/
+ * This file is at: packages/claude-code-plugin/src/gates/plugin-path.ts
+ * Plugin root is: packages/claude-code-plugin/
  *
- * We go up 3 levels: gates/ -> src/ -> core/ -> plugin/
+ * After compilation, __dirname is at: packages/claude-code-plugin/dist/gates/
+ * We go up 2 levels: gates/ -> dist/ -> claude-code-plugin/
  */
 function computePluginRoot(): string {
-  // In CommonJS, use __dirname
-  // __dirname is at: plugin/core/dist/gates/
+  // __dirname is at: packages/claude-code-plugin/dist/gates/
   // (after compilation from src/ to dist/)
 
-  // Go up 3 directories from dist/gates/
+  // Go up 2 directories from dist/gates/
   let pluginRoot = path.dirname(__dirname); // dist/
-  pluginRoot = path.dirname(pluginRoot); // core/
-  pluginRoot = path.dirname(pluginRoot); // plugin/
+  pluginRoot = path.dirname(pluginRoot); // claude-code-plugin/
 
   return pluginRoot;
 }

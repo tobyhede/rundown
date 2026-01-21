@@ -27,6 +27,9 @@ export function detectSyntheticEvents(input: HookInput): SyntheticEvent[] {
   }
 
   // Stop → SlashCommandEnd
+  // NOTE: SlashCommandEnd is emitted unconditionally on Stop events.
+  // The dispatcher (dispatcher.ts) filters this by checking session.active_command
+  // before processing, so SlashCommandEnd only fires when a command was active.
   if (hookEvent === 'Stop') {
     events.push({
       originalEvent: 'Stop',
