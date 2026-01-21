@@ -1,4 +1,4 @@
-import type { RunbookEventV1, StepPosition } from '../types.js';
+import type { RunbookEventV1 } from '../types.js';
 import type { OutputWriter } from '../../cli/writer.js';
 import {
   printMetadata,
@@ -37,7 +37,7 @@ export class CLISubscriber {
    * @param writer - OutputWriter to use (defaults to global writer)
    */
   constructor(writer?: OutputWriter) {
-    this.writer = writer || getWriter();
+    this.writer = writer ?? getWriter();
   }
 
   /**
@@ -123,6 +123,9 @@ export class CLISubscriber {
 
   private handleStepTransitioned(event: RunbookEventV1 & { type: 'STEP_TRANSITIONED' }): void {
     const { payload } = event;
+
+    // Print step separator before action block (matches fallback path)
+    printStepSeparator(payload.to, this.writer);
 
     // Print action block with transition details
     const action: ActionBlockData = {

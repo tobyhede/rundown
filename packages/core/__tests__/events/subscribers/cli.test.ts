@@ -58,7 +58,7 @@ describe('CLISubscriber', () => {
     expect(output).toContain('Test step');
   });
 
-  it('renders STEP_TRANSITIONED event', () => {
+  it('renders STEP_TRANSITIONED event with separator', () => {
     subscriber.handle(
       makeEvent('STEP_TRANSITIONED', {
         action: 'CONTINUE',
@@ -68,6 +68,14 @@ describe('CLISubscriber', () => {
       })
     );
     const output = writer.getOutput();
+
+    // Verify separator is present (em-dash character)
+    expect(output).toContain('─');
+
+    // Verify step number appears in separator
+    expect(output).toContain('2');
+
+    // Verify action block content
     expect(output).toContain('Action:');
     expect(output).toContain('CONTINUE');
     expect(output).toContain('PASS');
@@ -95,5 +103,32 @@ describe('CLISubscriber', () => {
     );
     const output = writer.getOutput();
     expect(output).toContain('Policy Denied');
+  });
+
+  it('renders RUNBOOK_STOPPED event with position', () => {
+    subscriber.handle(
+      makeEvent('RUNBOOK_STOPPED', {
+        position: { current: '3', total: 5 },
+        reason: 'fail_transition',
+        message: 'Step failed',
+      })
+    );
+    const output = writer.getOutput();
+    expect(output).toContain('Runbook:');
+    expect(output).toContain('STOP');
+  });
+
+  it('renders ERROR_OCCURRED event', () => {
+    subscriber.handle(
+      makeEvent('ERROR_OCCURRED', {
+        message: 'Something went wrong',
+        code: 'ERR_TEST',
+      })
+    );
+    const output = writer.getOutput();
+    expect(output).toContain('Error:');
+    expect(output).toContain('Something went wrong');
+    expect(output).toContain('Code:');
+    expect(output).toContain('ERR_TEST');
   });
 });
