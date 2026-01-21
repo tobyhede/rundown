@@ -211,7 +211,16 @@ export async function runExecutionLoop(
     // Fall back to original command if extractDisplayCommand returns empty (e.g., "rd echo --result pass")
     const extracted = extractDisplayCommand(itemToRender.command.code);
     const displayCommand = extracted || itemToRender.command.code;
-    printCommandExec(displayCommand);
+    if (emitter) {
+      emitter.emit('COMMAND_STARTED', {
+        command: itemToRender.command!.code,
+        displayCommand,
+        position: { current: displayStep, total: totalSteps, substep: displaySubstep },
+      });
+    } else {
+      // Temporary fallback only when emitter is not provided.
+      printCommandExec(displayCommand);
+    }
     let execResult: ExecutionResult;
 
     if (isInternalRdCommand(itemToRender.command.code)) {
