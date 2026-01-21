@@ -62,8 +62,8 @@ describe('runExecutionLoop', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     
-    (policyContext.isPolicyEnforced as any).mockReturnValue(false);
-    (policyContext.getSandboxOptions as any).mockReturnValue({ sandbox: true, sandboxStrict: false });
+    (policyContext.isPolicyEnforced).mockReturnValue(false);
+    (policyContext.getSandboxOptions).mockReturnValue({ sandbox: true, sandboxStrict: false });
     (core.executeCommand as any).mockReset();
     (core.executeCommandWithPolicy as any).mockReset();
 
@@ -152,7 +152,7 @@ describe('runExecutionLoop', () => {
 
   it('handles policy denial', async () => {
     mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
-    (policyContext.isPolicyEnforced as any).mockReturnValue(true);
+    (policyContext.isPolicyEnforced).mockReturnValue(true);
     
     (core.executeCommandWithPolicy as any).mockResolvedValue({
       success: false,
@@ -208,7 +208,7 @@ describe('executeCommandWithPolicyCheck', () => {
   });
 
   it('calls executeCommand directly if policy is not enforced', async () => {
-    (policyContext.isPolicyEnforced as any).mockReturnValue(false);
+    (policyContext.isPolicyEnforced).mockReturnValue(false);
     (core.executeCommand as any).mockResolvedValue({ success: true });
 
     await executeCommandWithPolicyCheck(command, cwd);
@@ -218,11 +218,11 @@ describe('executeCommandWithPolicyCheck', () => {
   });
 
   it('calls executeCommandWithPolicy if policy is enforced', async () => {
-    (policyContext.isPolicyEnforced as any).mockReturnValue(true);
+    (policyContext.isPolicyEnforced).mockReturnValue(true);
     const mockEvaluator = { setRunbookPath: jest.fn() };
-    (policyContext.getPolicyEvaluator as any).mockReturnValue(mockEvaluator);
-    (policyContext.getPolicyPrompter as any).mockReturnValue('prompter');
-    (policyContext.getSandboxOptions as any).mockReturnValue({ sandbox: true, sandboxStrict: true });
+    (policyContext.getPolicyEvaluator).mockReturnValue(mockEvaluator);
+    (policyContext.getPolicyPrompter).mockReturnValue('prompter');
+    (policyContext.getSandboxOptions).mockReturnValue({ sandbox: true, sandboxStrict: true });
     (core.executeCommandWithPolicy as any).mockResolvedValue({ success: true });
 
     await executeCommandWithPolicyCheck(command, cwd, 'test.md');
