@@ -107,8 +107,8 @@ export class ExecutionEventEmitter {
       runbookId: this.runbookId,
       runbook: this.runbook,
       seq: this.seq,
-      payload: payload as never,
-    };
+      payload,
+    } as Extract<RunbookEventV1, { type: T }>;
   }
 
   /**

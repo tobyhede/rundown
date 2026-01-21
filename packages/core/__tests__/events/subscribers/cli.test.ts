@@ -17,7 +17,7 @@ describe('CLISubscriber', () => {
   const makeEvent = <T extends RunbookEventV1['type']>(
     type: T,
     payload: Extract<RunbookEventV1, { type: T }>['payload']
-  ): RunbookEventV1 =>
+  ): Extract<RunbookEventV1, { type: T }> =>
     ({
       v: '1',
       type,
@@ -26,7 +26,7 @@ describe('CLISubscriber', () => {
       runbook: { name: 'test' },
       seq: 1,
       payload,
-    }) as RunbookEventV1;
+    }) as Extract<RunbookEventV1, { type: T }>;
 
   it('renders RUNBOOK_STARTED event with metadata', () => {
     subscriber.handle(

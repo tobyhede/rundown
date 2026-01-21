@@ -13,7 +13,7 @@ describe('JSONSubscriber', () => {
     type: T,
     payload: Extract<RunbookEventV1, { type: T }>['payload'],
     seq = 1
-  ): RunbookEventV1 =>
+  ): Extract<RunbookEventV1, { type: T }> =>
     ({
       v: '1',
       type,
@@ -22,7 +22,7 @@ describe('JSONSubscriber', () => {
       runbook: { name: 'test', path: 'test.md' },
       seq,
       payload,
-    }) as RunbookEventV1;
+    }) as Extract<RunbookEventV1, { type: T }>;
 
   it('collects events', () => {
     subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
