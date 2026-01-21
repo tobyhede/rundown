@@ -7,14 +7,31 @@ import type {
  * Execution summary for JSON output.
  */
 export interface ExecutionSummary {
+  /** Runbook state ID. Present after RUNBOOK_STARTED event. */
   readonly runbookId?: string;
+
+  /** Runbook path or name. Present after RUNBOOK_STARTED event. */
   readonly runbook?: string;
+
+  /** Execution status. Always present: 'running' until terminal event. */
   readonly status: 'complete' | 'stopped' | 'running';
+
+  /** Number of step transitions completed. Always present. */
   readonly stepsExecuted: number;
+
+  /** Total commands executed. Always present. */
   readonly commandsRun: number;
+
+  /** Commands that failed (non-zero exit). Always present. */
   readonly commandsFailed: number;
+
+  /** Final step position. Present after RUNBOOK_COMPLETED or RUNBOOK_STOPPED. */
   readonly finalPosition?: StepPosition;
+
+  /** Completion/stop message. Present if provided in terminal event. */
   readonly message?: string;
+
+  /** All collected events. Always present. */
   readonly events: readonly RunbookEventV1[];
 }
 

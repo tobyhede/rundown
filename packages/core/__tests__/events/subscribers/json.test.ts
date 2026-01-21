@@ -82,4 +82,92 @@ describe('JSONSubscriber', () => {
     subscriber.clear();
     expect(subscriber.getEvents()).toHaveLength(0);
   });
+
+  it('collects ERROR_OCCURRED events', () => {
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
+    subscriber.handle(
+      makeEvent('ERROR_OCCURRED', {
+        message: 'Command timed out',
+        code: 'TIMEOUT',
+        position: { current: '1', total: 2 },
+      }, 2)
+    );
+
+    const errors = subscriber.getEventsByType('ERROR_OCCURRED');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].payload.message).toBe('Command timed out');
+    expect(errors[0].payload.code).toBe('TIMEOUT');
+  });
+
+  it('builds summary for empty runbook (no steps executed)', () => {
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
+    subscriber.handle(
+      makeEvent('RUNBOOK_COMPLETED', {
+        finalPosition: { current: '0', total: 0 },
+      }, 2)
+    );
+
+    const summary = subscriber.getSummary();
+    expect(summary.status).toBe('complete');
+    expect(summary.stepsExecuted).toBe(0);
+    expect(summary.commandsRun).toBe(0);
+    expect(summary.commandsFailed).toBe(0);
+    expect(summary.runbookId).toBe('wf-test');
+  });
+
+  it('counts multiple commands with mixed success/failure', () => {
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
+    subscriber.handle(
+      makeEvent('COMMAND_COMPLETED', {
+        command: 'echo 1',
+        success: true,
+        exitCode: 0,
+        position: { current: '1', total: 3 },
+      }, 2)
+    );
+    subscriber.handle(
+      makeEvent('COMMAND_COMPLETED', {
+        command: 'false',
+        success: false,
+        exitCode: 1,
+        position: { current: '2', total: 3 },
+      }, 3)
+    );
+    subscriber.handle(
+      makeEvent('COMMAND_COMPLETED', {
+        command: 'echo 2',
+        success: true,
+        exitCode: 0,
+        position: { current: '3', total: 3 },
+      }, 4)
+    );
+    subscriber.handle(
+      makeEvent('RUNBOOK_COMPLETED', {
+        finalPosition: { current: '3', total: 3 },
+      }, 5)
+    );
+
+    const summary = subscriber.getSummary();
+    expect(summary.commandsRun).toBe(3);
+    expect(summary.commandsFailed).toBe(1);
+  });
+
+  it('returns running status before terminal event', () => {
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
+    subscriber.handle(
+      makeEvent('COMMAND_COMPLETED', {
+        command: 'echo test',
+        success: true,
+        exitCode: 0,
+        position: { current: '1', total: 2 },
+      }, 2)
+    );
+
+    const summary = subscriber.getSummary();
+    expect(summary.status).toBe('running');
+    expect(summary.runbookId).toBe('wf-test');
+    expect(summary.runbook).toBe('test.md');
+    expect(summary.finalPosition).toBeUndefined();
+    expect(summary.message).toBeUndefined();
+  });
 });
