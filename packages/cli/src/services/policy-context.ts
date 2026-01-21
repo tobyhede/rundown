@@ -216,7 +216,7 @@ export function parsePolicyCliOptions(opts: Record<string, unknown>): PolicyCliO
     policyPath: typeof opts.policy === 'string' ? opts.policy : undefined,
     yes: opts.yes === true,
     nonInteractive: opts.nonInteractive === true,
-    sandbox: opts.sandbox === true,
+    sandbox: typeof opts.sandbox === 'boolean' ? opts.sandbox : undefined,
     sandboxStrict: opts.sandboxStrict === true,
     noSandbox: opts.noSandbox === true,
   };

@@ -682,7 +682,7 @@ export function deriveAction(
  * @param runbookPath - Optional runbook file path for override matching
  * @returns Execution result
  */
-async function executeCommandWithPolicyCheck(
+export async function executeCommandWithPolicyCheck(
   command: string,
   cwd: string,
   runbookPath?: string
