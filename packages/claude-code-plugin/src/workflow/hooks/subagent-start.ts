@@ -28,7 +28,7 @@ export function handleSubagentStart(input: HookInput): SubagentStartResult {
   }
 
   try {
-    const output = rundown(`run --agent ${agentId}`, input.cwd);
+    const output = rundown(['run', '--agent', agentId], input.cwd);
 
     const context = parseStartAgentOutput(output, agentId);
     return { context };

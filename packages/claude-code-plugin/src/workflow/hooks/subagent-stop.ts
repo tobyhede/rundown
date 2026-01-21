@@ -1,6 +1,6 @@
 // src/workflow/hooks/subagent-stop.ts
 import type { HookInput } from '../../shared/index.js';
-import { rundown, setExecSync } from './rundown.js';
+import { rundown, setExecFileSync } from './rundown.js';
 
 export interface SubagentStopResult {
   context?: string;
@@ -8,7 +8,7 @@ export interface SubagentStopResult {
 }
 
 // Re-export for testing
-export { setExecSync };
+export { setExecFileSync };
 
 /**
  * Pattern for parsing STATUS field from agent output.
@@ -44,7 +44,7 @@ export function handleSubagentStop(input: HookInput): SubagentStopResult {
   const command = status === 'pass' ? 'pass' : 'fail';
 
   try {
-    const output = rundown(`${command} --agent ${agentId}`, input.cwd);
+    const output = rundown([command, '--agent', agentId], input.cwd);
 
     const context = formatCompletionContext(output, agentId, status);
     return { context };

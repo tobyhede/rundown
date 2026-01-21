@@ -25,7 +25,7 @@ export function trackStepDispatch(input: HookInput): StepDispatchResult {
     }
 
     try {
-      rundown(`run --step "${description}"`, input.cwd);
+      rundown(['run', '--step', description], input.cwd);
       return {};
     } catch {
       return {};
