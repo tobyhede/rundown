@@ -29,6 +29,9 @@ export * from './logger.js';
 // Runbook system
 export * from './runbook/index.js';
 
+// Events module (domain types for execution events)
+export * from './events/index.js';
+
 // CLI output module
 export * from './cli/index.js';
 
