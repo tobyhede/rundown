@@ -53,9 +53,11 @@ export class JSONSubscriber {
 
   /**
    * Get all collected events.
+   *
+   * Returns a defensive copy to prevent mutation of internal state.
    */
   getEvents(): readonly RunbookEventV1[] {
-    return this.events;
+    return [...this.events];
   }
 
   /**
@@ -99,7 +101,7 @@ export class JSONSubscriber {
       commandsFailed: commands.filter((c) => !c.payload.success).length,
       finalPosition,
       message,
-      events: this.events,
+      events: [...this.events],
     };
   }
 }
