@@ -27,14 +27,55 @@ import { runExecutionLoop } from '../services/execution.js';
  * Create an event emitter for a runbook execution.
  * OUTPUT PARITY: Uses runbookState.runbook for "File:" line (matches buildMetadata).
  */
-function createEmitter(
-  runbookState: RunbookState,
-  _agentId: string | undefined // reserved for future use
-): ExecutionEventEmitter {
+function createEmitter(runbookState: RunbookState): ExecutionEventEmitter {
   return new ExecutionEventEmitter(
     runbookState.id,
     { name: runbookState.runbook, path: runbookState.runbookPath }
   );
+}
+
+/**
+ * Result of setting up an emitter with subscriber for runbook execution.
+ */
+interface EmitterSetupResult {
+  emitter: ExecutionEventEmitter;
+  jsonSubscriber: JSONSubscriber | undefined;
+}
+
+/**
+ * Set up an emitter with the appropriate subscriber based on output mode.
+ *
+ * @param runbookState - The runbook state to create the emitter for
+ * @param jsonMode - Whether to use JSON output mode
+ * @returns The emitter and optional JSON subscriber
+ */
+function setupEmitterWithSubscriber(
+  runbookState: RunbookState,
+  jsonMode: boolean
+): EmitterSetupResult {
+  const emitter = createEmitter(runbookState);
+  const jsonSubscriber = jsonMode ? new JSONSubscriber() : undefined;
+
+  if (jsonSubscriber) {
+    emitter.subscribe(jsonSubscriber.handle);
+  } else {
+    const cliSubscriber = new CLISubscriber(getWriter());
+    emitter.subscribe(cliSubscriber.handle);
+  }
+
+  return { emitter, jsonSubscriber };
+}
+
+/**
+ * Output JSON summary from a JSON subscriber if present.
+ *
+ * @param jsonSubscriber - The JSON subscriber to get summary from, or undefined
+ */
+function outputJsonSummary(jsonSubscriber: JSONSubscriber | undefined): void {
+  if (jsonSubscriber) {
+    const writer = getWriter();
+    writer.writeJson(jsonSubscriber.getSummary());
+  }
 }
 
 /**
@@ -134,14 +175,7 @@ export function registerRunCommand(program: Command): void {
           await manager.update(state.id, { lastAction: 'START' });
 
           // Create emitter and attach subscriber based on --json flag
-          const emitter = createEmitter(state, undefined);
-          const jsonSubscriber = options.json ? new JSONSubscriber() : undefined;
-          if (jsonSubscriber) {
-            emitter.subscribe(jsonSubscriber.handle);
-          } else {
-            const cliSubscriber = new CLISubscriber(getWriter());
-            emitter.subscribe(cliSubscriber.handle);
-          }
+          const { emitter, jsonSubscriber } = setupEmitterWithSubscriber(state, !!options.json);
 
           // Emit RUNBOOK_STARTED (replaces printMetadata + printActionBlock)
           emitRunbookStarted(emitter, state, !!options.prompted);
@@ -150,9 +184,7 @@ export function registerRunCommand(program: Command): void {
           const result = await runExecutionLoop(manager, state.id, [...runbook.steps], cwd, !!options.prompted, undefined, emitter);
 
           // Output JSON summary if --json flag was used
-          if (jsonSubscriber) {
-            console.log(JSON.stringify(jsonSubscriber.getSummary(), null, 2));
-          }
+          outputJsonSummary(jsonSubscriber);
 
           if (result === 'stopped') {
             process.exit(1);
@@ -215,14 +247,7 @@ export function registerRunCommand(program: Command): void {
             await manager.update(childState.id, { lastAction: 'START' });
 
             // Create emitter for CHILD runbook (uses childState, NOT state!)
-            const emitter = createEmitter(childState, options.agent);
-            const jsonSubscriber = options.json ? new JSONSubscriber() : undefined;
-            if (jsonSubscriber) {
-              emitter.subscribe(jsonSubscriber.handle);
-            } else {
-              const cliSubscriber = new CLISubscriber(getWriter());
-              emitter.subscribe(cliSubscriber.handle);
-            }
+            const { emitter, jsonSubscriber } = setupEmitterWithSubscriber(childState, !!options.json);
 
             // Emit RUNBOOK_STARTED for child (replaces printMetadata + printActionBlock)
             emitRunbookStarted(emitter, childState, parentPrompted);
@@ -231,9 +256,7 @@ export function registerRunCommand(program: Command): void {
             const result = await runExecutionLoop(manager, childState.id, [...runbook.steps], cwd, parentPrompted, options.agent, emitter);
 
             // Output JSON summary if --json flag was used
-            if (jsonSubscriber) {
-              console.log(JSON.stringify(jsonSubscriber.getSummary(), null, 2));
-            }
+            outputJsonSummary(jsonSubscriber);
 
             if (result === 'stopped') {
               process.exit(1);
