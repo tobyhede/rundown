@@ -1,7 +1,18 @@
-import type { StepPosition } from '../events/types.js';
-
-// Re-export StepPosition from events (canonical location for domain types)
-export type { StepPosition };
+/**
+ * Step position within runbook execution.
+ *
+ * Represents the current position within a runbook, typically
+ * displayed in n/N format (e.g., "1/5" or "2.1/5").
+ * For dynamic runbooks, total may be '{N}' to indicate unbounded.
+ */
+export interface StepPosition {
+  /** Current step identifier (e.g., "1", "ErrorHandler", "{N}") */
+  readonly current: string;
+  /** Total number of steps, or '{N}' for dynamic runbooks */
+  readonly total: number | string;
+  /** Current substep identifier within the step (e.g., "1", "2") */
+  readonly substep?: string;
+}
 
 /**
  * Runbook metadata for display in CLI output.

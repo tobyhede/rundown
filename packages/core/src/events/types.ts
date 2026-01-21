@@ -1,18 +1,7 @@
-/**
- * Step position within runbook execution.
- *
- * Represents the current position within a runbook, typically
- * displayed in n/N format (e.g., "1/5" or "2.1/5").
- * For dynamic runbooks, total may be '{N}' to indicate unbounded.
- */
-export interface StepPosition {
-  /** Current step identifier (e.g., "1", "ErrorHandler", "{N}") */
-  current: string;
-  /** Total number of steps, or '{N}' for dynamic runbooks */
-  total: number | string;
-  /** Current substep identifier within the step (e.g., "1", "2") */
-  substep?: string;
-}
+import type { StepPosition } from '../cli/types.js';
+
+// Re-export StepPosition for backwards compatibility and event payload typing
+export type { StepPosition };
 
 /**
  * Runbook identification in events.
@@ -67,6 +56,8 @@ export interface StepEnteredPayload {
   /** Command language (e.g., 'bash', 'sh') */
   readonly commandLang?: string;
   readonly isSubstep: boolean;
+  /** Whether this step/substep is dynamic (uses {N}/{n} template) */
+  readonly isDynamic: boolean;
   /** Whether runbook is in prompted mode (affects command display) */
   readonly prompted: boolean;
 }

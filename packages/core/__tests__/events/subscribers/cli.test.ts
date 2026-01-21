@@ -51,6 +51,7 @@ describe('CLISubscriber', () => {
         description: 'Test step',
         hasCommand: true,
         isSubstep: false,
+        isDynamic: false,
         prompted: true,
       })
     );

@@ -48,32 +48,37 @@ export class CLISubscriber {
   handle = (event: RunbookEventV1): void => {
     switch (event.type) {
       case 'RUNBOOK_STARTED':
-        this.handleRunbookStarted(event as RunbookEventV1 & { type: 'RUNBOOK_STARTED' });
+        this.handleRunbookStarted(event);
         break;
       case 'STEP_ENTERED':
-        this.handleStepEntered(event as RunbookEventV1 & { type: 'STEP_ENTERED' });
+        this.handleStepEntered(event);
         break;
       case 'COMMAND_STARTED':
-        this.handleCommandStarted(event as RunbookEventV1 & { type: 'COMMAND_STARTED' });
+        this.handleCommandStarted(event);
         break;
       case 'COMMAND_COMPLETED':
-        this.handleCommandCompleted(event as RunbookEventV1 & { type: 'COMMAND_COMPLETED' });
+        this.handleCommandCompleted(event);
         break;
       case 'STEP_TRANSITIONED':
-        this.handleStepTransitioned(event as RunbookEventV1 & { type: 'STEP_TRANSITIONED' });
+        this.handleStepTransitioned(event);
         break;
       case 'POLICY_DENIED':
-        this.handlePolicyDenied(event as RunbookEventV1 & { type: 'POLICY_DENIED' });
+        this.handlePolicyDenied(event);
         break;
       case 'RUNBOOK_COMPLETED':
-        this.handleRunbookCompleted(event as RunbookEventV1 & { type: 'RUNBOOK_COMPLETED' });
+        this.handleRunbookCompleted(event);
         break;
       case 'RUNBOOK_STOPPED':
-        this.handleRunbookStopped(event as RunbookEventV1 & { type: 'RUNBOOK_STOPPED' });
+        this.handleRunbookStopped(event);
         break;
       case 'ERROR_OCCURRED':
-        this.handleErrorOccurred(event as RunbookEventV1 & { type: 'ERROR_OCCURRED' });
+        this.handleErrorOccurred(event);
         break;
+      default: {
+        // Exhaustiveness check - TypeScript errors if a case is missing
+        const _exhaustive: never = event;
+        throw new Error(`Unhandled event type: ${(_exhaustive as RunbookEventV1).type}`);
+      }
     }
   }
 
@@ -97,14 +102,14 @@ export class CLISubscriber {
 
   private handleStepEntered(event: RunbookEventV1 & { type: 'STEP_ENTERED' }): void {
     const { payload } = event;
-    const { position, stepName, description, prompt, hasCommand, commandCode, commandLang, isSubstep, prompted } = payload;
+    const { position, stepName, description, prompt, hasCommand, commandCode, commandLang, isSubstep, isDynamic, prompted } = payload;
 
     // Create minimal step/substep object for rendering
     // Include actual command code for prompted mode display
     const command = hasCommand ? { code: commandCode ?? '', lang: commandLang ?? 'bash' } : undefined;
     const item = (isSubstep
-      ? { id: stepName, description, prompt, command }
-      : { name: stepName, description, prompt, command }
+      ? { id: stepName, description, isDynamic, prompt, command }
+      : { name: stepName, description, isDynamic, prompt, command }
     ) as Step | Substep;
 
     // Pass `prompted` flag to control command display

@@ -24,6 +24,7 @@ export interface ExecutionSummary {
  * Use for MCP responses, --json flag, or testing.
  */
 export class JSONSubscriber {
+  /** Collected events. Mutated by handle()/clear(). */
   private events: RunbookEventV1[] = [];
 
   /**
@@ -62,21 +63,25 @@ export class JSONSubscriber {
    * Build execution summary from collected events.
    */
   getSummary(): ExecutionSummary {
-    const started = this.getEventsByType('RUNBOOK_STARTED')[0];
-    const complete = this.getEventsByType('RUNBOOK_COMPLETED')[0];
-    const stopped = this.getEventsByType('RUNBOOK_STOPPED')[0];
     const transitions = this.getEventsByType('STEP_TRANSITIONED');
     const commands = this.getEventsByType('COMMAND_COMPLETED');
+    const completeEvent = this.getEventsByType('RUNBOOK_COMPLETED').at(0);
+    const stoppedEvent = this.getEventsByType('RUNBOOK_STOPPED').at(0);
+    const startedEvent = this.getEventsByType('RUNBOOK_STARTED').at(0);
+
+    const status: 'complete' | 'stopped' | 'running' = completeEvent ? 'complete' : stoppedEvent ? 'stopped' : 'running';
+    const finalPosition = completeEvent ? completeEvent.payload.finalPosition : stoppedEvent?.payload.position;
+    const message = completeEvent ? completeEvent.payload.message : stoppedEvent?.payload.message;
 
     return {
-      runbookId: started?.runbookId,
-      runbook: started?.runbook.path ?? started?.runbook.name,
-      status: complete ? 'complete' : stopped ? 'stopped' : 'running',
+      runbookId: startedEvent?.runbookId,
+      runbook: startedEvent?.runbook.path ?? startedEvent?.runbook.name,
+      status,
       stepsExecuted: transitions.length,
       commandsRun: commands.length,
       commandsFailed: commands.filter((c) => !c.payload.success).length,
-      finalPosition: complete?.payload.finalPosition ?? stopped?.payload.position,
-      message: complete?.payload.message ?? stopped?.payload.message,
+      finalPosition,
+      message,
       events: this.events,
     };
   }
