@@ -365,7 +365,15 @@ export async function runExecutionLoop(
       await manager.update(runbookId, {
         variables: { ...currentVars, completed: true }
       });
-      printRunbookComplete(completionMessage);
+      if (emitter) {
+        emitter.emit('RUNBOOK_COMPLETED', {
+          message: completionMessage,
+          finalPosition: newPos,
+        });
+      } else {
+        // Temporary fallback only when emitter is not provided.
+        printRunbookComplete(completionMessage);
+      }
 
       // If this was a child runbook with agent, update parent's agent binding
 
