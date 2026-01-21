@@ -1,0 +1,85 @@
+import { describe, it, expect, beforeEach } from '@jest/globals';
+import { JSONSubscriber } from '../../../src/events/subscribers/json.js';
+import type { RunbookEventV1 } from '../../../src/events/types.js';
+
+describe('JSONSubscriber', () => {
+  let subscriber: JSONSubscriber;
+
+  beforeEach(() => {
+    subscriber = new JSONSubscriber();
+  });
+
+  const makeEvent = <T extends RunbookEventV1['type']>(
+    type: T,
+    payload: Extract<RunbookEventV1, { type: T }>['payload'],
+    seq = 1
+  ): RunbookEventV1 =>
+    ({
+      v: '1',
+      type,
+      ts: new Date().toISOString(),
+      runbookId: 'wf-test',
+      runbook: { name: 'test', path: 'test.md' },
+      seq,
+      payload,
+    }) as RunbookEventV1;
+
+  it('collects events', () => {
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
+    subscriber.handle(
+      makeEvent('STEP_TRANSITIONED', {
+        action: 'CONTINUE',
+        from: { current: '1', total: 2 },
+        to: { current: '2', total: 2 },
+        result: 'PASS',
+      }, 2)
+    );
+
+    expect(subscriber.getEvents()).toHaveLength(2);
+  });
+
+  it('builds execution summary for complete runbook', () => {
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
+    subscriber.handle(
+      makeEvent('COMMAND_COMPLETED', {
+        command: 'echo test',
+        success: true,
+        exitCode: 0,
+        position: { current: '1', total: 1 },
+      }, 2)
+    );
+    subscriber.handle(
+      makeEvent('RUNBOOK_COMPLETED', {
+        finalPosition: { current: '1', total: 1 },
+        message: 'Done',
+      }, 3)
+    );
+
+    const summary = subscriber.getSummary();
+    expect(summary.status).toBe('complete');
+    expect(summary.commandsRun).toBe(1);
+    expect(summary.commandsFailed).toBe(0);
+    expect(summary.message).toBe('Done');
+  });
+
+  it('builds execution summary for stopped runbook', () => {
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
+    subscriber.handle(
+      makeEvent('RUNBOOK_STOPPED', {
+        position: { current: '1', total: 1 },
+        message: 'Failed',
+        reason: 'fail_transition',
+      }, 2)
+    );
+
+    const summary = subscriber.getSummary();
+    expect(summary.status).toBe('stopped');
+    expect(summary.message).toBe('Failed');
+  });
+
+  it('clears collected events', () => {
+    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }));
+    subscriber.clear();
+    expect(subscriber.getEvents()).toHaveLength(0);
+  });
+});
