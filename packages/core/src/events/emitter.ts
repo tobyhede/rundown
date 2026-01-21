@@ -100,6 +100,14 @@ export class ExecutionEventEmitter {
     // the provided payload matches the type discriminant, even though our generic
     // constraints guarantee they match at runtime. See:
     // https://github.com/microsoft/TypeScript/issues/14094 (discriminated unions in generics)
+
+    // Development-mode validation: verify payload has required fields for event type.
+    // This catches type mismatches that the 'as Extract<...>' assertion bypasses.
+    // Zero cost in production since the entire block is tree-shaken.
+    if (process.env.NODE_ENV !== 'production') {
+      this.validatePayload(type, payload);
+    }
+
     return {
       v: '1',
       type,
@@ -109,6 +117,47 @@ export class ExecutionEventEmitter {
       seq: this.seq,
       payload,
     } as Extract<RunbookEventV1, { type: T }>;
+  }
+
+  /**
+   * Validate that payload contains required fields for the given event type.
+   * Only called in development mode. Throws if validation fails.
+   *
+   * @param type - Event type discriminator
+   * @param payload - Payload to validate
+   * @throws {Error} If payload is missing required fields for the event type
+   */
+  private validatePayload<T extends RunbookEventV1['type']>(
+    type: T,
+    payload: PayloadFor<T>
+  ): void {
+    // Define required fields for each event type
+    const requiredFields: Record<RunbookEventV1['type'], string[]> = {
+      RUNBOOK_STARTED: ['prompted', 'statePath'],
+      STEP_ENTERED: ['position', 'stepName', 'hasCommand', 'isSubstep', 'prompted'],
+      COMMAND_STARTED: ['command', 'displayCommand', 'position'],
+      COMMAND_COMPLETED: ['command', 'success', 'exitCode', 'position'],
+      STEP_TRANSITIONED: ['action', 'from', 'to', 'result'],
+      POLICY_DENIED: ['command', 'reason', 'position'],
+      RUNBOOK_COMPLETED: ['finalPosition'],
+      RUNBOOK_STOPPED: ['position'],
+      ERROR_OCCURRED: ['message'],
+    };
+
+    // TypeScript guarantees `required` is defined via Record<RunbookEventV1['type'], string[]>.
+    // All event types must be keys in requiredFields - adding a new event type without
+    // updating this record causes a compile-time error.
+    const required = requiredFields[type];
+    const payloadObj = payload as unknown as Record<string, unknown>;
+    const missing = required.filter(
+      (field) => !(field in payloadObj) || payloadObj[field] === undefined
+    );
+
+    if (missing.length > 0) {
+      throw new Error(
+        `Invalid payload for ${type}: missing required fields: ${missing.join(', ')}`
+      );
+    }
   }
 
   /**
