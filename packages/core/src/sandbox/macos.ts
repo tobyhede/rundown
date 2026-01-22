@@ -185,7 +185,7 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
   (subpath "/private/tmp")
   ;; Allow reading from current user's home directory for Node.js and CLI scripts
   ;; This is needed for symlink targets and module resolution
-  (subpath "${escapePath(process.env.HOME || '/Users')}")
+  (subpath "${escapePath(process.env.HOME ?? '/Users')}")
 )
 
 ;; Allow metadata operations (lstat, stat) on /private/var for path traversal
