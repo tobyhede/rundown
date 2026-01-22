@@ -1,6 +1,6 @@
 // src/workflow/hooks/subagent-stop.ts
 import type { HookInput } from '../../shared/index.js';
-import { rundown, setExecFileSync } from './rundown.js';
+import { rundown, setExecSync } from './rundown.js';
 
 export interface SubagentStopResult {
   context?: string;
@@ -8,7 +8,7 @@ export interface SubagentStopResult {
 }
 
 // Re-export for testing
-export { setExecFileSync };
+export { setExecSync };
 
 /**
  * Pattern for parsing STATUS field from agent output.

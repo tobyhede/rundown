@@ -31,10 +31,7 @@ For this session:
 CLAUDE_PLUGIN_ROOT=${pluginRoot}
 \`\`\`
 
-When you see file references like \
-@
-${CLAUDE_PLUGIN_ROOT}skills/...
-, resolve them using the path above.`;
+When you see file references like \`@\${CLAUDE_PLUGIN_ROOT}/skills/...\`, resolve them using the path above.`;
 
   return Promise.resolve({
     additionalContext: contextMessage

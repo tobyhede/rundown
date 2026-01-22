@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 // Allow injection for testing
 let execFileSyncImpl: typeof nodeExecFileSync = nodeExecFileSync;
 
-export function setExecFileSync(fn: typeof nodeExecFileSync): void {
+export function setExecSync(fn: typeof nodeExecFileSync): void {
   execFileSyncImpl = fn;
 }
 

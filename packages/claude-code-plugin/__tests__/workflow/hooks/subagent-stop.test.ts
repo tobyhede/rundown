@@ -41,7 +41,8 @@ describe('handleSubagentStop', () => {
       const result = handleSubagentStop(input);
       expect(result.context).toContain('Agent agent-123 complete');
       expect(mockExec).toHaveBeenCalledWith(
-        expect.stringContaining('pass --agent agent-123'),
+        'node',
+        [expect.any(String), 'pass', '--agent', 'agent-123'],
         expect.any(Object)
       );
     });
@@ -71,7 +72,8 @@ describe('handleSubagentStop', () => {
       const result = handleSubagentStop(input);
       expect(result.context).toContain('Agent agent-789 FAILED');
       expect(mockExec).toHaveBeenCalledWith(
-        expect.stringContaining('fail --agent agent-789'),
+        'node',
+        [expect.any(String), 'fail', '--agent', 'agent-789'],
         expect.any(Object)
       );
     });
@@ -101,7 +103,8 @@ describe('handleSubagentStop', () => {
       const result = handleSubagentStop(input);
       expect(result.context).toContain('Agent agent-no-status complete');
       expect(mockExec).toHaveBeenCalledWith(
-        expect.stringContaining('pass --agent'),
+        'node',
+        [expect.any(String), 'pass', '--agent', 'agent-no-status'],
         expect.any(Object)
       );
     });
@@ -226,6 +229,7 @@ describe('handleSubagentStop', () => {
       handleSubagentStop(input);
       expect(mockExec).toHaveBeenCalledWith(
         expect.any(String),
+        expect.any(Array),
         expect.objectContaining({ cwd: testCwd })
       );
     });

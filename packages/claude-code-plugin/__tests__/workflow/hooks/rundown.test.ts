@@ -29,7 +29,7 @@ describe('setExecSync', () => {
     const mockExec = createMockExecSync(customOutput);
     setExecSync(mockExec);
 
-    const result = rundown('status', '/test');
+    const result = rundown(['status'], '/test');
     expect(result).toBe(customOutput);
     expect(mockExec).toHaveBeenCalled();
   });
@@ -38,10 +38,11 @@ describe('setExecSync', () => {
     const mockExec = createMockExecSync('ok');
     setExecSync(mockExec);
 
-    rundown('pass --agent abc123', '/project/path');
+    rundown(['pass', '--agent', 'abc123'], '/project/path');
 
     expect(mockExec).toHaveBeenCalledWith(
-      expect.stringMatching(/node .+ pass --agent abc123$/),
+      'node',
+      [expect.stringContaining('cli'), 'pass', '--agent', 'abc123'],
       expect.objectContaining({
         cwd: '/project/path',
         stdio: 'pipe',
@@ -53,14 +54,14 @@ describe('setExecSync', () => {
 
 describe('rundown', () => {
   afterEach(() => {
-    setExecSync(jest.fn());
+    setExecSync(jest.fn() as any);
   });
 
   it('executes rundown CLI with provided arguments', () => {
     const mockExec = createMockExecSync('Command output');
     setExecSync(mockExec);
 
-    const result = rundown('status', '/test/cwd');
+    const result = rundown(['status'], '/test/cwd');
     expect(result).toBe('Command output');
   });
 
@@ -68,10 +69,11 @@ describe('rundown', () => {
     const mockExec = createMockExecSync('ok');
     setExecSync(mockExec);
 
-    rundown('status', '/custom/directory');
+    rundown(['status'], '/custom/directory');
 
     expect(mockExec).toHaveBeenCalledWith(
       expect.any(String),
+      expect.any(Array),
       expect.objectContaining({ cwd: '/custom/directory' })
     );
   });
@@ -80,10 +82,11 @@ describe('rundown', () => {
     const mockExec = createMockExecSync('ok');
     setExecSync(mockExec);
 
-    rundown('fail --agent abc-123 --reason "Task incomplete"', '/test');
+    rundown(['fail', '--agent', 'abc-123', '--reason', 'Task incomplete'], '/test');
 
     expect(mockExec).toHaveBeenCalledWith(
-      expect.stringContaining('fail --agent abc-123 --reason "Task incomplete"'),
+      'node',
+      [expect.any(String), 'fail', '--agent', 'abc-123', '--reason', 'Task incomplete'],
       expect.any(Object)
     );
   });
@@ -95,7 +98,7 @@ describe('rundown', () => {
     });
     setExecSync(mockExec);
 
-    expect(() => rundown('invalid-command', '/test')).toThrow('Command failed');
+    expect(() => rundown(['invalid-command'], '/test')).toThrow('Command failed');
   });
 
   describe('command construction', () => {
@@ -103,22 +106,23 @@ describe('rundown', () => {
       const mockExec = createMockExecSync('ok');
       setExecSync(mockExec);
 
-      rundown('status', '/test');
+      rundown(['status'], '/test');
 
       expect(mockExec).toHaveBeenCalledWith(
-        expect.stringMatching(/^node /),
+        'node',
+        expect.any(Array),
         expect.any(Object)
       );
     });
 
-    it('includes full CLI path in command', () => {
+    it('includes full CLI path in arguments', () => {
       const mockExec = createMockExecSync('ok');
       setExecSync(mockExec);
 
-      rundown('status', '/test');
+      rundown(['status'], '/test');
 
-      const callArg = mockExec.mock.calls[0][0] as string;
-      expect(callArg).toContain('cli');
+      const args = mockExec.mock.calls[0][1] as string[];
+      expect(args[0]).toContain('cli');
     });
   });
 
@@ -127,10 +131,11 @@ describe('rundown', () => {
       const mockExec = createMockExecSync('output');
       setExecSync(mockExec);
 
-      rundown('status', '/test');
+      rundown(['status'], '/test');
 
       expect(mockExec).toHaveBeenCalledWith(
         expect.any(String),
+        expect.any(Array),
         expect.objectContaining({ stdio: 'pipe' })
       );
     });
@@ -139,10 +144,11 @@ describe('rundown', () => {
       const mockExec = createMockExecSync('output');
       setExecSync(mockExec);
 
-      rundown('status', '/test');
+      rundown(['status'], '/test');
 
       expect(mockExec).toHaveBeenCalledWith(
         expect.any(String),
+        expect.any(Array),
         expect.objectContaining({ encoding: 'utf-8' })
       );
     });

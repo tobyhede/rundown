@@ -23,7 +23,7 @@ export function execute(input: HookInput): Promise<GateResult> {
   if (!workflow) return Promise.resolve({});
 
   // Validate workflow path to prevent command injection and path traversal
-  if (!/^[-￿0-9a-z/-_-]+$/.test(workflow) || workflow.includes('..')) {
+  if (!/^[\w./-]+$/.test(workflow) || workflow.includes('..')) {
     void logger.warn('Invalid workflow path rejected', { workflow, skill: skillName });
     return Promise.resolve({});
   }
