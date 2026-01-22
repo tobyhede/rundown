@@ -19,20 +19,6 @@ const { SeatbeltSandbox } = await import('../../src/sandbox/macos.js');
 const { spawn } = await import('child_process');
 const { existsSync, writeFileSync, unlinkSync } = await import('fs');
 
-/**
- * Helper to run a test with a mocked platform value.
- * Uses try/finally to ensure platform is restored even if test throws.
- */
-async function _withPlatform<T>(platform: string, fn: () => T | Promise<T>): Promise<T> {
-  const original = process.platform;
-  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
-  try {
-    return await fn();
-  } finally {
-    Object.defineProperty(process, 'platform', { value: original, configurable: true });
-  }
-}
-
 describe('SeatbeltSandbox', () => {
   const originalPlatform = process.platform;
 
