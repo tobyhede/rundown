@@ -11,6 +11,21 @@ import { spawn } from 'child_process';
 import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+
+/**
+ * Build PATH with node_modules/.bin prepended.
+ * This ensures local package binaries are found during command execution.
+ *
+ * @param cwd - Working directory
+ * @returns Enhanced PATH environment variable
+ */
+function buildEnhancedPath(cwd: string): string {
+  const binPath = join(cwd, 'node_modules', '.bin');
+  const isWindows = process.platform === 'win32';
+  const pathSeparator = isWindows ? ';' : ':';
+  const existingPath = process.env.PATH ?? process.env.Path ?? '';
+  return `${binPath}${pathSeparator}${existingPath}`;
+}
 import type {
   SandboxOptions,
   SandboxExecutionResult,
@@ -63,19 +78,17 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
 
 ;; Allow reading system paths (required for shell execution)
 (allow file-read*
+  (literal "/")
   (subpath "/usr")
   (subpath "/bin")
   (subpath "/sbin")
   (subpath "/System")
-  (subpath "/Library/Frameworks")
-  (subpath "/Library/Preferences")
-  (subpath "/private/var/db")
-  (subpath "/private/etc")
+  (subpath "/Library")
+  (subpath "/private")
   (subpath "/dev")
+  (subpath "/var")
   (literal "/etc")
   (literal "/tmp")
-  (literal "/var")
-  (literal "/private")
 )
 
 ;; Allow /dev access for stdio
@@ -94,9 +107,16 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
   (subpath "${escapePath(tmpdir())}")
 )
 
-;; Allow user home directory basics
+;; Allow reading from user directories (needed for Node.js, npm packages, and CLI scripts)
+;; This allows executing binaries and reading scripts from user-installed locations
 (allow file-read*
-  (subpath "/Users/Shared")
+  (subpath "/Users")
+)
+
+;; Allow reading from common package manager locations
+(allow file-read*
+  (subpath "/opt/homebrew")
+  (subpath "/usr/local")
 )
 
 ;; Custom read-only paths
@@ -220,13 +240,19 @@ export class SeatbeltSandbox implements SandboxImplementation {
     cwd: string
   ): Promise<SandboxExecutionResult> {
     return new Promise((resolve) => {
+      // Enhance PATH to include node_modules/.bin for local package binaries
+      const enhancedEnv = {
+        ...process.env,
+        PATH: buildEnhancedPath(cwd),
+      };
+
       const child = spawn(
         '/usr/bin/sandbox-exec',
         ['-f', profilePath, '/bin/sh', '-c', command],
         {
           cwd,
           stdio: 'inherit',
-          env: process.env,
+          env: enhancedEnv,
         }
       );
 
