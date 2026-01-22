@@ -19,9 +19,10 @@ const __dirname = dirname(__filename);
 
 export function execute(_input: HookInput): Promise<GateResult> {
   // Determine plugin root:
-  // 1. Use CLAUDE_PLUGIN_ROOT if set (standard Claude Code environment)
+  // 1. Use CLAUDE_PLUGIN_ROOT if set and non-empty (standard Claude Code environment)
   // 2. Otherwise compute from this script's location
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? computePluginRoot();
+  const envRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  const pluginRoot = envRoot && envRoot.trim().length > 0 ? envRoot : computePluginRoot();
 
   const contextMessage = `## Plugin Path Context
 

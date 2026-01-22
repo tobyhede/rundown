@@ -49,12 +49,14 @@ function findSkillWorkflow(skillName: string, cwd: string): string | undefined {
   const name = colonIndex >= 0 ? skillName.substring(colonIndex + 1) : skillName;
 
   // Search paths for SKILL.md
-  const searchPaths = [
-    // Plugin skills (via CLAUDE_PLUGIN_ROOT)
-    path.join(process.env.CLAUDE_PLUGIN_ROOT ?? '', 'skills', name, 'SKILL.md'),
-    // User skills (in project .claude directory)
-    path.join(cwd, '.claude', 'skills', name, 'SKILL.md')
-  ];
+  const searchPaths: string[] = [];
+  // Plugin skills (via CLAUDE_PLUGIN_ROOT)
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (pluginRoot) {
+    searchPaths.push(path.join(pluginRoot, 'skills', name, 'SKILL.md'));
+  }
+  // User skills (in project .claude directory)
+  searchPaths.push(path.join(cwd, '.claude', 'skills', name, 'SKILL.md'));
 
   for (const skillPath of searchPaths) {
     try {
@@ -73,8 +75,8 @@ function findSkillWorkflow(skillName: string, cwd: string): string | undefined {
  * Parse workflow field from YAML frontmatter
  */
 export function parseWorkflowFromFrontmatter(content: string): string | undefined {
-  // Match YAML frontmatter block
-  const match = /^---\n([\s\S]*?)\n---/.exec(content);
+  // Match YAML frontmatter block (supports both LF and CRLF line endings)
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
   if (!match) return undefined;
 
   // Extract workflow field from frontmatter
