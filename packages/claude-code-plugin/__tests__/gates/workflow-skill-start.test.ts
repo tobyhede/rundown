@@ -23,7 +23,7 @@ describe('workflow-skill-start gate', () => {
 
   describe('parseWorkflowFromFrontmatter', () => {
     it('extracts workflow field from frontmatter', () => {
-      const content = `---`
+      const content = `---
 name: verify
 description: Verify something
 workflow: verify.runbook.md
@@ -37,9 +37,7 @@ workflow: verify.runbook.md
     });
 
     it('returns undefined when no frontmatter', () => {
-      const content = '# Just a heading
-
-Some content';
+      const content = '# Just a heading\n\nSome content';
 
       const result = parseWorkflowFromFrontmatter(content);
 
@@ -47,7 +45,7 @@ Some content';
     });
 
     it('returns undefined when no workflow field', () => {
-      const content = `---`
+      const content = `---
 name: simple-skill
 description: No workflow
 ---
@@ -85,7 +83,7 @@ description: No workflow
     });
 
     it('starts workflow when skill has workflow in frontmatter', async () => {
-      const skillContent = `---`
+      const skillContent = `---
 name: verify
 workflow: verify.runbook.md
 ---
