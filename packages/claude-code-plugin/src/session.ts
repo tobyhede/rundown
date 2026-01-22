@@ -167,7 +167,8 @@ export class Session {
    */
   private async save(state: SessionState): Promise<void> {
     await fs.mkdir(dirname(this.stateFile), { recursive: true });
-    const temp = this.stateFile + '.tmp';
+    // Use unique temp file to avoid race conditions during concurrent writes
+    const temp = `${this.stateFile}.${Math.random().toString(36).slice(2)}.tmp`;
 
     try {
       // Write to temp file

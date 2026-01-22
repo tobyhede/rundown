@@ -129,17 +129,15 @@ describe('Session', () => {
       const session = new Session(testDir);
       await session.set('active_command', '/execute');
 
-      const stateFile = join(testDir, '.claude', 'session', 'state.json');
-      const tempFile = stateFile + '.tmp';
+      const stateDir = join(testDir, '.claude', 'session');
+      const files = await fs.readdir(stateDir);
 
-      // Temp file should not exist after save completes
-      const tempExists = await fs
-        .access(tempFile)
-        .then(() => true)
-        .catch(() => false);
-      expect(tempExists).toBe(false);
+      // Should only have state.json, no .tmp files
+      expect(files).toContain('state.json');
+      expect(files.filter((f) => f.endsWith('.tmp'))).toHaveLength(0);
 
       // State file should exist
+      const stateFile = join(stateDir, 'state.json');
       const stateExists = await fs
         .access(stateFile)
         .then(() => true)
@@ -178,17 +176,16 @@ describe('Session', () => {
       const session = new Session(testDir);
 
       // Rapid concurrent writes (atomic rename prevents corruption)
-      // Note: Some writes may fail due to temp file conflicts, but state file
-      // should never be corrupted (that's what atomic rename protects against)
+      // With unique temp files, all writes should succeed without ENOENT rename errors
       const results = await Promise.allSettled([
         session.append('edited_files', 'file1.ts'),
         session.append('edited_files', 'file2.ts'),
         session.append('edited_files', 'file3.ts')
       ]);
 
-      // At least one operation should succeed
+      // All operations should succeed
       const successCount = results.filter((r) => r.status === 'fulfilled').length;
-      expect(successCount).toBeGreaterThan(0);
+      expect(successCount).toBe(3);
 
       // State file should be valid (not corrupted)
       const files = await session.get('edited_files');
