@@ -104,6 +104,24 @@ function parseResultOptions(args: string[]): { results: string[]; remaining: str
 }
 
 /**
+ * Execute the 'prompt' command internally.
+ *
+ * Outputs the provided content wrapped in markdown fences (```).
+ * This is used for displaying code/commands to agents without executing them.
+ *
+ * @param args - Command arguments after 'prompt' (the content to display)
+ * @returns ExecutionResult with success status
+ */
+function executePromptInternal(args: string[]): ExecutionResult {
+  // Join all args as the content (handles space-separated content)
+  const content = args.join(' ');
+  console.log('```');
+  console.log(content);
+  console.log('```');
+  return { success: true, exitCode: 0 };
+}
+
+/**
  * Execute the 'echo' command internally.
  *
  * @param args - Command arguments after 'echo'
@@ -159,6 +177,9 @@ export async function executeRdCommandInternal(
   switch (subcommand) {
     case 'echo':
       return executeEchoInternal(args, cwd);
+
+    case 'prompt':
+      return executePromptInternal(args);
 
     // Add more commands as needed:
     // case 'pass':

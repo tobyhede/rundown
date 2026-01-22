@@ -149,7 +149,7 @@ In WebContainer environments where nested process spawning doesn't work, the CLI
 - `isInternalRdCommand()` - Detects rd/rundown commands
 - `executeRdCommandInternal()` - Executes commands without spawning
 
-Currently supported internally: `echo`. Unsupported commands fall back to spawn.
+Currently supported internally: `echo`, `prompt`. Unsupported commands fall back to spawn.
 
 ## Documentation
 
