@@ -30,6 +30,10 @@
     "build": "tsc",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
     "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
+    "test:watch": "NODE_OPTIONS='--experimental-vm-modules' jest --watch",
+    "test:ci": "NODE_OPTIONS='--experimental-vm-modules' jest --ci --coverage --maxWorkers=2",
+    "test:perf": "NODE_OPTIONS='--experimental-vm-modules' jest --testPathPattern=perf",
+    "test:smoke": "bash scripts/smoke-test.sh",
     "clean": "rm -rf dist",
     "lint": "eslint src/**/*.ts __tests__/**/*.ts"
   },

@@ -1,9 +1,24 @@
 export default {
   testEnvironment: 'node',
+  testTimeout: 10000,
   roots: ['<rootDir>/__tests__'],
   testMatch: ['**/*.test.ts'],
   collectCoverageFrom: ['src/**/*.ts'],
   coverageReporters: ['text', 'lcov', 'html'],
+  coverageThreshold: {
+    global: {
+      branches: 40,
+      functions: 50,
+      lines: 50,
+      statements: 50,
+    },
+    './src/dispatcher.ts': {
+      branches: 80,
+      functions: 90,
+      lines: 85,
+    },
+  },
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
   moduleFileExtensions: ['ts', 'js', 'json'],
   extensionsToTreatAsEsm: ['.ts'],
   moduleNameMapper: {
