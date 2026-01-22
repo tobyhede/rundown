@@ -11,6 +11,12 @@ import { spawn } from 'child_process';
 import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
+import type {
+  SandboxOptions,
+  SandboxExecutionResult,
+  SandboxAvailability,
+  SandboxImplementation,
+} from './types.js';
 
 /**
  * Build PATH with node_modules/.bin prepended.
@@ -53,13 +59,6 @@ function getNodeExecutionPaths(): string[] {
     if (versionManagerDir.includes('mise') || versionManagerDir.includes('nvm') || versionManagerDir.includes('nodenv')) {
       paths.push(versionManagerDir);
     }
-
-    // Get the path to this module (the CLI/core package)
-    // This allows reading the CLI script when it's symlinked from node_modules/.bin
-    // __filename in ESM is not available, so we use import.meta.url would need to be passed
-    // Instead, we'll allow the entire process.cwd() for development scenarios
-    // and rely on the cwd/node_modules path for production scenarios
-
   } catch {
     // Fallback: allow common Node.js installation paths
   }
@@ -109,12 +108,6 @@ function getScriptDirectory(): string | null {
   cachedScriptDir = '';
   return null;
 }
-import type {
-  SandboxOptions,
-  SandboxExecutionResult,
-  SandboxAvailability,
-  SandboxImplementation,
-} from './types.js';
 
 /**
  * Generate a Seatbelt profile for the given sandbox options.
