@@ -1,4 +1,4 @@
-import { type HookInput, type GateResult, logger } from '../shared/index.js';
+import { type HookInput, type GateResult, logger, safeJoin, sanitizePathSegment } from '../shared/index.js';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -23,7 +23,7 @@ export function execute(input: HookInput): Promise<GateResult> {
   if (!workflow) return Promise.resolve({});
 
   // Validate workflow path to prevent command injection and path traversal
-  if (!/^[\w./-]+$/.test(workflow) || workflow.includes('..')) {
+  if (!/^[-￿0-9a-z/-_-]+$/.test(workflow) || workflow.includes('..')) {
     void logger.warn('Invalid workflow path rejected', { workflow, skill: skillName });
     return Promise.resolve({});
   }
@@ -46,17 +46,28 @@ export function execute(input: HookInput): Promise<GateResult> {
 function findSkillWorkflow(skillName: string, cwd: string): string | undefined {
   // Parse namespace:name format
   const colonIndex = skillName.indexOf(':');
-  const name = colonIndex >= 0 ? skillName.substring(colonIndex + 1) : skillName;
+  // SECURITY: Sanitize components
+  const name = sanitizePathSegment(colonIndex >= 0 ? skillName.substring(colonIndex + 1) : skillName);
 
   // Search paths for SKILL.md
   const searchPaths: string[] = [];
+
   // Plugin skills (via CLAUDE_PLUGIN_ROOT)
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
   if (pluginRoot) {
-    searchPaths.push(path.join(pluginRoot, 'skills', name, 'SKILL.md'));
+    try {
+      searchPaths.push(safeJoin(pluginRoot, 'skills', name, 'SKILL.md'));
+    } catch {
+      // Path traversal attempt or other path error - skip plugin path
+    }
   }
+
   // User skills (in project .claude directory)
-  searchPaths.push(path.join(cwd, '.claude', 'skills', name, 'SKILL.md'));
+  try {
+    searchPaths.push(safeJoin(cwd, '.claude', 'skills', name, 'SKILL.md'));
+  } catch {
+    // Path traversal attempt or other path error - skip user path
+  }
 
   for (const skillPath of searchPaths) {
     try {
@@ -70,6 +81,7 @@ function findSkillWorkflow(skillName: string, cwd: string): string | undefined {
 
   return undefined;
 }
+
 
 /**
  * Parse workflow field from YAML frontmatter

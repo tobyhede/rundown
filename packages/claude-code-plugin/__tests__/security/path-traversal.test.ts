@@ -2,7 +2,13 @@
 // Security tests for path traversal prevention
 
 import { resolvePluginPath, validateConfig } from '../../src/shared/config.js';
-import { createMockConfig } from '../helpers/test-utils.js';
+import { isPathInside, safeJoin, sanitizePathSegment, shellEscape } from '../../src/shared/utils.js';
+import { discoverContextFile } from '../../src/context.js';
+import { execute as executeSkillStart } from '../../src/gates/workflow-skill-start.ts';
+import { createMockConfig, createMockHookInput } from '../helpers/test-utils.js';
+import * as path from 'path';
+import * as fs from 'fs/promises';
+import { tmpdir } from 'os';
 
 describe('Path Jail Security', () => {
   const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
@@ -17,6 +23,63 @@ describe('Path Jail Security', () => {
     } else {
       delete process.env.CLAUDE_PLUGIN_ROOT;
     }
+  });
+
+  describe('path utilities', () => {
+    describe('isPathInside', () => {
+      it('returns true for paths inside base', () => {
+        expect(isPathInside('/base', '/base/file.txt')).toBe(true);
+        expect(isPathInside('/base', '/base/subdir/file.txt')).toBe(true);
+      });
+
+      it('returns false for paths outside base', () => {
+        expect(isPathInside('/base', '/base/../outside.txt')).toBe(false);
+        expect(isPathInside('/base', '/outside.txt')).toBe(false);
+        expect(isPathInside('/base', '/base-extra/file.txt')).toBe(false);
+      });
+
+      it('returns false for base itself (empty relative path)', () => {
+        expect(isPathInside('/base', '/base')).toBe(false);
+      });
+    });
+
+    describe('safeJoin', () => {
+      it('joins paths inside base', () => {
+        expect(safeJoin('/base', 'file.txt')).toBe(path.join('/base', 'file.txt'));
+        expect(safeJoin('/base', 'subdir', 'file.txt')).toBe(path.join('/base', 'subdir', 'file.txt'));
+      });
+
+      it('throws for path traversal', () => {
+        expect(() => safeJoin('/base', '../outside.txt')).toThrow(/security violation/i);
+        expect(() => safeJoin('/base', 'subdir', '../../outside.txt')).toThrow(/security violation/i);
+      });
+    });
+
+    describe('sanitizePathSegment', () => {
+      it('removes path separators', () => {
+        expect(sanitizePathSegment('foo/bar')).toBe('foo_bar');
+        expect(sanitizePathSegment('foo\\bar')).toBe('foo_bar');
+      });
+
+      it('removes parent references', () => {
+        expect(sanitizePathSegment('..')).toBe('__');
+        expect(sanitizePathSegment('../../etc/passwd')).toBe('______etc_passwd');
+      });
+    });
+
+    describe('shellEscape', () => {
+      it('escapes dangerous characters', () => {
+        expect(shellEscape('foo"bar')).toBe('foo\\"bar');
+        expect(shellEscape('foo`bar')).toBe('foo\\`bar');
+        expect(shellEscape('foo$bar')).toBe('foo\\$bar');
+        expect(shellEscape('foo\\bar')).toBe('foo\\\\bar');
+      });
+
+      it('handles complex injection attempts', () => {
+        const malicious = 'foo"; rm -rf /; echo "';
+        expect(shellEscape(malicious)).toBe('foo\\"; rm -rf /; echo \\"');
+      });
+    });
   });
 
   describe('resolvePluginPath', () => {
@@ -267,5 +330,49 @@ describe('Cross-Plugin Security', () => {
     expect(() => resolvePluginPath('..')).toThrow();
     expect(() => resolvePluginPath('../secret')).toThrow();
     expect(() => resolvePluginPath('plugin/..')).toThrow();
+  });
+});
+
+describe('Path Jail Integration', () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(tmpdir(), 'rundown-jail-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  describe('discoverContextFile', () => {
+    it('prevents name-based path traversal', async () => {
+      // name = ../../../etc/passwd
+      const maliciousName = '../../../etc/passwd';
+      const result = await discoverContextFile(testDir, maliciousName, 'start');
+
+      // Should not find anything and should not throw (sanitized name won't match)
+      expect(result).toBeNull();
+    });
+
+    it('prevents stage-based path traversal', async () => {
+      // stage = ../../../etc/passwd
+      const maliciousStage = '../../../etc/passwd';
+      const result = await discoverContextFile(testDir, 'name', maliciousStage);
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('workflow-skill-start', () => {
+    it('prevents skill-name-based path traversal', async () => {
+      const input = createMockHookInput('SkillStart', {
+        cwd: testDir,
+        skill: 'evil:../../../etc/passwd'
+      });
+
+      // Should not crash and should not access outside paths
+      const result = await executeSkillStart(input);
+      expect(result).toEqual({});
+    });
   });
 });
