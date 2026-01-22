@@ -17,9 +17,15 @@ describe('Session', () => {
   });
 
   describe('constructor', () => {
-    test('sets state file path', () => {
+    test('writes state file under .claude/session', async () => {
       const session = new Session(testDir);
-      expect(session.stateFile).toBe(join(testDir, '.claude', 'session', 'state.json'));
+      await session.set('active_command', '/execute');
+      const expected = join(testDir, '.claude', 'session', 'state.json');
+      const exists = await fs
+        .access(expected)
+        .then(() => true)
+        .catch(() => false);
+      expect(exists).toBe(true);
     });
   });
 

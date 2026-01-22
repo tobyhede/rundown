@@ -62,7 +62,7 @@ echo "--- Testing hook dispatch ---"
 
 # Create a temporary directory for testing
 TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR" EXIT
+trap 'rm -rf "$TEMP_DIR"' EXIT
 
 # Test 3: PostToolUse hook dispatch
 HOOK_INPUT='{"hook_event_name":"PostToolUse","cwd":"'"$TEMP_DIR"'","tool_name":"Edit","file_path":"/test/file.ts"}'

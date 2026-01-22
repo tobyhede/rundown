@@ -4,7 +4,7 @@
 import { resolvePluginPath, validateConfig } from '../../src/shared/config.js';
 import { isPathInside, safeJoin, sanitizePathSegment, shellEscape } from '../../src/shared/utils.js';
 import { discoverContextFile } from '../../src/context.js';
-import { execute as executeSkillStart } from '../../src/gates/workflow-skill-start.ts';
+import { execute as executeSkillStart } from '../../src/gates/workflow-skill-start.js';
 import { createMockConfig, createMockHookInput } from '../helpers/test-utils.js';
 import * as path from 'path';
 import * as fs from 'fs/promises';

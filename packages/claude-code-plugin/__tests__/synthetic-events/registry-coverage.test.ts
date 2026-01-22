@@ -238,8 +238,8 @@ describe('Synthetic Event Registry Coverage', () => {
           { desc: '12 - Step twelve', expected: '12' },
           { desc: '1.1 - Substep', expected: '1.1' },
           { desc: '12.5 - Decimal substep', expected: '12.5' },
-          { desc: '1– Em dash step', expected: '1' },
-          { desc: '1— En dash step', expected: '1' }
+          { desc: '1– En dash step', expected: '1' },
+          { desc: '1— Em dash step', expected: '1' }
         ];
 
         for (const { desc, expected } of formats) {

@@ -71,7 +71,10 @@ describe('Dispatcher Coverage Extensions', () => {
       const sessionDir = path.join(testDir, '.claude', 'session');
       await fs.mkdir(path.join(sessionDir, 'state.json'), { recursive: true });
       await dispatch({ hook_event_name: 'SlashCommandStart', cwd: testDir, command: 'test' } as any);
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[Session Error]'));
+      const hadSessionError = consoleSpy.mock.calls.some((args) =>
+        args.some((arg) => String(arg).includes('[Session Error]'))
+      );
+      expect(hadSessionError).toBe(true);
       consoleSpy.mockRestore();
     });
   });

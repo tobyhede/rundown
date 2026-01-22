@@ -458,8 +458,8 @@ describe('gateMatchesFilePattern', () => {
     };
     const filePath = '/Users/test/project/../parent/file.ts';
     const result = await gateMatchesFilePattern(config, filePath, cwd);
-    // Documents security boundary - patterns match after path.relative normalization
-    expect(result).toBeDefined();
+    // Security: files outside project root should be rejected by path jail
+    expect(result).toBe(false);
   });
 });
 
@@ -781,5 +781,24 @@ describe('gateMatchesFilePattern - debug logging', () => {
 
     expect(result).toBe(false);
     expect(mockDebugCalls).toHaveLength(0);
+  });
+
+  it('should log debug message and return false when file is outside project root', async () => {
+    const config: GateConfig = {
+      command: 'echo test',
+      file_patterns: ['**/*.ts'],
+      on_pass: 'CONTINUE'
+    };
+    const filePath = '/Users/outside/file.ts';
+
+    const result = await gateMatchesFilePattern(config, filePath, cwd);
+
+    expect(result).toBe(false);
+    expect(mockDebugCalls).toHaveLength(1);
+    expect(mockDebugCalls[0].message).toBe('File outside project root - gate skipped');
+    expect(mockDebugCalls[0].data).toMatchObject({
+      absolutePath: filePath,
+      cwd
+    });
   });
 });
