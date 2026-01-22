@@ -25,7 +25,7 @@ Within implementation boundaries?
 ### {N}.3 Checks
 
 ```bash
-tsv echo npm run lint && tsv echo npm run build
+rundown echo npm run lint && rundown echo npm run build
 ```
 
 - PASS: CONTINUE
@@ -34,7 +34,7 @@ tsv echo npm run lint && tsv echo npm run build
 ### {N}.4 Tests
 
 ```bash
-tsv echo npm test
+rundown echo npm test
 ```
 
 - PASS: CONTINUE
