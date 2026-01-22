@@ -2,7 +2,6 @@
 
 import {
   type RunbookStateManager,
-  type ExecutionEventEmitter,
   printActionBlock,
   printStepBlock,
   printStepSeparator,
@@ -123,7 +122,6 @@ export async function handleNextInstanceFlags(
  * @param cwd - Current working directory for command execution
  * @param prompted - Whether to run in prompted mode (no auto-execution)
  * @param agentId - Optional agent ID for agent-specific runbook stacks
- * @param emitter - Optional event emitter for execution events
  * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only step reached
  */
 export async function runExecutionLoop(
@@ -132,8 +130,7 @@ export async function runExecutionLoop(
   steps: Step[],
   cwd: string,
   prompted: boolean,
-  agentId?: string,
-  emitter?: ExecutionEventEmitter
+  agentId?: string
 ): Promise<'done' | 'stopped' | 'waiting'> {
   // Note: state is loaded here and reloaded at end of each loop iteration.
   // Some immutable properties (parentRunbookId, agentId) are accessed from
@@ -352,26 +349,15 @@ export async function runExecutionLoop(
     const prevPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
     const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
 
-    // Emit STEP_TRANSITIONED event or fallback to printing
-    if (emitter) {
-      emitter.emit('STEP_TRANSITIONED', {
-        action,
-        from: prevPos,
-        to: newPos,
-        result: execResult.success ? 'PASS' : 'FAIL',
-        command: displayCommand,
-      });
-    } else {
-      // Temporary fallback only when emitter is not provided.
-      printStepSeparator(newPos);
-      printActionBlock({
-        action,
-        from: prevPos,
-        command: displayCommand,
-        result: execResult.success ? 'PASS' : 'FAIL',
-        at: newPos,
-      });
-    }
+    // Print separator with new step number and action block
+    printStepSeparator(newPos);
+    printActionBlock({
+      action,
+      from: prevPos,
+      command: displayCommand,
+      result: execResult.success ? 'PASS' : 'FAIL',
+      at: newPos,
+    });
 
     // Handle runbook end states
     if (isComplete) {
@@ -384,15 +370,7 @@ export async function runExecutionLoop(
       await manager.update(runbookId, {
         variables: { ...currentVars, completed: true }
       });
-      if (emitter) {
-        emitter.emit('RUNBOOK_COMPLETED', {
-          message: completionMessage,
-          finalPosition: newPos,
-        });
-      } else {
-        // Temporary fallback only when emitter is not provided.
-        printRunbookComplete(completionMessage);
-      }
+      printRunbookComplete(completionMessage);
 
       // If this was a child runbook with agent, update parent's agent binding
 
@@ -420,16 +398,7 @@ export async function runExecutionLoop(
         variables: { ...currentVars, stopped: true }
       });
       const stopPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
-      if (emitter) {
-        emitter.emit('RUNBOOK_STOPPED', {
-          message: stopMessage,
-          position: stopPos,
-          reason: 'fail_transition',
-        });
-      } else {
-        // Temporary fallback only when emitter is not provided.
-        printRunbookStoppedAtStep(stopPos, stopMessage);
-      }
+      printRunbookStoppedAtStep(stopPos, stopMessage);
 
       // If this was a child runbook with agent, update parent's agent binding
 
