@@ -6,11 +6,11 @@ import { SESSION_STATE_KEYS } from '../src/shared/index.js';
 // Re-implement type guards for testing (they're not exported from cli.ts)
 // These tests verify the logic matches the implementation
 
-function isSessionStateKey(key: string): key is keyof import('../src/shared/index.js').SessionState {
+function isSessionStateKey(key: string): key is string {
   return (SESSION_STATE_KEYS as readonly string[]).includes(key);
 }
 
-function isArrayKey(key: string): key is import('../src/shared/index.js').SessionStateArrayKey {
+function isArrayKey(key: string): key is 'edited_files' | 'file_extensions' {
   return key === 'edited_files' || key === 'file_extensions';
 }
 

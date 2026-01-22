@@ -67,7 +67,7 @@ describe('Dispatcher Coverage Extensions', () => {
     });
 
     it('handles session errors gracefully', async () => {
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => { /* noop */ });
       const sessionDir = path.join(testDir, '.claude', 'session');
       await fs.mkdir(path.join(sessionDir, 'state.json'), { recursive: true });
       await dispatch({ hook_event_name: 'SlashCommandStart', cwd: testDir, command: 'test' } as any);

@@ -154,7 +154,7 @@ describe('Path Jail Security', () => {
         }
       });
 
-      expect(() => validateConfig(config)).toThrow(/undefined gate.*non-existent-gate/i);
+      expect(() => { validateConfig(config); }).toThrow(/undefined gate.*non-existent-gate/i);
     });
 
     it('validates gate action references', () => {
@@ -172,7 +172,7 @@ describe('Path Jail Security', () => {
         }
       });
 
-      expect(() => validateConfig(config)).toThrow(/not CONTINUE\/BLOCK\/STOP or valid gate/i);
+      expect(() => { validateConfig(config); }).toThrow(/not CONTINUE\/BLOCK\/STOP or valid gate/i);
     });
 
     it('rejects unknown hook event names', () => {
@@ -183,7 +183,7 @@ describe('Path Jail Security', () => {
         gates: {}
       };
 
-      expect(() => validateConfig(config)).toThrow(/Unknown hook event: UnknownEvent/i);
+      expect(() => { validateConfig(config); }).toThrow(/Unknown hook event: UnknownEvent/i);
     });
   });
 
@@ -199,7 +199,7 @@ describe('Path Jail Security', () => {
         }
       });
 
-      expect(() => validateConfig(config)).toThrow(/has 'plugin' but missing 'gate'/i);
+      expect(() => { validateConfig(config); }).toThrow(/has 'plugin' but missing 'gate'/i);
     });
 
     it('rejects gate with gate name but no plugin', () => {
@@ -213,7 +213,7 @@ describe('Path Jail Security', () => {
         }
       });
 
-      expect(() => validateConfig(config)).toThrow(/has 'gate' but missing 'plugin'/i);
+      expect(() => { validateConfig(config); }).toThrow(/has 'gate' but missing 'plugin'/i);
     });
 
     it('rejects gate with both command and plugin/gate', () => {
@@ -228,7 +228,7 @@ describe('Path Jail Security', () => {
         }
       });
 
-      expect(() => validateConfig(config)).toThrow(/cannot have both 'command' and 'plugin\/gate'/i);
+      expect(() => { validateConfig(config); }).toThrow(/cannot have both 'command' and 'plugin\/gate'/i);
     });
   });
 
@@ -248,7 +248,7 @@ describe('Path Jail Security', () => {
         }
       });
 
-      expect(() => validateConfig(config)).toThrow(/expected string/i);
+      expect(() => { validateConfig(config); }).toThrow(/expected string/i);
     });
 
     it('accepts valid glob patterns', () => {
@@ -266,7 +266,7 @@ describe('Path Jail Security', () => {
         }
       });
 
-      expect(() => validateConfig(config)).not.toThrow();
+      expect(() => { validateConfig(config); }).not.toThrow();
     });
   });
 
@@ -297,7 +297,7 @@ describe('Path Jail Security', () => {
         });
 
         // Should not throw - patterns are strings, not evaluated
-        expect(() => validateConfig(config)).not.toThrow();
+        expect(() => { validateConfig(config); }).not.toThrow();
       }
     });
   });

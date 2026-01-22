@@ -1,5 +1,4 @@
 // __tests__/gates/plugin-path.test.ts
-import { jest } from '@jest/globals';
 import { execute } from '../../src/gates/plugin-path.js';
 import { createMockHookInput } from '../helpers/test-utils.js';
 

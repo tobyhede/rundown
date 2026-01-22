@@ -1,9 +1,7 @@
 // __tests__/perf/hook-performance.test.ts
 // Performance budget tests for hook processing
 
-import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as os from 'os';
 import { dispatch, shouldProcessHook, gateMatchesKeywords, gateMatchesFilePattern } from '../../src/dispatcher.js';
 import { detectSyntheticEvents } from '../../src/synthetic-events/detector.js';
 import { loadConfig } from '../../src/shared/config.js';
@@ -15,7 +13,7 @@ import {
   createTempTestDir,
   writeTestConfig
 } from '../helpers/test-utils.js';
-import type { HookInput, GateConfig, HookConfig } from '../../src/shared/index.js';
+import type { GateConfig, HookConfig } from '../../src/shared/index.js';
 
 /**
  * Performance budget in milliseconds for hook operations.

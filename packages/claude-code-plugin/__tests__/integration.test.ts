@@ -18,8 +18,8 @@ async function runHookDispatch(cliPath: string, input: object): Promise<{ stdout
     let stdout = '';
     let stderr = '';
     
-    proc.stdout.on('data', (data) => { stdout += data.toString(); });
-    proc.stderr.on('data', (data) => { stderr += data.toString(); });
+    proc.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
+    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
     
     proc.on('close', (code) => {
       resolve({ stdout, stderr, code });

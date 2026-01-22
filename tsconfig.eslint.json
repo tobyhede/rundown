@@ -18,6 +18,7 @@
     "packages/cli/__tests__/**/*.ts",
     "packages/cli/jest.setup.ts",
     "packages/claude-code-plugin/src/**/*.ts",
+    "packages/claude-code-plugin/jest.setup.ts",
     "packages/claude-code-plugin/__tests__/**/*.ts",
     "eslint.config.js"
   ],

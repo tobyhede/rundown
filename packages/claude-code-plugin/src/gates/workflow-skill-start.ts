@@ -1,7 +1,6 @@
 import { type HookInput, type GateResult, logger, safeJoin, sanitizePathSegment } from '../shared/index.js';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
-import * as path from 'path';
 
 /**
  * Workflow Skill Start Gate

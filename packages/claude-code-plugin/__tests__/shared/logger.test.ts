@@ -1,5 +1,4 @@
 // __tests__/shared/logger.test.ts
-import { jest } from '@jest/globals';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
@@ -182,7 +181,7 @@ describe('logger', () => {
     it('handles concurrent writes gracefully', async () => {
       // Trigger multiple writes simultaneously
       const writes = Array.from({ length: 10 }, (_, i) =>
-        logger.info(`concurrent message ${i}`, { index: i })
+        logger.info(`concurrent message ${String(i)}`, { index: i })
       );
 
       await expect(Promise.all(writes)).resolves.toBeDefined();
