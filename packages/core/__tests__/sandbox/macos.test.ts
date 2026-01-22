@@ -11,6 +11,7 @@ jest.unstable_mockModule('fs', () => ({
   existsSync: jest.fn(),
   writeFileSync: jest.fn(),
   unlinkSync: jest.fn(),
+  realpathSync: jest.fn((p: string) => p), // Return path as-is for testing
 }));
 
 // Import after mocking

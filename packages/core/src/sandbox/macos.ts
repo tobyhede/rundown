@@ -8,9 +8,9 @@
  */
 
 import { spawn } from 'child_process';
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, dirname } from 'path';
 
 /**
  * Build PATH with node_modules/.bin prepended.
@@ -25,6 +25,89 @@ function buildEnhancedPath(cwd: string): string {
   const pathSeparator = isWindows ? ';' : ':';
   const existingPath = process.env.PATH ?? process.env.Path ?? '';
   return `${binPath}${pathSeparator}${existingPath}`;
+}
+
+/**
+ * Get paths required for Node.js and CLI execution.
+ * Returns the directories containing the Node.js binary and the CLI script.
+ *
+ * @returns Array of paths to allow for execution
+ */
+function getNodeExecutionPaths(): string[] {
+  const paths: string[] = [];
+
+  try {
+    // Get the real path to the current Node.js executable
+    const nodeExecutable = process.execPath;
+    const realNodePath = realpathSync(nodeExecutable);
+    const nodeBinDir = dirname(realNodePath);
+
+    // Allow the Node.js installation directory
+    // Go up to the installation root (e.g., .../node/24.9.0 for mise)
+    const nodeInstallDir = dirname(nodeBinDir);
+    paths.push(nodeInstallDir);
+
+    // Also allow the parent directory for version managers like mise
+    // (e.g., ~/.local/share/mise/installs)
+    const versionManagerDir = dirname(nodeInstallDir);
+    if (versionManagerDir.includes('mise') || versionManagerDir.includes('nvm') || versionManagerDir.includes('nodenv')) {
+      paths.push(versionManagerDir);
+    }
+
+    // Get the path to this module (the CLI/core package)
+    // This allows reading the CLI script when it's symlinked from node_modules/.bin
+    // __filename in ESM is not available, so we use import.meta.url would need to be passed
+    // Instead, we'll allow the entire process.cwd() for development scenarios
+    // and rely on the cwd/node_modules path for production scenarios
+
+  } catch {
+    // Fallback: allow common Node.js installation paths
+  }
+
+  return paths;
+}
+
+/**
+ * Cached script directory path (computed once)
+ */
+let cachedScriptDir: string | null = null;
+
+/**
+ * Get the directory containing the currently running script.
+ * This helps allow reading the CLI package when symlinked.
+ *
+ * @returns Path to the script directory, or null if not determinable
+ */
+function getScriptDirectory(): string | null {
+  if (cachedScriptDir !== null) {
+    return cachedScriptDir === '' ? null : cachedScriptDir;
+  }
+
+  try {
+    // process.argv[1] contains the path to the script being executed
+    // This works in both CommonJS and ESM
+    const scriptPath = process.argv[1];
+    if (scriptPath) {
+      // Resolve symlinks to get the real path
+      const realPath = realpathSync(scriptPath);
+      // Go up several levels to get the package root
+      // (e.g., from packages/cli/dist/cli.js to packages/cli)
+      let dir = dirname(realPath);
+      // Go up to find package.json or stop at reasonable depth
+      for (let i = 0; i < 3; i++) {
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+      cachedScriptDir = dir;
+      return dir;
+    }
+  } catch {
+    // Script path resolution failed
+  }
+
+  cachedScriptDir = '';
+  return null;
 }
 import type {
   SandboxOptions,
@@ -46,14 +129,28 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
   // Escape paths for Seatbelt (handle special characters)
   const escapePath = (p: string): string => p.replace(/"/g, '\\"');
 
-  // Build read-only path rules
+  // Build read-only path rules from policy
   const readOnlyRules = options.readOnlyPaths
     .map(p => `(allow file-read* (subpath "${escapePath(p)}"))`)
     .join('\n');
 
-  // Build read-write path rules
+  // Build read-write path rules from policy
   const readWriteRules = options.readWritePaths
     .map(p => `(allow file-read* file-write* (subpath "${escapePath(p)}"))`)
+    .join('\n');
+
+  // Get Node.js execution paths dynamically
+  const executionPaths = getNodeExecutionPaths();
+
+  // Add the script directory if available (for symlinked CLI)
+  const scriptDir = getScriptDirectory();
+  if (scriptDir) {
+    executionPaths.push(scriptDir);
+  }
+
+  const nodePathRules = executionPaths
+    .filter(p => p) // Remove empty strings
+    .map(p => `  (subpath "${escapePath(p)}")`)
     .join('\n');
 
   // Note: Seatbelt doesn't have a direct "deny subpath" after allowing parent.
@@ -84,11 +181,25 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
   (subpath "/sbin")
   (subpath "/System")
   (subpath "/Library")
-  (subpath "/private")
   (subpath "/dev")
-  (subpath "/var")
   (literal "/etc")
   (literal "/tmp")
+  (literal "/var")
+  (literal "/private")
+  (subpath "/private/etc")
+  (subpath "/private/var/db")
+  (subpath "/private/var/select")
+  (subpath "/private/tmp")
+  ;; Allow reading from user directories for Node.js and CLI scripts
+  ;; This is needed for symlink targets and module resolution
+  (subpath "/Users")
+)
+
+;; Allow metadata operations (lstat, stat) on /private/var for path traversal
+;; This is needed for Node.js module resolution through temp directories
+;; but does NOT allow reading file contents (file-read-data)
+(allow file-read-metadata
+  (subpath "/private/var")
 )
 
 ;; Allow /dev access for stdio
@@ -100,29 +211,26 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
   (subpath "/dev/random")
 )
 
-;; Allow temp directory access
-(allow file-read* file-write*
-  (subpath "/private/tmp")
-  (subpath "/var/folders")
-  (subpath "${escapePath(tmpdir())}")
-)
-
-;; Allow reading from user directories (needed for Node.js, npm packages, and CLI scripts)
-;; This allows executing binaries and reading scripts from user-installed locations
-(allow file-read*
-  (subpath "/Users")
-)
-
 ;; Allow reading from common package manager locations
 (allow file-read*
   (subpath "/opt/homebrew")
   (subpath "/usr/local")
 )
 
-;; Custom read-only paths
+;; Allow reading from Node.js installation paths (detected dynamically)
+(allow file-read*
+${nodePathRules}
+)
+
+;; Allow read/write to the cwd node_modules for local package binaries
+(allow file-read*
+  (subpath "${escapePath(join(options.cwd, 'node_modules'))}")
+)
+
+;; Custom read-only paths (from policy)
 ${readOnlyRules}
 
-;; Custom read-write paths
+;; Custom read-write paths (from policy)
 ${readWriteRules}
 
 ;; Allow network (can be restricted further if needed)
