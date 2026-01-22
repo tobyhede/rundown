@@ -11,6 +11,7 @@ import {
   printRunbookStoppedAtStep,
   evaluatePassCondition,
   countNumberedSteps,
+  printNoActiveRunbook,
 } from '@rundown-org/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
@@ -57,7 +58,7 @@ export function registerPassCommand(program: Command): void {
         }
 
         if (!state) {
-          console.log('No active runbook');
+          printNoActiveRunbook();
           return;
         }
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);

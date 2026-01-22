@@ -2,6 +2,7 @@
 
 import {
   type RunbookStateManager,
+  type ExecutionEventEmitter,
   printActionBlock,
   printStepBlock,
   printStepSeparator,
