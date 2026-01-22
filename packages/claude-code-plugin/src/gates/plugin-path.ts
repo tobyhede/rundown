@@ -31,7 +31,10 @@ For this session:
 CLAUDE_PLUGIN_ROOT=${pluginRoot}
 \`\`\`
 
-When you see file references like \`@\${CLAUDE_PLUGIN_ROOT}skills/...\`, resolve them using the path above.`;
+When you see file references like \
+@
+${CLAUDE_PLUGIN_ROOT}skills/...
+, resolve them using the path above.`;
 
   return Promise.resolve({
     additionalContext: contextMessage
@@ -43,8 +46,8 @@ When you see file references like \`@\${CLAUDE_PLUGIN_ROOT}skills/...\`, resolve
  * This file is at: packages/claude-code-plugin/src/gates/plugin-path.ts
  * Plugin root is: packages/claude-code-plugin/
  *
- * After compilation, __dirname is at: packages/claude-code-plugin/dist/gates/
- * We go up 2 levels: gates/ -> dist/ -> claude-code-plugin/
+ * After compilation, this is at: packages/claude-code-plugin/dist/gates/
+ * We go up 2 levels: gates/ -> dist/ -> plugin root
  */
 function computePluginRoot(): string {
   // __dirname is at: packages/claude-code-plugin/dist/gates/
@@ -52,7 +55,7 @@ function computePluginRoot(): string {
 
   // Go up 2 directories from dist/gates/
   let pluginRoot = path.dirname(__dirname); // dist/
-  pluginRoot = path.dirname(pluginRoot); // claude-code-plugin/
+  pluginRoot = path.dirname(pluginRoot); // plugin root
 
   return pluginRoot;
 }
