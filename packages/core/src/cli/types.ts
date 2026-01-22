@@ -1,4 +1,20 @@
 /**
+ * Step position within runbook execution.
+ *
+ * Represents the current position within a runbook, typically
+ * displayed in n/N format (e.g., "1/5" or "2.1/5").
+ * For dynamic runbooks, total may be '{N}' to indicate unbounded.
+ */
+export interface StepPosition {
+  /** Current step identifier (e.g., "1", "ErrorHandler", "{N}") */
+  readonly current: string;
+  /** Total number of steps, or '{N}' for dynamic runbooks */
+  readonly total: number | string;
+  /** Current substep identifier within the step (e.g., "1", "2") */
+  readonly substep?: string;
+}
+
+/**
  * Runbook metadata for display in CLI output.
  *
  * Contains essential information about a runbook's current state
@@ -11,22 +27,6 @@ export interface RunbookMetadata {
   state: string;
   /** Whether the runbook is waiting for user input (only included if true) */
   prompted?: boolean;
-}
-
-/**
- * Step position for display in CLI output.
- *
- * Represents the current position within a runbook, typically
- * displayed in n/N format (e.g., "1/5" or "2.1/5").
- * For dynamic runbooks, total may be '{N}' to indicate unbounded.
- */
-export interface StepPosition {
-  /** Current step identifier (e.g., "1", "ErrorHandler", "{N}") */
-  current: string;
-  /** Total number of steps, or '{N}' for dynamic runbooks */
-  total: number | string;
-  /** Current substep identifier within the step (e.g., "1", "2") */
-  substep?: string;
 }
 
 /**

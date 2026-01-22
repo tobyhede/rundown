@@ -1,0 +1,15 @@
+{
+  "gates": {
+    "check": {
+      "command": "npm run lint",
+      "on_pass": "CONTINUE",
+      "on_fail": "BLOCK"
+    }
+  },
+  "hooks": {
+    "PostToolUse": {
+      "enabled_tools": ["Edit", "Write", "Step", "Task"],
+      "gates": ["check"]
+    }
+  }
+}

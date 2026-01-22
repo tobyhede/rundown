@@ -18,6 +18,7 @@ npm install -g @rundown-org/cli
 
 ```bash
 rundown run <file>       # Run a runbook
+rundown run <file> --json # Output execution events as JSON
 rundown pass             # Mark current step as passed (aliases: yes, ok)
 rundown fail             # Mark current step as failed (alias: no)
 rundown goto <n>         # Jump to specific step number

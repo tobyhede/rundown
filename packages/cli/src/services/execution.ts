@@ -20,6 +20,7 @@ import {
   evaluateFailCondition,
   countNumberedSteps,
   extractDisplayCommand,
+  type ExecutionEventEmitter,
 } from '@rundown-org/core';
 import {
   isInternalRdCommand,
@@ -87,7 +88,6 @@ export async function handleNextInstanceFlags(
         instance: nextInstanceNum,
         substep: '1'
       });
-      console.log(`Instance ${String(currentInstance)} complete. Starting instance ${String(nextInstanceNum)}...`);
     }
   }
 
@@ -122,6 +122,7 @@ export async function handleNextInstanceFlags(
  * @param cwd - Current working directory for command execution
  * @param prompted - Whether to run in prompted mode (no auto-execution)
  * @param agentId - Optional agent ID for agent-specific runbook stacks
+ * @param emitter - Optional event emitter for execution events
  * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only step reached
  */
 export async function runExecutionLoop(
@@ -130,7 +131,8 @@ export async function runExecutionLoop(
   steps: Step[],
   cwd: string,
   prompted: boolean,
-  agentId?: string
+  agentId?: string,
+  emitter?: ExecutionEventEmitter
 ): Promise<'done' | 'stopped' | 'waiting'> {
   // Note: state is loaded here and reloaded at end of each loop iteration.
   // Some immutable properties (parentRunbookId, agentId) are accessed from
@@ -178,8 +180,26 @@ export async function runExecutionLoop(
       ? String(state.substepStates?.length ?? 1)
       : state.substep;
 
-    // Print step/substep block with resolved instance number
-    printStepBlock({ current: displayStep, total: totalSteps, substep: displaySubstep }, itemToRender, prompted);
+    // Emit STEP_ENTERED event or print step/substep block
+    const stepPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
+    if (emitter) {
+      const isSubstep = 'id' in itemToRender;
+      emitter.emit('STEP_ENTERED', {
+        position: stepPosition,
+        stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as Step).name,
+        description: itemToRender.description,
+        prompt: itemToRender.prompt,
+        hasCommand: !!itemToRender.command,
+        commandCode: itemToRender.command?.code,
+        commandLang: itemToRender.command?.lang,
+        isSubstep,
+        isDynamic: itemToRender.isDynamic,
+        prompted,  // CRITICAL: Pass prompted flag for correct command display
+      });
+    } else {
+      // Temporary fallback only when emitter is not provided.
+      printStepBlock(stepPosition, itemToRender, prompted);
+    }
 
     // If CLI prompted mode, OR no command
     // Use itemToRender which may be a substep with its own command
@@ -193,7 +213,16 @@ export async function runExecutionLoop(
     // Fall back to original command if extractDisplayCommand returns empty (e.g., "rd echo --result pass")
     const extracted = extractDisplayCommand(itemToRender.command.code);
     const displayCommand = extracted || itemToRender.command.code;
-    printCommandExec(displayCommand);
+    if (emitter) {
+      emitter.emit('COMMAND_STARTED', {
+        command: itemToRender.command.code,
+        displayCommand,
+        position: { current: displayStep, total: totalSteps, substep: displaySubstep },
+      });
+    } else {
+      // Temporary fallback only when emitter is not provided.
+      printCommandExec(displayCommand);
+    }
     let execResult: ExecutionResult;
 
     if (isInternalRdCommand(itemToRender.command.code)) {
@@ -208,9 +237,39 @@ export async function runExecutionLoop(
       execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbookPath);
     }
 
+    // Emit COMMAND_COMPLETED event
+    if (emitter) {
+      const cmdPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
+      emitter.emit('COMMAND_COMPLETED', {
+        command: itemToRender.command.code,
+        success: execResult.success,
+        exitCode: execResult.exitCode,
+        position: cmdPosition,
+        policyDenied: execResult.policyDenied,
+        denialReason: execResult.denialReason,
+        sandboxed: execResult.sandboxed,
+      });
+    }
+
     // Handle policy denial
     if (execResult.policyDenied) {
-      printPolicyDenied(itemToRender.command.code, execResult.denialReason ?? 'Permission denied');
+      const policyPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
+      if (emitter) {
+        emitter.emit('POLICY_DENIED', {
+          command: itemToRender.command.code,
+          reason: execResult.denialReason ?? 'Permission denied',
+          position: policyPosition,
+        });
+        // Emit RUNBOOK_STOPPED so JSON output shows correct terminal state
+        emitter.emit('RUNBOOK_STOPPED', {
+          position: policyPosition,
+          reason: 'policy_denied',
+          message: `Command blocked by policy: ${execResult.denialReason ?? 'Permission denied'}`,
+        });
+      } else {
+        // Temporary fallback only when emitter is not provided.
+        printPolicyDenied(itemToRender.command.code, execResult.denialReason ?? 'Permission denied');
+      }
       return 'stopped';
     }
 
@@ -292,15 +351,26 @@ export async function runExecutionLoop(
     const prevPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
     const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
 
-    // Print separator with new step number and action block
-    printStepSeparator(newPos);
-    printActionBlock({
-      action,
-      from: prevPos,
-      command: displayCommand,
-      result: execResult.success ? 'PASS' : 'FAIL',
-      at: newPos,
-    });
+    // Emit STEP_TRANSITIONED event or fallback to printing
+    if (emitter) {
+      emitter.emit('STEP_TRANSITIONED', {
+        action,
+        from: prevPos,
+        to: newPos,
+        result: execResult.success ? 'PASS' : 'FAIL',
+        command: displayCommand,
+      });
+    } else {
+      // Temporary fallback only when emitter is not provided.
+      printStepSeparator(newPos);
+      printActionBlock({
+        action,
+        from: prevPos,
+        command: displayCommand,
+        result: execResult.success ? 'PASS' : 'FAIL',
+        at: newPos,
+      });
+    }
 
     // Handle runbook end states
     if (isComplete) {
@@ -313,7 +383,15 @@ export async function runExecutionLoop(
       await manager.update(runbookId, {
         variables: { ...currentVars, completed: true }
       });
-      printRunbookComplete(completionMessage);
+      if (emitter) {
+        emitter.emit('RUNBOOK_COMPLETED', {
+          message: completionMessage,
+          finalPosition: newPos,
+        });
+      } else {
+        // Temporary fallback only when emitter is not provided.
+        printRunbookComplete(completionMessage);
+      }
 
       // If this was a child runbook with agent, update parent's agent binding
 
@@ -340,7 +418,17 @@ export async function runExecutionLoop(
       await manager.update(runbookId, {
         variables: { ...currentVars, stopped: true }
       });
-      printRunbookStoppedAtStep({ current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep }, stopMessage);
+      const stopPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
+      if (emitter) {
+        emitter.emit('RUNBOOK_STOPPED', {
+          message: stopMessage,
+          position: stopPos,
+          reason: 'fail_transition',
+        });
+      } else {
+        // Temporary fallback only when emitter is not provided.
+        printRunbookStoppedAtStep(stopPos, stopMessage);
+      }
 
       // If this was a child runbook with agent, update parent's agent binding
 
@@ -594,7 +682,7 @@ export function deriveAction(
  * @param runbookPath - Optional runbook file path for override matching
  * @returns Execution result
  */
-async function executeCommandWithPolicyCheck(
+export async function executeCommandWithPolicyCheck(
   command: string,
   cwd: string,
   runbookPath?: string

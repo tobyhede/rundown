@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { getStepTotal, isDynamicRunbook } from '../../src/helpers/context.js';
+import { getStepTotal, isDynamicRunbook, getCwd, findRunbookFile } from '../../src/helpers/context.js';
 
 describe('context helpers', () => {
   let tempDir: string;
@@ -13,6 +13,27 @@ describe('context helpers', () => {
 
   afterEach(async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  describe('getCwd', () => {
+    it('returns current working directory', () => {
+      expect(getCwd()).toBe(process.cwd());
+    });
+  });
+
+  describe('findRunbookFile', () => {
+    it('returns path when file exists', async () => {
+      const filePath = path.join(tempDir, 'test.md');
+      await fs.writeFile(filePath, 'content');
+      
+      const result = await findRunbookFile(tempDir, 'test.md');
+      expect(result).toBe(filePath);
+    });
+
+    it('returns null when file does not exist', async () => {
+      const result = await findRunbookFile(tempDir, 'nonexistent.md');
+      expect(result).toBeNull();
+    });
   });
 
   describe('isDynamicRunbook', () => {
