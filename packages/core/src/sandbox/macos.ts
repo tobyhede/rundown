@@ -24,7 +24,7 @@ function buildEnhancedPath(cwd: string): string {
   const isWindows = process.platform === 'win32';
   const pathSeparator = isWindows ? ';' : ':';
   const existingPath = process.env.PATH ?? process.env.Path ?? '';
-  return `${binPath}${pathSeparator}${existingPath}`;
+  return existingPath ? `${binPath}${pathSeparator}${existingPath}` : binPath;
 }
 
 /**
