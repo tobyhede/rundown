@@ -13,7 +13,7 @@ export default tseslint.config(
       '**/*.js',
       '**/*.d.ts',
       'site/**',
-      '.worktrees/**',
+      '.worktree/**',
     ],
   },
 

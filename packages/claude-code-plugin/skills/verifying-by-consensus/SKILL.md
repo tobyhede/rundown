@@ -38,7 +38,7 @@ Dispatch N agents to independently review the same subject. Collate findings:
 
 1. Determine N (default 2, or from args)
 2. Select agents (from args, plugins, or built-ins)
-3. Start workflow: `tsv run runbooks/verify.runbook.md`
+3. Start workflow: `rundown run runbooks/verify.runbook.md`
 4. Dispatch agents with StepId prefix in description:
    ```
    Step(description="1.1 - Review [subject]", prompt="...", subagent_type="...")
@@ -49,8 +49,8 @@ Dispatch N agents to independently review the same subject. Collate findings:
 
 | Manual command | Hook trigger | When |
 |----------------|--------------|------|
-| `tsv run --step 1.1` | PostToolUse (Step) | StepId detected in description |
-| `tsv run --agent {id}` | SubagentStart | Agent spawns |
+| `rundown run --step 1.1` | PostToolUse (Step) | StepId detected in description |
+| `rundown run --agent {id}` | SubagentStart | Agent spawns |
 
 **Subagent protocol:**
 - Write findings to `.work/{date}-verify-{agentId}.md`
@@ -101,7 +101,7 @@ UNCERTAIN: X issues (user decides)
 ### Phase 4: Complete
 
 ```bash
-tsv complete
+rundown complete
 ```
 
 ## Output Files

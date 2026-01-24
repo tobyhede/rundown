@@ -32,7 +32,7 @@ Dispatch code review agent
 ## 3. Check batch
 
 ```bash
-tsv echo npm run lint && tsv echo npm run build && tsv echo npm test
+rundown echo npm run lint && rundown echo npm run build && rundown echo npm test
 ```
 
 - PASS: CONTINUE
@@ -47,8 +47,8 @@ Analyze failures and present options to orchestrator.
 - REVISE: Plan needs modification
 - ABORT: Stop execution
 
-**tsv pass:** Orchestrator chose FIX, issues are resolvable
-**tsv fail:** Orchestrator chose REVISE or ABORT
+**rundown pass:** Orchestrator chose FIX, issues are resolvable
+**rundown fail:** Orchestrator chose REVISE or ABORT
 
 - PASS: GOTO 5
 - FAIL: STOP "STOPPED: Orchestrator decision required"
@@ -57,10 +57,10 @@ Analyze failures and present options to orchestrator.
 
 Apply inline fixes within plan constraints.
 
-**HOW changes** (`tsv pass`): syntax, imports, types, test setup
-**WHAT changes** (`tsv fail`): algorithm, library, data structure, scope
+**HOW changes** (`rundown pass`): syntax, imports, types, test setup
+**WHAT changes** (`rundown fail`): algorithm, library, data structure, scope
 
-When uncertain, `tsv fail`.
+When uncertain, `rundown fail`.
 
 - PASS: GOTO 3
 - FAIL: STOP "STOPPED: Requires plan revision"
@@ -72,8 +72,8 @@ Review batch changes before proceeding.
 **Prompt:** Dispatch code review for batch changes.
 Categorize findings: BLOCKING or NON-BLOCKING.
 
-**tsv pass:** No blocking issues (or fixed)
-**tsv fail:** Blocking issues remain
+**rundown pass:** No blocking issues (or fixed)
+**rundown fail:** Blocking issues remain
 
 - PASS: CONTINUE
 - FAIL: STOP "STOPPED: Code review issues"
@@ -82,8 +82,8 @@ Categorize findings: BLOCKING or NON-BLOCKING.
 
 Evaluate remaining work.
 
-**tsv yes:** More batches remain → goto 2
-**tsv no:** All batches complete
+**rundown yes:** More batches remain → goto 2
+**rundown no:** All batches complete
 
 - PASS: GOTO 2
 - FAIL: CONTINUE
@@ -91,7 +91,7 @@ Evaluate remaining work.
 ## 8. Final validation
 
 ```bash
-tsv echo npm run lint && tsv echo npm run build && tsv echo npm test
+rundown echo npm run lint && rundown echo npm run build && rundown echo npm test
 ```
 
 - PASS: CONTINUE

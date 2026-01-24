@@ -4,7 +4,8 @@ import {
   type HookConfig,
   type GateConfig,
   loadConfig,
-  logger
+  logger,
+  isPathInside
 } from './shared/index.js';
 import { injectContext } from './context.js';
 import { executeGate } from './gate-loader.js';
@@ -111,6 +112,12 @@ export async function gateMatchesFilePattern(
   // FIX: Normalize relative paths to absolute paths before conversion
   // If filePath is already relative, path.relative may produce incorrect results
   const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
+
+  // SECURITY: Path Jail - only match files inside project root
+  if (!isPathInside(cwd, absolutePath)) {
+    await logger.debug('File outside project root - gate skipped', { absolutePath, cwd });
+    return false;
+  }
 
   // Convert absolute path to relative path from cwd
   const relativePath = path.relative(cwd, absolutePath);

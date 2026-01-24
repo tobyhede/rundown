@@ -39,7 +39,7 @@ export function registerStopCommand(program: Command): void {
         await manager.popRunbook(options.agent);
 
         // Print terminal message
-        printRunbookStopped(message);
+        printRunbookStopped(message ?? 'Runbook stopped');
       });
     });
 }

@@ -3,7 +3,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { type HookInput, fileExists, logger } from './shared/index.js';
+import { type HookInput, fileExists, logger, safeJoin, sanitizePathSegment } from './shared/index.js';
 import { Session } from './session.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -43,12 +43,16 @@ function buildContextPaths(
   name: string,
   stage: string
 ): string[] {
+  // SECURITY: Sanitize inputs to prevent escaping contextDir
+  const safeName = sanitizePathSegment(name);
+  const safeStage = sanitizePathSegment(stage);
+
   return [
-    path.join(baseDir, contextDir, `${name}-${stage}.md`),
-    path.join(baseDir, contextDir, 'slash-command', `${name}-${stage}.md`),
-    path.join(baseDir, contextDir, 'slash-command', name, `${stage}.md`),
-    path.join(baseDir, contextDir, 'skill', `${name}-${stage}.md`),
-    path.join(baseDir, contextDir, 'skill', name, `${stage}.md`)
+    safeJoin(baseDir, contextDir, `${safeName}-${safeStage}.md`),
+    safeJoin(baseDir, contextDir, 'slash-command', `${safeName}-${safeStage}.md`),
+    safeJoin(baseDir, contextDir, 'slash-command', safeName, `${safeStage}.md`),
+    safeJoin(baseDir, contextDir, 'skill', `${safeName}-${safeStage}.md`),
+    safeJoin(baseDir, contextDir, 'skill', safeName, `${safeStage}.md`)
   ];
 }
 
@@ -65,25 +69,33 @@ export async function discoverContextFile(
   stage: string
 ): Promise<string | null> {
   // Project-level context (highest priority)
-  const projectPaths = buildContextPaths(cwd, '.claude/context', name, stage);
+  try {
+    const projectPaths = buildContextPaths(cwd, '.claude/context', name, stage);
 
-  for (const filePath of projectPaths) {
-    if (await fileExists(filePath)) {
-      await logger.debug('Found project context file', { path: filePath, name, stage });
-      return filePath;
+    for (const filePath of projectPaths) {
+      if (await fileExists(filePath)) {
+        await logger.debug('Found project context file', { path: filePath, name, stage });
+        return filePath;
+      }
     }
+  } catch (error) {
+    await logger.warn('Error discovering project context file', { error: String(error), name, stage });
   }
 
   // Plugin-level context (fallback)
   const pluginRoot = getPluginRoot();
   if (pluginRoot) {
-    const pluginPaths = buildContextPaths(pluginRoot, 'context', name, stage);
+    try {
+      const pluginPaths = buildContextPaths(pluginRoot, 'context', name, stage);
 
-    for (const filePath of pluginPaths) {
-      if (await fileExists(filePath)) {
-        await logger.debug('Found plugin context file', { path: filePath, name, stage });
-        return filePath;
+      for (const filePath of pluginPaths) {
+        if (await fileExists(filePath)) {
+          await logger.debug('Found plugin context file', { path: filePath, name, stage });
+          return filePath;
+        }
       }
+    } catch (error) {
+      await logger.warn('Error discovering plugin context file', { error: String(error), name, stage });
     }
   }
 
@@ -108,47 +120,57 @@ async function discoverAgentCommandContext(
   stage: string
 ): Promise<string | null> {
   // Strip namespace prefix from agent name (namespace:agent-name → agent-name)
-  const agentName = agent.replace(/^[^:]+:/, '');
-  const contextName = commandOrSkill?.replace(/^\//, '').replace(/^[^:]+:/, '');
+  // SECURITY: Sanitize components
+  const agentName = sanitizePathSegment(agent.replace(/^[^:]+:/, ''));
+  const contextName = commandOrSkill ? sanitizePathSegment(commandOrSkill.replace(/^\//, '').replace(/^[^:]+:/, '')) : null;
+  const safeStage = sanitizePathSegment(stage);
 
   // Project-level paths (highest priority)
   const projectPaths: string[] = [];
-  if (contextName) {
-    projectPaths.push(
-      path.join(cwd, '.claude', 'context', `${agentName}-${contextName}-${stage}.md`)
-    );
-  }
-  projectPaths.push(path.join(cwd, '.claude', 'context', `${agentName}-${stage}.md`));
-
-  for (const filePath of projectPaths) {
-    if (await fileExists(filePath)) {
-      await logger.debug('Found project agent context file', {
-        path: filePath,
-        agent: agentName,
-        stage
-      });
-      return filePath;
-    }
-  }
-
-  // Plugin-level paths (fallback)
-  const pluginRoot = getPluginRoot();
-  if (pluginRoot) {
-    const pluginPaths: string[] = [];
+  try {
     if (contextName) {
-      pluginPaths.push(path.join(pluginRoot, 'context', `${agentName}-${contextName}-${stage}.md`));
+      projectPaths.push(
+        safeJoin(cwd, '.claude', 'context', `${agentName}-${contextName}-${safeStage}.md`)
+      );
     }
-    pluginPaths.push(path.join(pluginRoot, 'context', `${agentName}-${stage}.md`));
+    projectPaths.push(safeJoin(cwd, '.claude', 'context', `${agentName}-${safeStage}.md`));
 
-    for (const filePath of pluginPaths) {
+    for (const filePath of projectPaths) {
       if (await fileExists(filePath)) {
-        await logger.debug('Found plugin agent context file', {
+        await logger.debug('Found project agent context file', {
           path: filePath,
           agent: agentName,
           stage
         });
         return filePath;
       }
+    }
+  } catch (error) {
+    await logger.warn('Error discovering project agent context', { error: String(error), agent, stage });
+  }
+
+  // Plugin-level paths (fallback)
+  const pluginRoot = getPluginRoot();
+  if (pluginRoot) {
+    const pluginPaths: string[] = [];
+    try {
+      if (contextName) {
+        pluginPaths.push(safeJoin(pluginRoot, 'context', `${agentName}-${contextName}-${safeStage}.md`));
+      }
+      pluginPaths.push(safeJoin(pluginRoot, 'context', `${agentName}-${safeStage}.md`));
+
+      for (const filePath of pluginPaths) {
+        if (await fileExists(filePath)) {
+          await logger.debug('Found plugin agent context file', {
+            path: filePath,
+            agent: agentName,
+            stage
+          });
+          return filePath;
+        }
+      }
+    } catch (error) {
+      await logger.warn('Error discovering plugin agent context', { error: String(error), agent, stage });
     }
   }
 
@@ -163,6 +185,7 @@ async function discoverAgentCommandContext(
 
   return null;
 }
+
 
 /**
  * Extract name and stage from hook event.

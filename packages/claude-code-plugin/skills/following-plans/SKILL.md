@@ -58,7 +58,7 @@ Is change syntax/naming only?
 
 When evaluating changes from plan:
 
-| Domain | Within Boundaries (tsv pass) | Exceeds Boundaries (tsv fail) |
+| Domain | Within Boundaries (rundown pass) | Exceeds Boundaries (rundown fail) |
 |--------|-----------------------------|-------------------------------|
 | Logic | syntax/naming | algorithm changes |
 | Deps | calls within lib | swap library |
