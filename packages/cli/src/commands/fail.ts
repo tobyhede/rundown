@@ -11,6 +11,12 @@ import {
   printRunbookComplete,
   printRunbookStoppedAtStep,
   countNumberedSteps,
+  // Event system imports for JSON mode
+  ExecutionEventEmitter,
+  CLISubscriber,
+  JSONSubscriber,
+  getWriter,
+  type RunbookState,
 } from '@rundown-org/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
@@ -27,10 +33,32 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputManager } from '../services/output-manager.js';
 
 /**
+ * Set up an emitter with the appropriate subscriber based on output mode.
+ */
+function setupEmitterWithSubscriber(
+  runbookState: RunbookState,
+  jsonMode: boolean
+): { emitter: ExecutionEventEmitter; jsonSubscriber: JSONSubscriber | undefined } {
+  const emitter = new ExecutionEventEmitter(
+    runbookState.id,
+    { name: runbookState.runbook, path: runbookState.runbookPath }
+  );
+  const jsonSubscriber = jsonMode ? new JSONSubscriber() : undefined;
+
+  if (jsonSubscriber) {
+    emitter.subscribe(jsonSubscriber.handle);
+  } else {
+    const cliSubscriber = new CLISubscriber(getWriter());
+    emitter.subscribe(cliSubscriber.handle);
+  }
+
+  return { emitter, jsonSubscriber };
+}
+
+/**
  * Registers the 'fail' command for marking steps as failed.
  * @param program - Commander program instance to register the command on
  */
-
 export function registerFailCommand(program: Command): void {
   program
     .command('fail')
@@ -99,7 +127,11 @@ export function registerFailCommand(program: Command): void {
                 console.log(`Agent ${options.agent} retrying step ${stepName}`);
               }
               // Continue with execution loop for retry
-              const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, options.json);
+              const { emitter: retryEmitter, jsonSubscriber: retryJsonSubscriber } = setupEmitterWithSubscriber(state, !!options.json);
+              const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, retryEmitter);
+              if (retryJsonSubscriber) {
+                getWriter().writeJson(retryJsonSubscriber.getSummary());
+              }
               if (loopResult === 'stopped') process.exit(1);
               return;
             } else if (failResult.action === 'goto') {
@@ -111,7 +143,11 @@ export function registerFailCommand(program: Command): void {
                 console.log(`Agent ${options.agent} failed, runbook jumped to step ${updated.step}`);
               }
               // Continue with execution loop after GOTO
-              const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, options.json);
+              const { emitter: gotoEmitter, jsonSubscriber: gotoJsonSubscriber } = setupEmitterWithSubscriber(state, !!options.json);
+              const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, gotoEmitter);
+              if (gotoJsonSubscriber) {
+                getWriter().writeJson(gotoJsonSubscriber.getSummary());
+              }
               if (loopResult === 'stopped') process.exit(1);
               return;
             }
@@ -309,7 +345,16 @@ export function registerFailCommand(program: Command): void {
           });
         }
 
-        const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, options.json);
+        // Set up emitter for execution loop (for JSON mode)
+        const { emitter, jsonSubscriber } = setupEmitterWithSubscriber(updatedState, !!options.json);
+
+        const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, emitter);
+
+        // Output JSON summary if in JSON mode
+        if (jsonSubscriber) {
+          getWriter().writeJson(jsonSubscriber.getSummary());
+        }
+
         if (loopResult === 'stopped') {
           process.exit(1);
         }
