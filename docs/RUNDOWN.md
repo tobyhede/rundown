@@ -187,7 +187,7 @@ In WebContainer environments (e.g., StackBlitz), nested process spawning may not
 
 - `isInternalRdCommand()` detects rd/rundown commands
 - `executeRdCommandInternal()` dispatches to internal handlers
-- Currently supported: `echo` command
+- Currently supported: `echo`, `prompt` commands
 - Unsupported commands fall back to standard spawn behavior
 
 Example of a step that auto-executes:

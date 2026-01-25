@@ -7,6 +7,7 @@ Rundown is a format for defining executable runbooks using Markdown.
 - `@rundown-org/parser` - Markdown runbook parser
 - `@rundown-org/core` - Runbook state management and XState compilation
 - `@rundown-org/cli` - Command-line interface (`rundown`, `rd`)
+- `@rundown-org/claude-code-plugin` - Claude Code plugin for runbook orchestration
 
 ## Installation
 
@@ -48,6 +49,9 @@ State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown
 
 ```bash
 rundown run <file> --allow-run git,npm    # Allow specific commands
+rundown run <file> --allow-read /path     # Allow reading specific paths
+rundown run <file> --allow-write /path    # Allow writing to specific paths
+rundown run <file> --allow-env VAR        # Allow specific environment variables
 rundown run <file> --allow-all            # Bypass policy (trust mode)
 rundown run <file> --deny-all             # Block all commands
 rundown run <file> -y                     # Auto-approve prompts

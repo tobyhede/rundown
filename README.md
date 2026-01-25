@@ -137,6 +137,7 @@ The `rd` command is an alias for `rundown`.
 | [@rundown-org/parser](packages/parser) | Markdown runbook parser |
 | [@rundown-org/core](packages/core) | Runbook state management and XState compilation |
 | [@rundown-org/cli](packages/cli) | Command-line interface |
+| [@rundown-org/claude-code-plugin](packages/claude-code-plugin) | Claude Code plugin for runbook orchestration |
 
 ## Documentation
 
