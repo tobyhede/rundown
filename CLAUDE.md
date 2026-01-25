@@ -47,6 +47,8 @@ State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown
 
 ## Policy Options
 
+These options are registered at the program level and can be used with any subcommand:
+
 ```bash
 rundown run <file> --allow-run git,npm    # Allow specific commands
 rundown run <file> --allow-read /path     # Allow reading specific paths

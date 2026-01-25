@@ -487,7 +487,7 @@ uname -r
 If Landlock is not available:
 - Upgrade to Linux kernel 5.13 or later
 - Ensure CONFIG_SECURITY_LANDLOCK is enabled in kernel config
-- Install a Landlock wrapper like [landrun](https://github.com/Zouuup/landrun)
+- Install a Landlock wrapper like [landrun](https://github.com/Zouuup/landrun) (v0.1.0 or later recommended)
 
 ### macOS: Seatbelt Permissions
 

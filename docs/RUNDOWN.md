@@ -715,6 +715,8 @@ Repeat step template until work complete.
 
 ## Output Format
 
+Output formatting is implemented in `packages/cli/src/services/output-manager.ts` and `packages/cli/src/helpers/table-formatter.ts`.
+
 ### Standard Output Structure
 
 ```
