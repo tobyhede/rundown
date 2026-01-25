@@ -9,6 +9,12 @@ import {
   stepIdToString,
   countNumberedSteps,
   printNoActiveRunbook,
+  // Event system imports for JSON mode
+  ExecutionEventEmitter,
+  CLISubscriber,
+  JSONSubscriber,
+  getWriter,
+  type RunbookState,
 } from '@rundown-org/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
@@ -16,6 +22,29 @@ import { runExecutionLoop } from '../services/execution.js';
 import { printStepSeparator, printActionBlock } from '@rundown-org/core';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputManager } from '../services/output-manager.js';
+
+/**
+ * Set up an emitter with the appropriate subscriber based on output mode.
+ */
+function setupEmitterWithSubscriber(
+  runbookState: RunbookState,
+  jsonMode: boolean
+): { emitter: ExecutionEventEmitter; jsonSubscriber: JSONSubscriber | undefined } {
+  const emitter = new ExecutionEventEmitter(
+    runbookState.id,
+    { name: runbookState.runbook, path: runbookState.runbookPath }
+  );
+  const jsonSubscriber = jsonMode ? new JSONSubscriber() : undefined;
+
+  if (jsonSubscriber) {
+    emitter.subscribe(jsonSubscriber.handle);
+  } else {
+    const cliSubscriber = new CLISubscriber(getWriter());
+    emitter.subscribe(cliSubscriber.handle);
+  }
+
+  return { emitter, jsonSubscriber };
+}
 
 /**
  * Registers the 'goto' command for jumping to specific steps.
@@ -163,20 +192,27 @@ export function registerGotoCommand(program: Command): void {
             from: { current: prevStep, total: totalSteps, substep: prevSubstep },
             to: { current: target.step, total: totalSteps, substep: target.substep },
           });
-          return;
+        } else {
+          // Print separator with new step number and action block
+          printStepSeparator(newPos);
+          printActionBlock({
+            action: `GOTO ${stepIdToString(target)}`,
+            from: { current: prevStep, total: totalSteps, substep: prevSubstep },
+            at: newPos,
+          });
         }
 
-        // Print separator with new step number and action block
-        printStepSeparator(newPos);
-        printActionBlock({
-          action: `GOTO ${stepIdToString(target)}`,
-          from: { current: prevStep, total: totalSteps, substep: prevSubstep },
-          at: newPos,
-        });
+        // Set up emitter for execution loop (for JSON mode)
+        const { emitter, jsonSubscriber } = setupEmitterWithSubscriber(state, !!options.json);
 
         // Continue with execution loop
         // Goto doesn't have --agent option, so use default stack
-        const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, undefined);
+        const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, undefined, emitter);
+
+        // Output JSON summary if in JSON mode
+        if (jsonSubscriber) {
+          getWriter().writeJson(jsonSubscriber.getSummary());
+        }
 
         if (loopResult === 'stopped') {
           process.exit(1);
