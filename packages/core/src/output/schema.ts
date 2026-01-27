@@ -153,12 +153,13 @@ export interface ErrorDetails {
  * Response from state-transition action commands.
  *
  * Used by: pass, fail, goto, stop, complete
+ *
+ * Note: `result` boolean indicates action success (PASS = true, FAIL = false).
+ * The `action` field shows the transition (e.g., "CONTINUE", "GOTO 3", "RETRY").
  */
 export interface ActionResponse extends SuccessResponse {
-  /** The action that was performed (e.g., "CONTINUE", "GOTO 3") */
+  /** The action that was performed (e.g., "CONTINUE", "GOTO 3", "RETRY") */
   action: string;
-  /** The result of the action evaluation ("PASS" or "FAIL") */
-  actionResult?: 'PASS' | 'FAIL';
   /** The command that was executed */
   command?: string;
   /** Position before the action */
@@ -331,10 +332,14 @@ export interface ScenarioRunResponse {
  * Response from the echo command.
  */
 export interface EchoResponse {
-  /** The echoed content */
-  content: string;
-  /** The result code */
-  result?: 'PASS' | 'FAIL';
+  /** Whether the operation succeeded */
+  result: boolean;
+  /** The echoed output */
+  output?: string;
+  /** Error message if failed */
+  error?: string;
+  /** Exit code */
+  exitCode?: number;
 }
 
 // ============================================================================
