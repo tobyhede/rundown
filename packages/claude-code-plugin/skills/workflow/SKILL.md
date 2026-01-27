@@ -62,7 +62,7 @@ You orchestrate the workflow. Use these commands:
 ### Dispatching Steps
 
 Include StepId in Step tool description - hooks handle the rest automatically:
-```
+```text
 Step(description="2.1 - Review authentication code", ...)
 ```
 
@@ -87,7 +87,7 @@ For parallel execution (e.g., `### 2.{n}` substeps):
 `### N.{n}` marks dynamic substeps - orchestrator decides count at runtime.
 
 Dispatch with sequential StepIds in description:
-```
+```text
 Step(description="3.1 - Agent 1 review", ...)
 Step(description="3.2 - Agent 2 review", ...)
 ```
