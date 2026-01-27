@@ -2,10 +2,25 @@
 
 ## Conventions
 
-- **Lists**: Raw arrays `[...]`
-- **Status/Action**: Flat objects with `result` boolean
-- **Errors**: `{ result: false, error: "message" }`
-- **Position**: `{ current: string, total: number }`
+### Response Type Detection
+
+| Type | Format | Detection |
+|------|--------|-----------|
+| **Error** | `{ "error": "msg", "code": "CODE" }` | `error` field exists |
+| **Workflow** | `{ "result": bool, "action": "...", ... }` | `result` field exists |
+| **List** | `[...]` | `Array.isArray()` |
+
+### Key Conventions
+
+- **Lists**: Raw arrays `[...]` (no wrapper object)
+- **Workflow commands**: Include `result` boolean (pass, fail, stop, complete, stash, pop)
+- **Errors**: `{ "error": "message", "code": "CODE" }` - no `result` field (redundant)
+- **Position**: `{ "current": string, "total": number|string }`
+- **Action field**: Shows transition (e.g., "CONTINUE", "GOTO 3", "RETRY"), not command name
+
+### Schema Reference
+
+Authoritative TypeScript types: `packages/core/src/output/schema.ts`
 
 ---
 
@@ -141,6 +156,9 @@ Runbook:  COMPLETE
 
 ### `rd pass`
 
+The `action` field shows the transition (e.g., "CONTINUE" to next step, "GOTO 3" for jump).
+`result: true` indicates the pass action succeeded.
+
 **Text:**
 ```
 File:     runbooks/deploy.runbook.md
@@ -148,9 +166,8 @@ State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 
 ─── 2 ──────────────────────────────────────────
 
-Action:   PASS
+Action:   CONTINUE
 From:     1
-Result:   PASS
 At:       2/3
 
 ## 2. Second Step
@@ -162,18 +179,20 @@ Next step description.
 ```json
 {
   "result": true,
-  "action": "PASS",
+  "action": "CONTINUE",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
   "from": { "current": "1", "total": 3 },
-  "to": { "current": "2", "total": 3 },
-  "step": { "name": "2", "description": "Second Step" }
+  "to": { "current": "2", "total": 3 }
 }
 ```
 
 ---
 
 ## fail
+
+The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP" for stopping).
+`result: false` indicates the fail action was processed.
 
 ### `rd fail` (retry)
 
@@ -183,7 +202,6 @@ File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 
 Action:   RETRY (1/3)
-Result:   FAIL
 At:       1/3
 
 ## 1. First Step
@@ -195,13 +213,10 @@ Step description.
 ```json
 {
   "result": false,
-  "action": "RETRY",
-  "retryCount": 1,
-  "retryMax": 3,
+  "action": "RETRY (1/3)",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
-  "position": { "current": "1", "total": 3 },
-  "step": { "name": "1", "description": "First Step" }
+  "to": { "current": "1", "total": 3 }
 }
 ```
 
@@ -222,7 +237,7 @@ Runbook:  STOP
   "action": "STOP",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
-  "position": { "current": "1", "total": 3 }
+  "stopped": true
 }
 ```
 
@@ -231,6 +246,8 @@ Runbook:  STOP
 ## goto
 
 ### `rd goto <step>`
+
+The `action` field is combined (e.g., "GOTO 3"), not a separate `target` field.
 
 **Text:**
 ```
@@ -252,13 +269,11 @@ Step description.
 ```json
 {
   "result": true,
-  "action": "GOTO",
-  "target": "3",
+  "action": "GOTO 3",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
   "from": { "current": "1", "total": 5 },
-  "to": { "current": "3", "total": 5 },
-  "step": { "name": "3", "description": "Target Step" }
+  "to": { "current": "3", "total": 5 }
 }
 ```
 
@@ -267,6 +282,8 @@ Step description.
 ## stop
 
 ### `rd stop [message]`
+
+Uses `action: "stop"` (command name) and `result: false` (stopping is a failure outcome).
 
 **Text:**
 ```
@@ -279,8 +296,8 @@ Runbook:  STOP
 **JSON:**
 ```json
 {
-  "result": true,
-  "action": "stopped",
+  "result": false,
+  "action": "stop",
   "message": "User requested stop",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json"
@@ -318,6 +335,8 @@ Runbook:  COMPLETE
 
 ### `rd stash`
 
+Uses `action: "stash"` (command name).
+
 **Text:**
 ```
 File:     runbooks/deploy.runbook.md
@@ -333,7 +352,7 @@ Runbook:  STASHED
 ```json
 {
   "result": true,
-  "action": "stashed",
+  "action": "stash",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
   "prompted": true,
@@ -346,6 +365,8 @@ Runbook:  STASHED
 ## pop
 
 ### `rd pop`
+
+Uses `action: "pop"` (command name).
 
 **Text:**
 ```
@@ -365,13 +386,12 @@ Step description.
 ```json
 {
   "result": true,
-  "action": "restored",
+  "action": "pop",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
   "prompted": true,
   "position": { "current": "2", "total": 3 },
-  "step": { "name": "2", "description": "Second Step" },
-  "lastAction": { "action": "PASS", "result": true }
+  "step": { "name": "2", "description": "Second Step" }
 }
 ```
 
@@ -385,8 +405,8 @@ No stashed runbook to restore.
 **JSON:**
 ```json
 {
-  "result": false,
-  "error": "No stashed runbook to restore"
+  "error": "No stashed runbook to restore",
+  "code": "NO_STASHED_RUNBOOK"
 }
 ```
 
@@ -417,6 +437,8 @@ def456    orphaned   missing.runbook.md
 
 ### `rd prune`
 
+Both dry-run and actual prune output an array of pruned entries.
+
 **Text:**
 ```
 Pruned 2 stale state files.
@@ -424,16 +446,26 @@ Pruned 2 stale state files.
 
 **JSON:**
 ```json
-{
-  "result": true,
-  "action": "pruned",
-  "count": 2
-}
+[
+  {
+    "id": "abc123",
+    "runbook": "old-deploy.runbook.md",
+    "reason": "stale"
+  },
+  {
+    "id": "def456",
+    "runbook": "missing.runbook.md",
+    "reason": "orphaned"
+  }
+]
 ```
 
 ---
 
 ## check
+
+Check uses `valid`/`errors`/`stats` fields (validation, not workflow).
+No `result` field - the `valid` field indicates success.
 
 ### `rd check <file>` (valid)
 
@@ -445,7 +477,6 @@ PASS: 3 steps, 2 substeps
 **JSON:**
 ```json
 {
-  "result": true,
   "valid": true,
   "errors": [],
   "stats": { "steps": 3, "substeps": 2 }
@@ -464,7 +495,6 @@ Line 22: Missing command in step
 **JSON:**
 ```json
 {
-  "result": false,
   "valid": false,
   "errors": [
     { "line": 15, "message": "Unknown transition target \"step4\"" },
@@ -549,6 +579,8 @@ Available: success, failure
 
 ### `rd scenario run <file> <name>`
 
+Uses `passed` to indicate scenario outcome (not `result` - this is scenario verification, not workflow).
+
 **Text:**
 ```
 Scenario:  success
@@ -566,7 +598,6 @@ Scenario: COMPLETE
 **JSON:**
 ```json
 {
-  "result": true,
   "scenario": "success",
   "expected": "COMPLETE",
   "actual": "COMPLETE",
@@ -625,13 +656,15 @@ Hello world
 **JSON:**
 ```json
 {
-  "content": "Hello world"
+  "output": "Hello world"
 }
 ```
 
 ---
 
 ## Error Output (all commands)
+
+Error responses use `error` and `code` fields. No `result` field (the presence of `error` indicates failure).
 
 ### No active runbook
 
@@ -643,8 +676,8 @@ No active runbook.
 **JSON:**
 ```json
 {
-  "result": false,
-  "error": "No active runbook"
+  "error": "No active runbook",
+  "code": "NO_ACTIVE_RUNBOOK"
 }
 ```
 
@@ -658,7 +691,7 @@ Error: Runbook file not found: missing.runbook.md
 **JSON:**
 ```json
 {
-  "result": false,
-  "error": "Runbook file not found: missing.runbook.md"
+  "error": "Runbook file not found: missing.runbook.md",
+  "code": "RUNBOOK_NOT_FOUND"
 }
 ```
