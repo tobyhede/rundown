@@ -71,17 +71,17 @@ export const ErrorResponseSchema = z.object({
  * Action response schema (pass, fail, goto, stop, complete).
  *
  * Action responses include the action performed and position changes.
+ * Uses `result` boolean to indicate action success (PASS = true, FAIL = false).
  */
 export const ActionResponseSchema = z.object({
   action: z.string(),
-  actionResult: z.enum(['PASS', 'FAIL']).optional(),
   command: z.string().optional(),
   from: PositionSchema.optional(),
   to: PositionSchema.optional(),
   complete: z.boolean().optional(),
   stopped: z.boolean().optional(),
   runbook: RunbookContextSchema.optional(),
-  // Legacy flat format fields
+  // Flat format fields
   file: z.string().optional(),
   state: z.string().optional(),
   prompted: z.boolean().optional(),
@@ -92,20 +92,27 @@ export const ActionResponseSchema = z.object({
 
 /**
  * Status response schema.
+ *
+ * Uses flat structure per CLI-OUTPUT-SPEC:
+ * - `file`/`state`/`prompted` at top level (not nested in `runbook`)
+ * - `position` for step position (current/total/substep)
+ * - `step` for step details (name/description)
  */
 export const StatusResponseSchema = z.object({
   active: z.boolean(),
   stashed: z.boolean(),
-  runbook: RunbookContextSchema.optional(),
+  // Flat structure fields
+  file: z.string().optional(),
+  state: z.string().optional(),
+  prompted: z.boolean().optional(),
   position: PositionSchema.optional(),
-  step: PositionSchema.optional(),
-  currentStep: z.object({
+  step: z.object({
+    name: z.string(),
     description: z.string().optional(),
-    command: z.string().optional(),
   }).optional(),
   lastAction: z.object({
     action: z.string(),
-    result: z.string(),
+    result: z.string().optional(),
   }).optional(),
 }).passthrough();
 
@@ -196,17 +203,17 @@ export const ScenarioErrorResponseSchema = z.object({
 /**
  * Echo response schema.
  *
- * Uses `content` for output text and `result` boolean for success status.
+ * Uses `output` for echoed text and `result` boolean for success status.
  */
 export const EchoResponseSchema = z.object({
   result: z.boolean(),
-  content: z.string().optional(),
+  output: z.string().optional(),
   error: z.string().optional(),
   exitCode: z.number().optional(),
 }).refine(
-  // Must have either content or error
-  (data) => data.content !== undefined || data.error !== undefined,
-  { message: 'Must have content or error' }
+  // Must have either output or error (or neither for empty echo)
+  (data) => data.result !== undefined,
+  { message: 'Must have result' }
 );
 
 /**

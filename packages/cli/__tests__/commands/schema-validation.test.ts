@@ -506,8 +506,8 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Uses `content` for output text
-      expect(output).toHaveProperty('content', 'hello world');
+      // Uses `output` for echoed text per CLI-OUTPUT-SPEC
+      expect(output).toHaveProperty('output', 'hello world');
       expect(output).toHaveProperty('exitCode', 0);
     });
 
@@ -528,8 +528,8 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Uses `content` for output text, `result` is boolean
-      expect(output).toHaveProperty('content', 'test');
+      // Uses `output` for echoed text, `result` is boolean per CLI-OUTPUT-SPEC
+      expect(output).toHaveProperty('output', 'test');
       expect(output).toHaveProperty('result', true);
     });
   });
@@ -556,8 +556,8 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Current format: action='stopped', result=false (stop = failure to continue)
-      expect(output).toHaveProperty('action', 'stopped');
+      // Per CLI-OUTPUT-SPEC: action='stop' (command name), result=false (stop = failure to continue)
+      expect(output).toHaveProperty('action', 'stop');
       expect(output).toHaveProperty('result', false);
     });
   });

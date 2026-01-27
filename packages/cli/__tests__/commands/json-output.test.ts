@@ -104,9 +104,10 @@ prompt: Wait
 
       expect(output.active).toBe(true);
       expect(output.stashed).toBe(false);
-      expect(output.runbook).toHaveProperty('file', 'test.runbook.md');
-      expect(output.step).toHaveProperty('current', '1');
-      expect(output.step).toHaveProperty('total', 1);
+      // Flat structure per CLI-OUTPUT-SPEC
+      expect(output).toHaveProperty('file', 'test.runbook.md');
+      expect(output.position).toHaveProperty('current', '1');
+      expect(output.position).toHaveProperty('total', 1);
     });
   });
 
