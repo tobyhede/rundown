@@ -20,10 +20,12 @@ import {
   validateCheckOutput,
   validateScenarioLsOutput,
   validateScenarioShowOutput,
+  validateScenarioRunOutput,
   validatePruneOutput,
   validateStashOutput,
   validatePopOutput,
   validateEchoOutput,
+  validatePromptOutput,
   validateExecutionSummary,
 } from '../helpers/schema-validator.js';
 import * as fs from 'fs';
@@ -531,6 +533,118 @@ prompt: Wait
       // Uses `output` for echoed text, `result` is boolean per CLI-OUTPUT-SPEC
       expect(output).toHaveProperty('output', 'test');
       expect(output).toHaveProperty('result', true);
+    });
+  });
+
+  // ==========================================================================
+  // Prompt Command
+  // ==========================================================================
+
+  describe('prompt --json', () => {
+    it('validates prompt command output', () => {
+      // Use array form to preserve quoted content as single argument
+      const result = runCli(['prompt', 'Hello World', '--json'], workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validatePromptOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      // Uses `output` for content per CLI-OUTPUT-SPEC
+      expect(output).toHaveProperty('output', 'Hello World');
+    });
+
+    it('validates prompt with special characters', () => {
+      // Use array form to preserve content with spaces as single argument
+      const result = runCli(['prompt', 'Test with spaces and chars', '--json'], workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validatePromptOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      expect(output).toHaveProperty('output', 'Test with spaces and chars');
+    });
+  });
+
+  // ==========================================================================
+  // Run Command
+  // ==========================================================================
+
+  describe('run --json', () => {
+    it('validates run command completion output', () => {
+      const runbookPath = path.join(workspace.cwd, 'simple.runbook.md');
+      fs.writeFileSync(runbookPath, `---
+name: simple-test
+---
+## Step 1
+echo hello
+`);
+
+      const result = runCli('run --json simple.runbook.md', workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validateExecutionSummary(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      // Verify key fields
+      expect(output).toHaveProperty('status', 'complete');
+      expect(output).toHaveProperty('stepsExecuted');
+    });
+
+    it('validates run command with prompted runbook', () => {
+      const runbookPath = path.join(workspace.cwd, 'prompted.runbook.md');
+      fs.writeFileSync(runbookPath, `---
+name: prompted-test
+---
+## Step 1
+prompt: Wait for user
+`);
+
+      const result = runCli('run --json --prompted prompted.runbook.md', workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validateExecutionSummary(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      // Running with prompted flag should pause, status should be 'running'
+      expect(output).toHaveProperty('status', 'running');
+    });
+  });
+
+  // ==========================================================================
+  // Scenario Run Command
+  // ==========================================================================
+
+  describe('scenario run --json', () => {
+    it('validates scenario run success output', () => {
+      const runbookPath = path.join(workspace.cwd, 'test-scenarios.runbook.md');
+      fs.writeFileSync(runbookPath, `---
+name: scenario-test
+scenarios:
+  simple:
+    result: COMPLETE
+    commands:
+      - echo "test"
+---
+## Step 1
+echo hello
+`);
+
+      const result = runCli(`scenario run ${runbookPath} simple --json`, workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validateScenarioRunOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      // Per CLI-OUTPUT-SPEC: uses 'passed' not 'result'
+      expect(output).toHaveProperty('scenario', 'simple');
+      expect(output).toHaveProperty('expected', 'COMPLETE');
+      expect(output).toHaveProperty('actual');
+      expect(output).toHaveProperty('passed');
     });
   });
 

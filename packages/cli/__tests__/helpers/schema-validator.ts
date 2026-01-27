@@ -182,12 +182,14 @@ export const ScenarioListSchema = z.array(ScenarioEntrySchema);
 
 /**
  * Scenario run response.
+ *
+ * Uses `passed` to indicate scenario outcome (not `result` - scenario verification, not workflow).
  */
 export const ScenarioRunResponseSchema = z.object({
-  result: z.boolean(),
   scenario: z.string(),
   expected: z.string(),
   actual: z.string(),
+  passed: z.boolean(),
   message: z.string().optional(),
 });
 
@@ -210,11 +212,16 @@ export const EchoResponseSchema = z.object({
   output: z.string().optional(),
   error: z.string().optional(),
   exitCode: z.number().optional(),
-}).refine(
-  // Must have either output or error (or neither for empty echo)
-  (data) => data.result !== undefined,
-  { message: 'Must have result' }
-);
+});
+
+/**
+ * Prompt response schema.
+ *
+ * Simple output wrapper for prompt command.
+ */
+export const PromptResponseSchema = z.object({
+  output: z.string(),
+});
 
 /**
  * Prune entry.
@@ -434,6 +441,13 @@ export function validateScenarioRunOutput(data: unknown): ValidationResult {
  */
 export function validateEchoOutput(data: unknown): ValidationResult {
   return validateSchema(EchoResponseSchema, data);
+}
+
+/**
+ * Validate prompt command JSON output.
+ */
+export function validatePromptOutput(data: unknown): ValidationResult {
+  return validateSchema(PromptResponseSchema, data);
 }
 
 /**
