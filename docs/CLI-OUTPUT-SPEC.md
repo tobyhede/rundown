@@ -43,7 +43,7 @@ Authoritative TypeScript types: `packages/core/src/output/schema.ts`
 ### `rd ls`
 
 **Text:**
-```
+```text
 ID        STATUS   STEP  RUNBOOK                    TITLE
 abc12345  active   1/3   deploy.runbook.md          Deploy to Production
 def67890  stashed  2/5   onboarding.runbook.md      New Hire Setup
@@ -66,7 +66,7 @@ def67890  stashed  2/5   onboarding.runbook.md      New Hire Setup
 ### `rd ls --all`
 
 **Text:**
-```
+```text
 NAME              DESCRIPTION                    TAGS
 deploy            Deploy to production           deploy, ci
 onboarding        New hire setup                 hr, setup
@@ -92,7 +92,7 @@ onboarding        New hire setup                 hr, setup
 ### `rd status` (active runbook)
 
 **Text:**
-```
+```text
 File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 Prompt:   Yes
@@ -118,7 +118,7 @@ Step description here.
 ### `rd status` (no active runbook)
 
 **Text:**
-```
+```text
 No active runbook.
 ```
 
@@ -137,7 +137,7 @@ No active runbook.
 ### `rd run <file>`
 
 **Text:**
-```
+```text
 File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 
@@ -174,7 +174,7 @@ The `action` field shows the transition (e.g., "CONTINUE" to next step, "GOTO 3"
 `result: true` indicates the pass action succeeded.
 
 **Text:**
-```
+```text
 File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 
@@ -211,7 +211,7 @@ The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP" f
 ### `rd fail` (retry)
 
 **Text:**
-```
+```text
 File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 
@@ -237,7 +237,7 @@ Step description.
 ### `rd fail` (stop)
 
 **Text:**
-```
+```text
 File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 
@@ -264,7 +264,7 @@ Runbook:  STOP
 The `action` field is combined (e.g., "GOTO 3"), not a separate `target` field.
 
 **Text:**
-```
+```text
 File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 
@@ -300,7 +300,7 @@ Step description.
 Uses `action: "stop"` (command name) and `result: false` (stopping is a failure outcome).
 
 **Text:**
-```
+```text
 File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 
@@ -325,7 +325,7 @@ Runbook:  STOP
 ### `rd complete [message]`
 
 **Text:**
-```
+```text
 File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 
@@ -352,7 +352,7 @@ Runbook:  COMPLETE
 Uses `action: "stash"` (command name).
 
 **Text:**
-```
+```text
 File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 Prompt:   Yes
@@ -383,7 +383,7 @@ Runbook:  STASHED
 Uses `action: "pop"` (command name).
 
 **Text:**
-```
+```text
 File:     runbooks/deploy.runbook.md
 State:    .claude/rundown/runs/wf-2026-01-26-abc123.json
 Prompt:   Yes
@@ -412,7 +412,7 @@ Step description.
 ### `rd pop` (nothing stashed)
 
 **Text:**
-```
+```text
 No stashed runbook to restore.
 ```
 
@@ -433,7 +433,7 @@ Prune uses the same `Runbook` format as `ls`, with status values like "stale" or
 ### `rd prune --dry-run`
 
 **Text:**
-```
+```text
 ID        STATUS     RUNBOOK                    TITLE
 abc123    stale      old-deploy.runbook.md      Old Deploy
 def456    orphaned   missing.runbook.md
@@ -461,7 +461,7 @@ def456    orphaned   missing.runbook.md
 Both dry-run and actual prune output the same format.
 
 **Text:**
-```
+```text
 Pruned 2 stale state files.
 ```
 
@@ -492,7 +492,7 @@ No `result` field - the `valid` field indicates success.
 ### `rd check <file>` (valid)
 
 **Text:**
-```
+```text
 PASS: 3 steps, 2 substeps
 ```
 
@@ -508,7 +508,7 @@ PASS: 3 steps, 2 substeps
 ### `rd check <file>` (invalid)
 
 **Text:**
-```
+```text
 FAIL
 Line 15: Unknown transition target "step4"
 Line 22: Missing command in step
@@ -533,7 +533,7 @@ Line 22: Missing command in step
 ### `rd scenario ls <file>`
 
 **Text:**
-```
+```text
 NAME           EXPECTED   DESCRIPTION              TAGS
 success        COMPLETE   Happy path test          smoke
 failure        STOP       Error handling test      edge
@@ -558,7 +558,7 @@ failure        STOP       Error handling test      edge
 ### `rd scenario show <file> <name>`
 
 **Text:**
-```
+```text
 Name:        success
 Description: Happy path test
 Expected:    COMPLETE
@@ -581,7 +581,7 @@ Commands:
 ### `rd scenario show <file> <name>` (not found)
 
 **Text:**
-```
+```text
 Error: Scenario "unknown" not found
 Available: success, failure
 ```
@@ -604,7 +604,7 @@ Available: success, failure
 Uses `passed` to indicate scenario outcome (not `result` - this is scenario verification, not workflow).
 
 **Text:**
-```
+```text
 Scenario:  success
 ──────────────────────────────────────────────────
 
@@ -634,7 +634,7 @@ Scenario: COMPLETE
 ### `rd echo [command...]`
 
 **Text:**
-```
+```text
 npm install
 ```
 
@@ -650,7 +650,7 @@ npm install
 ### `rd echo --result fail`
 
 **Text:**
-```
+```text
 (empty or error output)
 ```
 
@@ -669,7 +669,7 @@ npm install
 ### `rd prompt <content>`
 
 **Text:**
-```
+```text
 ```
 Hello world
 ```
@@ -691,7 +691,7 @@ Error responses use `error` and `code` fields. No `result` field (the presence o
 ### No active runbook
 
 **Text:**
-```
+```text
 No active runbook.
 ```
 
@@ -706,7 +706,7 @@ No active runbook.
 ### File not found
 
 **Text:**
-```
+```text
 Error: Runbook file not found: missing.runbook.md
 ```
 

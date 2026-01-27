@@ -198,7 +198,13 @@
           "$ref": "#/definitions/position"
         },
         "step": {
-          "$ref": "#/definitions/position"
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "description": { "type": "string" }
+          },
+          "required": ["name"],
+          "additionalProperties": false
         },
         "currentStep": {
           "type": "object",
@@ -234,12 +240,16 @@
           "type": "string",
           "description": "Current step display"
         },
+        "total": {
+          "type": "number",
+          "description": "Total number of steps"
+        },
         "status": {
           "type": "string",
           "description": "Runbook status"
         }
       },
-      "required": ["id", "runbook", "step"],
+      "required": ["id", "runbook"],
       "additionalProperties": false
     },
 
@@ -348,7 +358,7 @@
     "scenarioRunResponse": {
       "type": "object",
       "properties": {
-        "result": {
+        "passed": {
           "type": "boolean",
           "description": "Whether scenario passed"
         },
@@ -369,7 +379,7 @@
           "description": "Detailed message"
         }
       },
-      "required": ["result", "scenario", "expected", "actual"],
+      "required": ["passed", "scenario", "expected", "actual"],
       "additionalProperties": false
     },
 

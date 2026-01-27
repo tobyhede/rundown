@@ -38,7 +38,7 @@ export async function runCli(args: string[]): Promise<CliResult> {
       if (execError.stdout) {
         try {
           const data = JSON.parse(execError.stdout) as { error?: string };
-          return { success: false, error: data.error, data };
+          return { success: false, error: data.error ?? 'Command failed', data };
         } catch { /* not JSON */ }
       }
 
@@ -46,7 +46,7 @@ export async function runCli(args: string[]): Promise<CliResult> {
       if (execError.stderr) {
         try {
           const data = JSON.parse(execError.stderr) as { error?: string };
-          return { success: false, error: data.error, data };
+          return { success: false, error: data.error ?? 'Command failed', data };
         } catch { /* not JSON */ }
       }
 

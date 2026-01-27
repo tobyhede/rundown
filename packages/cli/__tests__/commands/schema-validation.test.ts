@@ -290,7 +290,6 @@ echo done
 name: test-runbook
 ---
 ## Step 1
-- FAIL: GOTO 2
 prompt: First step
 
 ## Step 2
