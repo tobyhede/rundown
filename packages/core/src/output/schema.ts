@@ -156,8 +156,12 @@ export interface ErrorDetails {
  *
  * Note: `result` boolean indicates action success (PASS = true, FAIL = false).
  * The `action` field shows the transition (e.g., "CONTINUE", "GOTO 3", "RETRY").
+ *
+ * Extends BaseResponse (not SuccessResponse) to allow both true and false results:
+ * - pass/complete: result = true
+ * - fail/stop: result = false
  */
-export interface ActionResponse extends SuccessResponse {
+export interface ActionResponse extends BaseResponse {
   /** The action that was performed (e.g., "CONTINUE", "GOTO 3", "RETRY") */
   action: string;
   /** The command that was executed */
@@ -437,6 +441,9 @@ export function isErrorResponse(
 /**
  * Type guard to check if a response is an action response.
  *
+ * Action responses have both `result` (boolean) and `action` (string) fields.
+ * This distinguishes them from ErrorResponse which has `error` instead of `action`.
+ *
  * @param response - The response to check
  * @returns True if the response is an ActionResponse
  */
@@ -445,7 +452,7 @@ export function isActionResponse(
 ): response is ActionResponse {
   return (
     'result' in response &&
-    response.result === true &&
+    typeof response.result === 'boolean' &&
     'action' in response &&
     typeof response.action === 'string'
   );
