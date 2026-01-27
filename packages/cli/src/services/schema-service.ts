@@ -17,8 +17,8 @@ import { COMMAND_SCHEMAS } from '../schemas/output-schemas.js';
  * @returns The JSON Schema object, or null if no schema exists for the command
  */
 export function getCommandSchema(commandName: string): object | null {
-  const schema = COMMAND_SCHEMAS[commandName];
-  if (!schema) return null;
+  const schema = COMMAND_SCHEMAS[commandName] as typeof COMMAND_SCHEMAS[string] | undefined;
+  if (schema === undefined) return null;
 
   return zodToJsonSchema(schema, {
     $refStrategy: 'none',

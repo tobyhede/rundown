@@ -26,7 +26,7 @@ import type {
   StepPosition,
   ActionBlockData,
 } from '@rundown-org/core';
-import { ConsoleWriter, getWriter } from '@rundown-org/core';
+import { getWriter } from '@rundown-org/core';
 import type { OutputRenderer } from './renderers/types.js';
 import { TextRenderer } from './renderers/text-renderer.js';
 import { JSONRenderer } from './renderers/json-renderer.js';
@@ -80,7 +80,7 @@ export class OutputEmitter {
    * @param options - Emitter configuration options
    */
   constructor(options: OutputEmitterOptions = {}) {
-    this.writer = options.writer ?? getWriter() ?? new ConsoleWriter();
+    this.writer = options.writer ?? getWriter();
 
     if (options.renderer) {
       this.renderer = options.renderer;

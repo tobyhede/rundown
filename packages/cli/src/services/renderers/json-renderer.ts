@@ -10,7 +10,6 @@
 import {
   type OutputEvent,
   type OutputWriter,
-  ConsoleWriter,
   getWriter,
 } from '@rundown-org/core';
 import type { OutputRenderer, RendererOptions } from './types.js';
@@ -55,7 +54,7 @@ export class JSONRenderer implements OutputRenderer {
    * @param options - Renderer configuration options
    */
   constructor(options: RendererOptions = {}) {
-    this.writer = options.writer ?? getWriter() ?? new ConsoleWriter();
+    this.writer = options.writer ?? getWriter();
   }
 
   /**

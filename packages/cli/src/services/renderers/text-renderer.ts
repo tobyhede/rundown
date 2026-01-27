@@ -11,7 +11,6 @@ import {
   type OutputEvent,
   type OutputWriter,
   type StepPosition,
-  ConsoleWriter,
   getWriter,
   printMetadata,
   printActionBlock,
@@ -46,7 +45,7 @@ export class TextRenderer implements OutputRenderer {
    * @param options - Renderer configuration options
    */
   constructor(options: RendererOptions = {}) {
-    this.writer = options.writer ?? getWriter() ?? new ConsoleWriter();
+    this.writer = options.writer ?? getWriter();
   }
 
   /**
@@ -148,7 +147,21 @@ export class TextRenderer implements OutputRenderer {
       if (value !== undefined && value !== null) {
         // Format key with padding for alignment
         const formattedKey = `${key.charAt(0).toUpperCase() + key.slice(1)}:`.padEnd(10);
-        this.writer.writeLine(`${formattedKey}${String(value)}`);
+        // Format value based on type - objects use JSON, primitives use String
+        let formattedValue: string;
+        if (typeof value === 'object') {
+          formattedValue = JSON.stringify(value);
+        } else if (
+          typeof value === 'string' ||
+          typeof value === 'number' ||
+          typeof value === 'boolean'
+        ) {
+          formattedValue = String(value);
+        } else {
+          // symbol, bigint, function - use JSON.stringify for safety
+          formattedValue = JSON.stringify(value);
+        }
+        this.writer.writeLine(`${formattedKey}${formattedValue}`);
       }
     }
   }

@@ -435,7 +435,7 @@ export type CLIListResponse =
 export function isErrorResponse(
   response: CLIResponse | ErrorResponse
 ): response is ErrorResponse {
-  return 'result' in response && response.result === false && 'error' in response;
+  return 'result' in response && !response.result && 'error' in response;
 }
 
 /**
