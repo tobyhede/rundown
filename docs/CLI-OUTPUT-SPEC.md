@@ -22,6 +22,20 @@
 
 Authoritative TypeScript types: `packages/core/src/output/schema.ts`
 
+### Unified Types
+
+**Runbook** - Used by `ls` and `prune` for runbook listings:
+```json
+{
+  "id": "string",      // State file identifier
+  "runbook": "string", // Runbook filename
+  "status": "string",  // active, stashed, completed, stale, orphaned
+  "step": "string",    // (optional) Current step position
+  "total": number,     // (optional) Total steps
+  "title": "string"    // (optional) Runbook title
+}
+```
+
 ---
 
 ## ls
@@ -414,6 +428,8 @@ No stashed runbook to restore.
 
 ## prune
 
+Prune uses the same `Runbook` format as `ls`, with status values like "stale" or "orphaned".
+
 ### `rd prune --dry-run`
 
 **Text:**
@@ -431,13 +447,18 @@ def456    orphaned   missing.runbook.md
     "status": "stale",
     "runbook": "old-deploy.runbook.md",
     "title": "Old Deploy"
+  },
+  {
+    "id": "def456",
+    "status": "orphaned",
+    "runbook": "missing.runbook.md"
   }
 ]
 ```
 
 ### `rd prune`
 
-Both dry-run and actual prune output an array of pruned entries.
+Both dry-run and actual prune output the same format.
 
 **Text:**
 ```
@@ -449,13 +470,14 @@ Pruned 2 stale state files.
 [
   {
     "id": "abc123",
+    "status": "stale",
     "runbook": "old-deploy.runbook.md",
-    "reason": "stale"
+    "title": "Old Deploy"
   },
   {
     "id": "def456",
-    "runbook": "missing.runbook.md",
-    "reason": "orphaned"
+    "status": "orphaned",
+    "runbook": "missing.runbook.md"
   }
 ]
 ```

@@ -40,6 +40,18 @@ rundown prompt <content> # Output content in markdown fences
 
 The `rd` command is an alias for `rundown`.
 
+## Schema Output
+
+The `--schema` flag outputs the JSON Schema for any command's `--json` output:
+
+```bash
+rd status --schema           # Status response schema
+rd check --schema            # Check response schema
+rd scenario ls --schema      # Scenario list schema
+```
+
+This enables programmatic validation of CLI output against the schema.
+
 ## State Persistence
 
 State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown/session.json` (active runbook tracking). Runbook source files are discovered from `.claude/rundown/runbooks/`. All persist across context clears.
