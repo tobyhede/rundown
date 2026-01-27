@@ -13,7 +13,7 @@ import {
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -54,8 +54,9 @@ export function registerScenariosCommand(program: Command): void {
     .command('run <file> <name>')
     .description('Execute a scenario and verify the result')
     .option('-q, --quiet', 'Suppress command output')
-    .action(async (file: string, scenarioName: string, options: { quiet?: boolean }) => {
-      await runScenario(file, scenarioName, options.quiet ?? false);
+    .option('--json', 'Output as JSON for programmatic use')
+    .action(async (file: string, scenarioName: string, options: { quiet?: boolean; json?: boolean }) => {
+      await runScenario(file, scenarioName, options.quiet ?? false, options.json);
     });
 }
 
@@ -72,12 +73,13 @@ interface LoadedRunbook {
   scenarios: Scenarios;
 }
 
-async function loadScenarios(file: string): Promise<LoadedRunbook> {
+async function loadScenarios(file: string, output: OutputEmitter): Promise<LoadedRunbook> {
   const cwd = process.cwd();
   const filePath = await resolveRunbookFile(cwd, file);
 
   if (!filePath) {
-    console.error(`Runbook file not found: ${file}`);
+    output.error(`Runbook file not found: ${file}`, 'RUNBOOK_NOT_FOUND');
+    output.flush();
     process.exit(1);
   }
 
@@ -85,22 +87,25 @@ async function loadScenarios(file: string): Promise<LoadedRunbook> {
   const { frontmatter } = extractRawFrontmatter(content);
 
   if (!frontmatter) {
-    console.error('No frontmatter found in this runbook');
+    output.error('No frontmatter found in this runbook', 'VALIDATION_ERROR');
+    output.flush();
     process.exit(1);
   }
 
   const { scenarios, errors } = parseScenarios(frontmatter);
 
   if (errors.length > 0) {
-    console.error('Invalid scenarios in frontmatter:');
+    output.error('Invalid scenarios in frontmatter:', 'VALIDATION_ERROR');
     for (const error of errors) {
-      console.error(`  - ${error}`);
+      output.message(`  - ${error}`, 'error');
     }
+    output.flush();
     process.exit(1);
   }
 
   if (!scenarios || Object.keys(scenarios).length === 0) {
-    console.error('No scenarios defined in this runbook');
+    output.error('No scenarios defined in this runbook', 'VALIDATION_ERROR');
+    output.flush();
     process.exit(1);
   }
 
@@ -117,11 +122,13 @@ async function loadScenarios(file: string): Promise<LoadedRunbook> {
  * @param json - Whether to output as JSON
  */
 async function handleList(file: string, json?: boolean): Promise<void> {
+  const output = new OutputEmitter({ json });
   try {
-    const { scenarios } = await loadScenarios(file);
-    listScenarios(scenarios, json);
+    const { scenarios } = await loadScenarios(file, output);
+    listScenarios(scenarios, output);
   } catch (error) {
-    console.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
+    output.flush();
     process.exit(1);
   }
 }
@@ -134,11 +141,13 @@ async function handleList(file: string, json?: boolean): Promise<void> {
  * @param json - Whether to output as JSON
  */
 async function handleShow(file: string, scenarioName: string, json?: boolean): Promise<void> {
+  const output = new OutputEmitter({ json });
   try {
-    const { scenarios } = await loadScenarios(file);
-    showScenarioDetails(scenarioName, scenarios, json);
+    const { scenarios } = await loadScenarios(file, output);
+    showScenarioDetails(scenarioName, scenarios, output, json);
   } catch (error) {
-    console.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
+    output.flush();
     process.exit(1);
   }
 }
@@ -147,10 +156,9 @@ async function handleShow(file: string, scenarioName: string, json?: boolean): P
  * Display a list of all scenarios with their metadata.
  *
  * @param scenarios - Map of scenario names to their definitions
- * @param json - Whether to output as JSON
+ * @param output - OutputEmitter instance
  */
-function listScenarios(scenarios: Scenarios, json?: boolean): void {
-  const output = new OutputManager({ json });
+function listScenarios(scenarios: Scenarios, output: OutputEmitter): void {
   const rows = Object.entries(scenarios).map(([name, scenario]) => {
     const scenarioWithTags = scenario as { tags?: string[] };
     return {
@@ -167,6 +175,7 @@ function listScenarios(scenarios: Scenarios, json?: boolean): void {
     { header: 'DESCRIPTION', key: 'description' },
     { header: 'TAGS', key: 'tags' },
   ]);
+  output.flush();
 }
 
 /**
@@ -174,36 +183,42 @@ function listScenarios(scenarios: Scenarios, json?: boolean): void {
  *
  * @param name - The name of the scenario to display
  * @param scenarios - Map of scenario names to their definitions
+ * @param output - OutputEmitter instance
  * @param json - Whether to output as JSON
  */
-function showScenarioDetails(name: string, scenarios: Scenarios, json?: boolean): void {
-  const output = new OutputManager({ json });
+function showScenarioDetails(name: string, scenarios: Scenarios, output: OutputEmitter, json?: boolean): void {
   const writer = output.getWriter();
 
   if (!(name in scenarios)) {
-    if (output.isJson()) {
-      writer.writeJson({
+    if (json) {
+      output.detail({
         error: true,
         message: `Scenario "${name}" not found`,
         available: Object.keys(scenarios)
+      }, 'custom');
+      output.flush();
+    } else {
+      output.error(`Scenario "${name}" not found`, 'SCENARIO_NOT_FOUND', {
+        available: Object.keys(scenarios)
       });
-      process.exit(1);
+      // Write "Available:" to stderr to match expected behavior
+      writer.writeError(`Available: ${Object.keys(scenarios).join(', ')}`);
+      output.flush();
     }
-    console.error(`Scenario "${name}" not found`);
-    console.error(`Available: ${Object.keys(scenarios).join(', ')}`);
     process.exit(1);
   }
 
   const scenario = scenarios[name];
 
-  if (output.isJson()) {
-    writer.writeJson({
+  if (json) {
+    output.detail({
       name,
       description: scenario.description,
       expected: scenario.result,
       commands: scenario.commands,
       tags: (scenario as { tags?: string[] }).tags
-    });
+    }, 'scenario');
+    output.flush();
     return;
   }
 
@@ -249,14 +264,31 @@ function extractReferencedRunbooks(scenario: Scenario): string[] {
  * @param file - Runbook file path
  * @param scenarioName - Name of the scenario to run
  * @param quiet - Whether to suppress command output
+ * @param json - Whether to output as JSON
  */
-async function runScenario(file: string, scenarioName: string, quiet: boolean): Promise<void> {
+async function runScenario(file: string, scenarioName: string, quiet: boolean, json?: boolean): Promise<void> {
+  const output = new OutputEmitter({ json });
+
   // 1. Load and validate scenarios
-  const { filePath, scenarios } = await loadScenarios(file);
+  const { filePath, scenarios } = await loadScenarios(file, output);
 
   if (!(scenarioName in scenarios)) {
-    console.error(`Scenario "${scenarioName}" not found`);
-    console.error(`Available: ${Object.keys(scenarios).join(', ')}`);
+    if (json) {
+      output.detail({
+        scenario: scenarioName,
+        error: true,
+        message: `Scenario "${scenarioName}" not found`,
+        available: Object.keys(scenarios),
+      });
+      output.flush();
+    } else {
+      output.error(`Scenario "${scenarioName}" not found`, 'SCENARIO_NOT_FOUND', {
+        available: Object.keys(scenarios)
+      });
+      // Write "Available:" to stderr to match expected behavior
+      output.getWriter().writeError(`Available: ${Object.keys(scenarios).join(', ')}`);
+      output.flush();
+    }
     process.exit(1);
   }
 
@@ -284,20 +316,25 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
       }
     }
 
-    // 4. Print scenario header
-    console.log();
-    console.log(`${dim('Scenario:')}  ${info(scenarioName)}`);
-    console.log(dim('─'.repeat(50)));
-    console.log();
+    // 4. Print scenario header (text mode only)
+    if (!json) {
+      const writer = output.getWriter();
+      writer.writeLine('');
+      writer.writeLine(`${dim('Scenario:')}  ${info(scenarioName)}`);
+      writer.writeLine(dim('─'.repeat(50)));
+      writer.writeLine('');
+    }
 
     // 5. Execute commands in sequence
+    // In JSON mode, always run quietly (suppress output)
+    const runQuiet = quiet || !!json;
     for (const cmd of scenario.commands) {
-      if (!quiet) {
-        // Clear visual separator between commands
-        console.log();
-        console.log(dim('━'.repeat(50)));
-        console.log(`${info('$')} ${cmd}`);
-        console.log();
+      if (!runQuiet) {
+        const writer = output.getWriter();
+        writer.writeLine('');
+        writer.writeLine(dim('━'.repeat(50)));
+        writer.writeLine(`${info('$')} ${cmd}`);
+        writer.writeLine('');
       }
 
       // Replace 'rd ' with actual CLI path to avoid shell alias issues
@@ -306,7 +343,7 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
         execSync(actualCmd, {
           cwd: tmpDir,
           encoding: 'utf-8',
-          stdio: quiet ? 'pipe' : 'inherit',
+          stdio: runQuiet ? 'pipe' : 'inherit',
           env: { ...process.env, RUNDOWN_LOG: '0' }
         });
       } catch {
@@ -314,8 +351,9 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
       }
     }
 
-    if (!quiet) {
-      console.log();
+    if (!runQuiet) {
+      const writer = output.getWriter();
+      writer.writeLine('');
     }
 
     // 6. Check final state
@@ -348,11 +386,22 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean): 
     }
 
     // 7. Report result
-    const matches = actualResult === scenario.result;
+    const passed = actualResult === scenario.result;
 
-    console.log(`Scenario: ${colorizeStatus(actualResult)}`);
+    if (json) {
+      output.detail({
+        scenario: scenarioName,
+        expected: scenario.result,
+        actual: actualResult,
+        passed,
+      });
+      output.flush();
+    } else {
+      const writer = output.getWriter();
+      writer.writeLine(`Scenario: ${colorizeStatus(actualResult)}`);
+    }
 
-    if (!matches) {
+    if (!passed) {
       process.exit(1);
     }
   } finally {

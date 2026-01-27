@@ -6,10 +6,6 @@ import {
   RunbookStateManager,
   parseRunbook,
   evaluateFailCondition,
-  printStepSeparator,
-  printActionBlock,
-  printRunbookComplete,
-  printRunbookStoppedAtStep,
   countNumberedSteps,
   // Event system imports for JSON mode
   ExecutionEventEmitter,
@@ -30,7 +26,7 @@ import {
   handleNextInstanceFlags,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
  * Set up an emitter with the appropriate subscriber based on output mode.
@@ -68,7 +64,7 @@ export function registerFailCommand(program: Command): void {
     .option('--json', 'Output as JSON')
     .action(async (options: { agent?: string; json?: boolean }) => {
       await withErrorHandling(async () => {
-        const output = new OutputManager({ json: options.json });
+        const output = new OutputEmitter({ json: options.json });
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
         let state = await manager.getActive(options.agent);
@@ -86,11 +82,8 @@ export function registerFailCommand(program: Command): void {
         }
 
         if (!state) {
-          if (output.isJson()) {
-            output.getWriter().writeJson({ error: 'No active runbook' });
-          } else {
-            console.log('No active runbook');
-          }
+          output.status(false, 'fail', 'No active runbook');
+          output.flush();
           return;
         }
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);
@@ -121,11 +114,11 @@ export function registerFailCommand(program: Command): void {
             if (failResult.action === 'retry') {
               actor.send({ type: 'FAIL' });
               await manager.updateFromActor(state.id, actor, steps);
-              if (output.isJson()) {
-                output.getWriter().writeJson({ action: 'retry', agent: options.agent, step: stepName });
-              } else {
-                console.log(`Agent ${options.agent} retrying step ${stepName}`);
-              }
+              output.status(true, 'retry', `Agent ${options.agent} retrying step ${stepName}`, {
+                agent: options.agent,
+                step: stepName
+              });
+              output.flush();
               // Continue with execution loop for retry
               const { emitter: retryEmitter, jsonSubscriber: retryJsonSubscriber } = setupEmitterWithSubscriber(state, !!options.json);
               const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, retryEmitter);
@@ -137,11 +130,11 @@ export function registerFailCommand(program: Command): void {
             } else if (failResult.action === 'goto') {
               actor.send({ type: 'FAIL' });
               const updated = await manager.updateFromActor(state.id, actor, steps);
-              if (output.isJson()) {
-                output.getWriter().writeJson({ action: 'goto', agent: options.agent, step: updated.step });
-              } else {
-                console.log(`Agent ${options.agent} failed, runbook jumped to step ${updated.step}`);
-              }
+              output.status(true, 'goto', `Agent ${options.agent} failed, runbook jumped to step ${updated.step}`, {
+                agent: options.agent,
+                step: updated.step
+              });
+              output.flush();
               // Continue with execution loop after GOTO
               const { emitter: gotoEmitter, jsonSubscriber: gotoJsonSubscriber } = setupEmitterWithSubscriber(state, !!options.json);
               const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, gotoEmitter);
@@ -162,21 +155,21 @@ export function registerFailCommand(program: Command): void {
             const bindings = Object.values(updated?.agentBindings ?? {});
             const runningCount = bindings.filter((b: { status: string }) => b.status === 'running').length;
 
-            if (output.isJson()) {
-              output.getWriter().writeJson({
-                agent: options.agent,
-                result: 'fail',
-                agentsRunning: runningCount,
-                allComplete: runningCount === 0
-              });
-            } else {
-              console.log(`Agent ${options.agent} marked as fail`);
+            output.status(false, 'agent_failed', `Agent ${options.agent} marked as fail`, {
+              agent: options.agent,
+              result: 'fail',
+              agentsRunning: runningCount,
+              allComplete: runningCount === 0
+            });
+
+            if (!options.json) {
               if (runningCount > 0) {
-                console.log(`${String(runningCount)} agent(s) still running`);
+                output.message(`${String(runningCount)} agent(s) still running`, 'info');
               } else {
-                console.log('All agents complete');
+                output.message('All agents complete', 'info');
               }
             }
+            output.flush();
             return;
           }
           // No binding - this is a standalone runbook in agent's stack
@@ -258,16 +251,13 @@ export function registerFailCommand(program: Command): void {
         const prevPos = { current: displayStep, total: totalSteps, substep: prevDisplaySubstep };
         const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
 
-        if (!output.isJson()) {
-          // Print separator with new step number and action block
-          printStepSeparator(newPos);
-          printActionBlock({
-            action,
-            from: prevPos,
-            result: 'FAIL',
-            at: newPos,
-          });
-        }
+        // Emit action block
+        output.action({
+          action,
+          from: prevPos,
+          result: 'FAIL',
+          at: newPos,
+        });
 
         // Evaluate fail condition once to get message
         // Use state.retryCount (pre-transition value) to correctly determine message
@@ -276,17 +266,9 @@ export function registerFailCommand(program: Command): void {
         // Handle stopped
         if (isStopped) {
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
-          
-          if (output.isJson()) {
-            output.getWriter().writeJson({
-              success: false,
-              action: 'stopped',
-              from: prevPos,
-              to: newPos
-            });
-          } else {
-            printRunbookStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevDisplaySubstep }, failResult.message);
-          }
+
+          output.stopped(failResult.message, prevPos);
+          output.flush();
 
           // If this was a child runbook with agent, update parent's agent binding
           if (options.agent && state.parentRunbookId) {
@@ -307,16 +289,8 @@ export function registerFailCommand(program: Command): void {
             variables: { ...state.variables, completed: true }
           });
           
-          if (output.isJson()) {
-            output.getWriter().writeJson({
-              success: false,
-              action: 'complete',
-              from: prevPos,
-              to: newPos
-            });
-          } else {
-            printRunbookComplete(failResult.message);
-          }
+          output.complete(failResult.message, newPos);
+          output.flush();
 
           // If this was a child runbook with agent, update parent's agent binding
           if (options.agent && state.parentRunbookId) {
@@ -330,20 +304,8 @@ export function registerFailCommand(program: Command): void {
           return;
         }
 
-        // Continue with execution loop
-        if (output.isJson()) {
-          output.getWriter().writeJson({
-            success: false,
-            action: 'continue',
-            from: prevPos,
-            to: newPos,
-            nextStep: {
-              current: newDisplayStep,
-              total: totalSteps,
-              substep: newDisplaySubstep
-            }
-          });
-        }
+        // Flush the action output before continuing with execution loop
+        output.flush();
 
         // Set up emitter for execution loop (for JSON mode)
         const { emitter, jsonSubscriber } = setupEmitterWithSubscriber(updatedState, !!options.json);

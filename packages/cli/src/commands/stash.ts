@@ -1,15 +1,11 @@
 // packages/cli/src/commands/stash.ts
 
 import type { Command } from 'commander';
-import {
-  RunbookStateManager,
-  printMetadata,
-  printRunbookStashed,
-  printNoActiveRunbook,
-} from '@rundown-org/core';
+import { RunbookStateManager } from '@rundown-org/core';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
  * Registers the 'stash' command for pausing runbook enforcement.
@@ -20,27 +16,37 @@ export function registerStashCommand(program: Command): void {
     .command('stash')
     .description('Pause runbook enforcement, preserve state')
     .option('--agent <agentId>', 'Stash runbook from agent-specific stack')
-    .action(async (options: { agent?: string }) => {
-      await withErrorHandling(async () => {
-        const cwd = getCwd();
-        const manager = new RunbookStateManager(cwd);
-        const state = await manager.getActive(options.agent);
+    .option('--json', 'Output as JSON for programmatic use')
+    .action(async (options: { agent?: string; json?: boolean }) => {
+      await withErrorHandling(
+        async () => {
+          const cwd = getCwd();
+          const output = new OutputEmitter({ json: options.json });
+          const manager = new RunbookStateManager(cwd);
+          const state = await manager.getActive(options.agent);
 
-        if (!state) {
-          printNoActiveRunbook();
-          return;
-        }
+          if (!state) {
+            output.noActiveRunbook();
+            output.flush();
+            return;
+          }
 
-        const totalSteps = await getStepTotal(cwd, state.runbook);
+          const totalSteps = await getStepTotal(cwd, state.runbook);
 
-        // Print metadata
-        printMetadata(buildMetadata(state));
+          // Stash the runbook
+          await manager.stash(options.agent);
 
-        // Stash
-        await manager.stash(options.agent);
-
-        // Print step position and message
-        printRunbookStashed({ current: state.step, total: totalSteps });
-      });
+          // Emit structured output - TextRenderer handles stash action specially
+          output.metadata(buildMetadata(state));
+          output.status(true, 'stash', 'Runbook stashed', {
+            position: {
+              current: state.step,
+              total: totalSteps,
+            },
+          });
+          output.flush();
+        },
+        { json: options.json }
+      );
     });
 }

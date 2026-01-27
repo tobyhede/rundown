@@ -1,16 +1,11 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import {
-  RunbookStateManager,
-  printMetadata,
-  printRunbookStopped,
-  printNoActiveRunbook,
-} from '@rundown-org/core';
+import { RunbookStateManager } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -27,15 +22,13 @@ export function registerStopCommand(program: Command): void {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
-          const output = new OutputManager({ json: options.json });
+          const output = new OutputEmitter({ json: options.json });
           const manager = new RunbookStateManager(cwd);
           const state = await manager.getActive(options.agent);
+
           if (!state) {
-            if (output.isJson()) {
-              output.getWriter().writeJson({ success: false, action: 'stopped', message: 'No active runbook' });
-            } else {
-              printNoActiveRunbook();
-            }
+            output.status(false, 'stopped', 'No active runbook');
+            output.flush();
             return;
           }
 
@@ -43,15 +36,10 @@ export function registerStopCommand(program: Command): void {
           await manager.delete(state.id);
           await manager.popRunbook(options.agent);
 
-          if (output.isJson()) {
-            output.getWriter().writeJson({ success: true, action: 'stopped', message: message ?? 'Runbook stopped' });
-          } else {
-            // Print metadata
-            printMetadata(buildMetadata(state));
-
-            // Print terminal message
-            printRunbookStopped(message ?? 'Runbook stopped');
-          }
+          // Emit structured output - renderer decides format
+          output.metadata(buildMetadata(state));
+          output.stopped(message ?? 'Runbook stopped');
+          output.flush();
         },
         { json: options.json }
       );

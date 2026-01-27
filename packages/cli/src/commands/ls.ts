@@ -7,7 +7,7 @@ import {
 import { discoverRunbooks } from '../services/discovery.js';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 import { getStatus } from '../helpers/status.js';
 
 /**
@@ -24,7 +24,7 @@ export function registerLsCommand(program: Command): void {
     .action(async (options: { all?: boolean; json?: boolean; tags?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const output = new OutputManager({ json: options.json });
+        const output = new OutputEmitter({ json: options.json });
 
         // MODE 1: List available runbooks (--all)
         if (options.all) {
@@ -38,18 +38,19 @@ export function registerLsCommand(program: Command): void {
               );
             }
 
+            // Use list() for both modes - JSONRenderer outputs raw arrays for list-only events
             output.list(runbooks, [
-              { 
-                header: 'NAME', 
-                get: (w) => w.source === 'plugin' ? `${w.name} [${w.source}]` : w.name 
+              {
+                header: 'NAME',
+                key: (w) => w.source === 'plugin' ? `${w.name} [${w.source}]` : w.name
               },
-              { 
-                header: 'DESCRIPTION', 
-                get: (w) => w.description ?? '' 
+              {
+                header: 'DESCRIPTION',
+                key: (w) => w.description ?? ''
               },
-              { 
-                header: 'TAGS', 
-                get: (w) => w.tags?.join(', ') ?? '' 
+              {
+                header: 'TAGS',
+                key: (w) => w.tags?.join(', ') ?? ''
               },
             ], {
               emptyMessage: 'No runbooks found.',
@@ -61,6 +62,7 @@ export function registerLsCommand(program: Command): void {
                 path: w.path,
               }),
             });
+            output.flush();
             return;
         }
 
@@ -80,7 +82,7 @@ export function registerLsCommand(program: Command): void {
             const displayStep = state.instance !== undefined
               ? String(state.instance)
               : state.step;
-            
+
             return {
               ...state,
               _status: status,
@@ -89,20 +91,21 @@ export function registerLsCommand(program: Command): void {
           })
         );
 
+        // Use list() for both modes - JSONRenderer outputs raw arrays for list-only events
         output.list(enrichedStates, [
-          { header: 'ID', get: (s) => s.id.slice(0, 8) },
-          { header: 'STATUS', get: (s) => s._status },
-          { header: 'STEP', get: (s) => s._displayStep },
+          { header: 'ID', key: (s) => s.id.slice(0, 8) },
+          { header: 'STATUS', key: (s) => s._status },
+          { header: 'STEP', key: (s) => s._displayStep },
           { header: 'RUNBOOK', key: 'runbook' },
-          { header: 'TITLE', get: (s) => s.title ?? '' },
+          { header: 'TITLE', key: (s) => s.title ?? '' },
         ], {
           emptyMessage: 'No active runbooks.\nRun "rundown ls --all" to see available runbooks.',
-          // Strip internal display properties for JSON output
           jsonMapper: (s) => {
-             const { _status: _, _displayStep: __, ...original } = s;
-             return original;
-          }
+            const { _status: _, _displayStep: __, ...original } = s;
+            return original;
+          },
         });
+        output.flush();
       });
     });
 }

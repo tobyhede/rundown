@@ -81,10 +81,11 @@ echo hello
     it('outputs inactive status when empty', () => {
       const result = runCli('status --json', workspace);
       const output = JSON.parse(result.stdout);
-      
+
       expect(output).toEqual({
         active: false,
-        stashed: false
+        stashed: false,
+        result: true  // Added by JSONRenderer.flush()
       });
     });
 
@@ -212,7 +213,8 @@ echo hello
       expect(output).toEqual({
         error: true,
         message: 'Scenario "non-existent" not found',
-        available: ['test-scenario']
+        available: ['test-scenario'],
+        result: false  // Added by JSONRenderer.flush()
       });
     });
   });

@@ -6,11 +6,7 @@ import {
   RunbookStateManager,
   parseRunbook,
   stepIdToString,
-  printMetadata,
-  printActionBlock,
   printStepBlock,
-  printRunbookStashed,
-  printNoActiveRunbook,
   countNumberedSteps,
   type ActionBlockData,
   type RunbookMetadata,
@@ -21,9 +17,22 @@ import {
   buildMetadata,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
-interface StatusOutput {
+/**
+ * Internal data structure for status command JSON output.
+ *
+ * Note: This differs from the schema's StatusResponse interface because:
+ * - Uses RunbookMetadata (matches CLI's buildMetadata output)
+ * - Combines position + step details into single `step` object
+ * - Includes `pending` and `agents` for full state visibility
+ *
+ * The schema types define the public API contract; this interface
+ * is the command-specific implementation shape.
+ *
+ * @see StatusResponse in @rundown-org/core for the public API contract
+ */
+interface StatusOutputData {
   active: boolean;
   stashed: boolean;
   runbook?: RunbookMetadata;
@@ -37,6 +46,8 @@ interface StatusOutput {
   lastAction?: ActionBlockData;
   pending?: string[];
   agents?: Record<string, { step: string; status: string; result?: string }>;
+  // Index signature for Record<string, unknown> compatibility
+  [key: string]: unknown;
 }
 
 /**
@@ -52,19 +63,21 @@ export function registerStatusCommand(program: Command): void {
     .action(async (options: { agent?: string; json?: boolean }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const output = new OutputManager({ json: options.json });
-        const writer = output.getWriter();
+        const output = new OutputEmitter({ json: options.json });
 
         const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive(options.agent);
         const stashedId = await manager.getStashedRunbookId();
 
         if (!state && !stashedId) {
-          if (output.isJson()) {
-            writer.writeJson({ active: false, stashed: false });
+          if (options.json) {
+            // JSON mode: emit custom status data
+            output.detail({ active: false, stashed: false }, 'status');
           } else {
-            printNoActiveRunbook(writer);
+            // Text mode: use specific rendering
+            output.noActiveRunbook();
           }
+          output.flush();
           return;
         }
 
@@ -73,9 +86,10 @@ export function registerStatusCommand(program: Command): void {
           if (stashed) {
             const totalSteps = await getStepTotal(cwd, stashed.runbook);
             const metadata = buildMetadata(stashed);
-            
-            if (output.isJson()) {
-              const statusData: StatusOutput = {
+
+            if (options.json) {
+              // JSON mode: emit custom status data
+              const statusData: StatusOutputData = {
                 active: false,
                 stashed: true,
                 runbook: metadata,
@@ -85,16 +99,27 @@ export function registerStatusCommand(program: Command): void {
                   substep: stashed.substep,
                 },
               };
-              writer.writeJson(statusData);
+              output.detail(statusData, 'status');
             } else {
-              printMetadata(metadata, writer);
-              printRunbookStashed({ current: stashed.step, total: totalSteps, substep: stashed.substep }, writer);
+              // Text mode: use metadata and status events for formatting
+              output.metadata(metadata);
+              output.status(true, 'stash', undefined, {
+                position: {
+                  current: stashed.step,
+                  total: totalSteps,
+                  substep: stashed.substep,
+                },
+              });
             }
+            output.flush();
           }
           return;
         }
 
-        if (!state) return;
+        if (!state) {
+          output.flush();
+          return;
+        }
 
         const runbookPath = await findRunbookFile(cwd, state.runbook);
         if (!runbookPath) {
@@ -128,8 +153,9 @@ export function registerStatusCommand(program: Command): void {
           }
         }
 
-        if (output.isJson()) {
-           const statusData: StatusOutput = {
+        if (options.json) {
+          // JSON mode: build and emit custom status data
+          const statusData: StatusOutputData = {
             active: true,
             stashed: !!stashedId, // Could be stashed AND active (impossible usually but technically types allow)
             runbook: metadata,
@@ -141,8 +167,8 @@ export function registerStatusCommand(program: Command): void {
               command: currentStep?.command?.code
             },
             lastAction: actionBlockData,
-            pending: state.pendingSteps.length > 0 
-              ? state.pendingSteps.map((p) => stepIdToString(p.stepId)) 
+            pending: state.pendingSteps.length > 0
+              ? state.pendingSteps.map((p) => stepIdToString(p.stepId))
               : undefined,
             agents: Object.keys(state.agentBindings).length > 0
               ? Object.entries(state.agentBindings).reduce<Record<string, { step: string; status: string; result?: string }>>((acc, [agentId, binding]) => {
@@ -154,39 +180,44 @@ export function registerStatusCommand(program: Command): void {
                 return acc;
               }, {})
               : undefined
-           };
-           writer.writeJson(statusData);
-           return;
+          };
+          output.detail(statusData, 'status');
+          output.flush();
+          return;
         }
 
-        // Print metadata
-        printMetadata(metadata, writer);
+        // Text mode: emit structured events
+        output.metadata(metadata);
 
         // Print action block if lastAction exists
         if (actionBlockData) {
-          // For status, from would be the step before current... but we don't track that
-          // Just show action without from for now
-          printActionBlock(actionBlockData, writer);
+          output.action(actionBlockData);
         }
 
-        // Print step block
+        // Print step block (requires Step object, use writer directly)
         if (currentStep) {
-          printStepBlock({ current: displayStep, total: totalSteps, substep: state.substep }, currentStep, !!state.prompted, writer);
+          printStepBlock(
+            { current: displayStep, total: totalSteps, substep: state.substep },
+            currentStep,
+            !!state.prompted,
+            output.getWriter()
+          );
         }
 
         // Show pending steps and agent bindings
         if (state.pendingSteps.length > 0) {
-          writer.writeLine(`\nPending: ${state.pendingSteps.map((p) => stepIdToString(p.stepId)).join(', ')}`);
+          output.message(`\nPending: ${state.pendingSteps.map((p) => stepIdToString(p.stepId)).join(', ')}`, 'info');
         }
 
         if (Object.keys(state.agentBindings).length > 0) {
-          writer.writeLine('\nAgents:');
+          output.message('\nAgents:', 'info');
           for (const [agentId, binding] of Object.entries(state.agentBindings)) {
             const stepStr = stepIdToString(binding.stepId);
             const resultStr = binding.result ? ` (${binding.result})` : '';
-            writer.writeLine(`  ${agentId}: ${stepStr} [${binding.status}]${resultStr}`);
+            output.message(`  ${agentId}: ${stepStr} [${binding.status}]${resultStr}`, 'info');
           }
         }
+        output.flush();
       });
     });
 }

@@ -6,6 +6,7 @@ import {
   DEFAULT_RESULT_SEQUENCE,
   executeEchoLogic,
 } from '../helpers/echo-command.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
  * Collect option values into an array.
@@ -33,7 +34,10 @@ export function registerEchoCommand(program: Command): void {
     .command('echo [command...]')
     .description('Echo command for runbook testing')
     .option('-r, --result <outcome>', 'Add result to sequence (pass|fail)', collect, [])
-    .action(async (command: string[] | undefined, options: { result: string[] }) => {
+    .option('--json', 'Output as JSON for programmatic use')
+    .action(async (command: string[] | undefined, options: { result: string[]; json?: boolean }) => {
+      const output = new OutputEmitter({ json: options.json });
+
       try {
         const cwd = getCwd();
         const sequence = options.result.length > 0
@@ -43,15 +47,29 @@ export function registerEchoCommand(program: Command): void {
 
         const result = await executeEchoLogic(sequence, commandArgs, cwd);
 
+        if (options.json) {
+          // JSON mode: output structured data (use 'content' for consistency)
+          output.detail({
+            result: result.exitCode === 0,
+            ...(result.output && { content: result.output }),
+            ...(result.error && { error: result.error }),
+            exitCode: result.exitCode,
+          });
+          output.flush();
+          process.exit(result.exitCode);
+        }
+
+        // Text mode: original behavior - errors go to stderr
         if (result.error) {
-          console.error(result.error);
+          output.error(result.error, 'ECHO_ERROR');
+          output.flush();
           process.exit(result.exitCode);
         }
 
         if (result.output) {
-          console.log(result.output);
+          output.message(result.output, 'info');
         }
-
+        output.flush();
         process.exit(result.exitCode);
       } catch (error) {
         let message = 'Failed to process test command';
@@ -60,7 +78,18 @@ export function registerEchoCommand(program: Command): void {
         } else if (typeof error === 'string') {
           message = error;
         }
-        console.error(`Error: ${message}`);
+
+        if (options.json) {
+          output.detail({
+            result: false,
+            error: message,
+            exitCode: 1,
+          });
+          output.flush();
+        } else {
+          output.error(message, 'UNKNOWN_ERROR');
+          output.flush();
+        }
         process.exit(1);
       }
     });

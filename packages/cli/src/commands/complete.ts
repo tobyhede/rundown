@@ -2,18 +2,12 @@
 
 import * as fs from 'fs/promises';
 import type { Command } from 'commander';
-import {
-  RunbookStateManager,
-  parseRunbook,
-  printMetadata,
-  printRunbookComplete,
-  printNoActiveRunbook,
-} from '@rundown-org/core';
+import { RunbookStateManager, parseRunbook } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
  * Registers the 'complete' command for marking runbooks as complete.
@@ -28,25 +22,19 @@ export function registerCompleteCommand(program: Command): void {
     .option('--json', 'Output as JSON for programmatic use')
     .action(async (message: string | undefined, options: { agent?: string; json?: boolean }) => {
       await withErrorHandling(async () => {
-        const output = new OutputManager({ json: options.json });
-        const writer = output.getWriter();
+        const output = new OutputEmitter({ json: options.json });
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive(options.agent);
 
         if (!state) {
-          if (output.isJson()) {
-            writer.writeJson({ success: false, action: 'complete', message: 'No active runbook' });
-          } else {
-            printNoActiveRunbook(writer);
-          }
+          output.status(false, 'complete', 'No active runbook');
+          output.flush();
           return;
         }
 
-        // Print metadata
-        if (!output.isJson()) {
-          printMetadata(buildMetadata(state), writer);
-        }
+        // Emit metadata
+        output.metadata(buildMetadata(state));
 
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);
         if (!runbookPath) {
@@ -60,12 +48,9 @@ export function registerCompleteCommand(program: Command): void {
         });
         await manager.popRunbook(options.agent);
 
-        const completionMessage = message ?? 'Runbook completed successfully';
-        if (output.isJson()) {
-          writer.writeJson({ success: true, action: 'complete', message: completionMessage });
-        } else {
-          printRunbookComplete(message, writer);
-        }
+        // Emit completion
+        output.complete(message ?? 'Runbook completed successfully');
+        output.flush();
       }, { json: options.json });
     });
 }

@@ -22,7 +22,7 @@ import {
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
  * Create an event emitter for a runbook execution.
@@ -108,8 +108,8 @@ export function registerRunCommand(program: Command): void {
     .option('--prompted', 'Prompted mode: show commands without auto-executing')
     .option('--json', 'Output execution events as JSON')
     .action(async (file: string | undefined, options: { step?: string; agent?: string; prompted?: boolean; json?: boolean }) => {
-      // OutputManager for non-loop JSON output (step_queued, agent_bound)
-      const output = new OutputManager({ json: options.json });
+      // OutputEmitter for non-loop output (step_queued, agent_bound)
+      const output = new OutputEmitter({ json: options.json });
 
       try {
         const cwd = getCwd();
@@ -119,13 +119,17 @@ export function registerRunCommand(program: Command): void {
         if (options.step && !options.agent) {
           const state = await manager.getActive();
           if (!state) {
-            console.error('Error: No active runbook');
+            output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
+            output.flush();
             process.exit(1);
           }
 
           const stepId = parseStepIdFromString(options.step);
           if (!stepId) {
-            console.error(`Error: Invalid step ID format: ${options.step}. Expected format: "3" or "3.1"`);
+            output.error(`Invalid step ID format: ${options.step}. Expected format: "3" or "3.1"`, 'INVALID_SYNTAX', {
+              provided: options.step
+            });
+            output.flush();
             process.exit(1);
           }
 
@@ -136,11 +140,13 @@ export function registerRunCommand(program: Command): void {
 
           await manager.pushPendingStep(state.id, pendingStep);
 
-          if (output.isJson()) {
-            output.getWriter().writeJson({ action: 'step_queued', stepId: stepIdToString(stepId), runbook: file });
+          if (options.json) {
+            // output.json() writes immediately (no buffering), flush() not needed
+            output.json({ action: 'step_queued', stepId: stepIdToString(stepId), runbook: file });
           } else {
             const runbookInfo = file ? ` with runbook ${file}` : '';
-            console.log(`Step ${stepIdToString(stepId)} queued for agent binding${runbookInfo}`);
+            output.success(`Step ${stepIdToString(stepId)} queued for agent binding${runbookInfo}`);
+            output.flush();
           }
           return;
         }
@@ -150,7 +156,10 @@ export function registerRunCommand(program: Command): void {
           const filePath = await resolveRunbookFile(cwd, file);
 
           if (!filePath) {
-            console.error(`Error: Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`);
+            output.error(`Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`, 'RUNBOOK_NOT_FOUND', {
+              runbook: file
+            });
+            output.flush();
             process.exit(1);
           }
 
@@ -158,7 +167,10 @@ export function registerRunCommand(program: Command): void {
           const runbook = parseRunbookDocument(content, path.basename(filePath));
 
           if (runbook.steps.length === 0) {
-            console.error('Error: Runbook has no steps');
+            output.error('Runbook has no steps', 'VALIDATION_ERROR', {
+              runbook: file
+            });
+            output.flush();
             process.exit(1);
           }
 
@@ -202,28 +214,37 @@ export function registerRunCommand(program: Command): void {
         if (options.agent) {
           const state = await manager.getActive();
           if (!state) {
-            console.error('Error: No active runbook');
+            output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
+            output.flush();
             process.exit(1);
           }
 
           const pending = await manager.popPendingStep(state.id);
           if (!pending) {
-            console.error('Error: No pending step to bind');
+            output.error('No pending step to bind', 'AGENT_BINDING_ERROR', {
+              agent: options.agent
+            });
+            output.flush();
             process.exit(1);
           }
 
           await manager.bindAgent(state.id, options.agent, pending.stepId);
 
-          if (output.isJson()) {
-            output.getWriter().writeJson({ action: 'agent_bound', agent: options.agent, stepId: stepIdToString(pending.stepId) });
+          if (options.json) {
+            // output.json() writes immediately (no buffering), flush() not needed
+            output.json({ action: 'agent_bound', agent: options.agent, stepId: stepIdToString(pending.stepId) });
           } else {
-            console.log(`Agent ${options.agent} bound to step ${stepIdToString(pending.stepId)}`);
+            output.success(`Agent ${options.agent} bound to step ${stepIdToString(pending.stepId)}`);
+            output.flush();
           }
 
           if (pending.runbook) {
             const runbookPath = await resolveRunbookFile(cwd, pending.runbook);
             if (!runbookPath) {
-              console.error(`Error: Runbook file not found: ${pending.runbook}`);
+              output.error(`Runbook file not found: ${pending.runbook}`, 'RUNBOOK_NOT_FOUND', {
+                runbook: pending.runbook
+              });
+              output.flush();
               process.exit(1);
             }
 
@@ -231,7 +252,10 @@ export function registerRunCommand(program: Command): void {
             const runbook = parseRunbookDocument(content, path.basename(runbookPath));
 
             if (runbook.steps.length === 0) {
-              console.error('Error: Child runbook has no steps');
+              output.error('Child runbook has no steps', 'VALIDATION_ERROR', {
+                runbook: pending.runbook
+              });
+              output.flush();
               process.exit(1);
             }
 
@@ -277,18 +301,22 @@ export function registerRunCommand(program: Command): void {
         }
 
         if (!file && !options.step && !options.agent) {
-          console.error('Error: Runbook file, --step, or --agent option required');
+          output.error('Runbook file, --step, or --agent option required', 'INVALID_SYNTAX');
+          output.flush();
           process.exit(1);
         }
       } catch (error) {
         if (isNodeError(error) && error.code === 'ENOENT') {
-          console.error(`Error: Runbook not found: ${file ?? 'unknown'}`);
-          console.error(`Try 'rd ls --all' to list available runbooks.`);
+          output.error(`Runbook not found: ${file ?? 'unknown'}`, 'RUNBOOK_NOT_FOUND', {
+            runbook: file ?? 'unknown'
+          });
+          output.message("Try 'rd ls --all' to list available runbooks.", 'dim');
         } else if (error instanceof RunbookSyntaxError) {
-          console.error(`Syntax error: ${error.message}`);
+          output.error(`Syntax error: ${error.message}`, 'INVALID_SYNTAX');
         } else {
-          console.error(`Error: ${getErrorMessage(error)}`);
+          output.error(getErrorMessage(error), 'UNKNOWN_ERROR');
         }
+        output.flush();
         process.exit(1);
       }
     });

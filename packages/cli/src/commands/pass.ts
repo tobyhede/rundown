@@ -5,13 +5,8 @@ import type { Command } from 'commander';
 import {
   RunbookStateManager,
   parseRunbook,
-  printStepSeparator,
-  printActionBlock,
-  printRunbookComplete,
-  printRunbookStoppedAtStep,
   evaluatePassCondition,
   countNumberedSteps,
-  printNoActiveRunbook,
   // Event system imports for JSON mode
   ExecutionEventEmitter,
   CLISubscriber,
@@ -31,7 +26,7 @@ import {
   handleNextInstanceFlags,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
  * Set up an emitter with the appropriate subscriber based on output mode.
@@ -69,7 +64,7 @@ export function registerPassCommand(program: Command): void {
     .option('--json', 'Output as JSON')
     .action(async (options: { agent?: string; json?: boolean }) => {
       await withErrorHandling(async () => {
-        const output = new OutputManager({ json: options.json });
+        const output = new OutputEmitter({ json: options.json });
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
         let state = await manager.getActive(options.agent);
@@ -87,11 +82,8 @@ export function registerPassCommand(program: Command): void {
         }
 
         if (!state) {
-          if (output.isJson()) {
-            output.getWriter().writeJson({ success: false, error: 'No active runbook' });
-          } else {
-            printNoActiveRunbook();
-          }
+          output.status(false, 'pass', 'No active runbook');
+          output.flush();
           return;
         }
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);
@@ -130,22 +122,20 @@ export function registerPassCommand(program: Command): void {
             const bindings = Object.values(updated?.agentBindings ?? {});
             const runningCount = bindings.filter((b) => b.status === 'running').length;
 
-            if (output.isJson()) {
-              output.getWriter().writeJson({
-                success: true,
-                action: 'agent_completed',
-                agent: options.agent,
-                result,
-                agentsRunning: runningCount
-              });
-            } else {
-              console.log(`Agent ${options.agent} marked as pass`);
+            output.status(true, 'agent_completed', `Agent ${options.agent} marked as pass`, {
+              agent: options.agent,
+              result,
+              agentsRunning: runningCount
+            });
+
+            if (!options.json) {
               if (runningCount > 0) {
-                console.log(`${String(runningCount)} agent(s) still running`);
+                output.message(`${String(runningCount)} agent(s) still running`, 'info');
               } else {
-                console.log('All agents complete');
+                output.message('All agents complete', 'info');
               }
             }
+            output.flush();
             return;
           }
           // No binding - this is a standalone runbook in agent's stack
@@ -229,16 +219,13 @@ export function registerPassCommand(program: Command): void {
         const prevPos = { current: displayStep, total: totalSteps, substep: prevDisplaySubstep };
         const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
 
-        if (!output.isJson()) {
-          // Print separator with new step number and action block
-          printStepSeparator(newPos);
-          printActionBlock({
-            action,
-            from: prevPos,
-            result: 'PASS',
-            at: newPos,
-          });
-        }
+        // Emit action block
+        output.action({
+          action,
+          from: prevPos,
+          result: 'PASS',
+          at: newPos,
+        });
 
         // Evaluate pass condition once for use in completion/stopped blocks
         const passResult = evaluatePassCondition(currentStep);
@@ -250,16 +237,8 @@ export function registerPassCommand(program: Command): void {
             variables: { ...state.variables, completed: true }
           });
 
-          if (output.isJson()) {
-            output.getWriter().writeJson({
-              success: true,
-              action: 'complete',
-              from: prevPos,
-              to: newPos
-            });
-          } else {
-            printRunbookComplete(passResult.message);
-          }
+          output.complete(passResult.message, newPos);
+          output.flush();
 
           // If this was a child runbook with agent, update parent's agent binding
           if (options.agent && state.parentRunbookId) {
@@ -277,34 +256,14 @@ export function registerPassCommand(program: Command): void {
         if (isStopped) {
           await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
 
-          if (output.isJson()) {
-            output.getWriter().writeJson({
-              success: false,
-              action: 'stopped',
-              from: prevPos,
-              to: newPos
-            });
-          } else {
-            printRunbookStoppedAtStep({ current: displayStep, total: totalSteps, substep: prevDisplaySubstep }, passResult.message);
-          }
+          output.stopped(passResult.message, prevPos);
+          output.flush();
           process.exit(1);
           return;  // Explicit return for clarity (process.exit never returns)
         }
 
-        // Continue with execution loop
-        if (output.isJson()) {
-          output.getWriter().writeJson({
-            success: true,
-            action: 'continue',
-            from: prevPos,
-            to: newPos,
-            nextStep: {
-              current: newDisplayStep,
-              total: totalSteps,
-              substep: newDisplaySubstep
-            }
-          });
-        }
+        // Flush the action output before continuing with execution loop
+        output.flush();
 
         // Set up emitter for execution loop (for JSON mode)
         const { emitter, jsonSubscriber } = setupEmitterWithSubscriber(updatedState, !!options.json);
