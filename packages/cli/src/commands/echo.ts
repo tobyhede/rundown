@@ -48,10 +48,10 @@ export function registerEchoCommand(program: Command): void {
         const result = await executeEchoLogic(sequence, commandArgs, cwd);
 
         if (options.json) {
-          // JSON mode: output structured data (use 'content' for consistency)
+          // JSON mode: output structured data (use 'output' per CLI-OUTPUT-SPEC)
           output.detail({
             result: result.exitCode === 0,
-            ...(result.output && { content: result.output }),
+            ...(result.output && { output: result.output }),
             ...(result.error && { error: result.error }),
             exitCode: result.exitCode,
           });

@@ -87,6 +87,8 @@ export function registerLsCommand(program: Command): void {
               ...state,
               _status: status,
               _displayStep: `${displayStep}/${String(totalSteps)}`,
+              _step: displayStep,
+              _total: totalSteps,
             };
           })
         );
@@ -101,8 +103,14 @@ export function registerLsCommand(program: Command): void {
         ], {
           emptyMessage: 'No active runbooks.\nRun "rundown ls --all" to see available runbooks.',
           jsonMapper: (s) => {
-            const { _status: _, _displayStep: __, ...original } = s;
-            return original;
+            // Include status, step, total per CLI-OUTPUT-SPEC
+            const { _status, _displayStep: _, _step, _total, ...original } = s;
+            return {
+              ...original,
+              status: _status,
+              step: _step,
+              total: _total,
+            };
           },
         });
         output.flush();

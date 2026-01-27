@@ -9,7 +9,6 @@ import {
   printStepBlock,
   countNumberedSteps,
   type ActionBlockData,
-  type RunbookMetadata,
 } from '@rundown-org/core';
 import { getCwd, getStepTotal, findRunbookFile } from '../helpers/context.js';
 import {
@@ -22,26 +21,32 @@ import { OutputEmitter } from '../services/output-emitter.js';
 /**
  * Internal data structure for status command JSON output.
  *
- * Note: This differs from the schema's StatusResponse interface because:
- * - Uses RunbookMetadata (matches CLI's buildMetadata output)
- * - Combines position + step details into single `step` object
- * - Includes `pending` and `agents` for full state visibility
- *
- * The schema types define the public API contract; this interface
- * is the command-specific implementation shape.
+ * Uses flat structure per CLI-OUTPUT-SPEC:
+ * - `file`/`state`/`prompted` at top level (not nested in `runbook`)
+ * - `position` for step position (current/total/substep)
+ * - `step` for step details (name/description)
  *
  * @see StatusResponse in @rundown-org/core for the public API contract
  */
 interface StatusOutputData {
   active: boolean;
   stashed: boolean;
-  runbook?: RunbookMetadata;
-  step?: {
+  /** Runbook file path (flat, not nested) */
+  file?: string;
+  /** State file path */
+  state?: string;
+  /** Whether runbook is in prompted mode */
+  prompted?: boolean;
+  /** Current position in runbook */
+  position?: {
     current: string;
     total: string | number;
     substep?: string;
+  };
+  /** Current step details */
+  step?: {
+    name: string;
     description?: string;
-    command?: string;
   };
   lastAction?: ActionBlockData;
   pending?: string[];
@@ -88,15 +93,17 @@ export function registerStatusCommand(program: Command): void {
             const metadata = buildMetadata(stashed);
 
             if (options.json) {
-              // JSON mode: emit custom status data
+              // JSON mode: emit flat status data per CLI-OUTPUT-SPEC
               const statusData: StatusOutputData = {
                 active: false,
                 stashed: true,
-                runbook: metadata,
-                step: {
+                file: metadata.file,
+                state: metadata.state,
+                ...(metadata.prompted && { prompted: metadata.prompted }),
+                position: {
                   current: stashed.step,
                   total: totalSteps,
-                  substep: stashed.substep,
+                  ...(stashed.substep && { substep: stashed.substep }),
                 },
               };
               output.detail(statusData, 'status');
@@ -154,18 +161,24 @@ export function registerStatusCommand(program: Command): void {
         }
 
         if (options.json) {
-          // JSON mode: build and emit custom status data
+          // JSON mode: build and emit flat status data per CLI-OUTPUT-SPEC
           const statusData: StatusOutputData = {
             active: true,
-            stashed: !!stashedId, // Could be stashed AND active (impossible usually but technically types allow)
-            runbook: metadata,
-            step: {
+            stashed: !!stashedId,
+            file: metadata.file,
+            state: metadata.state,
+            ...(metadata.prompted && { prompted: metadata.prompted }),
+            position: {
               current: displayStep,
               total: totalSteps,
-              substep: state.substep,
-              description: currentStep?.description,
-              command: currentStep?.command?.code
+              ...(state.substep && { substep: state.substep }),
             },
+            ...(currentStep && {
+              step: {
+                name: currentStep.name,
+                description: currentStep.description,
+              },
+            }),
             lastAction: actionBlockData,
             pending: state.pendingSteps.length > 0
               ? state.pendingSteps.map((p) => stepIdToString(p.stepId))

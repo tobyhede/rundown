@@ -16,8 +16,8 @@ export function registerPromptCommand(program: Command): void {
       const output = new OutputEmitter({ json: options.json });
 
       if (options.json) {
-        // JSON mode: output structured data
-        output.detail({ content });
+        // JSON mode: output structured data (use 'output' per CLI-OUTPUT-SPEC)
+        output.detail({ output: content });
         output.flush();
         return;
       }

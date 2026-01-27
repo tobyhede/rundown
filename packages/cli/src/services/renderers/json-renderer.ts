@@ -21,7 +21,6 @@ import type { OutputRenderer, RendererOptions } from './types.js';
 interface JsonOutput {
   result?: boolean;
   action?: string;
-  actionResult?: string; // "PASS" | "FAIL" from action events (different from result boolean)
   message?: string;
   error?: string;
   code?: string;
@@ -141,7 +140,7 @@ export class JSONRenderer implements OutputRenderer {
         break;
       case 'stopped':
         this.output.result = false;
-        this.output.action = 'stopped';
+        this.output.action = 'stop';
         if (event.message) {
           this.output.message = event.message;
         }
@@ -214,8 +213,8 @@ export class JSONRenderer implements OutputRenderer {
 
     this.output.action = block.action;
     if (block.result) {
-      // Action result is "PASS"/"FAIL" string, different from status result (boolean)
-      this.output.actionResult = block.result;
+      // Set result boolean based on action result (PASS = true, FAIL = false)
+      this.output.result = block.result === 'PASS';
     }
     if (block.command) {
       this.output.command = block.command;
