@@ -192,7 +192,10 @@ export interface StatusResponse {
   runbook?: RunbookContext;
   /** Current position in the runbook (when active) */
   position?: Position;
-  /** Alias for position (deprecated, use position) */
+  /**
+   * Alias for position.
+   * @deprecated Use `position` instead. Will be removed in a future version.
+   */
   step?: Position;
   /** Current step details */
   currentStep?: {

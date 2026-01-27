@@ -3,15 +3,28 @@ import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Result from executing a CLI command.
+ *
+ * Represents the outcome of running a rundown CLI command via `runCli`.
+ */
 export interface CliResult {
+  /** Whether the command executed successfully */
   success: boolean;
+  /** Parsed JSON data from stdout (when successful) */
   data?: unknown;
+  /** Error message (when failed) */
   error?: string;
 }
 
 /**
  * Execute rundown CLI with args array (safe from injection).
- * Uses npx to find local or global rundown installation.
+ *
+ * Uses npx to find local or global rundown installation. Commands are
+ * executed with `--json` flag automatically appended for machine-readable output.
+ *
+ * @param args - Array of CLI arguments (e.g., ['status'] or ['goto', '3'])
+ * @returns Promise resolving to the CLI execution result
  */
 export async function runCli(args: string[]): Promise<CliResult> {
   try {

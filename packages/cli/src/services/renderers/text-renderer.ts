@@ -180,9 +180,10 @@ export class TextRenderer implements OutputRenderer {
       return;
     }
 
-    // Handle pop action - show success message with step info
+    // Handle pop action - use result to determine styling
     if (event.action === 'pop' && event.message) {
-      this.writer.writeLine(success(event.message));
+      const colorFn = event.result ? success : failure;
+      this.writer.writeLine(colorFn(event.message));
       return;
     }
 
