@@ -1,7 +1,7 @@
 /**
  * Schema validation helpers for CLI JSON output testing.
  *
- * Uses Zod for runtime validation to ensure CLI output matches the specification.
+ * Re-exports schemas from production code and provides validation utilities.
  * These validators are used in integration tests to verify JSON output format.
  *
  * @module tests/helpers/schema-validator
@@ -9,270 +9,56 @@
 
 import { z } from 'zod';
 
-// ============================================================================
-// Error Codes
-// ============================================================================
+// Re-export all schemas from production code
+export {
+  // Error codes
+  ErrorCodeSchema,
+  // Shared types
+  PositionSchema,
+  RunbookContextSchema,
+  ErrorDetailsSchema,
+  // Response schemas
+  ErrorResponseSchema,
+  ActionResponseSchema,
+  StatusResponseSchema,
+  RunbookSchema,
+  AvailableRunbookEntrySchema,
+  RunbookListSchema,
+  AvailableRunbooksListSchema,
+  ValidationErrorSchema,
+  CheckResponseSchema,
+  ScenarioSchema,
+  ScenarioListSchema,
+  ScenarioShowResponseSchema,
+  ScenarioRunResponseSchema,
+  ScenarioErrorResponseSchema,
+  EchoResponseSchema,
+  PromptResponseSchema,
+  StashResponseSchema,
+  PopResponseSchema,
+  ExecutionSummarySchema,
+  // Command mapping
+  COMMAND_SCHEMAS,
+} from '../../src/schemas/output-schemas.js';
 
-const ErrorCodeSchema = z.enum([
-  'NO_ACTIVE_RUNBOOK',
-  'RUNBOOK_NOT_FOUND',
-  'STEP_NOT_FOUND',
-  'INVALID_SYNTAX',
-  'VALIDATION_ERROR',
-  'NO_STASHED_RUNBOOK',
-  'AGENT_BINDING_ERROR',
-  'SCENARIO_NOT_FOUND',
-  'FILE_ERROR',
-  'UNKNOWN_ERROR',
-]);
-
-// ============================================================================
-// Shared Types
-// ============================================================================
-
-const PositionSchema = z.object({
-  current: z.string(),
-  total: z.union([z.number(), z.string()]),
-  substep: z.string().optional(),
-});
-
-const RunbookContextSchema = z.object({
-  file: z.string(),
-  state: z.string(),
-  prompted: z.boolean().optional(),
-});
-
-const ErrorDetailsSchema = z.object({
-  requested: z.string().optional(),
-  available: z.array(z.string()).optional(),
-  suggestion: z.string().optional(),
-  path: z.string().optional(),
-  searchedLocations: z.array(z.string()).optional(),
-  line: z.number().optional(),
-}).passthrough();
-
-// ============================================================================
-// Response Schemas
-// ============================================================================
-
-/**
- * Error response schema.
- *
- * All error responses must have result=false and an error message.
- */
-export const ErrorResponseSchema = z.object({
-  result: z.literal(false),
-  error: z.string(),
-  code: ErrorCodeSchema.optional(),
-  details: ErrorDetailsSchema.optional(),
-}).passthrough();
-
-/**
- * Action response schema (pass, fail, goto, stop, complete).
- *
- * Action responses include the action performed and position changes.
- * Uses `result` boolean to indicate action success (PASS = true, FAIL = false).
- */
-export const ActionResponseSchema = z.object({
-  action: z.string(),
-  command: z.string().optional(),
-  from: PositionSchema.optional(),
-  to: PositionSchema.optional(),
-  complete: z.boolean().optional(),
-  stopped: z.boolean().optional(),
-  runbook: RunbookContextSchema.optional(),
-  // Flat format fields
-  file: z.string().optional(),
-  state: z.string().optional(),
-  prompted: z.boolean().optional(),
-  result: z.boolean().optional(),
-  message: z.string().optional(),
-  position: PositionSchema.optional(),
-}).passthrough();
-
-/**
- * Status response schema.
- *
- * Uses flat structure per CLI-OUTPUT-SPEC:
- * - `file`/`state`/`prompted` at top level (not nested in `runbook`)
- * - `position` for step position (current/total/substep)
- * - `step` for step details (name/description)
- */
-export const StatusResponseSchema = z.object({
-  active: z.boolean(),
-  stashed: z.boolean(),
-  // Flat structure fields
-  file: z.string().optional(),
-  state: z.string().optional(),
-  prompted: z.boolean().optional(),
-  position: PositionSchema.optional(),
-  step: z.object({
-    name: z.string(),
-    description: z.string().optional(),
-  }).optional(),
-  lastAction: z.object({
-    action: z.string(),
-    result: z.string().optional(),
-  }).optional(),
-}).passthrough();
-
-/**
- * Active runbook entry (ls output).
- */
-export const ActiveRunbookEntrySchema = z.object({
-  id: z.string(),
-  runbook: z.string(),
-  step: z.string(),
-  status: z.string().optional(),
-});
-
-/**
- * Available runbook entry (ls --all output).
- */
-export const AvailableRunbookEntrySchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-  path: z.string(),
-});
-
-/**
- * List of active runbooks.
- */
-export const ActiveRunbooksListSchema = z.array(ActiveRunbookEntrySchema);
-
-/**
- * List of available runbooks.
- */
-export const AvailableRunbooksListSchema = z.array(AvailableRunbookEntrySchema);
-
-/**
- * Validation error entry.
- */
-export const ValidationErrorSchema = z.object({
-  message: z.string(),
-  line: z.number().optional(),
-});
-
-/**
- * Check response schema.
- */
-export const CheckResponseSchema = z.object({
-  valid: z.boolean(),
-  errors: z.array(ValidationErrorSchema),
-  stats: z.object({
-    steps: z.number(),
-    substeps: z.number(),
-  }).optional(),
-});
-
-/**
- * Scenario entry (scenario ls output).
- */
-export const ScenarioEntrySchema = z.object({
-  name: z.string(),
-  expected: z.string(),
-  description: z.string().optional(),
-  tags: z.string().optional(),
-});
-
-/**
- * Scenario list.
- */
-export const ScenarioListSchema = z.array(ScenarioEntrySchema);
-
-/**
- * Scenario run response.
- *
- * Uses `passed` to indicate scenario outcome (not `result` - scenario verification, not workflow).
- */
-export const ScenarioRunResponseSchema = z.object({
-  scenario: z.string(),
-  expected: z.string(),
-  actual: z.string(),
-  passed: z.boolean(),
-  message: z.string().optional(),
-});
-
-/**
- * Scenario error response.
- */
-export const ScenarioErrorResponseSchema = z.object({
-  error: z.literal(true),
-  message: z.string(),
-  available: z.array(z.string()).optional(),
-});
-
-/**
- * Echo response schema.
- *
- * Uses `output` for echoed text and `result` boolean for success status.
- */
-export const EchoResponseSchema = z.object({
-  result: z.boolean(),
-  output: z.string().optional(),
-  error: z.string().optional(),
-  exitCode: z.number().optional(),
-});
-
-/**
- * Prompt response schema.
- *
- * Simple output wrapper for prompt command.
- */
-export const PromptResponseSchema = z.object({
-  output: z.string(),
-});
-
-/**
- * Prune entry.
- */
-export const PruneEntrySchema = z.object({
-  id: z.string(),
-  runbook: z.string(),
-  reason: z.string(),
-});
-
-/**
- * Prune list.
- */
-export const PruneListSchema = z.array(PruneEntrySchema);
-
-/**
- * Stash response schema.
- *
- * Uses action='stash' (present tense verb).
- */
-export const StashResponseSchema = z.object({
-  result: z.boolean(),
-  action: z.literal('stash'),
-  stashedId: z.string().optional(),
-  runbook: RunbookContextSchema.optional(),
-  file: z.string().optional(),
-  state: z.string().optional(),
-  message: z.string().optional(),
-  position: PositionSchema.optional(),
-}).passthrough();
-
-/**
- * Pop response schema.
- *
- * Uses action='pop'.
- */
-export const PopResponseSchema = z.object({
-  result: z.boolean(),
-  action: z.literal('pop'),
-  restoredId: z.string().optional(),
-  runbook: RunbookContextSchema.optional(),
-  file: z.string().optional(),
-  state: z.string().optional(),
-  message: z.string().optional(),
-  position: PositionSchema.optional(),
-  step: z.object({
-    name: z.string().optional(),
-    description: z.string().optional(),
-    prompted: z.boolean().optional(),
-  }).optional(),
-}).passthrough();
+// Import for use in local validation functions
+import {
+  ActionResponseSchema,
+  StatusResponseSchema,
+  RunbookListSchema,
+  AvailableRunbooksListSchema,
+  CheckResponseSchema,
+  ScenarioListSchema,
+  ScenarioSchema,
+  ScenarioErrorResponseSchema,
+  ScenarioRunResponseSchema,
+  EchoResponseSchema,
+  PromptResponseSchema,
+  StashResponseSchema,
+  PopResponseSchema,
+  ErrorResponseSchema,
+  ExecutionSummarySchema,
+} from '../../src/schemas/output-schemas.js';
 
 // ============================================================================
 // Validation Functions
@@ -303,9 +89,7 @@ export function validateSchema<T>(
   }
   return {
     valid: false,
-    errors: result.error.errors.map(
-      (e) => `${e.path.join('.')}: ${e.message}`
-    ),
+    errors: result.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`),
   };
 }
 
@@ -331,30 +115,6 @@ export function assertValidSchema<T>(
     );
   }
 }
-
-/**
- * Execution summary schema.
- *
- * Output from commands that use JSONSubscriber.getSummary() like goto.
- */
-export const ExecutionSummarySchema = z.object({
-  runbookId: z.string().optional(),
-  runbook: z.string().optional(),
-  status: z.enum(['complete', 'stopped', 'running']),
-  stepsExecuted: z.number(),
-  commandsRun: z.number(),
-  commandsFailed: z.number(),
-  finalPosition: z.object({
-    current: z.string(),
-    total: z.union([z.number(), z.string()]),
-    substep: z.string().optional(),
-  }).optional(),
-  message: z.string().optional(),
-  events: z.array(z.object({
-    type: z.string(),
-    timestamp: z.string().optional(),
-  }).passthrough()).optional(),
-}).passthrough();
 
 // ============================================================================
 // Command-specific Validators
@@ -391,9 +151,9 @@ export function validateLsOutput(data: unknown): ValidationResult {
   if (data.length === 0) {
     return { valid: true, errors: [] };
   }
-  // Check if it's active runbooks (has 'id') or available runbooks (has 'name')
+  // Check if it's state entries (has 'id') or available runbooks (has 'name')
   if ('id' in data[0]) {
-    return validateSchema(ActiveRunbooksListSchema, data);
+    return validateSchema(RunbookListSchema, data);
   }
   return validateSchema(AvailableRunbooksListSchema, data);
 }
@@ -422,7 +182,7 @@ export function validateScenarioShowOutput(data: unknown): ValidationResult {
   }
   // For show, we expect scenario detail (entry + commands)
   return validateSchema(
-    ScenarioEntrySchema.extend({
+    ScenarioSchema.extend({
       commands: z.array(z.string()).optional(),
     }),
     data
@@ -454,7 +214,7 @@ export function validatePromptOutput(data: unknown): ValidationResult {
  * Validate prune command JSON output.
  */
 export function validatePruneOutput(data: unknown): ValidationResult {
-  return validateSchema(PruneListSchema, data);
+  return validateSchema(RunbookListSchema, data);
 }
 
 /**
@@ -507,10 +267,3 @@ export function toMatchSchema<T>(
       `Expected value to match schema:\n${result.errors.join('\n')}\n\nReceived:\n${JSON.stringify(received, null, 2)}`,
   };
 }
-
-// Export schemas for direct use
-export {
-  PositionSchema,
-  RunbookContextSchema,
-  ErrorDetailsSchema,
-};

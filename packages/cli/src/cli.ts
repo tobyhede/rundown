@@ -22,6 +22,23 @@ import {
   initializePolicyContext,
   parsePolicyCliOptions,
 } from './services/policy-context.js';
+import { outputCommandSchema } from './services/schema-service.js';
+
+// Handle --schema flag early, before Commander parses arguments
+// This allows schema output without requiring command arguments
+if (process.argv.includes('--schema')) {
+  // Extract command name(s) from argv (skip node, script, and flags)
+  const args = process.argv.slice(2).filter((arg) => !arg.startsWith('-'));
+  const commandName = args.join(' ');
+  if (commandName) {
+    const success = outputCommandSchema(commandName);
+    process.exit(success ? 0 : 1);
+  } else {
+    console.error('Usage: rd <command> --schema');
+    console.error('Example: rd status --schema');
+    process.exit(1);
+  }
+}
 
 const program = new Command();
 
@@ -29,6 +46,7 @@ program.name('rundown').description('Runbook orchestration CLI').version('1.0.0'
 
 // Display options
 program.option('--no-color', 'Disable colored output');
+program.option('--schema', "Output JSON schema for command's --json output");
 
 // Policy options
 program
