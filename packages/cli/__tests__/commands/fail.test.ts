@@ -8,6 +8,7 @@ import {
   getAllStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { ActionResponseSchema } from '../helpers/schema-validator.js';
 
 describe('fail command', () => {
   let workspace: TestWorkspace;
@@ -136,6 +137,30 @@ Do work.
       // Should now be on parent
       const statusResult = runCli('status', workspace);
       expect(statusResult.stdout).toContain('parent-fail.md');
+    });
+  });
+
+  describe('JSON output', () => {
+    it('includes action field when no active runbook', () => {
+      // Run fail --json with no active runbook
+      const result = runCli('fail --json', workspace);
+
+      // Should exit with error code
+      expect(result.exitCode).toBe(0);
+
+      // Parse JSON output
+      const output = JSON.parse(result.stdout);
+
+      // The output must include 'action' field per ActionResponseSchema
+      // Currently this test FAILS because output.error() does not set action
+      expect(output).toHaveProperty('action');
+      expect(output.action).toBe('fail');
+      expect(output.result).toBe(false);
+      expect(output.code).toBe('NO_ACTIVE_RUNBOOK');
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
     });
   });
 });

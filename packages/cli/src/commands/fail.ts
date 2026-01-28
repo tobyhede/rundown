@@ -82,7 +82,9 @@ export function registerFailCommand(program: Command): void {
         }
 
         if (!state) {
-          output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
+          output.status(false, 'fail', 'No active runbook', {
+            code: 'NO_ACTIVE_RUNBOOK',
+          });
           output.flush();
           return;
         }
