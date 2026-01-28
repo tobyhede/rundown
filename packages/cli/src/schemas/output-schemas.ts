@@ -416,10 +416,3 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
   'scenario show': ScenarioShowResponseSchema,
   'scenario run': ScenarioRunResponseSchema,
 };
-
-/**
- * All command names with JSON output schemas.
- *
- * Use getAvailableSchemaCommands() from schema-service for runtime access.
- */
-export const SCHEMA_COMMAND_NAMES = Object.keys(COMMAND_SCHEMAS) as readonly string[];
