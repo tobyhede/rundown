@@ -372,9 +372,7 @@ export const ScenarioListSchema = z.array(ScenarioEntrySchema).describe('List of
  */
 export const ScenarioRunResponseSchema = z.object({
   /** Whether the scenario passed */
-  result: z.boolean().optional().describe('Whether the scenario passed (deprecated: use passed)'),
-  /** Whether the scenario passed */
-  passed: z.boolean().optional().describe('Whether the scenario passed'),
+  result: z.boolean().describe('Whether the scenario passed'),
   /** Scenario name */
   scenario: z.string().describe('Scenario name'),
   /** Expected outcome */

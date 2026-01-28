@@ -390,10 +390,10 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean, j
 
     if (json) {
       output.detail({
+        result: passed,
         scenario: scenarioName,
         expected: scenario.result,
         actual: actualResult,
-        passed,
       });
       output.flush();
     } else {

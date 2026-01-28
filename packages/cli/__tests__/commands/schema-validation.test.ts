@@ -810,11 +810,10 @@ echo hello
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Per CLI-OUTPUT-SPEC: uses 'passed' not 'result'
+      expect(output).toHaveProperty('result');
       expect(output).toHaveProperty('scenario', 'simple');
       expect(output).toHaveProperty('expected', 'COMPLETE');
       expect(output).toHaveProperty('actual');
-      expect(output).toHaveProperty('passed');
     });
   });
 

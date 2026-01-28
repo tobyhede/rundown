@@ -73,36 +73,37 @@ export function registerPopCommand(program: Command): void {
             output.action(actionBlockData);
           }
 
+          if (!currentStep) {
+            output.status(false, 'pop', `Step "${state.step}" not found in runbook`, {
+              restoredId: state.id,
+            });
+            output.flush();
+            return;
+          }
+
           if (output.isJson()) {
-            // JSON mode: include step data in status
             output.status(true, 'pop', 'Runbook restored', {
               position: {
                 current: state.step,
                 total: totalSteps,
                 ...(state.substep && { substep: state.substep }),
               },
-              step: currentStep ? {
+              step: {
                 name: currentStep.name,
                 description: currentStep.description,
                 prompted: !!state.prompted,
-              } : undefined,
+              },
               restoredId: state.id,
             });
-            output.flush();
           } else {
-            // Text mode: use printStepBlock for step rendering (requires Step object)
-            if (currentStep) {
-              printStepBlock(
-                { current: state.step, total: totalSteps, substep: state.substep },
-                currentStep,
-                !!state.prompted,
-                output.getWriter()
-              );
-            } else {
-              output.status(false, 'pop', `Step "${state.step}" not found in runbook`);
-            }
-            output.flush();
+            printStepBlock(
+              { current: state.step, total: totalSteps, substep: state.substep },
+              currentStep,
+              !!state.prompted,
+              output.getWriter()
+            );
           }
+          output.flush();
         },
         { json: options.json }
       );
