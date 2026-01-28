@@ -26,7 +26,6 @@ import {
   validatePopOutput,
   validateEchoOutput,
   validatePromptOutput,
-  validateExecutionSummary,
   validateStepQueuedOutput,
   validateAgentBoundOutput,
   validateErrorOutput,
@@ -82,6 +81,32 @@ describe('CLI JSON Output Schema Validation', () => {
       }
       throw new Error(`Failed to parse JSON output: ${stdout}`);
     }
+  }
+
+  /**
+   * Parse NDJSON output as an array of events.
+   * Used for execution commands that stream events.
+   */
+  function parseNdjsonOutput(stdout: string): unknown[] {
+    const lines = stdout.trim().split('\n').filter(line => line.trim());
+    const events: unknown[] = [];
+    for (const line of lines) {
+      try {
+        events.push(JSON.parse(line));
+      } catch {
+        // Skip non-JSON lines
+      }
+    }
+    return events;
+  }
+
+  /**
+   * Find an event of a specific type in NDJSON output.
+   */
+  function findEventByType(events: unknown[], type: string): Record<string, unknown> | undefined {
+    return events.find((e): e is Record<string, unknown> =>
+      typeof e === 'object' && e !== null && (e as Record<string, unknown>).type === type
+    );
   }
 
   // ==========================================================================
@@ -324,7 +349,7 @@ echo done
   });
 
   describe('goto --json', () => {
-    it('validates goto command output', () => {
+    it('validates goto command NDJSON output', () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       // Use numeric step names (## 1, ## 2, ## 3) for goto to work
       fs.writeFileSync(runbookPath, `---
@@ -342,16 +367,29 @@ echo done
       runCli('run --prompted test.runbook.md', workspace);
 
       const result = runCli('goto 2 --json', workspace);
-      const output = parseJsonOutput(result.stdout);
+      const events = parseNdjsonOutput(result.stdout);
 
-      // Goto command uses JSONSubscriber which produces ExecutionSummary format
-      const validation = validateExecutionSummary(output);
-      expect(validation.valid).toBe(true);
-      expect(validation.errors).toEqual([]);
+      // Goto command now streams NDJSON events plus a final JSON object
+      // Execution events stream first, then accumulated output on flush
+      expect(events.length).toBeGreaterThan(0);
 
-      // Verify execution summary structure
-      expect(output).toHaveProperty('status');
-      expect(output).toHaveProperty('stepsExecuted');
+      // Check for step_entered event (execution resumed after goto)
+      const stepEntered = findEventByType(events, 'step_entered');
+      expect(stepEntered).toBeDefined();
+      if (stepEntered) {
+        const event = stepEntered;
+        expect(event).toHaveProperty('position');
+        expect(event).toHaveProperty('stepName');
+      }
+
+      // The action output (from output.action()) is flushed as the final JSON object
+      // Find an event with 'action' property (the accumulated output)
+      const actionOutput = events.find((e): e is Record<string, unknown> =>
+        typeof e === 'object' && e !== null && 'action' in e && typeof (e as Record<string, unknown>).action === 'string'
+      );
+      if (actionOutput) {
+        expect(String(actionOutput.action).startsWith('GOTO')).toBe(true);
+      }
     });
   });
 
@@ -632,7 +670,7 @@ prompt: Wait
   // ==========================================================================
 
   describe('run --json', () => {
-    it('validates run command completion output', () => {
+    it('validates run command NDJSON completion output', () => {
       const runbookPath = path.join(workspace.cwd, 'simple.runbook.md');
       fs.writeFileSync(runbookPath, `---
 name: simple-test
@@ -642,18 +680,30 @@ echo hello
 `);
 
       const result = runCli('run --json simple.runbook.md', workspace);
-      const output = parseJsonOutput(result.stdout);
+      const events = parseNdjsonOutput(result.stdout);
 
-      const validation = validateExecutionSummary(output);
-      expect(validation.valid).toBe(true);
-      expect(validation.errors).toEqual([]);
+      // Run command now streams NDJSON events
+      expect(events.length).toBeGreaterThan(0);
 
-      // Verify key fields
-      expect(output).toHaveProperty('status', 'complete');
-      expect(output).toHaveProperty('stepsExecuted');
+      // Should have runbook_started event
+      const startedEvent = findEventByType(events, 'runbook_started');
+      expect(startedEvent).toBeDefined();
+      if (startedEvent) {
+        const event = startedEvent;
+        expect(event).toHaveProperty('prompted');
+        expect(event).toHaveProperty('statePath');
+      }
+
+      // Should have runbook_completed event for successful run
+      const completedEvent = findEventByType(events, 'runbook_completed');
+      expect(completedEvent).toBeDefined();
+      if (completedEvent) {
+        const event = completedEvent;
+        expect(event).toHaveProperty('finalPosition');
+      }
     });
 
-    it('validates run command with prompted runbook', () => {
+    it('validates run command with prompted runbook NDJSON output', () => {
       const runbookPath = path.join(workspace.cwd, 'prompted.runbook.md');
       fs.writeFileSync(runbookPath, `---
 name: prompted-test
@@ -663,14 +713,22 @@ prompt: Wait for user
 `);
 
       const result = runCli('run --json --prompted prompted.runbook.md', workspace);
-      const output = parseJsonOutput(result.stdout);
+      const events = parseNdjsonOutput(result.stdout);
 
-      const validation = validateExecutionSummary(output);
-      expect(validation.valid).toBe(true);
-      expect(validation.errors).toEqual([]);
+      // Run command with prompted flag streams NDJSON events
+      expect(events.length).toBeGreaterThan(0);
 
-      // Running with prompted flag should pause, status should be 'running'
-      expect(output).toHaveProperty('status', 'running');
+      // Should have runbook_started event with prompted=true
+      const startedEvent = findEventByType(events, 'runbook_started');
+      expect(startedEvent).toBeDefined();
+      if (startedEvent) {
+        const event = startedEvent;
+        expect(event).toHaveProperty('prompted', true);
+      }
+
+      // Running with prompted flag should pause, so no completion event
+      const completedEvent = findEventByType(events, 'runbook_completed');
+      expect(completedEvent).toBeUndefined();
     });
   });
 

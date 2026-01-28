@@ -8,6 +8,7 @@
  */
 
 import type { StepPosition, ActionBlockData, RunbookMetadata } from '../cli/types.js';
+import type { RunbookEventV1 } from '../events/types.js';
 
 // ============================================================================
 // Column Definition for Lists
@@ -178,6 +179,19 @@ export interface NoActiveRunbookOutput extends BaseOutputEvent {
   type: 'no_active_runbook';
 }
 
+
+/**
+ * Event for bridging execution events to the output system.
+ *
+ * Used to stream execution events through the unified output architecture,
+ * allowing both text and JSON renderers to handle runbook execution events.
+ */
+export interface ExecutionEventOutput extends BaseOutputEvent {
+  type: 'execution_event';
+  /** The wrapped execution event */
+  event: RunbookEventV1;
+}
+
 // ============================================================================
 // Discriminated Union
 // ============================================================================
@@ -198,7 +212,8 @@ export type OutputEvent =
   | ErrorOutput
   | CompleteOutput
   | StoppedOutput
-  | NoActiveRunbookOutput;
+  | NoActiveRunbookOutput
+  | ExecutionEventOutput;
 
 /**
  * Type guard to check if an event is a ListOutput.

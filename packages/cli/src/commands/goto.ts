@@ -8,11 +8,7 @@ import {
   parseStepIdFromString,
   stepIdToString,
   countNumberedSteps,
-  // Event system imports for JSON mode
   ExecutionEventEmitter,
-  CLISubscriber,
-  JSONSubscriber,
-  getWriter,
   type RunbookState,
 } from '@rundown-org/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
@@ -22,26 +18,27 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
- * Set up an emitter with the appropriate subscriber based on output mode.
+ * Create an event emitter for a runbook execution and bridge to OutputEmitter.
+ *
+ * @param runbookState - The runbook state to create the emitter for
+ * @param output - The OutputEmitter to bridge events to
+ * @returns The ExecutionEventEmitter
  */
-function setupEmitterWithSubscriber(
+function createBridgedEmitter(
   runbookState: RunbookState,
-  jsonMode: boolean
-): { emitter: ExecutionEventEmitter; jsonSubscriber: JSONSubscriber | undefined } {
+  output: OutputEmitter
+): ExecutionEventEmitter {
   const emitter = new ExecutionEventEmitter(
     runbookState.id,
     { name: runbookState.runbook, path: runbookState.runbookPath }
   );
-  const jsonSubscriber = jsonMode ? new JSONSubscriber() : undefined;
 
-  if (jsonSubscriber) {
-    emitter.subscribe(jsonSubscriber.handle);
-  } else {
-    const cliSubscriber = new CLISubscriber(getWriter());
-    emitter.subscribe(cliSubscriber.handle);
-  }
+  // Bridge execution events to the unified output system
+  emitter.subscribe((event) => {
+    output.executionEvent(event);
+  });
 
-  return { emitter, jsonSubscriber };
+  return emitter;
 }
 
 /**
@@ -177,30 +174,18 @@ export function registerGotoCommand(program: Command): void {
           at: newPos,
         };
 
-        // Emit structured action output (text mode shows immediately)
+        // Emit structured action output
         output.action(actionData);
 
-        // In text mode, flush action immediately; in JSON mode, defer to combine with summary
-        if (!options.json) {
-          output.flush();
-        }
-
-        // Set up emitter for execution loop (for JSON mode)
-        const { emitter, jsonSubscriber } = setupEmitterWithSubscriber(state, !!options.json);
+        // Create emitter bridged to unified output
+        const emitter = createBridgedEmitter(state, output);
 
         // Continue with execution loop
         // Goto doesn't have --agent option, so use default stack
         const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, undefined, emitter);
 
-        // Output combined JSON if in JSON mode
-        if (jsonSubscriber) {
-          const summary = jsonSubscriber.getSummary();
-          // Merge action data into summary for single JSON output
-          getWriter().writeJson({
-            ...actionData,
-            ...summary,
-          });
-        }
+        // Flush any remaining output
+        output.flush();
 
         if (loopResult === 'stopped') {
           process.exit(1);

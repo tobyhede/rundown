@@ -35,6 +35,7 @@ export type {
   CompleteOutput,
   StoppedOutput,
   NoActiveRunbookOutput,
+  ExecutionEventOutput,
 } from './types.js';
 
 export {

@@ -22,9 +22,11 @@ import type {
   CompleteOutput,
   StoppedOutput,
   NoActiveRunbookOutput,
+  ExecutionEventOutput,
   RunbookMetadata,
   StepPosition,
   ActionBlockData,
+  RunbookEventV1,
 } from '@rundown-org/core';
 import { getWriter } from '@rundown-org/core';
 import type { OutputRenderer } from './renderers/types.js';
@@ -314,6 +316,24 @@ export class OutputEmitter {
       type: 'no_active_runbook',
     };
     this.renderer.render(event);
+  }
+
+
+  /**
+   * Bridge an execution event to the renderer.
+   *
+   * This method allows execution events from ExecutionEventEmitter to be
+   * rendered through the unified output system, enabling both text and
+   * JSON renderers to handle runbook execution events consistently.
+   *
+   * @param event - The execution event to render
+   */
+  executionEvent(event: RunbookEventV1): void {
+    const outputEvent: ExecutionEventOutput = {
+      type: 'execution_event',
+      event,
+    };
+    this.renderer.render(outputEvent);
   }
 
   /**

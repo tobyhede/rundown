@@ -32,13 +32,11 @@ export function registerCheckCommand(program: Command): void {
       const resolvedPath = path.resolve(file);
 
       if (!fs.existsSync(resolvedPath)) {
-        if (output.isJson()) {
-          output.detail({ valid: false, errors: [{ message: `File not found: ${file}` }] }, 'custom');
-          output.flush();
-        } else {
-          output.error(`FAIL: File not found: ${file}`, 'FILE_NOT_FOUND');
-          output.flush();
-        }
+        output.status(false, 'check', `FAIL: File not found: ${file}`, {
+          valid: false,
+          errors: [{ message: `File not found: ${file}` }]
+        });
+        output.flush();
         process.exit(1);
       }
 
@@ -48,46 +46,35 @@ export function registerCheckCommand(program: Command): void {
         const errors = validateRunbook(runbook.steps);
 
         if (errors.length > 0) {
-          if (output.isJson()) {
-            output.detail({
-              valid: false,
-              errors: errors.map(e => ({ line: e.line, message: e.message }))
-            }, 'custom');
-            output.flush();
-          } else {
-            output.message(`FAIL: ${String(errors.length)} error${errors.length > 1 ? 's' : ''}`, 'error');
-            output.message(formatErrors(errors), 'error');
-            output.flush();
-          }
+          const errorCount = errors.length;
+          const errorMessage = `FAIL: ${String(errorCount)} error${errorCount > 1 ? 's' : ''}\n${formatErrors(errors)}`;
+          output.status(false, 'check', errorMessage, {
+            valid: false,
+            errors: errors.map(e => ({ line: e.line, message: e.message }))
+          });
+          output.flush();
           process.exit(1);
         }
 
         const stepCount = runbook.steps.length;
         const substepCount = countSubsteps(runbook.steps);
+        const statsMessage = substepCount > 0
+          ? `PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount > 1 ? 's' : ''}`
+          : `PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}`;
 
-        if (output.isJson()) {
-          output.detail({
-            valid: true,
-            errors: [],
-            stats: { steps: stepCount, substeps: substepCount }
-          }, 'custom');
-          output.flush();
-        } else {
-          const statsMessage = substepCount > 0
-            ? `PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount > 1 ? 's' : ''}`
-            : `PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}`;
-          output.success(statsMessage);
-          output.flush();
-        }
+        output.status(true, 'check', statsMessage, {
+          valid: true,
+          errors: [],
+          stats: { steps: stepCount, substeps: substepCount }
+        });
+        output.flush();
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        if (output.isJson()) {
-          output.detail({ valid: false, errors: [{ message }] }, 'custom');
-          output.flush();
-        } else {
-          output.error(`FAIL: ${message}`, 'VALIDATION_ERROR');
-          output.flush();
-        }
+        output.status(false, 'check', `FAIL: ${message}`, {
+          valid: false,
+          errors: [{ message }]
+        });
+        output.flush();
         process.exit(1);
       }
     });

@@ -1,8 +1,13 @@
 /**
  * JSONRenderer - Renders output events as JSON.
  *
- * Accumulates events and outputs a single JSON object on flush().
- * This ensures consistent machine-readable output format.
+ * Handles two output modes:
+ * - Simple commands: Accumulates events and outputs a single JSON object on flush()
+ * - Execution events: Streams NDJSON (newline-delimited JSON) for real-time output
+ *
+ * This unified approach allows both simple commands (check, ls) to maintain
+ * backward compatibility with single-object JSON output, while execution
+ * commands (run, pass, fail) stream events as they happen.
  *
  * @module renderers/json-renderer
  */
@@ -10,6 +15,7 @@
 import {
   type OutputEvent,
   type OutputWriter,
+  type RunbookEventV1,
   getWriter,
 } from '@rundown-org/core';
 import type { OutputRenderer, RendererOptions } from './types.js';
@@ -155,6 +161,9 @@ export class JSONRenderer implements OutputRenderer {
         this.output.result = false;
         this.output.error = 'No active runbook';
         break;
+      case 'execution_event':
+        this.renderExecutionEvent(event.event);
+        break;
     }
   }
 
@@ -238,5 +247,41 @@ export class JSONRenderer implements OutputRenderer {
     if (event.stopped) {
       this.output.stopped = true;
     }
+  }
+
+
+  /**
+   * Render an execution event as NDJSON.
+   *
+   * Streams the event immediately as a newline-delimited JSON line,
+   * enabling real-time output for execution commands.
+   *
+   * @param event - The execution event to render
+   */
+  private renderExecutionEvent(event: RunbookEventV1): void {
+    // Convert event type to snake_case for JSON output
+    const eventType = this.toSnakeCase(event.type);
+
+    // Build NDJSON line with type, payload, and timestamp
+    const ndjsonLine = {
+      type: eventType,
+      ...event.payload,
+      timestamp: event.ts,
+      runbookId: event.runbookId,
+      seq: event.seq,
+    };
+
+    // Stream immediately - don't buffer
+    this.writer.writeLine(JSON.stringify(ndjsonLine));
+  }
+
+  /**
+   * Convert UPPER_SNAKE_CASE to lower_snake_case.
+   *
+   * @param str - The string to convert
+   * @returns The converted string
+   */
+  private toSnakeCase(str: string): string {
+    return str.toLowerCase();
   }
 }

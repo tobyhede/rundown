@@ -7,11 +7,7 @@ import {
   parseRunbook,
   evaluatePassCondition,
   countNumberedSteps,
-  // Event system imports for JSON mode
   ExecutionEventEmitter,
-  CLISubscriber,
-  JSONSubscriber,
-  getWriter,
   type RunbookState,
 } from '@rundown-org/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
@@ -29,26 +25,27 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
- * Set up an emitter with the appropriate subscriber based on output mode.
+ * Create an event emitter for a runbook execution and bridge to OutputEmitter.
+ *
+ * @param runbookState - The runbook state to create the emitter for
+ * @param output - The OutputEmitter to bridge events to
+ * @returns The ExecutionEventEmitter
  */
-function setupEmitterWithSubscriber(
+function createBridgedEmitter(
   runbookState: RunbookState,
-  jsonMode: boolean
-): { emitter: ExecutionEventEmitter; jsonSubscriber: JSONSubscriber | undefined } {
+  output: OutputEmitter
+): ExecutionEventEmitter {
   const emitter = new ExecutionEventEmitter(
     runbookState.id,
     { name: runbookState.runbook, path: runbookState.runbookPath }
   );
-  const jsonSubscriber = jsonMode ? new JSONSubscriber() : undefined;
 
-  if (jsonSubscriber) {
-    emitter.subscribe(jsonSubscriber.handle);
-  } else {
-    const cliSubscriber = new CLISubscriber(getWriter());
-    emitter.subscribe(cliSubscriber.handle);
-  }
+  // Bridge execution events to the unified output system
+  emitter.subscribe((event) => {
+    output.executionEvent(event);
+  });
 
-  return { emitter, jsonSubscriber };
+  return emitter;
 }
 
 /**
@@ -122,19 +119,15 @@ export function registerPassCommand(program: Command): void {
             const bindings = Object.values(updated?.agentBindings ?? {});
             const runningCount = bindings.filter((b) => b.status === 'running').length;
 
-            output.status(true, 'agent_completed', `Agent ${options.agent} marked as pass`, {
+            const statusMessage = runningCount > 0
+              ? `Agent ${options.agent} marked as pass (${String(runningCount)} agent(s) still running)`
+              : `Agent ${options.agent} marked as pass (All agents complete)`;
+
+            output.status(true, 'agent_completed', statusMessage, {
               agent: options.agent,
               result,
               agentsRunning: runningCount
             });
-
-            if (!options.json) {
-              if (runningCount > 0) {
-                output.message(`${String(runningCount)} agent(s) still running`, 'info');
-              } else {
-                output.message('All agents complete', 'info');
-              }
-            }
             output.flush();
             return;
           }
@@ -262,18 +255,13 @@ export function registerPassCommand(program: Command): void {
           return;  // Explicit return for clarity (process.exit never returns)
         }
 
-        // Flush the action output before continuing with execution loop
-        output.flush();
-
-        // Set up emitter for execution loop (for JSON mode)
-        const { emitter, jsonSubscriber } = setupEmitterWithSubscriber(updatedState, !!options.json);
+        // Create emitter bridged to unified output
+        const emitter = createBridgedEmitter(updatedState, output);
 
         const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, emitter);
 
-        // Output JSON summary if in JSON mode
-        if (jsonSubscriber) {
-          getWriter().writeJson(jsonSubscriber.getSummary());
-        }
+        // Flush any remaining output
+        output.flush();
 
         if (loopResult === 'stopped') {
           process.exit(1);

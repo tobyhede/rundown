@@ -11,14 +11,22 @@ import {
   type OutputEvent,
   type OutputWriter,
   type StepPosition,
+  type RunbookEventV1,
+  type ActionBlockData,
+  type Step,
+  type Substep,
   getWriter,
   printMetadata,
   printActionBlock,
   printStepSeparator,
+  printStepBlock,
   printRunbookComplete,
   printRunbookStopped,
+  printRunbookStoppedAtStep,
   printRunbookStashed,
   printNoActiveRunbook,
+  printCommandExec,
+  printPolicyDenied,
   success,
   failure,
   warning,
@@ -90,6 +98,9 @@ export class TextRenderer implements OutputRenderer {
         break;
       case 'no_active_runbook':
         printNoActiveRunbook(this.writer);
+        break;
+      case 'execution_event':
+        this.renderExecutionEvent(event.event);
         break;
     }
   }
@@ -189,7 +200,17 @@ export class TextRenderer implements OutputRenderer {
       return;
     }
 
-    // Handle pop action - use result to determine styling
+    // Handle pop action with step data - render step block
+    if (event.action === 'pop' && event.result && event.data?.step && event.data.position) {
+      const pos = event.data.position as StepPosition;
+      const stepData = event.data.step as { name: string; description?: string; prompted?: boolean };
+      // Create a minimal step object for printStepBlock
+      const step = { name: stepData.name, description: stepData.description } as Step;
+      printStepBlock(pos, step, stepData.prompted ?? false, this.writer);
+      return;
+    }
+
+    // Handle pop action failure - use result to determine styling
     if (event.action === 'pop' && event.message) {
       const colorFn = event.result ? success : failure;
       this.writer.writeLine(colorFn(event.message));
@@ -237,6 +258,124 @@ export class TextRenderer implements OutputRenderer {
     this.writer.writeError(failure(`Error: ${event.message}`));
     if (event.code) {
       this.writer.writeError(dim(`Code: ${event.code}`));
+    }
+  }
+
+
+  /**
+   * Render an execution event using the existing print functions.
+   *
+   * Delegates to the appropriate print function based on event type,
+   * maintaining consistent formatting with the established CLI style.
+   *
+   * @param event - The execution event to render
+   */
+  private renderExecutionEvent(event: RunbookEventV1): void {
+    switch (event.type) {
+      case 'RUNBOOK_STARTED':
+        this.handleRunbookStarted(event);
+        break;
+      case 'STEP_ENTERED':
+        this.handleStepEntered(event);
+        break;
+      case 'COMMAND_STARTED':
+        this.handleCommandStarted(event);
+        break;
+      case 'COMMAND_COMPLETED':
+        // Command output is printed separately during execution
+        break;
+      case 'STEP_TRANSITIONED':
+        this.handleStepTransitioned(event);
+        break;
+      case 'POLICY_DENIED':
+        this.handlePolicyDenied(event);
+        break;
+      case 'RUNBOOK_COMPLETED':
+        printRunbookComplete(event.payload.message, this.writer);
+        break;
+      case 'RUNBOOK_STOPPED':
+        printRunbookStoppedAtStep(event.payload.position, event.payload.message, this.writer);
+        break;
+      case 'ERROR_OCCURRED':
+        this.handleErrorOccurred(event);
+        break;
+    }
+  }
+
+  /**
+   * Handle RUNBOOK_STARTED event.
+   */
+  private handleRunbookStarted(event: RunbookEventV1 & { type: 'RUNBOOK_STARTED' }): void {
+    const { payload, runbook } = event;
+    printMetadata({
+      file: runbook.name ?? runbook.path ?? 'unknown',
+      state: payload.statePath,
+      prompted: payload.prompted,
+    }, this.writer);
+
+    printActionBlock({ action: 'START' }, this.writer);
+  }
+
+  /**
+   * Handle STEP_ENTERED event.
+   */
+  private handleStepEntered(event: RunbookEventV1 & { type: 'STEP_ENTERED' }): void {
+    const { payload } = event;
+    const { position, stepName, description, prompt, hasCommand, commandCode, commandLang, isSubstep, isDynamic, prompted } = payload;
+
+    // Create minimal step/substep object for rendering
+    const command = hasCommand ? { code: commandCode ?? '', lang: commandLang ?? 'bash' } : undefined;
+    const item = (isSubstep
+      ? { id: stepName, description, isDynamic, prompt, command }
+      : { name: stepName, description, isDynamic, prompt, command }
+    ) as Step | Substep;
+
+    printStepBlock(position, item, prompted, this.writer);
+  }
+
+  /**
+   * Handle COMMAND_STARTED event.
+   */
+  private handleCommandStarted(event: RunbookEventV1 & { type: 'COMMAND_STARTED' }): void {
+    printCommandExec(event.payload.displayCommand, this.writer);
+  }
+
+  /**
+   * Handle STEP_TRANSITIONED event.
+   */
+  private handleStepTransitioned(event: RunbookEventV1 & { type: 'STEP_TRANSITIONED' }): void {
+    const { payload } = event;
+
+    // Print step separator before action block
+    printStepSeparator(payload.to, this.writer);
+
+    // Print action block with transition details
+    const action: ActionBlockData = {
+      action: payload.action,
+      from: payload.from,
+      result: payload.result,
+      command: payload.command,
+      at: payload.to,
+    };
+    printActionBlock(action, this.writer);
+  }
+
+  /**
+   * Handle POLICY_DENIED event.
+   */
+  private handlePolicyDenied(event: RunbookEventV1 & { type: 'POLICY_DENIED' }): void {
+    printPolicyDenied(event.payload.command, event.payload.reason, this.writer);
+  }
+
+  /**
+   * Handle ERROR_OCCURRED event.
+   */
+  private handleErrorOccurred(event: RunbookEventV1 & { type: 'ERROR_OCCURRED' }): void {
+    const { payload } = event;
+    this.writer.writeLine('');
+    this.writer.writeLine(`Error: ${payload.message}`);
+    if (payload.code) {
+      this.writer.writeLine(`Code: ${payload.code}`);
     }
   }
 }

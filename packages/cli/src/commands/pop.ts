@@ -5,7 +5,6 @@ import type { Command } from 'commander';
 import {
   RunbookStateManager,
   parseRunbook,
-  printStepBlock,
   countNumberedSteps,
   type ActionBlockData,
 } from '@rundown-org/core';
@@ -81,28 +80,21 @@ export function registerPopCommand(program: Command): void {
             return;
           }
 
-          if (output.isJson()) {
-            output.status(true, 'pop', 'Runbook restored', {
-              position: {
-                current: state.step,
-                total: totalSteps,
-                ...(state.substep && { substep: state.substep }),
-              },
-              step: {
-                name: currentStep.name,
-                description: currentStep.description,
-                prompted: !!state.prompted,
-              },
-              restoredId: state.id,
-            });
-          } else {
-            printStepBlock(
-              { current: state.step, total: totalSteps, substep: state.substep },
-              currentStep,
-              !!state.prompted,
-              output.getWriter()
-            );
-          }
+          // Emit status with step data for both modes
+          // TextRenderer handles rendering the step block for text output
+          output.status(true, 'pop', 'Runbook restored', {
+            position: {
+              current: state.step,
+              total: totalSteps,
+              ...(state.substep && { substep: state.substep }),
+            },
+            step: {
+              name: currentStep.name,
+              description: currentStep.description,
+              prompted: !!state.prompted,
+            },
+            restoredId: state.id,
+          });
           output.flush();
         },
         { json: options.json }
