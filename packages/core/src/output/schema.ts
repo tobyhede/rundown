@@ -457,7 +457,9 @@ export function isActionResponse(
     'result' in response &&
     typeof response.result === 'boolean' &&
     'action' in response &&
-    typeof response.action === 'string'
+    typeof response.action === 'string' &&
+    !('stashedId' in response) &&
+    !('restoredId' in response)
   );
 }
 
