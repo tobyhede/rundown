@@ -20,6 +20,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 /**
  * Registers the 'pop' command for resuming stashed runbooks.
  * @param program - Commander program instance to register the command on
+ * @throws Error when the stashed runbook file cannot be found
  */
 export function registerPopCommand(program: Command): void {
   program
@@ -96,6 +97,8 @@ export function registerPopCommand(program: Command): void {
                 !!state.prompted,
                 output.getWriter()
               );
+            } else {
+              output.status(false, 'pop', `Step "${state.step}" not found in runbook`);
             }
             output.flush();
           }
