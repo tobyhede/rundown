@@ -589,9 +589,10 @@ Available: success, failure
 **JSON:**
 ```json
 {
-  "result": false,
-  "error": "Scenario \"unknown\" not found",
-  "available": ["success", "failure"]
+  "error": true,
+  "message": "Scenario \"unknown\" not found",
+  "available": ["success", "failure"],
+  "result": false
 }
 ```
 
@@ -670,9 +671,7 @@ npm install
 
 **Text:**
 ```text
-```
 Hello world
-```
 ```
 
 **JSON:**
