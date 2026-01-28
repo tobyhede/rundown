@@ -330,5 +330,5 @@ Parsers and executors must adhere to strict validation:
 
 Executable examples and conformance test cases are maintained in the `packages/parser/fixtures/conformance/` directory.
 
-- **Valid Runbooks**: `packages/parser/fixtures/conformance/valid/`
+- **Valid Runbooks**: `packages/parser/fixtures/conformance/valid/` (symlinks to `runbooks/patterns/` for shared examples)
 - **Invalid Runbooks (Error Cases)**: `packages/parser/fixtures/conformance/invalid/`

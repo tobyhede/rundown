@@ -187,7 +187,7 @@ In WebContainer environments (e.g., StackBlitz), nested process spawning may not
 
 - `isInternalRdCommand()` detects rd/rundown commands
 - `executeRdCommandInternal()` dispatches to internal handlers
-- Currently supported: `echo` command
+- Currently supported: `echo`, `prompt` commands
 - Unsupported commands fall back to standard spawn behavior
 
 Example of a step that auto-executes:
@@ -714,6 +714,8 @@ Repeat step template until work complete.
 ---
 
 ## Output Format
+
+Output formatting is implemented in `packages/cli/src/services/output-manager.ts` and `packages/cli/src/helpers/table-formatter.ts`.
 
 ### Standard Output Structure
 
