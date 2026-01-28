@@ -28,7 +28,7 @@ export function registerCompleteCommand(program: Command): void {
         const state = await manager.getActive(options.agent);
 
         if (!state) {
-          output.status(false, 'complete', 'No active runbook');
+          output.noActiveRunbook('complete');
           output.flush();
           return;
         }

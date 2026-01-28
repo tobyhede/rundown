@@ -27,7 +27,7 @@ export function registerStopCommand(program: Command): void {
           const state = await manager.getActive(options.agent);
 
           if (!state) {
-            output.status(false, 'stopped', 'No active runbook');
+            output.noActiveRunbook('stop');
             output.flush();
             return;
           }

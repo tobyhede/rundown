@@ -7,8 +7,6 @@ import {
   parseRunbook,
   evaluateFailCondition,
   countNumberedSteps,
-  ExecutionEventEmitter,
-  type RunbookState,
 } from '@rundown-org/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
@@ -23,30 +21,7 @@ import {
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-
-/**
- * Create an event emitter for a runbook execution and bridge to OutputEmitter.
- *
- * @param runbookState - The runbook state to create the emitter for
- * @param output - The OutputEmitter to bridge events to
- * @returns The ExecutionEventEmitter
- */
-function createBridgedEmitter(
-  runbookState: RunbookState,
-  output: OutputEmitter
-): ExecutionEventEmitter {
-  const emitter = new ExecutionEventEmitter(
-    runbookState.id,
-    { name: runbookState.runbook, path: runbookState.runbookPath }
-  );
-
-  // Bridge execution events to the unified output system
-  emitter.subscribe((event) => {
-    output.executionEvent(event);
-  });
-
-  return emitter;
-}
+import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 
 /**
  * Registers the 'fail' command for marking steps as failed.
@@ -79,9 +54,7 @@ export function registerFailCommand(program: Command): void {
         }
 
         if (!state) {
-          output.status(false, 'fail', 'No active runbook', {
-            code: 'NO_ACTIVE_RUNBOOK',
-          });
+          output.noActiveRunbook('fail');
           output.flush();
           return;
         }
