@@ -128,7 +128,7 @@ export const StatusResponseSchema = z
     lastAction: z
       .object({
         action: z.string().describe('Last action performed'),
-        result: z.string().optional().describe('Result of the last action'),
+        result: z.boolean().optional().describe('Result of the last action'),
       })
       .optional()
       .describe('Last action information'),
