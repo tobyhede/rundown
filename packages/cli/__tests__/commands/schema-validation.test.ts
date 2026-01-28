@@ -273,6 +273,9 @@ echo done
       // Explicit type check: result must be boolean, not string
       if ('result' in (output as Record<string, unknown>)) {
         expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
+        // Regression guard: ensure string literals are never used
+        expect((output as Record<string, unknown>).result).not.toBe('PASS');
+        expect((output as Record<string, unknown>).result).not.toBe('FAIL');
       }
     });
 
