@@ -43,6 +43,7 @@ export function registerStashCommand(program: Command): void {
               current: state.step,
               total: totalSteps,
             },
+            stashedId: state.id,
           });
           output.flush();
         },

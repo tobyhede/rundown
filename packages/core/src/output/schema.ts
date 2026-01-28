@@ -1,8 +1,8 @@
 /**
  * CLI JSON Output Schema - Standardized response format for machine-readable output.
  *
- * This module defines the formal specification for all CLI JSON output. All commands
- * using `--json` should output responses conforming to these interfaces.
+ * This module re-exports types derived from Zod schemas (single source of truth)
+ * and provides type guards for runtime type checking.
  *
  * Design principles:
  * - Flat structure: Action-specific fields merged at top level (no nesting)
@@ -14,420 +14,106 @@
  */
 
 // ============================================================================
-// CLI Error Codes (distinct from core ErrorCodes)
+// Re-export Zod Schemas (Single Source of Truth)
 // ============================================================================
 
-/**
- * Machine-readable error codes for CLI JSON output.
- *
- * These codes enable programmatic error handling without parsing error messages.
- * Named CLIErrorCodes to avoid conflict with core ErrorCodes.
- */
-export const CLIErrorCodes = {
-  /** No runbook is currently active */
-  NO_ACTIVE_RUNBOOK: 'NO_ACTIVE_RUNBOOK',
-  /** Specified runbook file doesn't exist */
-  RUNBOOK_NOT_FOUND: 'RUNBOOK_NOT_FOUND',
-  /** Target step doesn't exist */
-  STEP_NOT_FOUND: 'STEP_NOT_FOUND',
-  /** Runbook has syntax errors */
-  INVALID_SYNTAX: 'INVALID_SYNTAX',
-  /** Input validation failed */
-  VALIDATION_ERROR: 'VALIDATION_ERROR',
-  /** No stashed runbook to restore */
-  NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
-  /** Agent binding operation failed */
-  AGENT_BINDING_ERROR: 'AGENT_BINDING_ERROR',
-  /** Scenario not found */
-  SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
-  /** File system operation failed */
-  FILE_ERROR: 'FILE_ERROR',
-  /** Unknown or unexpected error */
-  UNKNOWN_ERROR: 'UNKNOWN_ERROR',
-} as const;
+export {
+  // Error codes
+  CLIErrorCodes,
+  ErrorCodeSchema,
+  type CLIErrorCode,
 
-/**
- * Union type of all valid CLI error codes.
- */
-export type CLIErrorCode = (typeof CLIErrorCodes)[keyof typeof CLIErrorCodes];
+  // Shared schemas
+  PositionSchema,
+  RunbookContextSchema,
+  ErrorDetailsSchema,
 
-// ============================================================================
-// Shared Types
-// ============================================================================
+  // Base response schemas
+  BaseResponseSchema,
+  SuccessResponseSchema,
+  ErrorResponseSchema,
 
-/**
- * Runbook context information included in responses.
- *
- * Provides essential metadata about the runbook being operated on.
- */
-export interface RunbookContext {
-  /** Runbook filename (relative path) */
-  file: string;
-  /** State file path */
-  state: string;
-  /** Whether runbook is in prompted mode (waiting for user input) */
-  prompted?: boolean;
-}
+  // Action schemas
+  ActionResponseSchema,
+  StatusResponseSchema,
 
-/**
- * Position within a runbook.
- *
- * Represents the current location in the runbook execution.
- */
-export interface Position {
-  /** Current step identifier (e.g., "1", "2", "ErrorHandler") */
-  current: string;
-  /** Total number of steps (number or "{N}" for dynamic runbooks) */
-  total: number | string;
-  /** Current substep identifier if applicable */
-  substep?: string;
-}
+  // List schemas
+  ActiveRunbookEntrySchema,
+  AvailableRunbookEntrySchema,
+  ActiveRunbookListSchema,
+  AvailableRunbooksListSchema,
 
-// ============================================================================
-// Base Response Types
-// ============================================================================
+  // Check schemas
+  CheckValidationErrorSchema,
+  RunbookStatsSchema,
+  CheckResponseSchema,
 
-/**
- * Base interface for all successful CLI responses.
- *
- * Contains the required `result` field that all responses must have.
- */
-export interface BaseResponse {
-  /** Whether the operation succeeded (true = success, false = failure) */
-  result: boolean;
-}
+  // Scenario schemas
+  ScenarioEntrySchema,
+  ScenarioDetailSchema,
+  ScenarioListSchema,
+  ScenarioRunResponseSchema,
+  ScenarioErrorResponseSchema,
 
-/**
- * Successful response base with optional context.
- */
-export interface SuccessResponse extends BaseResponse {
-  result: true;
-  /** The action performed (e.g., "CONTINUE", "GOTO 3", "stopped") */
-  action?: string;
-  /** Runbook context when applicable */
-  runbook?: RunbookContext;
-}
+  // Echo schema
+  EchoResponseSchema,
 
-/**
- * Error response structure.
- *
- * Provides structured error information for programmatic handling.
- */
-export interface ErrorResponse extends BaseResponse {
-  result: false;
-  /** Human-readable error message */
-  error: string;
-  /** Machine-readable error code for programmatic handling */
-  code?: CLIErrorCode;
-  /** Actionable context to help resolve the error */
-  details?: ErrorDetails;
-}
+  // Prune schemas
+  PruneEntrySchema,
+  PruneResponseSchema,
 
-/**
- * Actionable error details.
- *
- * Provides context that helps agents/users resolve the error.
- */
-export interface ErrorDetails {
-  /** The value that was requested but invalid/not found */
-  requested?: string;
-  /** Available valid options */
-  available?: string[];
-  /** Suggested command to run */
-  suggestion?: string;
-  /** File path related to the error */
-  path?: string;
-  /** Locations that were searched */
-  searchedLocations?: string[];
-  /** Line number where error occurred */
-  line?: number;
-  /** Additional error-specific fields */
-  [key: string]: unknown;
-}
+  // Stash/Pop schemas
+  StashResponseSchema,
+  PopResponseSchema,
 
-// ============================================================================
-// Action Command Responses (pass, fail, goto, stop, complete)
-// ============================================================================
+  // Execution schemas
+  ExecutionSummarySchema,
+  StepQueuedResponseSchema,
+  AgentBoundResponseSchema,
+  RunCommandResponseSchema,
 
-/**
- * Response from state-transition action commands.
- *
- * Used by: pass, fail, goto, stop, complete
- *
- * Note: `result` boolean indicates action success (PASS = true, FAIL = false).
- * The `action` field shows the transition (e.g., "CONTINUE", "GOTO 3", "RETRY").
- *
- * Extends BaseResponse (not SuccessResponse) to allow both true and false results:
- * - pass/complete: result = true
- * - fail/stop: result = false
- */
-export interface ActionResponse extends BaseResponse {
-  /** The action that was performed (e.g., "CONTINUE", "GOTO 3", "RETRY") */
-  action: string;
-  /** The command that was executed */
-  command?: string;
-  /** Position before the action */
-  from?: Position;
-  /** Position after the action */
-  to?: Position;
-  /** Whether this resulted in runbook completion */
-  complete?: boolean;
-  /** Whether this resulted in runbook stopping */
-  stopped?: boolean;
-}
-
-// ============================================================================
-// Status Command Response
-// ============================================================================
-
-/**
- * Response from the status command.
- */
-export interface StatusResponse {
-  /** Whether a runbook is currently active */
-  active: boolean;
-  /** Whether a runbook is stashed */
-  stashed: boolean;
-  /** Runbook context (when active) */
-  runbook?: RunbookContext;
-  /** Current position in the runbook (when active) */
-  position?: Position;
-  /**
-   * Alias for position.
-   * @deprecated Use `position` instead. Will be removed in a future version.
-   */
-  step?: Position;
-  /** Current step details */
-  currentStep?: {
-    /** Step description/title */
-    description?: string;
-    /** Command to execute */
-    command?: string;
-  };
-  /** Last action performed */
-  lastAction?: {
-    /** The action that was performed */
-    action: string;
-    /** The result of the action */
-    result?: boolean;
-  };
-}
-
-// ============================================================================
-// List Command Responses
-// ============================================================================
-
-/**
- * Active runbook entry in ls output.
- */
-export interface ActiveRunbookEntry {
-  /** Unique runbook instance ID */
-  id: string;
-  /** Runbook filename */
-  runbook: string;
-  /** Current step display (e.g., "1/5", "Step") */
-  step: string;
-  /** Status of the runbook */
-  status?: string;
-}
-
-/**
- * Available runbook entry in ls --all output.
- */
-export interface AvailableRunbookEntry {
-  /** Runbook name from frontmatter */
-  name: string;
-  /** Runbook description */
-  description?: string;
-  /** Path to runbook file */
-  path: string;
-}
-
-/**
- * Type alias for ls command output.
- *
- * ls --json outputs a raw array of active runbooks.
- * ls --all --json outputs a raw array of available runbooks.
- */
-export type ListResponse = ActiveRunbookEntry[] | AvailableRunbookEntry[];
-
-// ============================================================================
-// Check Command Response
-// ============================================================================
-
-/**
- * Syntax error from runbook validation (check command).
- *
- * Named CheckValidationError to avoid conflict with core ValidationError.
- */
-export interface CheckValidationError {
-  /** Human-readable error message */
-  message: string;
-  /** Line number where error occurred (if applicable) */
-  line?: number;
-}
-
-/**
- * Runbook statistics from validation.
- */
-export interface RunbookStats {
-  /** Total number of steps */
-  steps: number;
-  /** Total number of substeps */
-  substeps: number;
-}
-
-/**
- * Response from the check command.
- */
-export interface CheckResponse {
-  /** Whether the runbook is valid */
-  valid: boolean;
-  /** List of validation errors (empty if valid) */
-  errors: CheckValidationError[];
-  /** Runbook statistics (only present when valid) */
-  stats?: RunbookStats;
-}
-
-// ============================================================================
-// Scenario Command Responses
-// ============================================================================
-
-/**
- * Scenario entry in scenario ls output.
- */
-export interface ScenarioEntry {
-  /** Scenario name */
-  name: string;
-  /** Expected result (e.g., "COMPLETE", "STOPPED") */
-  expected: string;
-  /** Scenario description */
-  description?: string;
-  /** Tags as comma-separated string */
-  tags?: string;
-}
-
-/**
- * Detailed scenario information from scenario show.
- */
-export interface ScenarioDetail extends ScenarioEntry {
-  /** Commands to execute */
-  commands: string[];
-}
-
-/**
- * Scenario run result.
- */
-export interface ScenarioRunResponse {
-  /** Whether the scenario passed */
-  result: boolean;
-  /** Scenario name */
-  scenario: string;
-  /** Expected outcome */
-  expected: string;
-  /** Actual outcome */
-  actual: string;
-  /** Detailed message */
-  message?: string;
-}
-
-// ============================================================================
-// Echo Command Response
-// ============================================================================
-
-/**
- * Response from the echo command.
- */
-export interface EchoResponse {
-  /** Whether the operation succeeded */
-  result: boolean;
-  /** The echoed output */
-  output?: string;
-  /** Error message if failed */
-  error?: string;
-  /** Exit code */
-  exitCode?: number;
-}
-
-// ============================================================================
-// Prune Command Response
-// ============================================================================
-
-/**
- * Entry for a pruned state file.
- */
-export interface PruneEntry {
-  /** State file ID */
-  id: string;
-  /** Associated runbook file */
-  runbook: string;
-  /** Reason for pruning */
-  reason: string;
-}
-
-/**
- * Type alias for prune command output.
- *
- * prune --json outputs a raw array of pruned entries.
- */
-export type PruneResponse = PruneEntry[];
-
-// ============================================================================
-// Stash/Pop Command Responses
-// ============================================================================
-
-/**
- * Response from stash command.
- */
-export interface StashResponse extends SuccessResponse {
-  action: 'stash';
-  /** ID of the stashed runbook */
-  stashedId: string;
-  /** Runbook context */
-  runbook?: RunbookContext;
-}
-
-/**
- * Response from pop command.
- */
-export interface PopResponse extends SuccessResponse {
-  action: 'pop';
-  /** ID of the restored runbook */
-  restoredId: string;
-  /** Runbook context */
-  runbook?: RunbookContext;
-}
-
-// ============================================================================
-// Union Types
-// ============================================================================
-
-/**
- * Union type representing any CLI JSON response.
- *
- * Commands output one of these types based on the operation.
- */
-export type CLIResponse =
-  | ActionResponse
-  | ErrorResponse
-  | StatusResponse
-  | CheckResponse
-  | ScenarioRunResponse
-  | StashResponse
-  | PopResponse
-  | EchoResponse;
-
-/**
- * Union type representing list outputs (raw arrays).
- */
-export type CLIListResponse =
-  | ListResponse
-  | ScenarioEntry[]
-  | PruneResponse;
+  // Derived TypeScript types
+  type Position,
+  type RunbookContext,
+  type ErrorDetails,
+  type BaseResponse,
+  type SuccessResponse,
+  type ErrorResponse,
+  type ActionResponse,
+  type StatusResponse,
+  type ActiveRunbookEntry,
+  type AvailableRunbookEntry,
+  type ListResponse,
+  type CheckValidationError,
+  type RunbookStats,
+  type CheckResponse,
+  type ScenarioEntry,
+  type ScenarioDetail,
+  type ScenarioRunResponse,
+  type EchoResponse,
+  type PruneEntry,
+  type PruneResponse,
+  type StashResponse,
+  type PopResponse,
+  type ExecutionSummary,
+  type StepQueuedResponse,
+  type AgentBoundResponse,
+  type RunCommandResponse,
+  type CLIResponse,
+  type CLIListResponse,
+} from './zod-schemas.js';
 
 // ============================================================================
 // Type Guards
 // ============================================================================
+
+import type {
+  CLIResponse,
+  ErrorResponse,
+  ActionResponse,
+  StatusResponse,
+  CheckResponse,
+} from './zod-schemas.js';
 
 /**
  * Type guard to check if a response is an error response.

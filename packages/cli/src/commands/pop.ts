@@ -86,6 +86,7 @@ export function registerPopCommand(program: Command): void {
                 description: currentStep.description,
                 prompted: !!state.prompted,
               } : undefined,
+              restoredId: state.id,
             });
             output.flush();
           } else {
