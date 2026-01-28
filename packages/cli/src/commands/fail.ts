@@ -255,7 +255,7 @@ export function registerFailCommand(program: Command): void {
         output.action({
           action,
           from: prevPos,
-          result: 'FAIL',
+          result: false,
           at: newPos,
         });
 

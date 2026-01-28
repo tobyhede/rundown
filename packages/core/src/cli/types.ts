@@ -40,8 +40,8 @@ export interface ActionBlockData {
   action: string;
   /** The step that was just evaluated (where we transitioned from) */
   from?: StepPosition;
-  /** The pass/fail result of the evaluation (aligns with --result flag) */
-  result?: 'PASS' | 'FAIL';
+  /** Whether the action succeeded (true = PASS, false = FAIL) */
+  result?: boolean;
   /** The command that was executed (display-friendly, with rd echo wrapper stripped) */
   command?: string;
   /** The current step position after the transition (displayed as "At: n/N") */

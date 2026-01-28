@@ -211,9 +211,8 @@ export class JSONRenderer implements OutputRenderer {
     const block = event.block;
 
     this.output.action = block.action;
-    if (block.result) {
-      // Set result boolean based on action result (PASS = true, FAIL = false)
-      this.output.result = block.result === 'PASS';
+    if (block.result !== undefined) {
+      this.output.result = block.result;
     }
     if (block.command) {
       this.output.command = block.command;

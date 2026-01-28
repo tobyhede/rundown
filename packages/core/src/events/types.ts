@@ -82,7 +82,8 @@ export interface StepTransitionedPayload {
   readonly action: string;
   readonly from: StepPosition;
   readonly to: StepPosition;
-  readonly result: 'PASS' | 'FAIL';
+  /** Whether the step passed (true = PASS, false = FAIL) */
+  readonly result: boolean;
   readonly command?: string;
 }
 

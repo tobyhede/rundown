@@ -357,7 +357,7 @@ export async function runExecutionLoop(
         action,
         from: prevPos,
         to: newPos,
-        result: execResult.success ? 'PASS' : 'FAIL',
+        result: execResult.success,
         command: displayCommand,
       });
     } else {
@@ -367,7 +367,7 @@ export async function runExecutionLoop(
         action,
         from: prevPos,
         command: displayCommand,
-        result: execResult.success ? 'PASS' : 'FAIL',
+        result: execResult.success,
         at: newPos,
       });
     }

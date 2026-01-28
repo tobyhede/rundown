@@ -270,6 +270,10 @@ echo done
 
       // Verify structure
       expect(output).toHaveProperty('action');
+      // Explicit type check: result must be boolean, not string
+      if ('result' in (output as Record<string, unknown>)) {
+        expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
+      }
     });
 
     it('validates pass error when no active runbook', () => {
@@ -280,6 +284,8 @@ echo done
       expect(typeof output).toBe('object');
       // Should indicate no active runbook
       expect(output).toHaveProperty('result', false);
+      // Explicit type check: result must be boolean, not string
+      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
   });
 
@@ -303,6 +309,11 @@ echo done
       const validation = validateActionOutput(output);
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
+
+      // Explicit type check: result must be boolean, not string
+      if ('result' in (output as Record<string, unknown>)) {
+        expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
+      }
     });
   });
 
@@ -363,6 +374,8 @@ prompt: Wait
       // Uses action='stash' (present tense verb), result=true
       expect(output).toHaveProperty('result', true);
       expect(output).toHaveProperty('action', 'stash');
+      // Explicit type check: result must be boolean, not string
+      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
 
     it('validates stash error when no active runbook', () => {
@@ -371,6 +384,8 @@ prompt: Wait
 
       // Should indicate error
       expect(output).toHaveProperty('result', false);
+      // Explicit type check: result must be boolean, not string
+      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
   });
 
@@ -395,6 +410,8 @@ prompt: Wait
 
       expect(output).toHaveProperty('result', true);
       expect(output).toHaveProperty('action', 'pop');
+      // Explicit type check: result must be boolean, not string
+      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
 
     it('validates pop error when no stashed runbook', () => {
@@ -403,6 +420,8 @@ prompt: Wait
 
       // Should indicate error
       expect(output).toHaveProperty('result', false);
+      // Explicit type check: result must be boolean, not string
+      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
   });
 
@@ -510,6 +529,10 @@ prompt: Wait
       // Uses `output` for echoed text per CLI-OUTPUT-SPEC
       expect(output).toHaveProperty('output', 'hello world');
       expect(output).toHaveProperty('exitCode', 0);
+      // Echo without --result should have result as boolean
+      if ('result' in (output as Record<string, unknown>)) {
+        expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
+      }
     });
 
     it('validates echo with result flag', () => {
@@ -532,6 +555,8 @@ prompt: Wait
       // Uses `output` for echoed text, `result` is boolean per CLI-OUTPUT-SPEC
       expect(output).toHaveProperty('output', 'test');
       expect(output).toHaveProperty('result', true);
+      // Explicit type check: result must be boolean, not string
+      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
   });
 
@@ -672,6 +697,8 @@ prompt: Wait
       // Per CLI-OUTPUT-SPEC: action='stop' (command name), result=false (stop = failure to continue)
       expect(output).toHaveProperty('action', 'stop');
       expect(output).toHaveProperty('result', false);
+      // Explicit type check: result must be boolean, not string
+      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
   });
 
@@ -696,6 +723,8 @@ prompt: Wait
       // Current format: action='complete', result=true (complete = success)
       expect(output).toHaveProperty('action', 'complete');
       expect(output).toHaveProperty('result', true);
+      // Explicit type check: result must be boolean, not string
+      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
   });
 
@@ -710,6 +739,8 @@ prompt: Wait
 
       // Verify error structure
       expect(output).toHaveProperty('result', false);
+      // Explicit type check: result must be boolean, not string
+      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
       // The error message varies by command
       expect(typeof (output as { error?: string }).error === 'string' ||
              typeof (output as { message?: string }).message === 'string').toBe(true);

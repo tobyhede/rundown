@@ -223,7 +223,7 @@ export function registerPassCommand(program: Command): void {
         output.action({
           action,
           from: prevPos,
-          result: 'PASS',
+          result: !isStopped,
           at: newPos,
         });
 

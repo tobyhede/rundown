@@ -156,7 +156,7 @@ export function registerStatusCommand(program: Command): void {
                     state.lastAction,
           };
           if (state.lastResult) {
-            actionBlockData.result = state.lastResult === 'pass' ? 'PASS' : 'FAIL';
+            actionBlockData.result = state.lastResult === 'pass';
           }
         }
 

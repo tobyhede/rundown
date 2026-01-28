@@ -155,7 +155,7 @@ describe('output formatter', () => {
         {
           action: 'CONTINUE',
           from: { current: '1', total: 5 },
-          result: 'PASS',
+          result: true,
         },
         writer
       );
@@ -182,7 +182,7 @@ describe('output formatter', () => {
         {
           action: 'RETRY (1/3)',
           from: { current: '2', total: 5 },
-          result: 'FAIL',
+          result: false,
         },
         writer
       );
@@ -195,7 +195,7 @@ describe('output formatter', () => {
           action: 'RETRY (1/1)',
           from: { current: '1', total: 1 },
           command: 'npm run deploy:check',
-          result: 'FAIL',
+          result: false,
         },
         writer
       );
@@ -213,7 +213,7 @@ describe('output formatter', () => {
           action: 'CONTINUE',
           from: { current: '1', total: 5 },
           command: 'npm test',
-          result: 'PASS',
+          result: true,
           at: { current: '2', total: 5 },
         },
         writer

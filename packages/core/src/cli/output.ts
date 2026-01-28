@@ -127,7 +127,7 @@ export function printActionBlock(
   if (data.command) {
     writer.writeLine(`Command:  ${data.command}`);
   }
-  if (data.result) {
+  if (data.result !== undefined) {
     writer.writeLine(`Result:   ${colorizeResult(data.result)}`);
   }
   if (data.at) {
