@@ -53,6 +53,8 @@ export class JSONRenderer implements OutputRenderer {
   private listItems: unknown[] | null = null;
   /** Track if only list events have been emitted */
   private isListOnly = true;
+  /** Track if NDJSON streaming has been used */
+  private isNdjsonMode = false;
 
   /**
    * Create a new JSONRenderer.
@@ -171,20 +173,26 @@ export class JSONRenderer implements OutputRenderer {
    * Flush accumulated output as JSON.
    *
    * For list-only output, returns a raw array. Otherwise returns an object.
+   * When in NDJSON mode (streaming execution events), uses compact JSON
+   * to maintain the NDJSON contract of one JSON object per line.
    */
   flush(): void {
     if (this.hasOutput) {
+      // Use compact JSON in NDJSON mode to maintain single-line contract
+      const pretty = !this.isNdjsonMode;
+
       // If only list events were emitted, output raw array
       if (this.isListOnly && this.listItems !== null) {
-        this.writer.writeJson(this.listItems);
+        this.writer.writeJson(this.listItems, pretty);
       } else {
         // Ensure result field exists (default based on error presence)
         this.output.result ??= !this.output.error;
-        this.writer.writeJson(this.output);
+        this.writer.writeJson(this.output, pretty);
       }
       this.output = {};
       this.listItems = null;
       this.isListOnly = true;
+      this.isNdjsonMode = false;
       this.hasOutput = false;
     }
   }
@@ -256,20 +264,40 @@ export class JSONRenderer implements OutputRenderer {
    * Streams the event immediately as a newline-delimited JSON line,
    * enabling real-time output for execution commands.
    *
+   * Includes full envelope fields (runbook, agentId, parentRunbookId, parentStepId)
+   * to enable downstream tooling to attribute events in multi-agent or nested
+   * runbook scenarios.
+   *
    * @param event - The execution event to render
    */
   private renderExecutionEvent(event: RunbookEventV1): void {
+    // Mark as NDJSON mode so flush() uses compact JSON
+    this.isNdjsonMode = true;
+
     // Convert event type to snake_case for JSON output
     const eventType = this.toSnakeCase(event.type);
 
-    // Build NDJSON line with type, payload, and timestamp
-    const ndjsonLine = {
+    // Build NDJSON line with full envelope and payload
+    // Include all envelope fields for multi-agent/nested runbook attribution
+    const ndjsonLine: Record<string, unknown> = {
       type: eventType,
       ...event.payload,
       timestamp: event.ts,
       runbookId: event.runbookId,
+      runbook: event.runbook,
       seq: event.seq,
     };
+
+    // Include optional envelope fields when present
+    if (event.agentId !== undefined) {
+      ndjsonLine.agentId = event.agentId;
+    }
+    if (event.parentRunbookId !== undefined) {
+      ndjsonLine.parentRunbookId = event.parentRunbookId;
+    }
+    if (event.parentStepId !== undefined) {
+      ndjsonLine.parentStepId = event.parentStepId;
+    }
 
     // Stream immediately - don't buffer
     this.writer.writeLine(JSON.stringify(ndjsonLine));
