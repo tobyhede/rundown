@@ -351,6 +351,42 @@ export const ExecutionSummarySchema = z
   .describe('Response from commands with execution summary')
   .passthrough();
 
+/**
+ * Step queued response schema (run --step output).
+ *
+ * Emitted when a step is queued for execution via `run --step`.
+ */
+export const StepQueuedResponseSchema = z.object({
+  action: z.literal('step_queued').describe('Action type for step queue'),
+  stepId: z.string().describe('Step identifier that was queued'),
+  runbook: z.string().optional().describe('Runbook filename'),
+});
+
+/**
+ * Agent bound response schema (run --agent output).
+ *
+ * Emitted when an agent is bound to a step via `run --agent`.
+ */
+export const AgentBoundResponseSchema = z.object({
+  action: z.literal('agent_bound').describe('Action type for agent binding'),
+  agent: z.string().describe('Agent identifier that was bound'),
+  stepId: z.string().describe('Step identifier the agent is bound to'),
+});
+
+/**
+ * Combined run command response schema (all variants).
+ *
+ * The run command can produce different output formats depending on flags:
+ * - Default: ExecutionSummarySchema (full execution)
+ * - --step: StepQueuedResponseSchema (step queue confirmation)
+ * - --agent: AgentBoundResponseSchema (agent binding confirmation)
+ */
+export const RunCommandResponseSchema = z.union([
+  ExecutionSummarySchema,
+  StepQueuedResponseSchema,
+  AgentBoundResponseSchema,
+]);
+
 // ============================================================================
 // Command to Schema Mapping
 // ============================================================================
@@ -373,7 +409,7 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
   check: CheckResponseSchema,
   echo: EchoResponseSchema,
   prompt: PromptResponseSchema,
-  run: ExecutionSummarySchema,
+  run: RunCommandResponseSchema,
   ls: z.union([RunbookListSchema, AvailableRunbooksListSchema]),
   prune: RunbookListSchema,
   'scenario ls': ScenarioListSchema,

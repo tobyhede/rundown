@@ -27,6 +27,9 @@ import {
   validateEchoOutput,
   validatePromptOutput,
   validateExecutionSummary,
+  validateStepQueuedOutput,
+  validateAgentBoundOutput,
+  validateErrorOutput,
 } from '../helpers/schema-validator.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -479,6 +482,36 @@ echo hello
   });
 
   describe('scenario show --json', () => {
+    it('validates scenario show success output', () => {
+      const runbookPath = path.join(workspace.cwd, 'show-success.runbook.md');
+      fs.writeFileSync(runbookPath, `---
+name: show-success
+scenarios:
+  test-scenario:
+    description: A test scenario
+    commands:
+      - echo hello
+    result: COMPLETE
+---
+## Step 1
+echo hello
+`);
+
+      const result = runCli(`scenario show ${runbookPath} test-scenario --json`, workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validateScenarioShowOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      // Verify success structure
+      expect(output).toHaveProperty('name', 'test-scenario');
+      expect(output).toHaveProperty('expected', 'COMPLETE');
+      expect(output).toHaveProperty('description', 'A test scenario');
+      expect(output).toHaveProperty('commands');
+      expect((output as { commands: string[] }).commands).toContain('echo hello');
+    });
+
     it('validates scenario show error output', () => {
       const runbookPath = path.join(workspace.cwd, 'scenarios.runbook.md');
       fs.writeFileSync(runbookPath, `---
@@ -638,6 +671,116 @@ prompt: Wait for user
 
       // Running with prompted flag should pause, status should be 'running'
       expect(output).toHaveProperty('status', 'running');
+    });
+  });
+
+  // ==========================================================================
+  // Run --step Command
+  // ==========================================================================
+
+  describe('run --step --json', () => {
+    it('validates step queued output', () => {
+      const runbookPath = path.join(workspace.cwd, 'step-test.runbook.md');
+      fs.writeFileSync(runbookPath, `---
+name: step-test
+---
+## Step 1
+prompt: Wait for agent
+`);
+      runCli('run --prompted step-test.runbook.md', workspace);
+
+      const result = runCli('run --step 1 --json', workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validateStepQueuedOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      // Verify structure
+      expect(output).toHaveProperty('action', 'step_queued');
+      expect(output).toHaveProperty('stepId', '1');
+    });
+
+    it('validates step queued error when no active runbook', () => {
+      const result = runCli('run --step 1 --json', workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validateErrorOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      // Verify error structure
+      expect(output).toHaveProperty('result', false);
+      expect(output).toHaveProperty('error');
+      expect(output).toHaveProperty('code', 'NO_ACTIVE_RUNBOOK');
+    });
+  });
+
+  // ==========================================================================
+  // Run --agent Command
+  // ==========================================================================
+
+  describe('run --agent --json', () => {
+    it('validates agent bound output', () => {
+      const runbookPath = path.join(workspace.cwd, 'agent-test.runbook.md');
+      fs.writeFileSync(runbookPath, `---
+name: agent-test
+---
+## Step 1
+prompt: Wait for agent
+`);
+      runCli('run --prompted agent-test.runbook.md', workspace);
+      runCli('run --step 1', workspace);
+
+      const result = runCli('run --agent test-agent --json', workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validateAgentBoundOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      // Verify structure
+      expect(output).toHaveProperty('action', 'agent_bound');
+      expect(output).toHaveProperty('agent', 'test-agent');
+      expect(output).toHaveProperty('stepId', '1');
+    });
+
+    it('validates agent bound error when no active runbook', () => {
+      const result = runCli('run --agent test-agent --json', workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validateErrorOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      // Verify error structure
+      expect(output).toHaveProperty('result', false);
+      expect(output).toHaveProperty('error');
+      expect(output).toHaveProperty('code', 'NO_ACTIVE_RUNBOOK');
+    });
+
+    it('validates agent bound error when no pending step', () => {
+      const runbookPath = path.join(workspace.cwd, 'no-pending.runbook.md');
+      fs.writeFileSync(runbookPath, `---
+name: no-pending
+---
+## Step 1
+prompt: Wait
+`);
+      runCli('run --prompted no-pending.runbook.md', workspace);
+
+      // Try to bind agent without first queuing a step
+      const result = runCli('run --agent test-agent --json', workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validateErrorOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+
+      // Verify error structure
+      expect(output).toHaveProperty('result', false);
+      expect(output).toHaveProperty('error');
+      expect(output).toHaveProperty('code', 'AGENT_BINDING_ERROR');
     });
   });
 

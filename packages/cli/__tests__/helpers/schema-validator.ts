@@ -7,7 +7,7 @@
  * @module tests/helpers/schema-validator
  */
 
-import { z } from 'zod';
+import type { z } from 'zod';
 
 // Re-export all schemas from production code
 export {
@@ -37,6 +37,9 @@ export {
   StashResponseSchema,
   PopResponseSchema,
   ExecutionSummarySchema,
+  StepQueuedResponseSchema,
+  AgentBoundResponseSchema,
+  RunCommandResponseSchema,
   // Command mapping
   COMMAND_SCHEMAS,
 } from '../../src/schemas/output-schemas.js';
@@ -49,7 +52,7 @@ import {
   AvailableRunbooksListSchema,
   CheckResponseSchema,
   ScenarioListSchema,
-  ScenarioSchema,
+  ScenarioShowResponseSchema,
   ScenarioErrorResponseSchema,
   ScenarioRunResponseSchema,
   EchoResponseSchema,
@@ -58,6 +61,8 @@ import {
   PopResponseSchema,
   ErrorResponseSchema,
   ExecutionSummarySchema,
+  StepQueuedResponseSchema,
+  AgentBoundResponseSchema,
 } from '../../src/schemas/output-schemas.js';
 
 // ============================================================================
@@ -181,12 +186,7 @@ export function validateScenarioShowOutput(data: unknown): ValidationResult {
     return validateSchema(ScenarioErrorResponseSchema, data);
   }
   // For show, we expect scenario detail (entry + commands)
-  return validateSchema(
-    ScenarioSchema.extend({
-      commands: z.array(z.string()).optional(),
-    }),
-    data
-  );
+  return validateSchema(ScenarioShowResponseSchema, data);
 }
 
 /**
@@ -236,6 +236,20 @@ export function validatePopOutput(data: unknown): ValidationResult {
  */
 export function validateErrorOutput(data: unknown): ValidationResult {
   return validateSchema(ErrorResponseSchema, data);
+}
+
+/**
+ * Validate step queued JSON output (run --step).
+ */
+export function validateStepQueuedOutput(data: unknown): ValidationResult {
+  return validateSchema(StepQueuedResponseSchema, data);
+}
+
+/**
+ * Validate agent bound JSON output (run --agent).
+ */
+export function validateAgentBoundOutput(data: unknown): ValidationResult {
+  return validateSchema(AgentBoundResponseSchema, data);
 }
 
 // ============================================================================
