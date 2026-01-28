@@ -7,6 +7,7 @@ Rundown is a format for defining executable runbooks using Markdown.
 - `@rundown-org/parser` - Markdown runbook parser
 - `@rundown-org/core` - Runbook state management and XState compilation
 - `@rundown-org/cli` - Command-line interface (`rundown`, `rd`)
+- `@rundown-org/mcp` - MCP server for AI agent integration
 
 ## Installation
 
@@ -166,3 +167,4 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 ## Documentation
 
 - [docs/SPEC.md](docs/SPEC.md) - Rundown specification
+- [docs/MCP.md](docs/MCP.md) - MCP server reference
