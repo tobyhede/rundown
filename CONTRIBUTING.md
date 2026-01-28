@@ -40,7 +40,7 @@ The security policy layer (`packages/core/src/policy/`) enforces permission cont
 npm test --workspace=packages/core -- --testPathPattern="policy"
 
 # Test CLI integration
-npm run cli -- run examples/test.runbook.md --allow-run git,npm
+npm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-run git,npm
 ```
 
 ## Development Setup
