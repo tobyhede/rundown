@@ -47,28 +47,13 @@ export function registerEchoCommand(program: Command): void {
 
         const result = await executeEchoLogic(sequence, commandArgs, cwd);
 
-        if (options.json) {
-          // JSON mode: output structured data (use 'output' per CLI-OUTPUT-SPEC)
-          output.detail({
-            result: result.exitCode === 0,
-            ...(result.output && { output: result.output }),
-            ...(result.error && { error: result.error }),
-            exitCode: result.exitCode,
-          });
-          output.flush();
-          process.exit(result.exitCode);
-        }
-
-        // Text mode: original behavior - errors go to stderr
-        if (result.error) {
-          output.error(result.error, 'ECHO_ERROR');
-          output.flush();
-          process.exit(result.exitCode);
-        }
-
-        if (result.output) {
-          output.message(result.output, 'info');
-        }
+        // Emit structured data unconditionally - renderer handles formatting
+        output.detail({
+          result: result.exitCode === 0,
+          ...(result.output && { output: result.output }),
+          ...(result.error && { error: result.error }),
+          exitCode: result.exitCode,
+        }, 'echo');
         output.flush();
         process.exit(result.exitCode);
       } catch (error) {
@@ -79,17 +64,13 @@ export function registerEchoCommand(program: Command): void {
           message = error;
         }
 
-        if (options.json) {
-          output.detail({
-            result: false,
-            error: message,
-            exitCode: 1,
-          });
-          output.flush();
-        } else {
-          output.error(message, 'UNKNOWN_ERROR');
-          output.flush();
-        }
+        // Emit error unconditionally - renderer handles formatting
+        output.detail({
+          result: false,
+          error: message,
+          exitCode: 1,
+        }, 'echo');
+        output.flush();
         process.exit(1);
       }
     });

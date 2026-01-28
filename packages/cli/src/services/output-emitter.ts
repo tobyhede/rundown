@@ -125,7 +125,7 @@ export class OutputEmitter {
    */
   detail(
     data: Record<string, unknown>,
-    format: 'metadata' | 'step' | 'scenario' | 'scenario_result' | 'status' | 'custom' = 'custom'
+    format: 'metadata' | 'step' | 'scenario' | 'scenario_result' | 'status' | 'echo' | 'prompt' | 'check' | 'custom' = 'custom'
   ): void {
     const event: DetailOutput = {
       type: 'detail',
@@ -310,10 +310,15 @@ export class OutputEmitter {
 
   /**
    * Emit "no active runbook" message.
+   *
+   * @param action - Optional action/command that triggered this (for JSON output)
+   * @param code - Optional error code (defaults to 'NO_ACTIVE_RUNBOOK')
    */
-  noActiveRunbook(): void {
+  noActiveRunbook(action?: string, code = 'NO_ACTIVE_RUNBOOK'): void {
     const event: NoActiveRunbookOutput = {
       type: 'no_active_runbook',
+      action,
+      code,
     };
     this.renderer.render(event);
   }

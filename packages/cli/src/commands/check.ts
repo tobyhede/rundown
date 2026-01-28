@@ -1,14 +1,8 @@
-import * as fs from 'fs';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { Command } from 'commander';
-import { parseRunbookDocument, validateRunbook, type ValidationError, type Step } from '@rundown-org/parser';
+import { parseRunbookDocument, validateRunbook, type Step } from '@rundown-org/parser';
 import { OutputEmitter } from '../services/output-emitter.js';
-
-function formatErrors(errors: ValidationError[]): string {
-  return errors
-    .map(e => e.line ? `Line ${String(e.line)}: ${e.message}` : e.message)
-    .join('\n');
-}
 
 function countSubsteps(steps: readonly Step[]): number {
   return steps.reduce((count, step) => {
@@ -25,55 +19,56 @@ export function registerCheckCommand(program: Command): void {
     .command('check <file>')
     .description('Check a runbook file for errors')
     .option('--json', 'Output as JSON')
-    .action((file: string, options: { json?: boolean }) => {
+    .action(async (file: string, options: { json?: boolean }) => {
       const output = new OutputEmitter({ json: options.json });
 
       // Resolve file path
       const resolvedPath = path.resolve(file);
 
-      if (!fs.existsSync(resolvedPath)) {
-        output.status(false, 'check', `FAIL: File not found: ${file}`, {
+      try {
+        // Check if file exists using async stat
+        await fs.access(resolvedPath);
+      } catch {
+        // File not found
+        output.detail({
           valid: false,
           errors: [{ message: `File not found: ${file}` }]
-        });
+        }, 'check');
         output.flush();
         process.exit(1);
       }
 
       try {
-        const content = fs.readFileSync(resolvedPath, 'utf-8');
+        const content = await fs.readFile(resolvedPath, 'utf-8');
         const runbook = parseRunbookDocument(content, path.basename(resolvedPath), { skipValidation: true });
         const errors = validateRunbook(runbook.steps);
 
         if (errors.length > 0) {
-          const errorCount = errors.length;
-          const errorMessage = `FAIL: ${String(errorCount)} error${errorCount > 1 ? 's' : ''}\n${formatErrors(errors)}`;
-          output.status(false, 'check', errorMessage, {
+          // Emit structured data - renderer handles formatting
+          output.detail({
             valid: false,
             errors: errors.map(e => ({ line: e.line, message: e.message }))
-          });
+          }, 'check');
           output.flush();
           process.exit(1);
         }
 
         const stepCount = runbook.steps.length;
         const substepCount = countSubsteps(runbook.steps);
-        const statsMessage = substepCount > 0
-          ? `PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount > 1 ? 's' : ''}`
-          : `PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}`;
 
-        output.status(true, 'check', statsMessage, {
+        // Emit structured data - renderer handles formatting
+        output.detail({
           valid: true,
           errors: [],
           stats: { steps: stepCount, substeps: substepCount }
-        });
+        }, 'check');
         output.flush();
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        output.status(false, 'check', `FAIL: ${message}`, {
+        output.detail({
           valid: false,
           errors: [{ message }]
-        });
+        }, 'check');
         output.flush();
         process.exit(1);
       }

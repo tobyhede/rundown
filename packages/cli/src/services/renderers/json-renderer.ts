@@ -162,6 +162,12 @@ export class JSONRenderer implements OutputRenderer {
       case 'no_active_runbook':
         this.output.result = false;
         this.output.error = 'No active runbook';
+        if (event.action) {
+          this.output.action = event.action;
+        }
+        if (event.code) {
+          this.output.code = event.code;
+        }
         break;
       case 'execution_event':
         this.renderExecutionEvent(event.event);

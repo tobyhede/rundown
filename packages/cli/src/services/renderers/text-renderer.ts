@@ -154,6 +154,9 @@ export class TextRenderer implements OutputRenderer {
    * - 'status': Runbook status (uses printMetadata, printStepBlock)
    * - 'scenario': Scenario details (aligned key-value pairs)
    * - 'scenario_result': Scenario run result (with color)
+   * - 'echo': Echo command result (output or error)
+   * - 'prompt': Prompt content wrapped in markdown fences
+   * - 'check': Runbook validation result (PASS/FAIL with stats)
    * - 'custom': Generic key-value rendering
    */
   private renderDetail(event: OutputEvent & { type: 'detail' }): void {
@@ -168,6 +171,15 @@ export class TextRenderer implements OutputRenderer {
         break;
       case 'scenario_result':
         this.renderScenarioResult(data);
+        break;
+      case 'echo':
+        this.renderEchoDetail(data);
+        break;
+      case 'prompt':
+        this.renderPromptDetail(data);
+        break;
+      case 'check':
+        this.renderCheckDetail(data);
         break;
       default:
         this.renderGenericDetail(data);
@@ -301,6 +313,74 @@ export class TextRenderer implements OutputRenderer {
     if (result === false && expected && actual) {
       this.writer.writeLine(`  Expected: ${expected}`);
       this.writer.writeLine(`  Actual:   ${actual}`);
+    }
+  }
+
+  /**
+   * Render echo command result.
+   *
+   * In text mode:
+   * - If there's output, print it as plain text
+   * - If there's an error, print it to stderr with error formatting
+   */
+  private renderEchoDetail(data: Record<string, unknown>): void {
+    const { output, error } = data as {
+      result?: boolean;
+      output?: string;
+      error?: string;
+      exitCode?: number;
+    };
+
+    // Print error to stderr if present
+    if (error) {
+      this.writer.writeError(failure(`Error: ${error}`));
+      return;
+    }
+
+    // Print output as plain text if present
+    if (output) {
+      this.writer.writeLine(output);
+    }
+  }
+
+  /**
+   * Render prompt content wrapped in markdown fences.
+   */
+  private renderPromptDetail(data: Record<string, unknown>): void {
+    const { output } = data as { output?: string };
+    if (output) {
+      this.writer.writeLine('```');
+      this.writer.writeLine(output);
+      this.writer.writeLine('```');
+    }
+  }
+
+  /**
+   * Render runbook check/validation result.
+   *
+   * Formats as "PASS: N steps, M substeps" or "FAIL: N errors".
+   */
+  private renderCheckDetail(data: Record<string, unknown>): void {
+    const { valid, stats, errors } = data as {
+      valid?: boolean;
+      stats?: { steps?: number; substeps?: number };
+      errors?: { line?: number; message: string }[];
+    };
+
+    if (valid) {
+      const stepCount = stats?.steps ?? 0;
+      const substepCount = stats?.substeps ?? 0;
+      const statsMessage = substepCount > 0
+        ? `PASS: ${String(stepCount)} step${stepCount !== 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount !== 1 ? 's' : ''}`
+        : `PASS: ${String(stepCount)} step${stepCount !== 1 ? 's' : ''}`;
+      this.writer.writeLine(success(statsMessage));
+    } else if (errors && errors.length > 0) {
+      const errorCount = errors.length;
+      this.writer.writeLine(failure(`FAIL: ${String(errorCount)} error${errorCount !== 1 ? 's' : ''}`));
+      for (const err of errors) {
+        const linePrefix = err.line ? `Line ${String(err.line)}: ` : '';
+        this.writer.writeLine(`  ${linePrefix}${err.message}`);
+      }
     }
   }
 

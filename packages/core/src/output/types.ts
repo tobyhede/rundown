@@ -61,12 +61,12 @@ export interface ListOutput<T = unknown, U = T> extends BaseOutputEvent {
 /**
  * Event for outputting detailed information about a single item.
  *
- * Used for commands like `status`, `scenario show`, etc.
+ * Used for commands like `status`, `scenario show`, `echo`, `prompt`, `check`, etc.
  */
 export interface DetailOutput extends BaseOutputEvent {
   type: 'detail';
   /** The format/template to use for text rendering */
-  format: 'metadata' | 'step' | 'scenario' | 'scenario_result' | 'status' | 'custom';
+  format: 'metadata' | 'step' | 'scenario' | 'scenario_result' | 'status' | 'echo' | 'prompt' | 'check' | 'custom';
   /** Structured data for the detail view */
   data: Record<string, unknown>;
 }
@@ -174,9 +174,16 @@ export interface StoppedOutput extends BaseOutputEvent {
 
 /**
  * Event for "no active runbook" message.
+ *
+ * Optional action and code fields enable consistent JSON output
+ * that includes the triggering command and error code.
  */
 export interface NoActiveRunbookOutput extends BaseOutputEvent {
   type: 'no_active_runbook';
+  /** The action/command that triggered this (e.g., 'pass', 'fail', 'goto') */
+  action?: string;
+  /** Error code for programmatic handling */
+  code?: string;
 }
 
 

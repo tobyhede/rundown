@@ -15,17 +15,9 @@ export function registerPromptCommand(program: Command): void {
     .action((content: string, options: { json?: boolean }) => {
       const output = new OutputEmitter({ json: options.json });
 
-      if (options.json) {
-        // JSON mode: output structured data (use 'output' per CLI-OUTPUT-SPEC)
-        output.detail({ output: content });
-        output.flush();
-        return;
-      }
-
-      // Text mode: wrap in markdown fences
-      output.message('```', 'info');
-      output.message(content, 'info');
-      output.message('```', 'info');
+      // Emit structured data unconditionally - renderer handles formatting
+      // TextRenderer wraps in markdown fences, JSONRenderer outputs as-is
+      output.detail({ output: content }, 'prompt');
       output.flush();
     });
 }
