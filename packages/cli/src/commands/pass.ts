@@ -156,7 +156,7 @@ export function registerPassCommand(program: Command): void {
           substepInstance
         );
 
-        // Update lastAction
+        // Update lastAction and lastResult
         let actionType: 'GOTO' | 'RETRY' | 'CONTINUE' | 'COMPLETE' | 'STOP';
         if (action.startsWith('GOTO')) {
           actionType = 'GOTO';
@@ -165,7 +165,14 @@ export function registerPassCommand(program: Command): void {
         } else {
           actionType = action as 'CONTINUE' | 'COMPLETE' | 'STOP';
         }
-        await manager.update(state.id, { lastAction: actionType });
+        // RETRY and STOP are failure outcomes, everything else is success
+        const actionResult = actionType !== 'RETRY' && actionType !== 'STOP';
+        
+        // Update lastAction and lastResult in persistent state:
+        // - lastResult: Persisted in state - tracks whether the user action was pass or fail (from state manager perspective)
+        // - result (in action output): Whether the transition was successful (RETRY/STOP = false, others = true)
+        // These are semantically distinct: lastResult is about the user's pass/fail choice, result is about transition outcome
+        await manager.update(state.id, { lastAction: actionType, lastResult: actionResult ? 'pass' : 'fail' });
 
         // Resolve {n} in prev substep for display
         const prevSubstepStatesLen = state.substepStates?.length ?? 1;
@@ -191,7 +198,7 @@ export function registerPassCommand(program: Command): void {
         output.action({
           action,
           from: prevPos,
-          result: !isStopped,
+          result: actionResult,
           at: newPos,
         });
 

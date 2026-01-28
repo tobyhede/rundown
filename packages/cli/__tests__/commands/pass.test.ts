@@ -7,8 +7,10 @@ import {
   getActiveState,
   readSession,
   getAllStates,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { ActionResponseSchema } from '../helpers/schema-validator.js';
 
 describe('pass command', () => {
   let workspace: TestWorkspace;
@@ -200,6 +202,97 @@ Do work.
       // Agent stack should be empty
       const result = runCli('status --agent agent-001', workspace);
       expect(result.stdout).toContain('No active runbook');
+    });
+  });
+
+  describe('JSON action result semantics', () => {
+    it('reports result: true for CONTINUE transitions', async () => {
+      // Start runbook in prompted mode
+      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+
+      // Pass should trigger CONTINUE to next step
+      const result = runCli('pass --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect(output!.action).toBe('CONTINUE');
+      expect(output!.result).toBe(true);
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
+    });
+
+    it('reports result: false for RETRY transitions', async () => {
+      // Create retry runbook where pass triggers retry (via command failure)
+      const retryRunbook = `## 1. Retry on pass fail
+
+- PASS: CONTINUE
+- FAIL: RETRY 3
+
+This step has FAIL: RETRY.
+
+\`\`\`bash
+rd echo --result fail
+\`\`\`
+
+## 2. Done
+
+- PASS: COMPLETE
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'retry-test.md'), retryRunbook);
+
+      // Start runbook (not prompted - will execute command which fails, triggering RETRY)
+      const result = runCli('run runbooks/retry-test.md --json', workspace);
+      const lines = result.stdout.trim().split('\n');
+
+      // Find the action output line (may be multiple JSON outputs)
+      let foundRetry = false;
+      for (const line of lines) {
+        if (line.trim().startsWith('{')) {
+          try {
+            const output = JSON.parse(line) as Record<string, unknown>;
+            const action = output.action as string | undefined;
+            if (action?.startsWith('RETRY')) {
+              expect(output.result).toBe(false);
+              foundRetry = true;
+              break;
+            }
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+      expect(foundRetry).toBe(true);
+    });
+
+    it('reports result: true for COMPLETE transitions', async () => {
+      // Start runbook in prompted mode
+      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+      runCli('pass', workspace); // Advance to step 2
+
+      // Pass on step 2 should trigger COMPLETE
+      // The action is 'complete' (lowercase) for completion events
+      const result = runCli('pass --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect(output!.action).toBe('complete');
+      expect(output!.result).toBe(true);
+    });
+
+    it('reports result: true for GOTO transitions', async () => {
+      // Start goto runbook in prompted mode
+      runCli('run --prompted runbooks/goto.runbook.md', workspace);
+
+      // Pass should trigger GOTO 3
+      const result = runCli('pass --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect((output!.action as string)).toMatch(/^GOTO/);
+      expect(output!.result).toBe(true);
     });
   });
 });

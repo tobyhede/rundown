@@ -6,6 +6,7 @@ import {
   runCli,
   getActiveState,
   getAllStates,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { ActionResponseSchema } from '../helpers/schema-validator.js';
@@ -157,6 +158,59 @@ Do work.
       expect(output.action).toBe('fail');
       expect(output.result).toBe(false);
       expect(output.code).toBe('NO_ACTIVE_RUNBOOK');
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
+    });
+  });
+
+  describe('JSON action result semantics', () => {
+    it('reports result: false for RETRY transitions', async () => {
+      // Start retry runbook in prompted mode
+      runCli('run --prompted runbooks/retry.runbook.md', workspace);
+
+      // Fail should trigger RETRY (since FAIL: RETRY 3)
+      const result = runCli('fail --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect((output!.action as string)).toMatch(/^RETRY/);
+      expect(output!.result).toBe(false);
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
+    });
+
+    it('reports result: false for STOP transitions', async () => {
+      // Start simple runbook in prompted mode (FAIL: STOP on step 1)
+      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+
+      // Fail should trigger STOP
+      const result = runCli('fail --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect(output!.action).toBe('stop'); // lowercase per CLI conventions
+      expect(output!.result).toBe(false);
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
+    });
+
+    it('reports result: false for GOTO transitions', async () => {
+      // Start fail-goto runbook in prompted mode (FAIL: GOTO 3)
+      runCli('run --prompted runbooks/fail-goto.runbook.md', workspace);
+
+      // Fail should trigger GOTO 3
+      const result = runCli('fail --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect((output!.action as string)).toMatch(/^GOTO/);
+      expect(output!.result).toBe(false);
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);

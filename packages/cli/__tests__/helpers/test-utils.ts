@@ -272,3 +272,40 @@ export async function writeConfig(
   const configPath = join(workspace.cwd, '.claude', 'rundown.json');
   await writeFile(configPath, JSON.stringify(config, null, 2));
 }
+
+
+/**
+ * Helper to find action output from JSON output.
+ * JSON output may be multi-line formatted or contain multiple JSON objects.
+ *
+ * @param stdout - The stdout string to search
+ * @returns The action output object with 'action' and 'result' fields, or null if not found
+ */
+export function findActionOutput(stdout: string): Record<string, unknown> | null {
+  // First try to parse the entire stdout as a single JSON object
+  try {
+    const output = JSON.parse(stdout.trim()) as Record<string, unknown>;
+    if ('action' in output && 'result' in output) {
+      return output;
+    }
+  } catch {
+    // Not a single JSON object, try line-by-line
+  }
+
+  // Try each line as a separate JSON object
+  const lines = stdout.trim().split('\n');
+  for (const line of lines) {
+    if (line.trim().startsWith('{')) {
+      try {
+        const output = JSON.parse(line) as Record<string, unknown>;
+        // Action outputs have action + result fields
+        if ('action' in output && 'result' in output) {
+          return output;
+        }
+      } catch {
+        // Skip malformed JSON
+      }
+    }
+  }
+  return null;
+}

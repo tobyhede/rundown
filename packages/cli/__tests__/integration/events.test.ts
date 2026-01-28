@@ -38,7 +38,7 @@ describe('event output integration', () => {
       action: 'COMPLETE',
       from: { current: '1', total: 1 },
       to: { current: '1', total: 1 },
-      result: 'PASS',
+      result: true,
     });
     emitter.emit('RUNBOOK_COMPLETED', {
       finalPosition: { current: '1', total: 1 },

@@ -182,7 +182,7 @@ export function registerFailCommand(program: Command): void {
           substepInstance
         );
 
-        // Update lastAction
+        // Update lastAction and lastResult
         let actionType: 'GOTO' | 'RETRY' | 'CONTINUE' | 'COMPLETE' | 'STOP';
         if (action.startsWith('GOTO')) {
           actionType = 'GOTO';
@@ -191,7 +191,8 @@ export function registerFailCommand(program: Command): void {
         } else {
           actionType = action as 'CONTINUE' | 'COMPLETE' | 'STOP';
         }
-        await manager.update(state.id, { lastAction: actionType });
+        // Fail always results in lastResult='fail' since it's a failure action
+        await manager.update(state.id, { lastAction: actionType, lastResult: 'fail' });
 
         // Resolve {n} in prev substep for display
         const prevSubstepStatesLen = state.substepStates?.length ?? 1;
