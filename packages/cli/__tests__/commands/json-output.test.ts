@@ -211,11 +211,12 @@ echo hello
       expect(result.exitCode).toBe(1);
       const output = JSON.parse(result.stdout);
 
+      // Uses standard error format from output.error()
       expect(output).toEqual({
-        error: true,
-        message: 'Scenario "non-existent" not found',
-        available: ['test-scenario'],
-        result: false  // Added by JSONRenderer.flush()
+        result: false,
+        error: 'Scenario "non-existent" not found',
+        code: 'SCENARIO_NOT_FOUND',
+        details: { available: ['test-scenario'] },
       });
     });
   });

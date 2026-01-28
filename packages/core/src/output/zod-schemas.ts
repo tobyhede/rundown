@@ -415,21 +415,12 @@ export const EchoResponseSchema = z.object({
 // ============================================================================
 
 /**
- * Entry for a pruned state file.
- */
-export const PruneEntrySchema = z.object({
-  /** State file ID */
-  id: z.string().describe('Unique state file identifier'),
-  /** Associated runbook file */
-  runbook: z.string().describe('Runbook filename'),
-  /** Reason for pruning */
-  reason: z.string().describe('Reason for pruning'),
-}).describe('Pruned state file entry');
-
-/**
  * Prune response schema.
+ *
+ * Uses the same format as `ls` command - an array of ActiveRunbookEntry objects
+ * representing the runbook states that were (or would be) pruned.
  */
-export const PruneResponseSchema = z.array(PruneEntrySchema).describe('List of pruned state entries');
+export const PruneResponseSchema = ActiveRunbookListSchema.describe('List of runbook states that were/would be pruned');
 
 // ============================================================================
 // Stash/Pop Command Schemas
@@ -595,10 +586,7 @@ export type ScenarioRunResponse = z.infer<typeof ScenarioRunResponseSchema>;
 /** Echo response */
 export type EchoResponse = z.infer<typeof EchoResponseSchema>;
 
-/** Prune entry */
-export type PruneEntry = z.infer<typeof PruneEntrySchema>;
-
-/** Prune response */
+/** Prune response (same as active runbook list) */
 export type PruneResponse = z.infer<typeof PruneResponseSchema>;
 
 /** Stash response */

@@ -5,11 +5,6 @@ import { basename, dirname, join } from 'path';
 import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import {
-  info,
-  dim,
-  colorizeStatus,
-} from '@rundown-org/core';
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
@@ -144,7 +139,7 @@ async function handleShow(file: string, scenarioName: string, json?: boolean): P
   const output = new OutputEmitter({ json });
   try {
     const { scenarios } = await loadScenarios(file, output);
-    showScenarioDetails(scenarioName, scenarios, output, json);
+    showScenarioDetails(scenarioName, scenarios, output);
   } catch (error) {
     output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
     output.flush();
@@ -181,57 +176,33 @@ function listScenarios(scenarios: Scenarios, output: OutputEmitter): void {
 /**
  * Display detailed information for a specific scenario.
  *
+ * Uses unified output - TextRenderer formats 'scenario' detail events
+ * with aligned key-value pairs, JSONRenderer outputs the raw data.
+ *
  * @param name - The name of the scenario to display
  * @param scenarios - Map of scenario names to their definitions
  * @param output - OutputEmitter instance
- * @param json - Whether to output as JSON
  */
-function showScenarioDetails(name: string, scenarios: Scenarios, output: OutputEmitter, json?: boolean): void {
-  const writer = output.getWriter();
-
+function showScenarioDetails(name: string, scenarios: Scenarios, output: OutputEmitter): void {
   if (!(name in scenarios)) {
-    if (json) {
-      output.detail({
-        error: true,
-        message: `Scenario "${name}" not found`,
-        available: Object.keys(scenarios)
-      }, 'custom');
-      output.flush();
-    } else {
-      output.error(`Scenario "${name}" not found`, 'SCENARIO_NOT_FOUND', {
-        available: Object.keys(scenarios)
-      });
-      // Write "Available:" to stderr to match expected behavior
-      writer.writeError(`Available: ${Object.keys(scenarios).join(', ')}`);
-      output.flush();
-    }
+    output.error(`Scenario "${name}" not found`, 'SCENARIO_NOT_FOUND', {
+      available: Object.keys(scenarios)
+    });
+    output.flush();
     process.exit(1);
   }
 
   const scenario = scenarios[name];
 
-  if (json) {
-    output.detail({
-      name,
-      description: scenario.description,
-      expected: scenario.result,
-      commands: scenario.commands,
-      tags: (scenario as { tags?: string[] }).tags
-    }, 'scenario');
-    output.flush();
-    return;
-  }
-
-  // Aligned keys (12 chars = "Description:")
-  writer.writeLine(`Name:        ${name}`);
-  if (scenario.description) {
-    writer.writeLine(`Description: ${scenario.description}`);
-  }
-  writer.writeLine(`Expected:    ${scenario.result}`);
-  writer.writeLine('Commands:');
-  for (const cmd of scenario.commands) {
-    writer.writeLine(`  $ ${cmd}`);
-  }
+  // Emit unified scenario detail - renderer handles formatting
+  output.detail({
+    name,
+    description: scenario.description,
+    expected: scenario.result,
+    commands: scenario.commands,
+    tags: (scenario as { tags?: string[] }).tags
+  }, 'scenario');
+  output.flush();
 }
 
 /**
@@ -261,6 +232,11 @@ function extractReferencedRunbooks(scenario: Scenario): string[] {
 /**
  * Execute a scenario and verify the result.
  *
+ * Progress output (scenario header, command headers) is suppressed in quiet
+ * mode or JSON mode, as these modes indicate the user wants clean output.
+ * The final result is emitted via unified output.detail() with 'scenario_result'
+ * format, which the renderer handles appropriately.
+ *
  * @param file - Runbook file path
  * @param scenarioName - Name of the scenario to run
  * @param quiet - Whether to suppress command output
@@ -273,22 +249,10 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean, j
   const { filePath, scenarios } = await loadScenarios(file, output);
 
   if (!(scenarioName in scenarios)) {
-    if (json) {
-      output.detail({
-        scenario: scenarioName,
-        error: true,
-        message: `Scenario "${scenarioName}" not found`,
-        available: Object.keys(scenarios),
-      });
-      output.flush();
-    } else {
-      output.error(`Scenario "${scenarioName}" not found`, 'SCENARIO_NOT_FOUND', {
-        available: Object.keys(scenarios)
-      });
-      // Write "Available:" to stderr to match expected behavior
-      output.getWriter().writeError(`Available: ${Object.keys(scenarios).join(', ')}`);
-      output.flush();
-    }
+    output.error(`Scenario "${scenarioName}" not found`, 'SCENARIO_NOT_FOUND', {
+      available: Object.keys(scenarios)
+    });
+    output.flush();
     process.exit(1);
   }
 
@@ -316,25 +280,24 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean, j
       }
     }
 
-    // 4. Print scenario header (text mode only)
-    if (!json) {
-      const writer = output.getWriter();
-      writer.writeLine('');
-      writer.writeLine(`${dim('Scenario:')}  ${info(scenarioName)}`);
-      writer.writeLine(dim('─'.repeat(50)));
-      writer.writeLine('');
+    // 4. Execute commands in sequence
+    // Suppress progress output in quiet mode or JSON mode
+    const runQuiet = quiet || !!json;
+
+    // Print scenario header (verbose mode only)
+    if (!runQuiet) {
+      output.message('', 'info');
+      output.message(`Scenario:  ${scenarioName}`, 'dim');
+      output.message('─'.repeat(50), 'dim');
+      output.message('', 'info');
     }
 
-    // 5. Execute commands in sequence
-    // In JSON mode, always run quietly (suppress output)
-    const runQuiet = quiet || !!json;
     for (const cmd of scenario.commands) {
       if (!runQuiet) {
-        const writer = output.getWriter();
-        writer.writeLine('');
-        writer.writeLine(dim('━'.repeat(50)));
-        writer.writeLine(`${info('$')} ${cmd}`);
-        writer.writeLine('');
+        output.message('', 'info');
+        output.message('━'.repeat(50), 'dim');
+        output.message(`$ ${cmd}`, 'info');
+        output.message('', 'info');
       }
 
       // Replace 'rd ' with actual CLI path to avoid shell alias issues
@@ -352,11 +315,10 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean, j
     }
 
     if (!runQuiet) {
-      const writer = output.getWriter();
-      writer.writeLine('');
+      output.message('', 'info');
     }
 
-    // 6. Check final state
+    // 5. Check final state
     const runsDir = join(tmpDir, '.claude', 'rundown', 'runs');
     let actualResult = 'UNKNOWN';
 
@@ -385,27 +347,22 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean, j
       // State file may not exist
     }
 
-    // 7. Report result
+    // 6. Report result using unified output
     const passed = actualResult === scenario.result;
 
-    if (json) {
-      output.detail({
-        result: passed,
-        scenario: scenarioName,
-        expected: scenario.result,
-        actual: actualResult,
-      });
-      output.flush();
-    } else {
-      const writer = output.getWriter();
-      writer.writeLine(`Scenario: ${colorizeStatus(actualResult)}`);
-    }
+    output.detail({
+      result: passed,
+      scenario: scenarioName,
+      expected: scenario.result,
+      actual: actualResult,
+    }, 'scenario_result');
+    output.flush();
 
     if (!passed) {
       process.exit(1);
     }
   } finally {
-    // 8. Cleanup temp directory
+    // 7. Cleanup temp directory
     await rm(tmpDir, { recursive: true, force: true });
   }
 }

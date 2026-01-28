@@ -568,13 +568,15 @@ echo hello
       const result = runCli(`scenario show ${runbookPath} non-existent --json`, workspace);
       const output = parseJsonOutput(result.stdout);
 
-      const validation = validateScenarioShowOutput(output);
+      // Error responses use the standard ErrorResponse schema
+      const validation = validateErrorOutput(output);
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Verify error structure
-      expect(output).toHaveProperty('error', true);
-      expect(output).toHaveProperty('message');
+      // Verify error structure per CLI-OUTPUT-SPEC
+      expect(output).toHaveProperty('result', false);
+      expect(output).toHaveProperty('error', 'Scenario "non-existent" not found');
+      expect(output).toHaveProperty('code', 'SCENARIO_NOT_FOUND');
     });
   });
 

@@ -148,12 +148,166 @@ export class TextRenderer implements OutputRenderer {
   }
 
   /**
-   * Render a detail event as key-value pairs.
+   * Render a detail event based on format type.
+   *
+   * Different formats receive specialized rendering:
+   * - 'status': Runbook status (uses printMetadata, printStepBlock)
+   * - 'scenario': Scenario details (aligned key-value pairs)
+   * - 'scenario_result': Scenario run result (with color)
+   * - 'custom': Generic key-value rendering
    */
   private renderDetail(event: OutputEvent & { type: 'detail' }): void {
-    // Format depends on the detail format type
-    const data = event.data;
+    const { data, format } = event;
 
+    switch (format) {
+      case 'status':
+        this.renderStatusDetail(data);
+        break;
+      case 'scenario':
+        this.renderScenarioDetail(data);
+        break;
+      case 'scenario_result':
+        this.renderScenarioResult(data);
+        break;
+      default:
+        this.renderGenericDetail(data);
+    }
+  }
+
+  /**
+   * Render status response as formatted text.
+   */
+  private renderStatusDetail(data: Record<string, unknown>): void {
+    const {
+      active,
+      stashed,
+      file,
+      state,
+      prompted,
+      position,
+      step,
+      lastAction,
+      pending,
+      agents,
+    } = data as {
+      active?: boolean;
+      stashed?: boolean;
+      file?: string;
+      state?: string;
+      prompted?: boolean;
+      position?: { current: string; total: string | number; substep?: string };
+      step?: { name: string; description?: string };
+      lastAction?: { action: string; result?: boolean };
+      pending?: string[];
+      agents?: Record<string, { step: string; status: string; result?: string }>;
+    };
+
+    // No active runbook
+    if (!active && !stashed) {
+      printNoActiveRunbook(this.writer);
+      return;
+    }
+
+    // Stashed only (no active)
+    if (!active && stashed && position) {
+      if (file || state) {
+        printMetadata({ file: file ?? 'unknown', state: state ?? 'unknown', prompted }, this.writer);
+      }
+      printRunbookStashed(position, this.writer);
+      return;
+    }
+
+    // Active runbook
+    if (file || state) {
+      printMetadata({ file: file ?? 'unknown', state: state ?? 'unknown', prompted }, this.writer);
+    }
+
+    // Print action block if lastAction exists
+    if (lastAction) {
+      printActionBlock(lastAction, this.writer);
+    }
+
+    // Print step block if we have position and step details
+    if (position && step) {
+      const stepObj = { name: step.name, description: step.description } as Step;
+      printStepBlock(position, stepObj, !!prompted, this.writer);
+    }
+
+    // Show pending steps
+    if (pending && pending.length > 0) {
+      this.writer.writeLine(`\nPending: ${pending.join(', ')}`);
+    }
+
+    // Show agent bindings
+    if (agents && Object.keys(agents).length > 0) {
+      this.writer.writeLine('\nAgents:');
+      for (const [agentId, binding] of Object.entries(agents)) {
+        const resultStr = binding.result ? ` (${binding.result})` : '';
+        this.writer.writeLine(`  ${agentId}: ${binding.step} [${binding.status}]${resultStr}`);
+      }
+    }
+  }
+
+  /**
+   * Render scenario details with aligned keys.
+   */
+  private renderScenarioDetail(data: Record<string, unknown>): void {
+    const { name, description, expected, commands, tags } = data as {
+      name?: string;
+      description?: string;
+      expected?: string;
+      commands?: string[];
+      tags?: string[];
+    };
+
+    // Aligned keys (12 chars = "Description:")
+    if (name) {
+      this.writer.writeLine(`Name:        ${name}`);
+    }
+    if (description) {
+      this.writer.writeLine(`Description: ${description}`);
+    }
+    if (expected) {
+      this.writer.writeLine(`Expected:    ${expected}`);
+    }
+    if (tags && tags.length > 0) {
+      this.writer.writeLine(`Tags:        ${tags.join(', ')}`);
+    }
+    if (commands && commands.length > 0) {
+      this.writer.writeLine('Commands:');
+      for (const cmd of commands) {
+        this.writer.writeLine(`  $ ${cmd}`);
+      }
+    }
+  }
+
+  /**
+   * Render scenario run result with color.
+   */
+  private renderScenarioResult(data: Record<string, unknown>): void {
+    const { result, expected, actual } = data as {
+      result?: boolean;
+      expected?: string;
+      actual?: string;
+    };
+
+    // Show final status line (colorized)
+    if (actual) {
+      const statusColor = result ? success : failure;
+      this.writer.writeLine(`Scenario: ${statusColor(actual)}`);
+    }
+
+    // If failed, show expected vs actual
+    if (result === false && expected && actual) {
+      this.writer.writeLine(`  Expected: ${expected}`);
+      this.writer.writeLine(`  Actual:   ${actual}`);
+    }
+  }
+
+  /**
+   * Render generic key-value pairs.
+   */
+  private renderGenericDetail(data: Record<string, unknown>): void {
     for (const [key, value] of Object.entries(data)) {
       if (value !== undefined && value !== null) {
         // Format key with padding for alignment

@@ -89,17 +89,9 @@ export function registerPruneCommand(program: Command): void {
         }
 
         if (options.dryRun) {
-          if (!options.json) {
-            output.message('Would remove state for:', 'info');
-          }
-
           output.list(enrichedItems, columns as Parameters<typeof output.list>[1], { jsonMapper });
           output.flush();
           return;
-        }
-
-        if (!options.json) {
-          output.message('Pruned state for:', 'info');
         }
 
         // Perform deletion
@@ -108,10 +100,6 @@ export function registerPruneCommand(program: Command): void {
         }
 
         output.list(enrichedItems, columns as Parameters<typeof output.list>[1], { jsonMapper });
-
-        if (!options.json) {
-          output.message(`\nTotal: ${String(toDelete.length)} runbook(s).`, 'info');
-        }
         output.flush();
       });
     });

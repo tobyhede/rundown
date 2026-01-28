@@ -48,8 +48,7 @@ export {
   ScenarioRunResponseSchema,
   ScenarioErrorResponseSchema,
 
-  // Prune schemas
-  PruneEntrySchema,
+  // Prune schema (same format as ls output)
   PruneResponseSchema,
 
   // Execution schemas

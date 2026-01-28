@@ -6,7 +6,6 @@ import {
   RunbookStateManager,
   parseRunbook,
   stepIdToString,
-  printStepBlock,
   countNumberedSteps,
   type ActionBlockData,
 } from '@rundown-org/core';
@@ -19,12 +18,15 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
- * Internal data structure for status command JSON output.
+ * Internal data structure for status command output.
  *
  * Uses flat structure per CLI-OUTPUT-SPEC:
  * - `file`/`state`/`prompted` at top level (not nested in `runbook`)
  * - `position` for step position (current/total/substep)
  * - `step` for step details (name/description)
+ *
+ * Both text and JSON modes use this same structure - the renderer
+ * decides how to format it.
  *
  * @see StatusResponse in @rundown-org/core for the public API contract
  */
@@ -74,60 +76,46 @@ export function registerStatusCommand(program: Command): void {
         const state = await manager.getActive(options.agent);
         const stashedId = await manager.getStashedRunbookId();
 
+        // Case 1: No active runbook and nothing stashed
         if (!state && !stashedId) {
-          if (options.json) {
-            // JSON mode: emit custom status data
-            output.detail({ active: false, stashed: false }, 'status');
-          } else {
-            // Text mode: use specific rendering
-            output.noActiveRunbook();
-          }
+          const statusData: StatusOutputData = { active: false, stashed: false };
+          output.detail(statusData, 'status');
           output.flush();
           return;
         }
 
+        // Case 2: Something stashed but nothing active
         if (stashedId && !state) {
           const stashed = await manager.load(stashedId);
           if (stashed) {
             const totalSteps = await getStepTotal(cwd, stashed.runbook);
             const metadata = buildMetadata(stashed);
 
-            if (options.json) {
-              // JSON mode: emit flat status data per CLI-OUTPUT-SPEC
-              const statusData: StatusOutputData = {
-                active: false,
-                stashed: true,
-                file: metadata.file,
-                state: metadata.state,
-                ...(metadata.prompted && { prompted: metadata.prompted }),
-                position: {
-                  current: stashed.step,
-                  total: totalSteps,
-                  ...(stashed.substep && { substep: stashed.substep }),
-                },
-              };
-              output.detail(statusData, 'status');
-            } else {
-              // Text mode: use metadata and status events for formatting
-              output.metadata(metadata);
-              output.status(true, 'stash', undefined, {
-                position: {
-                  current: stashed.step,
-                  total: totalSteps,
-                  substep: stashed.substep,
-                },
-              });
-            }
+            const statusData: StatusOutputData = {
+              active: false,
+              stashed: true,
+              file: metadata.file,
+              state: metadata.state,
+              ...(metadata.prompted && { prompted: metadata.prompted }),
+              position: {
+                current: stashed.step,
+                total: totalSteps,
+                ...(stashed.substep && { substep: stashed.substep }),
+              },
+            };
+            output.detail(statusData, 'status');
             output.flush();
           }
           return;
         }
 
+        // Early exit if no state (shouldn't happen, but defensive)
         if (!state) {
           output.flush();
           return;
         }
 
+        // Case 3: Active runbook
         const runbookPath = await findRunbookFile(cwd, state.runbook);
         if (!runbookPath) {
           throw new Error(`Runbook file ${state.runbook} not found`);
@@ -147,6 +135,7 @@ export function registerStatusCommand(program: Command): void {
 
         const metadata = buildMetadata(state);
 
+        // Build action block data if lastAction exists
         let actionBlockData: ActionBlockData | undefined;
         if (state.lastAction) {
           const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
@@ -160,76 +149,41 @@ export function registerStatusCommand(program: Command): void {
           }
         }
 
-        if (options.json) {
-          // JSON mode: build and emit flat status data per CLI-OUTPUT-SPEC
-          const statusData: StatusOutputData = {
-            active: true,
-            stashed: !!stashedId,
-            file: metadata.file,
-            state: metadata.state,
-            ...(metadata.prompted && { prompted: metadata.prompted }),
-            position: {
-              current: displayStep,
-              total: totalSteps,
-              ...(state.substep && { substep: state.substep }),
+        // Build unified status data - same structure for both text and JSON
+        const statusData: StatusOutputData = {
+          active: true,
+          stashed: !!stashedId,
+          file: metadata.file,
+          state: metadata.state,
+          ...(metadata.prompted && { prompted: metadata.prompted }),
+          position: {
+            current: displayStep,
+            total: totalSteps,
+            ...(state.substep && { substep: state.substep }),
+          },
+          ...(currentStep && {
+            step: {
+              name: currentStep.name,
+              description: currentStep.description,
             },
-            ...(currentStep && {
-              step: {
-                name: currentStep.name,
-                description: currentStep.description,
-              },
-            }),
-            lastAction: actionBlockData,
-            pending: state.pendingSteps.length > 0
-              ? state.pendingSteps.map((p) => stepIdToString(p.stepId))
-              : undefined,
-            agents: Object.keys(state.agentBindings).length > 0
-              ? Object.entries(state.agentBindings).reduce<Record<string, { step: string; status: string; result?: string }>>((acc, [agentId, binding]) => {
-                acc[agentId] = {
-                  step: stepIdToString(binding.stepId),
-                  status: binding.status,
-                  result: binding.result
-                };
-                return acc;
-              }, {})
-              : undefined
-          };
-          output.detail(statusData, 'status');
-          output.flush();
-          return;
-        }
+          }),
+          lastAction: actionBlockData,
+          pending: state.pendingSteps.length > 0
+            ? state.pendingSteps.map((p) => stepIdToString(p.stepId))
+            : undefined,
+          agents: Object.keys(state.agentBindings).length > 0
+            ? Object.entries(state.agentBindings).reduce<Record<string, { step: string; status: string; result?: string }>>((acc, [agentId, binding]) => {
+              acc[agentId] = {
+                step: stepIdToString(binding.stepId),
+                status: binding.status,
+                result: binding.result
+              };
+              return acc;
+            }, {})
+            : undefined
+        };
 
-        // Text mode: emit structured events
-        output.metadata(metadata);
-
-        // Print action block if lastAction exists
-        if (actionBlockData) {
-          output.action(actionBlockData);
-        }
-
-        // Print step block (requires Step object, use writer directly)
-        if (currentStep) {
-          printStepBlock(
-            { current: displayStep, total: totalSteps, substep: state.substep },
-            currentStep,
-            !!state.prompted,
-            output.getWriter()
-          );
-        }
-
-        // Show pending steps and agent bindings
-        if (state.pendingSteps.length > 0) {
-          output.message(`\nPending: ${state.pendingSteps.map((p) => stepIdToString(p.stepId)).join(', ')}`, 'info');
-        }
-
-        if (Object.keys(state.agentBindings).length > 0) {
-          output.message('\nAgents:', 'info');
-          for (const [agentId, binding] of Object.entries(state.agentBindings)) {
-            const stepStr = stepIdToString(binding.stepId);
-            const resultStr = binding.result ? ` (${binding.result})` : '';
-            output.message(`  ${agentId}: ${stepStr} [${binding.status}]${resultStr}`, 'info');
-          }
-        }
+        output.detail(statusData, 'status');
         output.flush();
       });
     });

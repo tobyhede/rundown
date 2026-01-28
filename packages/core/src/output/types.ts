@@ -66,7 +66,7 @@ export interface ListOutput<T = unknown, U = T> extends BaseOutputEvent {
 export interface DetailOutput extends BaseOutputEvent {
   type: 'detail';
   /** The format/template to use for text rendering */
-  format: 'metadata' | 'step' | 'scenario' | 'status' | 'custom';
+  format: 'metadata' | 'step' | 'scenario' | 'scenario_result' | 'status' | 'custom';
   /** Structured data for the detail view */
   data: Record<string, unknown>;
 }

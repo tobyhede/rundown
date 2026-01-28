@@ -125,7 +125,7 @@ export class OutputEmitter {
    */
   detail(
     data: Record<string, unknown>,
-    format: 'metadata' | 'step' | 'scenario' | 'status' | 'custom' = 'custom'
+    format: 'metadata' | 'step' | 'scenario' | 'scenario_result' | 'status' | 'custom' = 'custom'
   ): void {
     const event: DetailOutput = {
       type: 'detail',

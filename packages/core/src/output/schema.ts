@@ -58,8 +58,7 @@ export {
   // Echo schema
   EchoResponseSchema,
 
-  // Prune schemas
-  PruneEntrySchema,
+  // Prune schema (same format as ls output)
   PruneResponseSchema,
 
   // Stash/Pop schemas
@@ -91,7 +90,6 @@ export {
   type ScenarioDetail,
   type ScenarioRunResponse,
   type EchoResponse,
-  type PruneEntry,
   type PruneResponse,
   type StashResponse,
   type PopResponse,

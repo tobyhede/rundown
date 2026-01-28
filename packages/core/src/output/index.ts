@@ -125,11 +125,9 @@ export {
   type EchoResponse,
 } from './schema.js';
 
-// Prune schemas
+// Prune schema (same format as ls output)
 export {
-  PruneEntrySchema,
   PruneResponseSchema,
-  type PruneEntry,
   type PruneResponse,
 } from './schema.js';
 
