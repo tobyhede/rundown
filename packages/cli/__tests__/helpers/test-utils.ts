@@ -96,6 +96,7 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
       PATH: `${binPath}:${process.env.PATH ?? ''}`,
       CLAUDE_PLUGIN_ROOT: pluginDir,
       NO_COLOR: '1',
+      FORCE_COLOR: undefined, // Prevent inheritance - avoids NO_COLOR warning
       RUNDOWN_LOG: '0', // Disable logging during tests
     },
   });
