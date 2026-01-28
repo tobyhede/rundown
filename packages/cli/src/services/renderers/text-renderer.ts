@@ -150,16 +150,25 @@ export class TextRenderer implements OutputRenderer {
         // Format value based on type - objects use JSON, primitives use String
         let formattedValue: string;
         if (typeof value === 'object') {
-          formattedValue = JSON.stringify(value);
+          try {
+            formattedValue = JSON.stringify(value);
+          } catch {
+            // Fallback for circular references - [object Object] is acceptable
+            formattedValue = '[circular]';
+          }
         } else if (
           typeof value === 'string' ||
           typeof value === 'number' ||
           typeof value === 'boolean'
         ) {
           formattedValue = String(value);
+        } else if (typeof value === 'bigint') {
+          // BigInt cannot be serialized with JSON.stringify
+          formattedValue = value.toString();
         } else {
-          // symbol, bigint, function - use JSON.stringify for safety
-          formattedValue = JSON.stringify(value);
+          // symbol, function - use String for human-readable output
+          // eslint-disable-next-line @typescript-eslint/no-base-to-string
+          formattedValue = String(value);
         }
         this.writer.writeLine(`${formattedKey}${formattedValue}`);
       }
