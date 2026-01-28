@@ -209,7 +209,7 @@ export interface StatusResponse {
     /** The action that was performed */
     action: string;
     /** The result of the action */
-    result: string;
+    result?: boolean;
   };
 }
 
