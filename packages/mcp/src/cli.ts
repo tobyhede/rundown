@@ -1,0 +1,74 @@
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Result from executing a CLI command.
+ *
+ * Represents the outcome of running a rundown CLI command via `runCli`.
+ */
+export interface CliResult {
+  /** Whether the command executed successfully */
+  success: boolean;
+  /** Parsed JSON data from stdout (when successful) */
+  data?: unknown;
+  /** Error message (when failed) */
+  error?: string;
+}
+
+/**
+ * Execute rundown CLI with args array (safe from injection).
+ *
+ * Uses npx to find local or global rundown installation. Commands are
+ * executed with `--json` flag automatically appended for machine-readable output.
+ *
+ * @param args - Array of CLI arguments (e.g., ['status'] or ['goto', '3'])
+ * @returns Promise resolving to the CLI execution result
+ */
+export async function runCli(args: string[]): Promise<CliResult> {
+  try {
+    const { stdout } = await execFileAsync('npx', ['--no', 'rundown', ...args, '--json'], { timeout: 30000 });
+
+    // Check if stdout has content and try to parse it
+    if (stdout.trim()) {
+      try {
+        return { success: true, data: JSON.parse(stdout) };
+      } catch {
+        // If parsing fails, return the raw stdout as data
+        return { success: true, data: stdout };
+      }
+    }
+
+    // Empty stdout is still success
+    return { success: true, data: undefined };
+  } catch (error: unknown) {
+    // execFile error includes stdout and stderr
+    if (error && typeof error === 'object') {
+      const execError = error as { stdout?: string; stderr?: string };
+
+      // Try stdout first (some commands write JSON errors to stdout)
+      if (execError.stdout) {
+        try {
+          const data = JSON.parse(execError.stdout) as { error?: string };
+          return { success: false, error: data.error ?? 'Command failed', data };
+        } catch { /* not JSON */ }
+      }
+
+      // Try stderr (withErrorHandling writes JSON errors here)
+      if (execError.stderr) {
+        try {
+          const data = JSON.parse(execError.stderr) as { error?: string };
+          return { success: false, error: data.error ?? 'Command failed', data };
+        } catch { /* not JSON */ }
+      }
+
+      // Fall back to raw stderr/stdout as error message
+      const message = execError.stderr ?? execError.stdout ?? '';
+      if (message) {
+        return { success: false, error: message.trim() };
+      }
+    }
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}

@@ -2,17 +2,12 @@
 
 import * as fs from 'fs/promises';
 import type { Command } from 'commander';
-import {
-  RunbookStateManager,
-  parseRunbook,
-  printMetadata,
-  printRunbookComplete,
-  printNoActiveRunbook,
-} from '@rundown-org/core';
+import { RunbookStateManager, parseRunbook } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
  * Registers the 'complete' command for marking runbooks as complete.
@@ -24,19 +19,22 @@ export function registerCompleteCommand(program: Command): void {
     .description('Mark current runbook as complete')
     .argument('[message]', 'Completion message')
     .option('--agent <agentId>', 'Complete runbook in agent-specific stack')
-    .action(async (message: string | undefined, options: { agent?: string }) => {
+    .option('--json', 'Output as JSON for programmatic use')
+    .action(async (message: string | undefined, options: { agent?: string; json?: boolean }) => {
       await withErrorHandling(async () => {
+        const output = new OutputEmitter({ json: options.json });
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive(options.agent);
 
         if (!state) {
-          printNoActiveRunbook();
+          output.noActiveRunbook('complete');
+          output.flush();
           return;
         }
 
-        // Print metadata
-        printMetadata(buildMetadata(state));
+        // Emit metadata
+        output.metadata(buildMetadata(state));
 
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);
         if (!runbookPath) {
@@ -49,7 +47,10 @@ export function registerCompleteCommand(program: Command): void {
           variables: { ...state.variables, completed: true }
         });
         await manager.popRunbook(options.agent);
-        printRunbookComplete(message);
-      });
+
+        // Emit completion
+        output.complete(message ?? 'Runbook completed successfully');
+        output.flush();
+      }, { json: options.json });
     });
 }

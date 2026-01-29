@@ -35,6 +35,9 @@ export * from './events/index.js';
 // CLI output module
 export * from './cli/index.js';
 
+// Output event types for format-agnostic output
+export * from './output/index.js';
+
 // Policy module
 export * from './policy/index.js';
 

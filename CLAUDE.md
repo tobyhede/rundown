@@ -7,6 +7,7 @@ Rundown is a format for defining executable runbooks using Markdown.
 - `@rundown-org/parser` - Markdown runbook parser
 - `@rundown-org/core` - Runbook state management and XState compilation
 - `@rundown-org/cli` - Command-line interface (`rundown`, `rd`)
+- `@rundown-org/mcp` - MCP server for AI agent integration
 - `@rundown-org/claude-code-plugin` - Claude Code plugin for runbook orchestration
 
 ## Installation
@@ -40,6 +41,18 @@ rundown prompt <content> # Output content in markdown fences
 ```
 
 The `rd` command is an alias for `rundown`.
+
+## Schema Output
+
+The `--schema` flag outputs the JSON Schema for any command's `--json` output:
+
+```bash
+rd status --schema           # Status response schema
+rd check --schema            # Check response schema
+rd scenario ls --schema      # Scenario list schema
+```
+
+This enables programmatic validation of CLI output against the schema.
 
 ## State Persistence
 
@@ -122,12 +135,12 @@ export function parseRunbookDocument(
 
 ## CLI Output Standards
 
-New CLI commands MUST use `OutputManager` for consistent output with automatic JSON/text mode switching:
+New CLI commands MUST use `OutputEmitter` for consistent output with format-agnostic rendering:
 
 ```typescript
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
-const output = new OutputManager({ json: options.json });
+const output = new OutputEmitter({ json: options.json });
 
 output.list(items, [
   { header: 'NAME', key: 'name' },
@@ -136,6 +149,10 @@ output.list(items, [
   emptyMessage: 'No items found.',
   jsonMapper: (item) => ({ name: item.name, status: item.status }),
 });
+
+output.detail(data, 'status');
+output.action({ action, from, result, at });
+output.flush();
 ```
 
 For direct table formatting without JSON support, use `formatTable` from `../helpers/table-formatter.js`.
@@ -160,3 +177,4 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 ## Documentation
 
 - [docs/SPEC.md](docs/SPEC.md) - Rundown specification
+- [docs/MCP.md](docs/MCP.md) - MCP server reference

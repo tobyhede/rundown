@@ -6,8 +6,10 @@ import {
   runCli,
   getActiveState,
   getAllStates,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { ActionResponseSchema } from '../helpers/schema-validator.js';
 
 describe('fail command', () => {
   let workspace: TestWorkspace;
@@ -136,6 +138,109 @@ Do work.
       // Should now be on parent
       const statusResult = runCli('status', workspace);
       expect(statusResult.stdout).toContain('parent-fail.md');
+    });
+  });
+
+  describe('state consistency in execution loop', () => {
+    it('uses updated state for retry execution loop', async () => {
+      // Create a runbook with agent-scoped RETRY that continues execution
+      const retryRunbook = `## 1. Retry step
+- FAIL: RETRY 3
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo --result pass
+\`\`\`
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'agent-retry.md'), retryRunbook);
+
+      runCli('run --prompted runbooks/agent-retry.md --agent test-agent', workspace);
+
+      // Fail to trigger RETRY which should continue execution with updated state
+      const result = runCli('fail --agent test-agent --json', workspace);
+
+      // The execution loop should run with updated state (retryCount incremented)
+      // Verify the retry action was emitted correctly
+      expect(result.stdout).toContain('retry');
+      expect(result.exitCode).toBe(0); // Should complete after retry succeeds
+    });
+  });
+
+  describe('JSON output', () => {
+    it('includes action field when no active runbook', () => {
+      // Run fail --json with no active runbook
+      const result = runCli('fail --json', workspace);
+
+      // Should exit with error code
+      expect(result.exitCode).toBe(0);
+
+      // Parse JSON output
+      const output = JSON.parse(result.stdout);
+
+      // The output must include 'action' field per ActionResponseSchema
+      // Currently this test FAILS because output.error() does not set action
+      expect(output).toHaveProperty('action');
+      expect(output.action).toBe('fail');
+      expect(output.result).toBe(false);
+      expect(output.code).toBe('NO_ACTIVE_RUNBOOK');
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
+    });
+  });
+
+  describe('JSON action result semantics', () => {
+    it('reports result: false for RETRY transitions', async () => {
+      // Start retry runbook in prompted mode
+      runCli('run --prompted runbooks/retry.runbook.md', workspace);
+
+      // Fail should trigger RETRY (since FAIL: RETRY 3)
+      const result = runCli('fail --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect((output!.action as string)).toMatch(/^RETRY/);
+      expect(output!.result).toBe(false);
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
+    });
+
+    it('reports result: false for STOP transitions', async () => {
+      // Start simple runbook in prompted mode (FAIL: STOP on step 1)
+      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+
+      // Fail should trigger STOP
+      const result = runCli('fail --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect(output!.action).toBe('stop'); // lowercase per CLI conventions
+      expect(output!.result).toBe(false);
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
+    });
+
+    it('reports result: false for GOTO transitions', async () => {
+      // Start fail-goto runbook in prompted mode (FAIL: GOTO 3)
+      runCli('run --prompted runbooks/fail-goto.runbook.md', workspace);
+
+      // Fail should trigger GOTO 3
+      const result = runCli('fail --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect((output!.action as string)).toMatch(/^GOTO/);
+      expect(output!.result).toBe(false);
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
     });
   });
 });

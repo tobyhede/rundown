@@ -1,14 +1,8 @@
-import * as fs from 'fs';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { Command } from 'commander';
-import { parseRunbookDocument, validateRunbook, type ValidationError, type Step } from '@rundown-org/parser';
-import { OutputManager } from '../services/output-manager.js';
-
-function formatErrors(errors: ValidationError[]): string {
-  return errors
-    .map(e => e.line ? `Line ${String(e.line)}: ${e.message}` : e.message)
-    .join('\n');
-}
+import { parseRunbookDocument, validateRunbook, type Step } from '@rundown-org/parser';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 function countSubsteps(steps: readonly Step[]): number {
   return steps.reduce((count, step) => {
@@ -25,66 +19,57 @@ export function registerCheckCommand(program: Command): void {
     .command('check <file>')
     .description('Check a runbook file for errors')
     .option('--json', 'Output as JSON')
-    .action((file: string, options: { json?: boolean }) => {
-      const output = new OutputManager({ json: options.json });
-      const writer = output.getWriter();
+    .action(async (file: string, options: { json?: boolean }) => {
+      const output = new OutputEmitter({ json: options.json });
 
       // Resolve file path
       const resolvedPath = path.resolve(file);
 
-      if (!fs.existsSync(resolvedPath)) {
-        if (output.isJson()) {
-          writer.writeJson({ valid: false, errors: [{ message: `File not found: ${file}` }] });
-        } else {
-          writer.writeError(`FAIL: File not found: ${file}`);
-        }
+      try {
+        // Check if file exists using async stat
+        await fs.access(resolvedPath);
+      } catch {
+        // File not found
+        output.detail({
+          valid: false,
+          errors: [{ message: `File not found: ${file}` }]
+        }, 'check');
+        output.flush();
         process.exit(1);
       }
 
       try {
-        const content = fs.readFileSync(resolvedPath, 'utf-8');
+        const content = await fs.readFile(resolvedPath, 'utf-8');
         const runbook = parseRunbookDocument(content, path.basename(resolvedPath), { skipValidation: true });
         const errors = validateRunbook(runbook.steps);
 
         if (errors.length > 0) {
-          if (output.isJson()) {
-            writer.writeJson({ 
-              valid: false, 
-              errors: errors.map(e => ({ line: e.line, message: e.message })) 
-            });
-          } else {
-            writer.writeError(`FAIL: ${String(errors.length)} error${errors.length > 1 ? 's' : ''}\n`);
-            writer.writeError(formatErrors(errors));
-          }
+          // Emit structured data - renderer handles formatting
+          output.detail({
+            valid: false,
+            errors: errors.map(e => ({ line: e.line, message: e.message }))
+          }, 'check');
+          output.flush();
           process.exit(1);
         }
 
         const stepCount = runbook.steps.length;
         const substepCount = countSubsteps(runbook.steps);
 
-        if (output.isJson()) {
-          writer.writeJson({
-            valid: true,
-            errors: [],
-            stats: {
-              steps: stepCount,
-              substeps: substepCount
-            }
-          });
-        } else {
-          if (substepCount > 0) {
-            writer.writeLine(`PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount > 1 ? 's' : ''}`);
-          } else {
-            writer.writeLine(`PASS: ${String(stepCount)} step${stepCount > 1 ? 's' : ''}`);
-          }
-        }
+        // Emit structured data - renderer handles formatting
+        output.detail({
+          valid: true,
+          errors: [],
+          stats: { steps: stepCount, substeps: substepCount }
+        }, 'check');
+        output.flush();
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        if (output.isJson()) {
-          writer.writeJson({ valid: false, errors: [{ message }] });
-        } else {
-          writer.writeError(`FAIL: ${message}`);
-        }
+        output.detail({
+          valid: false,
+          errors: [{ message }]
+        }, 'check');
+        output.flush();
         process.exit(1);
       }
     });

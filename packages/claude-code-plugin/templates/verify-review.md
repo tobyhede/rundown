@@ -36,4 +36,4 @@ Issues that should be considered but don't block.
 **BLOCKING count:** X
 **SUGGESTION count:** X
 
-**Conclusion:** [PASS | FAIL | NEEDS_WORK]
+STATUS: [PASS | FAIL]

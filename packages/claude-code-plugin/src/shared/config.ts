@@ -10,6 +10,7 @@ const KNOWN_HOOK_EVENTS = [
   'PostToolUse',
   'SubagentStart',
   'SubagentStop',
+  'SubagentEnd',
   'UserPromptSubmit',
   'SlashCommandStart',
   'SlashCommandEnd',
@@ -150,9 +151,14 @@ export function resolvePluginPath(pluginName: string): string {
     throw new Error('Cannot resolve plugin path: CLAUDE_PLUGIN_ROOT not set');
   }
 
+  // Security: Reject empty plugin names
+  if (!pluginName) {
+    throw new Error(`Invalid plugin name: '${pluginName}' (must be non-empty)`);
+  }
+
   // Security: Reject plugin names with path separators or parent references
-  // Prevents path traversal attacks like "../../../etc" or "foo/bar"
-  if (pluginName.includes('/') || pluginName.includes('\\') || pluginName.includes('..')) {
+  // Prevents path traversal attacks like "../../../etc", "foo/bar", ".", or ".."
+  if (pluginName.includes('/') || pluginName.includes('\\') || pluginName === '.' || pluginName === '..' || pluginName.includes('..')) {
     throw new Error(`Invalid plugin name: '${pluginName}' (must not contain path separators)`);
   }
 

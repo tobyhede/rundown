@@ -7,8 +7,10 @@ import {
   getActiveState,
   readSession,
   getAllStates,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { ActionResponseSchema } from '../helpers/schema-validator.js';
 
 describe('pass command', () => {
   let workspace: TestWorkspace;
@@ -81,6 +83,73 @@ describe('pass command', () => {
 
       const state = await getActiveState(workspace);
       expect(state?.stepName).toContain('Jump target');
+    });
+  });
+
+  describe('PASS: RETRY N', () => {
+    beforeEach(async () => {
+      runCli('run --prompted runbooks/pass-retry.runbook.md', workspace);
+    });
+
+    it('increments retryCount if under max', async () => {
+      runCli('pass', workspace);
+
+      const state = await getActiveState(workspace);
+      expect(state?.retryCount).toBe(1);
+      expect(state?.step).toBe('1'); // Same step
+    });
+
+    it('outputs retry info', async () => {
+      const result = runCli('pass', workspace);
+
+      expect(result.stdout).toContain('Retry');
+    });
+
+    it('advances after max retries', async () => {
+      runCli('pass', workspace); // Retry 1 (count 0→1)
+      runCli('pass', workspace); // Retry 2 (count 1→2)
+      runCli('pass', workspace); // Retry 3 (count 2→3)
+      runCli('pass', workspace); // Count 3 >= 3, CONTINUE to step 2
+
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('2'); // Advanced to step 2
+    });
+  });
+
+  describe('PASS: STOP', () => {
+    beforeEach(async () => {
+      // stop-on-pass.md created inline in the lastResult test
+      const stopOnPassRunbook = `## 1. Stop on pass
+- PASS: STOP
+- FAIL: CONTINUE
+
+This step stops on pass.
+`;
+      return mkdir(join(workspace.cwd, 'runbooks'), { recursive: true }).then(() =>
+        writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass.md'), stopOnPassRunbook)
+      ).then(() =>
+        runCli('run --prompted runbooks/stop-on-pass.md', workspace)
+      );
+    });
+
+    it('blocks runbook', async () => {
+      const result = runCli('pass', workspace);
+
+      expect(result.exitCode).toBe(1);
+    });
+
+    it('outputs stop message', async () => {
+      const result = runCli('pass', workspace);
+
+      expect(result.stdout).toContain('STOP');
+    });
+
+    it('should set variables.stopped=true when STOP action triggered', async () => {
+      runCli('pass', workspace);
+
+      const states = await getAllStates(workspace);
+      const state = states.find(s => s.runbook === 'runbooks/stop-on-pass.md');
+      expect(state?.variables.stopped).toBe(true);
     });
   });
 
@@ -200,6 +269,164 @@ Do work.
       // Agent stack should be empty
       const result = runCli('status --agent agent-001', workspace);
       expect(result.stdout).toContain('No active runbook');
+    });
+  });
+
+  describe('lastResult semantics', () => {
+    it('sets lastResult to pass even when STOP is triggered', async () => {
+      // Create a runbook where PASS triggers STOP (edge case)
+      const stopOnPassRunbook = `## 1. Stop on pass
+- PASS: STOP
+- FAIL: CONTINUE
+
+This step stops on pass.
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass.md'), stopOnPassRunbook);
+
+      runCli('run --prompted runbooks/stop-on-pass.md', workspace);
+      runCli('pass', workspace);
+
+      const states = await getAllStates(workspace);
+      const state = states.find(s => s.runbook === 'runbooks/stop-on-pass.md');
+
+      // lastResult should reflect user's choice (pass), not transition outcome
+      expect(state?.lastResult).toBe('pass');
+    });
+  });
+
+  describe('JSON action result semantics', () => {
+    it('reports result: true for CONTINUE transitions', async () => {
+      // Start runbook in prompted mode
+      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+
+      // Pass should trigger CONTINUE to next step
+      const result = runCli('pass --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect(output!.action).toBe('CONTINUE');
+      expect(output!.result).toBe(true);
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
+    });
+
+    it('reports result: false for RETRY transitions', async () => {
+      // Create retry runbook where pass triggers retry (via command failure)
+      const retryRunbook = `## 1. Retry on pass fail
+
+- PASS: CONTINUE
+- FAIL: RETRY 3
+
+This step has FAIL: RETRY.
+
+\`\`\`bash
+rd echo --result fail
+\`\`\`
+
+## 2. Done
+
+- PASS: COMPLETE
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'retry-test.md'), retryRunbook);
+
+      // Start runbook (not prompted - will execute command which fails, triggering RETRY)
+      const result = runCli('run runbooks/retry-test.md --json', workspace);
+      const lines = result.stdout.trim().split('\n');
+
+      // Find the action output line (may be multiple JSON outputs)
+      let foundRetry = false;
+      for (const line of lines) {
+        if (line.trim().startsWith('{')) {
+          try {
+            const output = JSON.parse(line) as Record<string, unknown>;
+            const action = output.action as string | undefined;
+            if (action?.startsWith('RETRY')) {
+              expect(output.result).toBe(false);
+              foundRetry = true;
+              break;
+            }
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+      expect(foundRetry).toBe(true);
+    });
+
+    it('reports result: true for COMPLETE transitions', async () => {
+      // Start runbook in prompted mode
+      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+      runCli('pass', workspace); // Advance to step 2
+
+      // Pass on step 2 should trigger COMPLETE
+      // The action is 'complete' (lowercase) for completion events
+      const result = runCli('pass --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect(output!.action).toBe('complete');
+      expect(output!.result).toBe(true);
+    });
+
+    it('reports result: true for GOTO transitions', async () => {
+      // Start goto runbook in prompted mode
+      runCli('run --prompted runbooks/goto.runbook.md', workspace);
+
+      // Pass should trigger GOTO 3
+      const result = runCli('pass --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect((output!.action as string)).toMatch(/^GOTO/);
+      expect(output!.result).toBe(true);
+    });
+
+    it('reports result: false for RETRY transitions', async () => {
+      // Start pass-retry runbook in prompted mode
+      runCli('run --prompted runbooks/pass-retry.runbook.md', workspace);
+
+      // Pass should trigger RETRY (since PASS: RETRY 3)
+      const result = runCli('pass --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect((output!.action as string)).toMatch(/^RETRY/);
+      expect(output!.result).toBe(false);
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
+    });
+
+    it('reports result: false for STOP transitions', async () => {
+      // Create stop-on-pass runbook
+      const stopOnPassRunbook = `## 1. Stop on pass
+- PASS: STOP
+- FAIL: CONTINUE
+
+This step stops on pass.
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass-json.md'), stopOnPassRunbook);
+
+      // Start runbook in prompted mode
+      runCli('run --prompted runbooks/stop-on-pass-json.md', workspace);
+
+      // Pass should trigger STOP
+      const result = runCli('pass --json', workspace);
+      const output = findActionOutput(result.stdout);
+
+      expect(output).not.toBeNull();
+      expect(output!.action).toBe('stop'); // lowercase per CLI conventions
+      expect(output!.result).toBe(false);
+
+      // Validate against schema
+      const parseResult = ActionResponseSchema.safeParse(output);
+      expect(parseResult.success).toBe(true);
     });
   });
 });

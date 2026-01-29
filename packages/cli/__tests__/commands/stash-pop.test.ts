@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { writeFile } from 'fs/promises';
+import { join } from 'path';
 import {
   createTestWorkspace,
   runCli,
   readSession,
   getActiveState,
+  writeSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -124,5 +127,36 @@ describe('pop command', () => {
     const result = runCli('pop', workspace);
 
     expect(result.stdout).toContain('Second step');
+  });
+
+  it('outputs error when step not found in runbook', async () => {
+    // Create a state file with a step that doesn't exist in the runbook
+    const runbookId = 'wf-2025-01-28-test01';
+    const stateFile = join(workspace.statePath(), `${runbookId}.json`);
+    const state = {
+      id: runbookId,
+      runbook: 'runbooks/simple.runbook.md',
+      runbookPath: join(workspace.cwd, 'runbooks', 'simple.runbook.md'),
+      title: 'Test Runbook',
+      step: 'NonExistentStep', // Step that doesn't exist
+      stepName: 'A step that does not exist',
+      retryCount: 0,
+      variables: {},
+      steps: [],
+      pendingSteps: [],
+      agentBindings: {},
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await writeFile(stateFile, JSON.stringify(state, null, 2));
+
+    // Set up session to have this runbook stashed (with empty defaultStack)
+    await writeSession(workspace, { stashed: runbookId, defaultStack: [] });
+
+    const result = runCli('pop', workspace);
+
+    // Text mode should NOT be silent - should show error message
+    expect(result.stdout.trim()).not.toBe('');
+    expect(result.stdout).toContain('not found');
   });
 });

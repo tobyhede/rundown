@@ -6,14 +6,8 @@ import {
   RunbookStateManager,
   parseRunbook,
   stepIdToString,
-  printMetadata,
-  printActionBlock,
-  printStepBlock,
-  printRunbookStashed,
-  printNoActiveRunbook,
   countNumberedSteps,
   type ActionBlockData,
-  type RunbookMetadata,
 } from '@rundown-org/core';
 import { getCwd, getStepTotal, findRunbookFile } from '../helpers/context.js';
 import {
@@ -21,22 +15,46 @@ import {
   buildMetadata,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
-interface StatusOutput {
+/**
+ * Internal data structure for status command output.
+ *
+ * Uses flat structure per CLI-OUTPUT-SPEC:
+ * - `file`/`state`/`prompted` at top level (not nested in `runbook`)
+ * - `position` for step position (current/total/substep)
+ * - `step` for step details (name/description)
+ *
+ * Both text and JSON modes use this same structure - the renderer
+ * decides how to format it.
+ *
+ * @see StatusResponse in @rundown-org/core for the public API contract
+ */
+interface StatusOutputData {
   active: boolean;
   stashed: boolean;
-  runbook?: RunbookMetadata;
-  step?: {
+  /** Runbook file path (flat, not nested) */
+  file?: string;
+  /** State file path */
+  state?: string;
+  /** Whether runbook is in prompted mode */
+  prompted?: boolean;
+  /** Current position in runbook */
+  position?: {
     current: string;
     total: string | number;
     substep?: string;
+  };
+  /** Current step details */
+  step?: {
+    name: string;
     description?: string;
-    command?: string;
   };
   lastAction?: ActionBlockData;
   pending?: string[];
   agents?: Record<string, { step: string; status: string; result?: string }>;
+  // Index signature for Record<string, unknown> compatibility
+  [key: string]: unknown;
 }
 
 /**
@@ -52,50 +70,52 @@ export function registerStatusCommand(program: Command): void {
     .action(async (options: { agent?: string; json?: boolean }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const output = new OutputManager({ json: options.json });
-        const writer = output.getWriter();
+        const output = new OutputEmitter({ json: options.json });
 
         const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive(options.agent);
         const stashedId = await manager.getStashedRunbookId();
 
+        // Case 1: No active runbook and nothing stashed
         if (!state && !stashedId) {
-          if (output.isJson()) {
-            writer.writeJson({ active: false, stashed: false });
-          } else {
-            printNoActiveRunbook(writer);
-          }
+          const statusData: StatusOutputData = { active: false, stashed: false };
+          output.detail(statusData, 'status');
+          output.flush();
           return;
         }
 
+        // Case 2: Something stashed but nothing active
         if (stashedId && !state) {
           const stashed = await manager.load(stashedId);
           if (stashed) {
             const totalSteps = await getStepTotal(cwd, stashed.runbook);
             const metadata = buildMetadata(stashed);
-            
-            if (output.isJson()) {
-              const statusData: StatusOutput = {
-                active: false,
-                stashed: true,
-                runbook: metadata,
-                step: {
-                  current: stashed.step,
-                  total: totalSteps,
-                  substep: stashed.substep,
-                },
-              };
-              writer.writeJson(statusData);
-            } else {
-              printMetadata(metadata, writer);
-              printRunbookStashed({ current: stashed.step, total: totalSteps, substep: stashed.substep }, writer);
-            }
+
+            const statusData: StatusOutputData = {
+              active: false,
+              stashed: true,
+              file: metadata.file,
+              state: metadata.state,
+              ...(metadata.prompted && { prompted: metadata.prompted }),
+              position: {
+                current: stashed.step,
+                total: totalSteps,
+                ...(stashed.substep && { substep: stashed.substep }),
+              },
+            };
+            output.detail(statusData, 'status');
+            output.flush();
           }
           return;
         }
 
-        if (!state) return;
+        // Early exit if no state (shouldn't happen, but defensive)
+        if (!state) {
+          output.flush();
+          return;
+        }
 
+        // Case 3: Active runbook
         const runbookPath = await findRunbookFile(cwd, state.runbook);
         if (!runbookPath) {
           throw new Error(`Runbook file ${state.runbook} not found`);
@@ -115,6 +135,7 @@ export function registerStatusCommand(program: Command): void {
 
         const metadata = buildMetadata(state);
 
+        // Build action block data if lastAction exists
         let actionBlockData: ActionBlockData | undefined;
         if (state.lastAction) {
           const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
@@ -124,69 +145,46 @@ export function registerStatusCommand(program: Command): void {
                     state.lastAction,
           };
           if (state.lastResult) {
-            actionBlockData.result = state.lastResult === 'pass' ? 'PASS' : 'FAIL';
+            actionBlockData.result = state.lastResult === 'pass';
           }
         }
 
-        if (output.isJson()) {
-           const statusData: StatusOutput = {
-            active: true,
-            stashed: !!stashedId, // Could be stashed AND active (impossible usually but technically types allow)
-            runbook: metadata,
+        // Build unified status data - same structure for both text and JSON
+        const statusData: StatusOutputData = {
+          active: true,
+          stashed: !!stashedId,
+          file: metadata.file,
+          state: metadata.state,
+          ...(metadata.prompted && { prompted: metadata.prompted }),
+          position: {
+            current: displayStep,
+            total: totalSteps,
+            ...(state.substep && { substep: state.substep }),
+          },
+          ...(currentStep && {
             step: {
-              current: displayStep,
-              total: totalSteps,
-              substep: state.substep,
-              description: currentStep?.description,
-              command: currentStep?.command?.code
+              name: currentStep.name,
+              description: currentStep.description,
             },
-            lastAction: actionBlockData,
-            pending: state.pendingSteps.length > 0 
-              ? state.pendingSteps.map((p) => stepIdToString(p.stepId)) 
-              : undefined,
-            agents: Object.keys(state.agentBindings).length > 0
-              ? Object.entries(state.agentBindings).reduce<Record<string, { step: string; status: string; result?: string }>>((acc, [agentId, binding]) => {
-                acc[agentId] = {
-                  step: stepIdToString(binding.stepId),
-                  status: binding.status,
-                  result: binding.result
-                };
-                return acc;
-              }, {})
-              : undefined
-           };
-           writer.writeJson(statusData);
-           return;
-        }
+          }),
+          lastAction: actionBlockData,
+          pending: state.pendingSteps.length > 0
+            ? state.pendingSteps.map((p) => stepIdToString(p.stepId))
+            : undefined,
+          agents: Object.keys(state.agentBindings).length > 0
+            ? Object.entries(state.agentBindings).reduce<Record<string, { step: string; status: string; result?: string }>>((acc, [agentId, binding]) => {
+              acc[agentId] = {
+                step: stepIdToString(binding.stepId),
+                status: binding.status,
+                result: binding.result
+              };
+              return acc;
+            }, {})
+            : undefined
+        };
 
-        // Print metadata
-        printMetadata(metadata, writer);
-
-        // Print action block if lastAction exists
-        if (actionBlockData) {
-          // For status, from would be the step before current... but we don't track that
-          // Just show action without from for now
-          printActionBlock(actionBlockData, writer);
-        }
-
-        // Print step block
-        if (currentStep) {
-          printStepBlock({ current: displayStep, total: totalSteps, substep: state.substep }, currentStep, !!state.prompted, writer);
-        }
-
-        // Show pending steps and agent bindings
-        if (state.pendingSteps.length > 0) {
-          writer.writeLine(`\nPending: ${state.pendingSteps.map((p) => stepIdToString(p.stepId)).join(', ')}`);
-        }
-
-        if (Object.keys(state.agentBindings).length > 0) {
-          writer.writeLine('\nAgents:');
-          for (const [agentId, binding] of Object.entries(state.agentBindings)) {
-            const stepStr = stepIdToString(binding.stepId);
-            const resultStr = binding.result ? ` (${binding.result})` : '';
-            writer.writeLine(`  ${agentId}: ${stepStr} [${binding.status}]${resultStr}`);
-          }
-        }
+        output.detail(statusData, 'status');
+        output.flush();
       });
     });
 }

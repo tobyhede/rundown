@@ -83,6 +83,66 @@ describe('status command', () => {
   });
 });
 
+describe('JSON lastAction.result semantics', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('reports lastAction.result: true after successful pass', async () => {
+    runCli('run --prompted runbooks/simple.runbook.md', workspace);
+    runCli('pass', workspace); // Triggers CONTINUE (success)
+
+    const result = runCli('status --json', workspace);
+    const output = JSON.parse(result.stdout);
+
+    expect(output.lastAction).toBeDefined();
+    expect(output.lastAction.result).toBe(true);
+    expect(output.lastAction.action).toBe('CONTINUE');
+  });
+
+  it('reports lastAction.result: false after fail triggers RETRY', async () => {
+    runCli('run --prompted runbooks/retry.runbook.md', workspace);
+    runCli('fail', workspace); // Triggers RETRY (failure)
+
+    const result = runCli('status --json', workspace);
+    const output = JSON.parse(result.stdout);
+
+    expect(output.lastAction).toBeDefined();
+    expect(output.lastAction.result).toBe(false);
+    expect(output.lastAction.action).toMatch(/^RETRY/);
+  });
+
+  it('reports lastAction.result: true after pass triggers GOTO', async () => {
+    runCli('run --prompted runbooks/goto.runbook.md', workspace);
+    runCli('pass', workspace); // Triggers GOTO 3 (success)
+
+    const result = runCli('status --json', workspace);
+    const output = JSON.parse(result.stdout);
+
+    expect(output.lastAction).toBeDefined();
+    expect(output.lastAction.result).toBe(true);
+    expect(output.lastAction.action).toMatch(/^GOTO/);
+  });
+
+  it('reports lastAction.result: false after fail triggers GOTO', async () => {
+    runCli('run --prompted runbooks/fail-goto.runbook.md', workspace);
+    runCli('fail', workspace); // Triggers GOTO 3 (failure)
+
+    const result = runCli('status --json', workspace);
+    const output = JSON.parse(result.stdout);
+
+    expect(output.lastAction).toBeDefined();
+    expect(output.lastAction.result).toBe(false);
+    expect(output.lastAction.action).toMatch(/^GOTO/);
+  });
+});
+
 describe('agent-scoped status', () => {
   let workspace: TestWorkspace;
 

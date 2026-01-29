@@ -1,15 +1,11 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import {
-  RunbookStateManager,
-  printMetadata,
-  printRunbookStopped,
-  printNoActiveRunbook,
-} from '@rundown-org/core';
+import { RunbookStateManager } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -21,25 +17,31 @@ export function registerStopCommand(program: Command): void {
     .description('Abort current runbook')
     .argument('[message]', 'Stop message')
     .option('--agent <agentId>', 'Stop runbook in agent-specific stack')
-    .action(async (message: string | undefined, options: { agent?: string }) => {
-      await withErrorHandling(async () => {
-        const cwd = getCwd();
-        const manager = new RunbookStateManager(cwd);
-        const state = await manager.getActive(options.agent);
-        if (!state) {
-          printNoActiveRunbook();
-          return;
-        }
+    .option('--json', 'Output as JSON for programmatic use')
+    .action(async (message: string | undefined, options: { agent?: string; json?: boolean }) => {
+      await withErrorHandling(
+        async () => {
+          const cwd = getCwd();
+          const output = new OutputEmitter({ json: options.json });
+          const manager = new RunbookStateManager(cwd);
+          const state = await manager.getActive(options.agent);
 
-        // Print metadata
-        printMetadata(buildMetadata(state));
+          if (!state) {
+            output.noActiveRunbook('stop');
+            output.flush();
+            return;
+          }
 
-        // Delete and clear
-        await manager.delete(state.id);
-        await manager.popRunbook(options.agent);
+          // Delete and clear
+          await manager.delete(state.id);
+          await manager.popRunbook(options.agent);
 
-        // Print terminal message
-        printRunbookStopped(message ?? 'Runbook stopped');
-      });
+          // Emit structured output - renderer decides format
+          output.metadata(buildMetadata(state));
+          output.stopped(message ?? 'Runbook stopped');
+          output.flush();
+        },
+        { json: options.json }
+      );
     });
 }

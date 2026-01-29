@@ -13,70 +13,13 @@ import {
   getErrorMessage,
   type PendingStep,
   type RunbookState,
-  // Event system imports
-  ExecutionEventEmitter,
-  CLISubscriber,
-  JSONSubscriber,
-  getWriter,
+  type ExecutionEventEmitter,
 } from '@rundown-org/core';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
-
-/**
- * Create an event emitter for a runbook execution.
- * OUTPUT PARITY: Uses runbookState.runbook for "File:" line (matches buildMetadata).
- */
-function createEmitter(runbookState: RunbookState): ExecutionEventEmitter {
-  return new ExecutionEventEmitter(
-    runbookState.id,
-    { name: runbookState.runbook, path: runbookState.runbookPath }
-  );
-}
-
-/**
- * Result of setting up an emitter with subscriber for runbook execution.
- */
-interface EmitterSetupResult {
-  emitter: ExecutionEventEmitter;
-  jsonSubscriber: JSONSubscriber | undefined;
-}
-
-/**
- * Set up an emitter with the appropriate subscriber based on output mode.
- *
- * @param runbookState - The runbook state to create the emitter for
- * @param jsonMode - Whether to use JSON output mode
- * @returns The emitter and optional JSON subscriber
- */
-function setupEmitterWithSubscriber(
-  runbookState: RunbookState,
-  jsonMode: boolean
-): EmitterSetupResult {
-  const emitter = createEmitter(runbookState);
-  const jsonSubscriber = jsonMode ? new JSONSubscriber() : undefined;
-
-  if (jsonSubscriber) {
-    emitter.subscribe(jsonSubscriber.handle);
-  } else {
-    const cliSubscriber = new CLISubscriber(getWriter());
-    emitter.subscribe(cliSubscriber.handle);
-  }
-
-  return { emitter, jsonSubscriber };
-}
-
-/**
- * Output JSON summary from a JSON subscriber if present.
- *
- * @param jsonSubscriber - The JSON subscriber to get summary from, or undefined
- */
-function outputJsonSummary(jsonSubscriber: JSONSubscriber | undefined): void {
-  if (jsonSubscriber) {
-    const writer = getWriter();
-    writer.writeJson(jsonSubscriber.getSummary());
-  }
-}
+import { OutputEmitter } from '../services/output-emitter.js';
+import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 
 /**
  * Emit RUNBOOK_STARTED event with metadata.
@@ -107,6 +50,9 @@ export function registerRunCommand(program: Command): void {
     .option('--prompted', 'Prompted mode: show commands without auto-executing')
     .option('--json', 'Output execution events as JSON')
     .action(async (file: string | undefined, options: { step?: string; agent?: string; prompted?: boolean; json?: boolean }) => {
+      // OutputEmitter for non-loop output (step_queued, agent_bound)
+      const output = new OutputEmitter({ json: options.json });
+
       try {
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
@@ -115,14 +61,17 @@ export function registerRunCommand(program: Command): void {
         if (options.step && !options.agent) {
           const state = await manager.getActive();
           if (!state) {
-            console.error('Error: No active runbook');
+            output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
+            output.flush();
             process.exit(1);
           }
 
           const stepId = parseStepIdFromString(options.step);
           if (!stepId) {
-            console.error(`Error: Invalid step ID format: ${options.step}`);
-            console.error('Expected format: "3" or "3.1"');
+            output.error(`Invalid step ID format: ${options.step}. Expected format: "3" or "3.1"`, 'INVALID_SYNTAX', {
+              provided: options.step
+            });
+            output.flush();
             process.exit(1);
           }
 
@@ -134,7 +83,11 @@ export function registerRunCommand(program: Command): void {
           await manager.pushPendingStep(state.id, pendingStep);
 
           const runbookInfo = file ? ` with runbook ${file}` : '';
-          console.log(`Step ${stepIdToString(stepId)} queued for agent binding${runbookInfo}`);
+          output.status(true, 'step_queued', `Step ${stepIdToString(stepId)} queued for agent binding${runbookInfo}`, {
+            stepId: stepIdToString(stepId),
+            runbook: file
+          });
+          output.flush();
           return;
         }
 
@@ -143,8 +96,10 @@ export function registerRunCommand(program: Command): void {
           const filePath = await resolveRunbookFile(cwd, file);
 
           if (!filePath) {
-            console.error(`Error: Runbook not found: ${file}`);
-            console.error(`Try 'rd ls --all' to list available runbooks.`);
+            output.error(`Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`, 'RUNBOOK_NOT_FOUND', {
+              runbook: file
+            });
+            output.flush();
             process.exit(1);
           }
 
@@ -152,7 +107,10 @@ export function registerRunCommand(program: Command): void {
           const runbook = parseRunbookDocument(content, path.basename(filePath));
 
           if (runbook.steps.length === 0) {
-            console.error('Error: Runbook has no steps');
+            output.error('Runbook has no steps', 'VALIDATION_ERROR', {
+              runbook: file
+            });
+            output.flush();
             process.exit(1);
           }
 
@@ -174,8 +132,8 @@ export function registerRunCommand(program: Command): void {
           // Update lastAction
           await manager.update(state.id, { lastAction: 'START' });
 
-          // Create emitter and attach subscriber based on --json flag
-          const { emitter, jsonSubscriber } = setupEmitterWithSubscriber(state, !!options.json);
+          // Create emitter bridged to unified output
+          const emitter = createBridgedEmitter(state, output);
 
           // Emit RUNBOOK_STARTED (replaces printMetadata + printActionBlock)
           emitRunbookStarted(emitter, state, !!options.prompted);
@@ -183,8 +141,8 @@ export function registerRunCommand(program: Command): void {
           // Run execution loop with emitter
           const result = await runExecutionLoop(manager, state.id, [...runbook.steps], cwd, !!options.prompted, undefined, emitter);
 
-          // Output JSON summary if --json flag was used
-          outputJsonSummary(jsonSubscriber);
+          // Flush any remaining output
+          output.flush();
 
           if (result === 'stopped') {
             process.exit(1);
@@ -196,23 +154,35 @@ export function registerRunCommand(program: Command): void {
         if (options.agent) {
           const state = await manager.getActive();
           if (!state) {
-            console.error('Error: No active runbook');
+            output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
+            output.flush();
             process.exit(1);
           }
 
           const pending = await manager.popPendingStep(state.id);
           if (!pending) {
-            console.error('Error: No pending step to bind');
+            output.error('No pending step to bind', 'AGENT_BINDING_ERROR', {
+              agent: options.agent
+            });
+            output.flush();
             process.exit(1);
           }
 
           await manager.bindAgent(state.id, options.agent, pending.stepId);
-          console.log(`Agent ${options.agent} bound to step ${stepIdToString(pending.stepId)}`);
+
+          output.status(true, 'agent_bound', `Agent ${options.agent} bound to step ${stepIdToString(pending.stepId)}`, {
+            agent: options.agent,
+            stepId: stepIdToString(pending.stepId)
+          });
+          output.flush();
 
           if (pending.runbook) {
             const runbookPath = await resolveRunbookFile(cwd, pending.runbook);
             if (!runbookPath) {
-              console.error(`Error: Runbook file not found: ${pending.runbook}`);
+              output.error(`Runbook file not found: ${pending.runbook}`, 'RUNBOOK_NOT_FOUND', {
+                runbook: pending.runbook
+              });
+              output.flush();
               process.exit(1);
             }
 
@@ -220,7 +190,10 @@ export function registerRunCommand(program: Command): void {
             const runbook = parseRunbookDocument(content, path.basename(runbookPath));
 
             if (runbook.steps.length === 0) {
-              console.error('Error: Child runbook has no steps');
+              output.error('Child runbook has no steps', 'VALIDATION_ERROR', {
+                runbook: pending.runbook
+              });
+              output.flush();
               process.exit(1);
             }
 
@@ -247,7 +220,7 @@ export function registerRunCommand(program: Command): void {
             await manager.update(childState.id, { lastAction: 'START' });
 
             // Create emitter for CHILD runbook (uses childState, NOT state!)
-            const { emitter, jsonSubscriber } = setupEmitterWithSubscriber(childState, !!options.json);
+            const emitter = createBridgedEmitter(childState, output);
 
             // Emit RUNBOOK_STARTED for child (replaces printMetadata + printActionBlock)
             emitRunbookStarted(emitter, childState, parentPrompted);
@@ -255,8 +228,8 @@ export function registerRunCommand(program: Command): void {
             // Run execution loop with emitter
             const result = await runExecutionLoop(manager, childState.id, [...runbook.steps], cwd, parentPrompted, options.agent, emitter);
 
-            // Output JSON summary if --json flag was used
-            outputJsonSummary(jsonSubscriber);
+            // Flush any remaining output
+            output.flush();
 
             if (result === 'stopped') {
               process.exit(1);
@@ -266,18 +239,22 @@ export function registerRunCommand(program: Command): void {
         }
 
         if (!file && !options.step && !options.agent) {
-          console.error('Error: Runbook file, --step, or --agent option required');
+          output.error('Runbook file, --step, or --agent option required', 'INVALID_SYNTAX');
+          output.flush();
           process.exit(1);
         }
       } catch (error) {
         if (isNodeError(error) && error.code === 'ENOENT') {
-          console.error(`Error: Runbook not found: ${file ?? 'unknown'}`);
-          console.error(`Try 'rd ls --all' to list available runbooks.`);
+          output.error(`Runbook not found: ${file ?? 'unknown'}`, 'RUNBOOK_NOT_FOUND', {
+            runbook: file ?? 'unknown'
+          });
+          output.message("Try 'rd ls --all' to list available runbooks.", 'dim');
         } else if (error instanceof RunbookSyntaxError) {
-          console.error(`Syntax error: ${error.message}`);
+          output.error(`Syntax error: ${error.message}`, 'INVALID_SYNTAX');
         } else {
-          console.error(`Error: ${getErrorMessage(error)}`);
+          output.error(getErrorMessage(error), 'UNKNOWN_ERROR');
         }
+        output.flush();
         process.exit(1);
       }
     });

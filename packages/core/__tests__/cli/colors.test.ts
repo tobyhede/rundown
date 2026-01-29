@@ -160,21 +160,14 @@ describe('colors', () => {
       setColorEnabled(true);
     });
 
-    it('colors PASS green', () => {
-      expect(colorizeResult('PASS')).toContain('\x1b[32m');
+    it('colors true (PASS) green', () => {
+      expect(colorizeResult(true)).toContain('\x1b[32m');
+      expect(colorizeResult(true)).toContain('PASS');
     });
 
-    it('colors FAIL red', () => {
-      expect(colorizeResult('FAIL')).toContain('\x1b[31m');
-    });
-
-    it('is case insensitive for matching', () => {
-      expect(colorizeResult('pass')).toContain('\x1b[32m');
-      expect(colorizeResult('fail')).toContain('\x1b[31m');
-    });
-
-    it('returns unknown results unchanged', () => {
-      expect(colorizeResult('SKIP')).toBe('SKIP');
+    it('colors false (FAIL) red', () => {
+      expect(colorizeResult(false)).toContain('\x1b[31m');
+      expect(colorizeResult(false)).toContain('FAIL');
     });
   });
 });

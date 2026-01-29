@@ -4,7 +4,7 @@ import type { Command } from 'commander';
 import { RunbookStateManager } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 import { getStatus } from '../helpers/status.js';
 
 interface PruneOptions {
@@ -33,8 +33,7 @@ export function registerPruneCommand(program: Command): void {
     .action(async (options: PruneOptions) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const output = new OutputManager({ json: options.json });
-        const writer = output.getWriter();
+        const output = new OutputEmitter({ json: options.json });
 
         const manager = new RunbookStateManager(cwd);
         const states = await manager.list();
@@ -65,37 +64,34 @@ export function registerPruneCommand(program: Command): void {
           _status: getStatus(state, activeState, stashedId)
         }));
 
+        // Define columns once for reuse
+        const columns = [
+          { header: 'ID', key: 'id' as const },
+          { header: 'STATUS', key: (item: typeof enrichedItems[0]) => item._status },
+          { header: 'RUNBOOK', key: 'runbook' as const },
+          { header: 'TITLE', key: (item: typeof enrichedItems[0]) => item.title ? `[${item.title}]` : '' }
+        ];
+
+        // JSON mapper to clean internal fields
+        const jsonMapper = (item: typeof enrichedItems[0]): Record<string, unknown> => {
+          const { _status: _, ...rest } = item;
+          return { ...rest, status: item._status };
+        };
+
         if (toDelete.length === 0) {
-          if (output.isJson()) {
-            writer.writeJson([]);
-          } else {
-            writer.writeLine('No runbook state to prune.');
-          }
+          // Use output.list() for consistency - outputs raw array in JSON mode
+          output.list([], columns as Parameters<typeof output.list>[1], {
+            emptyMessage: 'No runbook state to prune.',
+            jsonMapper
+          });
+          output.flush();
           return;
         }
 
         if (options.dryRun) {
-          if (!output.isJson()) {
-            writer.writeLine('Would remove state for:');
-          }
-          
-          output.list(enrichedItems, [
-            { header: 'ID', key: 'id' },
-            { header: 'STATUS', get: (item) => item._status },
-            { header: 'RUNBOOK', key: 'runbook' },
-            { header: 'TITLE', get: (item) => item.title ? `[${item.title}]` : '' }
-          ], {
-            // For JSON, clean up internal fields
-            jsonMapper: (item) => {
-              const { _status: _, ...rest } = item;
-              return { ...rest, status: item._status };
-            }
-          });
+          output.list(enrichedItems, columns as Parameters<typeof output.list>[1], { jsonMapper });
+          output.flush();
           return;
-        }
-
-        if (!output.isJson()) {
-          writer.writeLine('Pruned state for:');
         }
 
         // Perform deletion
@@ -103,21 +99,8 @@ export function registerPruneCommand(program: Command): void {
            await manager.delete(state.id);
         }
 
-        output.list(enrichedItems, [
-            { header: 'ID', key: 'id' },
-            { header: 'STATUS', get: (item) => item._status },
-            { header: 'RUNBOOK', key: 'runbook' },
-            { header: 'TITLE', get: (item) => item.title ? `[${item.title}]` : '' }
-          ], {
-            jsonMapper: (item) => {
-              const { _status: _, ...rest } = item;
-              return { ...rest, status: item._status };
-            }
-        });
-
-        if (!output.isJson()) {
-          writer.writeLine(`\nTotal: ${String(toDelete.length)} runbook(s).`);
-        }
+        output.list(enrichedItems, columns as Parameters<typeof output.list>[1], { jsonMapper });
+        output.flush();
       });
     });
 }

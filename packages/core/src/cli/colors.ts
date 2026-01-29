@@ -157,12 +157,9 @@ export function colorizeStatus(status: string): string {
 /**
  * Apply result-appropriate coloring (PASS/FAIL).
  *
- * @param result - The result string to colorize
+ * @param result - Whether the result passed (true = PASS, false = FAIL)
  * @returns Colorized result string
  */
-export function colorizeResult(result: string): string {
-  const upper = result.toUpperCase();
-  if (upper === 'PASS') return success(result);
-  if (upper === 'FAIL') return failure(result);
-  return result;
+export function colorizeResult(result: boolean): string {
+  return result ? success('PASS') : failure('FAIL');
 }

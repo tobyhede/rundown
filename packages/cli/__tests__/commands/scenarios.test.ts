@@ -102,7 +102,7 @@ name: no-scenarios
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('not found');
-      expect(result.stderr).toContain('Available:');
+      expect(result.stderr).toContain('SCENARIO_NOT_FOUND');
     });
   });
 });

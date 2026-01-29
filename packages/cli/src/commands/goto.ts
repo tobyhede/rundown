@@ -12,8 +12,9 @@ import {
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
-import { printStepSeparator, printActionBlock } from '@rundown-org/core';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { OutputEmitter } from '../services/output-emitter.js';
+import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 
 /**
  * Registers the 'goto' command for jumping to specific steps.
@@ -23,33 +24,42 @@ export function registerGotoCommand(program: Command): void {
   program
     .command('goto <step>')
     .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
-    .action(async (stepArg: string) => {
+    .option('--json', 'Output as JSON for programmatic use')
+    .action(async (stepArg: string, options: { json?: boolean }) => {
       await withErrorHandling(async () => {
+        const output = new OutputEmitter({ json: options.json });
         const cwd = getCwd();
         const manager = new RunbookStateManager(cwd);
         const state = await manager.getActive();
 
         if (!state) {
-          console.log('No active runbook');
+          output.noActiveRunbook('goto');
+          output.flush();
           return;
         }
         // Parse target with StepId
         const target = parseStepIdFromString(stepArg);
         if (!target) {
-          console.error(`Error: Invalid step target: ${stepArg}`);
-          console.error('Format: N (step) or N.M (step.substep)');
+          output.error(`Invalid step target: ${stepArg}. Format: N (step) or N.M (step.substep)`, 'INVALID_SYNTAX', {
+            provided: stepArg
+          });
+          output.flush();
           process.exit(1);
         }
 
         // Reject NEXT via CLI
         if (target.step === 'NEXT') {
-          console.error('Error: GOTO NEXT is only valid as a runbook transition, not via CLI');
+          output.error('GOTO NEXT is only valid as a runbook transition, not via CLI', 'INVALID_SYNTAX');
+          output.flush();
           process.exit(1);
         }
 
         const runbookPath = await resolveRunbookFile(cwd, state.runbook);
         if (!runbookPath) {
-          console.error(`Error: Runbook file ${state.runbook} not found`);
+          output.error(`Runbook file ${state.runbook} not found`, 'RUNBOOK_NOT_FOUND', {
+            runbook: state.runbook
+          });
+          output.flush();
           process.exit(1);
         }
         const content = await fs.readFile(runbookPath, 'utf8');
@@ -60,7 +70,11 @@ export function registerGotoCommand(program: Command): void {
           // Look up step by name (includes numeric names like "1", "2")
           const stepIndex = steps.findIndex(s => s.name === target.step);
           if (stepIndex === -1) {
-            console.error(`Error: Step "${target.step}" does not exist`);
+            output.error(`Step "${target.step}" does not exist`, 'STEP_NOT_FOUND', {
+              requested: target.step,
+              available: steps.map(s => s.name)
+            });
+            output.flush();
             process.exit(1);
           }
 
@@ -68,16 +82,27 @@ export function registerGotoCommand(program: Command): void {
           if (target.substep) {
             const step = steps[stepIndex];
             if (!step.substeps || step.substeps.length === 0) {
-              console.error(`Error: Step ${stepIdToString({ step: target.step })} has no substeps`);
+              output.error(`Step ${stepIdToString({ step: target.step })} has no substeps`, 'STEP_NOT_FOUND', {
+                step: target.step
+              });
+              output.flush();
               process.exit(1);
             }
             if (step.substeps.some(s => s.isDynamic)) {
-              console.error(`Error: Cannot goto substep of dynamic step. Use: rd goto ${target.step}`);
+              output.error(`Cannot goto substep of dynamic step. Use: rd goto ${target.step}`, 'INVALID_SYNTAX', {
+                step: target.step,
+                suggestion: `rd goto ${target.step}`
+              });
+              output.flush();
               process.exit(1);
             }
             const substepExists = step.substeps.some(s => s.id === target.substep);
             if (!substepExists) {
-              console.error(`Error: Substep ${stepIdToString(target)} does not exist`);
+              output.error(`Substep ${stepIdToString(target)} does not exist`, 'STEP_NOT_FOUND', {
+                requested: stepIdToString(target),
+                available: step.substeps.map(s => s.id)
+              });
+              output.flush();
               process.exit(1);
             }
           }
@@ -86,7 +111,8 @@ export function registerGotoCommand(program: Command): void {
         // Create XState actor
         const actor = await manager.createActor(state.id, steps);
         if (!actor) {
-          console.error('Error: Failed to initialize runbook engine');
+          output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
+          output.flush();
           process.exit(1);
         }
 
@@ -114,22 +140,31 @@ export function registerGotoCommand(program: Command): void {
           total: totalSteps,
           substep: target.substep,
         };
+        const prevPos = { current: prevStep, total: totalSteps, substep: prevSubstep };
 
-        // Print separator with new step number and action block
-        printStepSeparator(newPos);
-        printActionBlock({
+        // Build action data for goto
+        const actionData = {
           action: `GOTO ${stepIdToString(target)}`,
-          from: { current: prevStep, total: totalSteps, substep: prevSubstep },
+          from: prevPos,
           at: newPos,
-        });
+        };
+
+        // Emit structured action output
+        output.action(actionData);
+
+        // Create emitter bridged to unified output
+        const emitter = createBridgedEmitter(state, output);
 
         // Continue with execution loop
         // Goto doesn't have --agent option, so use default stack
-        const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, undefined);
+        const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, undefined, emitter);
+
+        // Flush any remaining output
+        output.flush();
 
         if (loopResult === 'stopped') {
           process.exit(1);
         }
-      });
+      }, { json: options.json });
     });
 }

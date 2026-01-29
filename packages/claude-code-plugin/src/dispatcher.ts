@@ -120,7 +120,8 @@ export async function gateMatchesFilePattern(
   }
 
   // Convert absolute path to relative path from cwd
-  const relativePath = path.relative(cwd, absolutePath);
+  // Normalize to forward slashes for cross-platform compatibility (Windows path.relative returns backslashes)
+  const relativePath = path.relative(cwd, absolutePath).replace(/\\/g, '/');
 
   // FIX: Keep .some() implementation from Task 3, add logging separately
   let matchedPattern: string | undefined;

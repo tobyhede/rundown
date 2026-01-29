@@ -81,10 +81,11 @@ echo hello
     it('outputs inactive status when empty', () => {
       const result = runCli('status --json', workspace);
       const output = JSON.parse(result.stdout);
-      
+
       expect(output).toEqual({
         active: false,
-        stashed: false
+        stashed: false,
+        result: true  // Added by JSONRenderer.flush()
       });
     });
 
@@ -103,9 +104,10 @@ prompt: Wait
 
       expect(output.active).toBe(true);
       expect(output.stashed).toBe(false);
-      expect(output.runbook).toHaveProperty('file', 'test.runbook.md');
-      expect(output.step).toHaveProperty('current', '1');
-      expect(output.step).toHaveProperty('total', 1);
+      // Flat structure per CLI-OUTPUT-SPEC
+      expect(output).toHaveProperty('file', 'test.runbook.md');
+      expect(output.position).toHaveProperty('current', '1');
+      expect(output.position).toHaveProperty('total', 1);
     });
   });
 
@@ -209,10 +211,12 @@ echo hello
       expect(result.exitCode).toBe(1);
       const output = JSON.parse(result.stdout);
 
+      // Uses standard error format from output.error()
       expect(output).toEqual({
-        error: true,
-        message: 'Scenario "non-existent" not found',
-        available: ['test-scenario']
+        result: false,
+        error: 'Scenario "non-existent" not found',
+        code: 'SCENARIO_NOT_FOUND',
+        details: { available: ['test-scenario'] },
       });
     });
   });

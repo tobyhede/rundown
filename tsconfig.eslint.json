@@ -20,6 +20,8 @@
     "packages/claude-code-plugin/src/**/*.ts",
     "packages/claude-code-plugin/jest.setup.ts",
     "packages/claude-code-plugin/__tests__/**/*.ts",
+    "packages/mcp/src/**/*.ts",
+    "packages/mcp/__tests__/**/*.ts",
     "eslint.config.js"
   ],
   "exclude": ["node_modules", "**/dist/**"]
