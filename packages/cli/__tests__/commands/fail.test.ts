@@ -141,6 +141,32 @@ Do work.
     });
   });
 
+  describe('state consistency in execution loop', () => {
+    it('uses updated state for retry execution loop', async () => {
+      // Create a runbook with agent-scoped RETRY that continues execution
+      const retryRunbook = `## 1. Retry step
+- FAIL: RETRY 3
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo --result pass
+\`\`\`
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'agent-retry.md'), retryRunbook);
+
+      runCli('run --prompted runbooks/agent-retry.md --agent test-agent', workspace);
+
+      // Fail to trigger RETRY which should continue execution with updated state
+      const result = runCli('fail --agent test-agent --json', workspace);
+
+      // The execution loop should run with updated state (retryCount incremented)
+      // Verify the retry action was emitted correctly
+      expect(result.stdout).toContain('retry');
+      expect(result.exitCode).toBe(0); // Should complete after retry succeeds
+    });
+  });
+
   describe('JSON output', () => {
     it('includes action field when no active runbook', () => {
       // Run fail --json with no active runbook

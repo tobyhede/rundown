@@ -205,6 +205,29 @@ Do work.
     });
   });
 
+  describe('lastResult semantics', () => {
+    it('sets lastResult to pass even when STOP is triggered', async () => {
+      // Create a runbook where PASS triggers STOP (edge case)
+      const stopOnPassRunbook = `## 1. Stop on pass
+- PASS: STOP
+- FAIL: CONTINUE
+
+This step stops on pass.
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass.md'), stopOnPassRunbook);
+
+      runCli('run --prompted runbooks/stop-on-pass.md', workspace);
+      runCli('pass', workspace);
+
+      const states = await getAllStates(workspace);
+      const state = states.find(s => s.runbook === 'runbooks/stop-on-pass.md');
+
+      // lastResult should reflect user's choice (pass), not transition outcome
+      expect(state?.lastResult).toBe('pass');
+    });
+  });
+
   describe('JSON action result semantics', () => {
     it('reports result: true for CONTINUE transitions', async () => {
       // Start runbook in prompted mode

@@ -169,10 +169,10 @@ export function registerPassCommand(program: Command): void {
         const actionResult = actionType !== 'RETRY' && actionType !== 'STOP';
         
         // Update lastAction and lastResult in persistent state:
-        // - lastResult: Persisted in state - tracks whether the user action was pass or fail (from state manager perspective)
+        // - lastResult: Persisted in state - tracks the user's pass/fail command choice (always 'pass' for pass command)
         // - result (in action output): Whether the transition was successful (RETRY/STOP = false, others = true)
         // These are semantically distinct: lastResult is about the user's pass/fail choice, result is about transition outcome
-        await manager.update(state.id, { lastAction: actionType, lastResult: actionResult ? 'pass' : 'fail' });
+        await manager.update(state.id, { lastAction: actionType, lastResult: 'pass' });
 
         // Resolve {n} in prev substep for display
         const prevSubstepStatesLen = state.substepStates?.length ?? 1;

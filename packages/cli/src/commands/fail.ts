@@ -85,26 +85,26 @@ export function registerFailCommand(program: Command): void {
 
             if (failResult.action === 'retry') {
               actor.send({ type: 'FAIL' });
-              await manager.updateFromActor(state.id, actor, steps);
+              const retryState = await manager.updateFromActor(state.id, actor, steps);
               output.status(true, 'retry', `Agent ${options.agent} retrying step ${stepName}`, {
                 agent: options.agent,
                 step: stepName
               });
               // Continue with execution loop for retry
-              const retryEmitter = createBridgedEmitter(state, output);
+              const retryEmitter = createBridgedEmitter(retryState, output);
               const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, retryEmitter);
               output.flush();
               if (loopResult === 'stopped') process.exit(1);
               return;
             } else if (failResult.action === 'goto') {
               actor.send({ type: 'FAIL' });
-              const updated = await manager.updateFromActor(state.id, actor, steps);
-              output.status(true, 'goto', `Agent ${options.agent} failed, runbook jumped to step ${updated.step}`, {
+              const gotoState = await manager.updateFromActor(state.id, actor, steps);
+              output.status(true, 'goto', `Agent ${options.agent} failed, runbook jumped to step ${gotoState.step}`, {
                 agent: options.agent,
-                step: updated.step
+                step: gotoState.step
               });
               // Continue with execution loop after GOTO
-              const gotoEmitter = createBridgedEmitter(state, output);
+              const gotoEmitter = createBridgedEmitter(gotoState, output);
               const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, options.agent, gotoEmitter);
               output.flush();
               if (loopResult === 'stopped') process.exit(1);
