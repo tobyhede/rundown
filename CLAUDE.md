@@ -135,12 +135,12 @@ export function parseRunbookDocument(
 
 ## CLI Output Standards
 
-New CLI commands MUST use `OutputManager` for consistent output with automatic JSON/text mode switching:
+New CLI commands MUST use `OutputEmitter` for consistent output with format-agnostic rendering:
 
 ```typescript
-import { OutputManager } from '../services/output-manager.js';
+import { OutputEmitter } from '../services/output-emitter.js';
 
-const output = new OutputManager({ json: options.json });
+const output = new OutputEmitter({ json: options.json });
 
 output.list(items, [
   { header: 'NAME', key: 'name' },
@@ -149,6 +149,10 @@ output.list(items, [
   emptyMessage: 'No items found.',
   jsonMapper: (item) => ({ name: item.name, status: item.status }),
 });
+
+output.detail(data, 'status');
+output.action({ action, from, result, at });
+output.flush();
 ```
 
 For direct table formatting without JSON support, use `formatTable` from `../helpers/table-formatter.js`.
