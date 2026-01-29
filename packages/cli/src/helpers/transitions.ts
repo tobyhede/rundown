@@ -345,17 +345,16 @@ export async function handleTerminalState(
       return 'complete';
     }
 
-    if (type === 'stopped') {
-      await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
+    // type === 'stopped' (only other possibility)
+    await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
 
-      // stopped uses prevPos for output
-      output.stopped(conditionResult.message, prevPos);
-      output.flush();
+    // stopped uses prevPos for output
+    output.stopped(conditionResult.message, prevPos);
+    output.flush();
 
-      await applySideEffects(config.onStopped, config.lastResult);
-      process.exit(1);
-      return 'stopped'; // Explicit return for clarity (process.exit never returns)
-    }
+    await applySideEffects(config.onStopped, config.lastResult);
+    process.exit(1);
+    return 'stopped'; // Explicit return for clarity (process.exit never returns)
   }
 
   return 'continue';
@@ -381,7 +380,7 @@ export async function executeTransition(
   const prevState = { ...state };
 
   // Calculate initial position for action output
-  const { displayStep, totalSteps, displaySubstep: prevDisplaySubstep } = calculatePosition(state, steps);
+  const { displayStep } = calculatePosition(state, steps);
   const prevSubstep = state.substep;
 
   // Send event
