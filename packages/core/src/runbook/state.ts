@@ -37,6 +37,7 @@ interface CreateOptions {
   readonly parentRunbookId?: string;
   readonly parentStepId?: StepId;
   readonly prompted?: boolean;
+  readonly runbookSrc?: string;
 }
 
 /**
@@ -105,7 +106,8 @@ export class RunbookStateManager {
       parentStepId: options.parentStepId,
       startedAt: now,
       updatedAt: now,
-      prompted: options.prompted
+      prompted: options.prompted,
+      runbookSrc: options.runbookSrc
     };
 
     await this.save(state);
@@ -167,7 +169,8 @@ export class RunbookStateManager {
       ...state,
       updatedAt: new Date().toISOString()
     };
-    await fs.writeFile(this.statePath(state.id), JSON.stringify(updated, null, 2));
+    const content = JSON.stringify(updated, null, 2);
+    await fs.writeFile(this.statePath(state.id), content, { mode: 0o600 }); // Owner read/write only
   }
 
   /**
