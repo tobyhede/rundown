@@ -181,7 +181,8 @@ export const RunbookStateSchema = z.object({
   snapshot: z.unknown().optional(), // XState snapshot
   prompted: z.boolean().optional(),
   lastResult: z.enum(['pass', 'fail']).optional(),
-  lastAction: z.enum(['START', 'CONTINUE', 'GOTO', 'COMPLETE', 'STOP', 'RETRY']).optional()
+  lastAction: z.enum(['START', 'CONTINUE', 'GOTO', 'COMPLETE', 'STOP', 'RETRY']).optional(),
+  runbookSrc: z.string().optional()
 });
 
 export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;

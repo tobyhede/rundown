@@ -199,6 +199,52 @@ describe('Action schema-derived type', () => {
   });
 });
 
+describe('RunbookStateSchema runbookSrc', () => {
+  it('should accept runbookSrc field', () => {
+    const validState = {
+      id: 'wf-test-123',
+      runbook: 'test.md',
+      runbookPath: 'test.md',
+      step: '1',
+      stepName: 'Test',
+      retryCount: 0,
+      variables: {},
+      steps: [],
+      pendingSteps: [],
+      agentBindings: {},
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      runbookSrc: '# Rendered content',
+    };
+
+    const result = RunbookStateSchema.safeParse(validState);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.runbookSrc).toBe('# Rendered content');
+    }
+  });
+
+  it('should allow runbookSrc to be undefined', () => {
+    const validState = {
+      id: 'wf-test-123',
+      runbook: 'test.md',
+      runbookPath: 'test.md',
+      step: '1',
+      stepName: 'Test',
+      retryCount: 0,
+      variables: {},
+      steps: [],
+      pendingSteps: [],
+      agentBindings: {},
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const result = RunbookStateSchema.safeParse(validState);
+    expect(result.success).toBe(true);
+  });
+});
+
 describe('Transitions schema-derived type', () => {
   it('parses all:true (pass all) transitions', () => {
     const parsed = TransitionsSchema.parse({
