@@ -29,7 +29,7 @@ import type { RunbookState } from '@rundown-org/core';
 export function getRunbookFromState(
   state: RunbookState,
   _cwd: string
-): Step[] {
+): readonly Step[] {
   if (!state.runbookSrc) {
     throw new Error(
       `State file ${state.id} is missing runbookSrc. ` +
