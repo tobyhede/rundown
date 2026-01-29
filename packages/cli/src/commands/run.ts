@@ -207,8 +207,16 @@ export function registerRunCommand(program: Command): void {
               process.exit(1);
             }
 
-            const content = await fs.readFile(runbookPath, 'utf8');
-            const runbook = parseRunbookDocument(content, path.basename(runbookPath));
+            // Load and render child template (inherit parent's variables context)
+            const rawContent = await fs.readFile(runbookPath, 'utf8');
+            const variables = await collectVariables(
+              { varFile: options.varFile, var: options.var },
+              cwd
+            );
+            const childRunbookSrc = renderTemplate(rawContent, variables);
+
+            // Parse expanded content
+            const runbook = parseRunbookDocument(childRunbookSrc, path.basename(runbookPath));
 
             if (runbook.steps.length === 0) {
               output.error('Child runbook has no steps', 'VALIDATION_ERROR', {
@@ -228,7 +236,8 @@ export function registerRunCommand(program: Command): void {
               agentId: options.agent,
               parentRunbookId: state.id,
               parentStepId: pending.stepId,
-              prompted: parentPrompted  // Inherit from parent
+              prompted: parentPrompted,  // Inherit from parent
+              runbookSrc: childRunbookSrc,  // Store expanded child content
             });
 
             await manager.updateAgentBinding(state.id, options.agent, {
