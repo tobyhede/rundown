@@ -1,20 +1,18 @@
 // packages/cli/src/commands/goto.ts
 
-import * as fs from 'fs/promises';
 import type { Command } from 'commander';
 import {
   RunbookStateManager,
-  parseRunbook,
   parseStepIdFromString,
   stepIdToString,
   countNumberedSteps,
 } from '@rundown-org/core';
-import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
+import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
 /**
  * Registers the 'goto' command for jumping to specific steps.
@@ -54,16 +52,14 @@ export function registerGotoCommand(program: Command): void {
           process.exit(1);
         }
 
-        const runbookPath = await resolveRunbookFile(cwd, state.runbook);
-        if (!runbookPath) {
-          output.error(`Runbook file ${state.runbook} not found`, 'RUNBOOK_NOT_FOUND', {
-            runbook: state.runbook
-          });
+        let steps;
+        try {
+          steps = getRunbookFromState(state, cwd);
+        } catch (err) {
+          output.error(`Runbook state error: ${(err as Error).message}`, 'STATE_ERROR');
           output.flush();
           process.exit(1);
         }
-        const content = await fs.readFile(runbookPath, 'utf8');
-        const steps = parseRunbook(content);
 
         // Validate step exists (numeric steps and named steps - dynamic {N} references are validated at runtime)
         if (target.step !== '{N}') {

@@ -1,13 +1,12 @@
 // packages/cli/src/commands/complete.ts
 
-import * as fs from 'fs/promises';
 import type { Command } from 'commander';
-import { RunbookStateManager, parseRunbook } from '@rundown-org/core';
+import { RunbookStateManager } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
-import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
 /**
  * Registers the 'complete' command for marking runbooks as complete.
@@ -36,12 +35,7 @@ export function registerCompleteCommand(program: Command): void {
         // Emit metadata
         output.metadata(buildMetadata(state));
 
-        const runbookPath = await resolveRunbookFile(cwd, state.runbook);
-        if (!runbookPath) {
-          throw new Error(`Runbook file ${state.runbook} not found`);
-        }
-        const content = await fs.readFile(runbookPath, 'utf8');
-        const steps = parseRunbook(content);
+        const steps = getRunbookFromState(state, cwd);
         await manager.update(state.id, {
           step: steps[steps.length - 1].name,
           variables: { ...state.variables, completed: true }
