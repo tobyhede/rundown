@@ -8,7 +8,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
   executeTransition,
-  type TransitionContext,
+  handleAgentBinding,
   type ActionType,
 } from '../helpers/transitions.js';
 
@@ -38,7 +38,17 @@ export function registerPassCommand(program: Command): void {
         // Handle agent binding completion (substep case)
         // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
         if (options.agent) {
-          const handled = await handlePassAgentBinding(ctx, options.agent);
+          const config = {
+            eventType: 'PASS' as const,
+            commandName: 'pass' as const,
+            lastResult: 'pass' as const,
+            computeActionResult: (actionType: ActionType) => actionType !== 'RETRY' && actionType !== 'STOP',
+            evaluateCondition: (step: Step, prevState: RunbookState) => evaluatePassCondition(step, prevState.retryCount),
+            terminalOrder: 'complete-first' as const,
+            onStopped: { popRunbook: false, updateParentBinding: false },
+            onComplete: { popRunbook: true, updateParentBinding: true },
+          };
+          const handled = await handleAgentBinding(ctx, options.agent, config);
           if (handled) return;
         }
 
@@ -47,63 +57,11 @@ export function registerPassCommand(program: Command): void {
           commandName: 'pass',
           lastResult: 'pass',
           computeActionResult: (actionType: ActionType) => actionType !== 'RETRY' && actionType !== 'STOP',
-          evaluateCondition: (step: Step, _prevState: RunbookState) => evaluatePassCondition(step),
+          evaluateCondition: (step: Step, prevState: RunbookState) => evaluatePassCondition(step, prevState.retryCount),
           terminalOrder: 'complete-first',
           onStopped: { popRunbook: false, updateParentBinding: false },
           onComplete: { popRunbook: true, updateParentBinding: true },
         });
       }, { json: options.json });
     });
-}
-
-/**
- * Handle pass-specific agent binding completion.
- *
- * Checks child runbook result before marking agent as done.
- *
- * @param ctx - Transition context
- * @param agentId - Agent ID to check binding for
- * @returns True if agent binding was handled, false to continue to main flow
- */
-async function handlePassAgentBinding(ctx: TransitionContext, agentId: string): Promise<boolean> {
-  const { output, manager, state } = ctx;
-  const binding = await manager.getAgentBinding(state.id, agentId);
-
-  if (!binding) {
-    // No binding - this is a standalone runbook in agent's stack
-    // Continue to main pass flow
-    return false;
-  }
-
-  // Agent binding exists - handle substep completion
-  let result: 'pass' | 'fail' = 'pass';
-
-  if (binding.childRunbookId) {
-    const childResult = await manager.getChildRunbookResult(binding.childRunbookId);
-    if (childResult === null) {
-      throw new Error(`Child runbook still active. Complete or stop it first.\nChild runbook: ${binding.childRunbookId}`);
-    }
-    result = childResult;
-  }
-
-  await manager.updateAgentBinding(state.id, agentId, {
-    status: 'done',
-    result
-  });
-
-  const updated = await manager.load(state.id);
-  const bindings = Object.values(updated?.agentBindings ?? {});
-  const runningCount = bindings.filter((b) => b.status === 'running').length;
-
-  const statusMessage = runningCount > 0
-    ? `Agent ${agentId} marked as pass (${String(runningCount)} agent(s) still running)`
-    : `Agent ${agentId} marked as pass (All agents complete)`;
-
-  output.status(true, 'agent_completed', statusMessage, {
-    agent: agentId,
-    result,
-    agentsRunning: runningCount
-  });
-  output.flush();
-  return true;
 }

@@ -361,6 +361,99 @@ export async function handleTerminalState(
 }
 
 /**
+ * Handle agent binding completion with condition evaluation.
+ *
+ * Unified handler for both pass and fail agent bindings. Evaluates
+ * RETRY/GOTO conditions before marking agent as done. If retry or
+ * goto is triggered, continues execution instead of marking complete.
+ *
+ * @param ctx - Transition context
+ * @param agentId - Agent ID to check binding for
+ * @param config - Transition configuration (for condition evaluation)
+ * @returns True if agent binding was handled, false to continue to main flow
+ */
+export async function handleAgentBinding(
+  ctx: TransitionContext,
+  agentId: string,
+  config: TransitionConfig
+): Promise<boolean> {
+  const { output, manager, state, steps, actor, cwd } = ctx;
+  const binding = await manager.getAgentBinding(state.id, agentId);
+
+  if (!binding) {
+    // No binding - this is a standalone runbook in agent's stack
+    // Continue to main pass/fail flow
+    return false;
+  }
+
+  // Agent binding exists - evaluate condition for RETRY/GOTO (same for pass and fail)
+  const stepName = binding.stepId.step;
+  const stepIndex = steps.findIndex(s => s.name === stepName);
+  const agentStep = stepIndex >= 0 ? steps[stepIndex] : steps[0];
+  const conditionResult = config.evaluateCondition(agentStep, state);
+
+  if (conditionResult.action === 'retry') {
+    actor.send({ type: config.eventType });
+    const retryState = await manager.updateFromActor(state.id, actor, steps);
+    output.status(true, 'retry', `Agent ${agentId} retrying step ${stepName}`, {
+      agent: agentId,
+      step: stepName
+    });
+    // Continue with execution loop for retry
+    const retryEmitter = createBridgedEmitter(retryState, output);
+    const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, agentId, retryEmitter);
+    output.flush();
+    if (loopResult === 'stopped') process.exit(1);
+    return true;
+  }
+
+  if (conditionResult.action === 'goto') {
+    actor.send({ type: config.eventType });
+    const gotoState = await manager.updateFromActor(state.id, actor, steps);
+    output.status(true, 'goto', `Agent ${agentId} triggered goto to step ${gotoState.step}`, {
+      agent: agentId,
+      step: gotoState.step
+    });
+    // Continue with execution loop after GOTO
+    const gotoEmitter = createBridgedEmitter(gotoState, output);
+    const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, agentId, gotoEmitter);
+    output.flush();
+    if (loopResult === 'stopped') process.exit(1);
+    return true;
+  }
+
+  // No retry/goto - mark binding as done
+  let result: 'pass' | 'fail' = config.lastResult;
+
+  if (binding.childRunbookId) {
+    const childResult = await manager.getChildRunbookResult(binding.childRunbookId);
+    if (childResult === null) {
+      throw new Error(`Child runbook still active. Complete or stop it first.\nChild runbook: ${binding.childRunbookId}`);
+    }
+    result = childResult;
+  }
+
+  await manager.updateAgentBinding(state.id, agentId, { status: 'done', result });
+
+  const updated = await manager.load(state.id);
+  const bindings = Object.values(updated?.agentBindings ?? {});
+  const runningCount = bindings.filter((b) => b.status === 'running').length;
+
+  const action = config.lastResult === 'pass' ? 'agent_completed' : 'agent_failed';
+  const statusMessage = runningCount > 0
+    ? `Agent ${agentId} marked as ${config.lastResult} (${String(runningCount)} agent(s) still running)`
+    : `Agent ${agentId} marked as ${config.lastResult} (All agents complete)`;
+
+  output.status(config.lastResult === 'pass', action, statusMessage, {
+    agent: agentId,
+    result,
+    agentsRunning: runningCount
+  });
+  output.flush();
+  return true;
+}
+
+/**
  * Execute a transition with the given configuration.
  *
  * Main entry point for transition execution. Sends event to actor,
