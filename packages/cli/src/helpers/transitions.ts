@@ -172,8 +172,9 @@ export async function buildTransitionContext(
     return null;
   }
 
-  const steps = getRunbookFromState(state, cwd);
-  const actor = await manager.createActor(state.id, [...steps]);
+  const readonlySteps = getRunbookFromState(state, cwd);
+  const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
+  const actor = await manager.createActor(state.id, steps);
   if (!actor) {
     throw new Error('Failed to initialize runbook engine');
   }
