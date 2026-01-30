@@ -271,5 +271,39 @@ rd echo done
       const output = JSON.parse(result.stdout);
       expect(output.position.total).toBe(2);
     });
+
+    it('should use stored runbookSrc in pop command', async () => {
+      const runbookContent = `# Test Runbook
+
+## 1. First Step
+- PASS: CONTINUE
+
+\`\`\`bash
+rd echo {{message}}
+\`\`\`
+
+## 2. Second Step
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo done
+\`\`\`
+`;
+      const runbookPath = join(workspace.cwd, 'test.runbook.md');
+      await writeFile(runbookPath, runbookContent);
+
+      // Run with variable to store expanded content
+      runCli('run test.runbook.md --var message=original --prompted', workspace);
+
+      // Stash the runbook
+      runCli('stash', workspace);
+
+      // Delete source file to confirm we're using runbookSrc
+      await rm(runbookPath);
+
+      // Pop should work with stored runbookSrc
+      const result = runCli('pop --json', workspace);
+      expect(result.exitCode).toBe(0);
+    });
   });
 });

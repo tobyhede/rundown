@@ -107,8 +107,10 @@ export async function discoverVariables(
   cwd: string
 ): Promise<Record<string, string>> {
   let dir = cwd;
+  let parent = path.dirname(dir);
 
-  while (true) {
+  // Continue while we haven't reached filesystem root
+  while (parent !== dir) {
     const configPath = path.join(dir, '.rundown', 'config.yaml');
 
     try {
@@ -118,7 +120,7 @@ export async function discoverVariables(
       // File doesn't exist, continue searching
     }
 
-    // Check if we've reached git root or filesystem root
+    // Check if we've reached git root
     const gitPath = path.join(dir, '.git');
     try {
       await fs.access(gitPath);
@@ -128,12 +130,17 @@ export async function discoverVariables(
       // Not git root, continue
     }
 
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      // Reached filesystem root
-      return {};
-    }
     dir = parent;
+    parent = path.dirname(dir);
+  }
+
+  // Check the filesystem root as well
+  const configPath = path.join(dir, '.rundown', 'config.yaml');
+  try {
+    await fs.access(configPath);
+    return await loadVariablesFromFile(configPath);
+  } catch {
+    return {};
   }
 }
 
@@ -167,6 +174,8 @@ export async function collectVariables(
       const parsed = parseVarFlag(flag);
       if (parsed) {
         fromFlags[parsed.key] = parsed.value;
+      } else {
+        console.warn(`Warning: Ignoring invalid --var flag: ${flag}`);
       }
     }
   }
