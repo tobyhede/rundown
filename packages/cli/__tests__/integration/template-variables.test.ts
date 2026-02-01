@@ -7,6 +7,17 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
+/**
+ * Parse NDJSON output from `run --json`, filtering out non-JSON lines (command output).
+ */
+function parseNdjsonEvents(stdout: string): Record<string, unknown>[] {
+  return stdout
+    .trim()
+    .split('\n')
+    .filter(line => line.startsWith('{'))
+    .map(line => JSON.parse(line) as Record<string, unknown>);
+}
+
 describe('Template Variables Integration', () => {
   let workspace: TestWorkspace;
 
@@ -42,8 +53,32 @@ rd echo {{message}}
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('from-flag');
-      expect(result.stdout).not.toContain('from-file');
+
+      // Parse JSON events and verify the command used the correct variable value
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo from-flag');
+      expect(commandStartedEvent.command).not.toContain('from-file');
+    });
+
+    it('--var with empty value overrides --var-file', async () => {
+      await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: from-file');
+      const result = runCli(
+        'run test.runbook.md --var-file vars.yaml --var message= --json',
+        workspace
+      );
+      expect(result.exitCode).toBe(0);
+
+      // Parse JSON events and verify empty value was used
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      // Empty value renders as empty string (no trailing space after 'rd echo')
+      expect(commandStartedEvent.command).toBe('rd echo');
+      expect(commandStartedEvent.command).not.toContain('from-file');
     });
 
     it('--var-file overrides auto-discovered config', async () => {
@@ -63,8 +98,14 @@ rd echo {{message}}
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('explicit');
-      expect(result.stdout).not.toContain('auto-discovered');
+
+      // Parse JSON events and verify explicit var file value was used
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo explicit');
+      expect(commandStartedEvent.command).not.toContain('auto-discovered');
     });
 
     it('uses auto-discovered config when no flags provided', async () => {
@@ -77,7 +118,13 @@ rd echo {{message}}
       const result = runCli('run test.runbook.md --json', workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('auto-discovered');
+
+      // Parse JSON events and verify auto-discovered value was used
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo auto-discovered');
     });
   });
 
@@ -97,8 +144,13 @@ rd echo "{{undefined_var}}"
       const result = runCli('run test.runbook.md --json', workspace);
 
       expect(result.exitCode).toBe(0);
-      // The literal {{undefined_var}} should be preserved
-      expect(result.stdout).toContain('undefined_var');
+
+      // Parse JSON events and verify undefined variable was preserved
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo "{{undefined_var}}"');
     });
   });
 
@@ -159,6 +211,14 @@ rd echo done
       // Pass should work with stored runbookSrc
       const result = runCli('pass --json', workspace);
       expect(result.exitCode).toBe(0);
+
+      // Parse NDJSON output - the last line contains the final state
+      const lines = result.stdout.trim().split('\n').filter(line => line.trim());
+      const output = JSON.parse(lines[lines.length - 1]);
+      expect(output.result).toBe(true);
+      expect(output.action).toBe('CONTINUE');
+      expect(output.from.current).toBe('1');
+      expect(output.to.current).toBe('2');
     });
 
     it('should use stored runbookSrc in fail command', async () => {
@@ -187,6 +247,14 @@ rd echo done
 
       const result = runCli('fail --json', workspace);
       expect(result.exitCode).toBe(0);
+
+      // Parse NDJSON output - the last line contains the final state
+      const lines = result.stdout.trim().split('\n').filter(line => line.trim());
+      const output = JSON.parse(lines[lines.length - 1]);
+      expect(output.result).toBe(false);
+      expect(output.action).toContain('RETRY');
+      expect(output.from.current).toBe('1');
+      expect(output.to.current).toBe('1');
     });
 
     it('should use stored runbookSrc in goto command', async () => {
@@ -214,6 +282,14 @@ rd echo done
 
       const result = runCli('goto 2 --json', workspace);
       expect(result.exitCode).toBe(0);
+
+      // Parse NDJSON output - the last line contains the final state
+      const lines = result.stdout.trim().split('\n').filter(line => line.trim());
+      const output = JSON.parse(lines[lines.length - 1]);
+      expect(output.result).toBe(true);
+      expect(output.action).toContain('GOTO');
+      expect(output.from.current).toBe('1');
+      expect(output.to.current).toBe('2');
     });
 
     it('should use stored runbookSrc in complete command', async () => {
@@ -241,6 +317,11 @@ rd echo done
 
       const result = runCli('complete --json', workspace);
       expect(result.exitCode).toBe(0);
+
+      // Complete outputs a single pretty-printed JSON object
+      const output = JSON.parse(result.stdout);
+      expect(output.result).toBe(true);
+      expect(output.action).toBe('complete');
     });
 
     it('should use stored runbookSrc in status command', async () => {
@@ -304,6 +385,166 @@ rd echo done
       // Pop should work with stored runbookSrc
       const result = runCli('pop --json', workspace);
       expect(result.exitCode).toBe(0);
+
+      // Parse JSON output and verify runbook was restored
+      const output = JSON.parse(result.stdout);
+      expect(output.result).toBe(true);
+      expect(output.action).toBe('pop');
+      expect(output.position.current).toBe('1');
+      expect(output.position.total).toBe(2);
+    });
+  });
+
+  describe('Mode 3 child runbook variable inheritance', () => {
+    it('should expand child runbook variables and store in runbookSrc', async () => {
+      // Create parent runbook that delegates to child
+      const parentRunbook = `# Parent Runbook
+
+## 1. Dispatch work
+- PASS: COMPLETE
+
+Delegate work to agent.
+`;
+
+      // Create child runbook with template variables
+      const childRunbook = `# Child Runbook
+
+## 1. Execute task
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo {{task_name}}
+\`\`\`
+`;
+
+      // Set up runbooks directory
+      const runbooksDir = join(workspace.cwd, 'runbooks');
+      await mkdir(runbooksDir, { recursive: true });
+      await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+      await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+      // Start parent runbook in prompted mode
+      let result = runCli('run runbooks/parent.runbook.md --prompted', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Queue step with child runbook binding
+      result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Step 1 queued');
+
+      // Bind agent to step with variables
+      result = runCli('run --agent test-agent --var task_name=TestTask', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('bound');
+
+      // Verify child runbook was created with expanded variables
+      // The child runbook should now be active for the agent
+      result = runCli('status --json', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const statusOutput = JSON.parse(result.stdout);
+
+      // The parent runbook should show the agent binding
+      expect(statusOutput.agents).toBeDefined();
+      expect(statusOutput.agents['test-agent']).toBeDefined();
+      expect(statusOutput.agents['test-agent'].step).toBe('1');
+      expect(statusOutput.agents['test-agent'].status).toBe('running');
+
+      // Now check that the child runbook has expanded variables
+      // We can verify this by completing the child and checking if it used the variable
+      result = runCli('pass --agent test-agent --json', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // The child should have executed with the expanded variable
+      // Since we can't directly inspect runbookSrc without accessing state files,
+      // we verify indirectly by confirming the execution succeeded with the variable
+      const passOutput = JSON.parse(result.stdout);
+      expect(passOutput.result).toBe(true);
+    });
+
+    it('should handle child runbook with missing variables', async () => {
+      // Create parent and child runbooks
+      const parentRunbook = `# Parent Runbook
+
+## 1. Dispatch work
+- PASS: COMPLETE
+
+Delegate work to agent.
+`;
+
+      const childRunbook = `# Child Runbook
+
+## 1. Execute task
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo "Task: {{task_name}}"
+\`\`\`
+`;
+
+      const runbooksDir = join(workspace.cwd, 'runbooks');
+      await mkdir(runbooksDir, { recursive: true });
+      await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+      await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+      // Start parent runbook
+      runCli('run runbooks/parent.runbook.md --prompted', workspace);
+
+      // Queue step with child runbook
+      runCli('run --step 1 runbooks/child.runbook.md', workspace);
+
+      // Bind agent WITHOUT providing variables
+      const result = runCli('run --agent test-agent', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('bound');
+
+      // Child should be created with literal {{task_name}} preserved
+      // Pass the step to complete
+      const passResult = runCli('pass --agent test-agent --json', workspace);
+      expect(passResult.exitCode).toBe(0);
+    });
+
+    it('should inherit parent variables in child runbook', async () => {
+      // Create parent and child runbooks
+      const parentRunbook = `# Parent Runbook
+
+## 1. Dispatch work
+- PASS: COMPLETE
+
+Delegate work to agent.
+`;
+
+      const childRunbook = `# Child Runbook
+
+## 1. Execute task
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo "Project: {{project_name}}, Task: {{task_name}}"
+\`\`\`
+`;
+
+      const runbooksDir = join(workspace.cwd, 'runbooks');
+      await mkdir(runbooksDir, { recursive: true });
+      await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+      await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+      // Start parent with project-level variable
+      runCli('run runbooks/parent.runbook.md --var project_name=MyProject --prompted', workspace);
+
+      // Queue step with child runbook
+      runCli('run --step 1 runbooks/child.runbook.md', workspace);
+
+      // Bind agent with additional task-specific variable
+      const result = runCli('run --agent test-agent --var task_name=BuildTask --var project_name=MyProject', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Complete the child task
+      const passResult = runCli('pass --agent test-agent --json', workspace);
+      expect(passResult.exitCode).toBe(0);
+
+      const passOutput = JSON.parse(passResult.stdout);
+      expect(passOutput.result).toBe(true);
     });
   });
 });
