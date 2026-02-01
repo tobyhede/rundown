@@ -21,6 +21,8 @@ npm install -g @rundown-org/cli
 ```bash
 rundown run <file>       # Run a runbook
 rundown run <file> --json # Output execution events as JSON
+rundown run <file> --var key=value  # Set template variable (repeatable)
+rundown run <file> --var-file path  # Load variables from YAML file
 rundown pass             # Mark current step as passed (aliases: yes, ok)
 rundown fail             # Mark current step as failed (alias: no)
 rundown goto <n>         # Jump to specific step number
@@ -41,6 +43,25 @@ rundown prompt <content> # Output content in markdown fences
 ```
 
 The `rd` command is an alias for `rundown`.
+
+## Template Variables
+
+Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time.
+
+**Variable Sources (Precedence: High to Low):**
+1. `--var key=value` flags (highest priority, repeatable)
+2. `--var-file path` contents (YAML format)
+3. `.rundown/config.yaml` (auto-discovered from cwd upward, stops at git root)
+
+**Example:**
+```bash
+rundown run deploy.md --var environment=staging --var version=1.2.3
+```
+
+**Notes:**
+- Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
+- Undefined variables are preserved as literal `{{variable}}` text
+- Template variables (`{{var}}`) differ from dynamic step references (`{N}`)
 
 ## Schema Output
 

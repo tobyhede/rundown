@@ -63,6 +63,47 @@ scenarios:
 
 ---
 
+## Template Variables
+
+Rundown supports template variables using Handlebars double-brace syntax: `{{variableName}}`.
+
+### Syntax
+
+```markdown
+## 1. Deploy to {{environment}}
+```bash
+npm run deploy --env={{environment}}
+```
+```
+
+### Variable Names
+
+Variable names must be valid identifiers matching the pattern: `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
+
+- Must start with a letter or underscore
+- Can contain letters, digits, and underscores
+- Case-sensitive
+
+### Distinction from Dynamic Steps
+
+Template variables use **double braces** `{{var}}` and are expanded before parsing:
+- `{{environment}}` → template variable (replaced with value at `rd run`)
+- `{N}` → dynamic step identifier (handled by parser)
+- `{n}` → dynamic substep identifier (handled by parser)
+
+### Undefined Variable Behavior
+
+When a variable is not provided, it is preserved as literal text in the output:
+- Input: `Deploy to {{environment}}`
+- With `--var environment=prod`: `Deploy to prod`
+- Without variable: `Deploy to {{environment}}` (unchanged)
+
+### Expansion Timing
+
+Template variables are expanded **once** when `rd run` is invoked. The expanded content is stored in the runbook state, ensuring that resume commands (`pass`, `fail`, `goto`, `status`, `pop`) work consistently without re-rendering.
+
+---
+
 ## Step Definitions
 
 A step (`##`) defines a unit of work or orchestration.

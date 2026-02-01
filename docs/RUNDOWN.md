@@ -282,6 +282,79 @@ Key fields:
 
 ---
 
+## Template Variables
+
+Rundown supports template variables using Handlebars syntax `{{variableName}}` for parameterizing runbooks.
+
+### Syntax
+
+```markdown
+## 1. Deploy to {{environment}}
+```bash
+npm run deploy --env={{environment}} --version={{version}}
+```
+```
+
+### Variable Sources
+
+Variables are collected from multiple sources with the following precedence (highest to lowest):
+
+| Source | Description |
+|--------|-------------|
+| `--var key=value` | CLI flags (repeatable, highest priority) |
+| `--var-file path` | YAML file specified on command line |
+| `.rundown/config.yaml` | Auto-discovered from cwd upward |
+
+### Auto-Discovery
+
+The CLI automatically searches for `.rundown/config.yaml` starting from the current working directory and walking upward. The search stops at:
+- The first `.rundown/config.yaml` found
+- The git repository root (`.git` directory)
+- The filesystem root
+
+Example `.rundown/config.yaml`:
+```yaml
+environment: staging
+version: 1.2.3
+db_host: localhost
+```
+
+### Usage Examples
+
+```bash
+# Set variables via CLI flags
+rundown run deploy.runbook.md --var environment=prod --var version=2.0.0
+
+# Load variables from a file
+rundown run deploy.runbook.md --var-file production.yaml
+
+# Combine sources (CLI flags override file values)
+rundown run deploy.runbook.md --var-file base.yaml --var environment=prod
+```
+
+### Variable Name Requirements
+
+Variable names must match the pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`:
+- Must start with a letter or underscore
+- Can contain letters, digits, and underscores
+
+### Undefined Variables
+
+Undefined variables are preserved as literal `{{variable}}` text rather than causing an error. This allows partial variable substitution.
+
+### State Persistence
+
+Template variables are expanded **once** at `rd run` time. The expanded content is stored in `state.runbookSrc` to ensure resume commands (`pass`, `fail`, `goto`, `complete`, `status`, `pop`) work consistently without re-rendering.
+
+### Distinction from Dynamic Steps
+
+Template variables (`{{var}}`) differ from dynamic step syntax:
+- `{{variable}}` - Template variable, expanded before parsing
+- `{N}` - Dynamic step identifier, handled by parser
+- `{n}` - Dynamic substep identifier, handled by parser
+
+---
+
 ## Security Policy
 
 Rundown enforces a security policy layer to control what commands runbooks can execute.
@@ -338,6 +411,8 @@ Start a new runbook from a runbook file.
 ```bash
 rundown run my-runbook.runbook.md
 rundown run my-runbook.runbook.md --prompted  # Disable automatic execution
+rundown run my-runbook.runbook.md --var key=value  # Set template variable (repeatable)
+rundown run my-runbook.runbook.md --var-file vars.yaml  # Load variables from YAML file
 ```
 
 **Behavior:**
