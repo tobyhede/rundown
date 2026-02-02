@@ -159,6 +159,8 @@ export async function resolveActiveState(
  * @param cwd - Current working directory
  * @param agentId - Optional agent ID
  * @returns TransitionContext or null if no active runbook
+ * @throws Error if state is missing runbookSrc (corrupted state)
+ * @throws Error if runbook engine fails to initialize
  */
 export async function buildTransitionContext(
   output: OutputEmitter,

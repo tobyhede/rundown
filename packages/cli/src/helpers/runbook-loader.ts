@@ -19,6 +19,8 @@ import type { RunbookState } from '@rundown-org/core';
  * @param _cwd - Unused, kept for signature compatibility
  * @returns Parsed steps from runbookSrc
  * @throws Error if runbookSrc is missing (corrupted state)
+ * @throws {RunbookSyntaxError} if runbookSrc fails to parse as a runbook document
+ *         (thrown by parseRunbookDocument)
  *
  * @example
  * ```typescript

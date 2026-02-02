@@ -32,6 +32,8 @@ handlebars.registerHelper('helperMissing', function (...args: unknown[]) {
  * @param markdown - Raw markdown content with {{variable}} placeholders
  * @param variables - Key-value pairs for variable substitution
  * @returns Rendered markdown with variables replaced
+ * @throws Error if markdown contains invalid Handlebars syntax (e.g., unclosed
+ *         braces or malformed expressions) - thrown by Handlebars.compile()
  *
  * @example
  * ```typescript

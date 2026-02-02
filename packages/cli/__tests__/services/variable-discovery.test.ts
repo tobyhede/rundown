@@ -112,7 +112,7 @@ describe('loadVariablesFromFile', () => {
     expect(result).toEqual({});
   });
 
-  it('should return empty object if YAML content is not an object (array)', async () => {
+  it('should map array YAML to numeric-keyed object', async () => {
     const filePath = path.join(tmpDir, 'array.yaml');
     await fs.writeFile(filePath, '- item1\n- item2\n- item3');
 
