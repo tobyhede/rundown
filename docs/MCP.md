@@ -152,7 +152,7 @@ The server delegates all operations to the CLI with `--json` flag for machine-re
 | `pass` | Mark step passed | - | `agent` |
 | `fail` | Mark step failed | - | `agent` |
 | `goto` | Jump to step | `step` | - |
-| `complete` | Mark runbook complete | - | `message` |
+| `complete` | Force early completion | - | `message`, `agentId` |
 | `stop` | Stop runbook | - | `message` |
 
 ---
@@ -416,13 +416,16 @@ Jump to a specific step.
 
 ### complete
 
-Mark the runbook as successfully completed.
+Force early completion of a runbook (runbooks auto-complete on final step).
+
+**Note:** Runbooks auto-complete when the final step's PASS transition executes. This tool is for forcing early completion from any step, bypassing remaining steps.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `message` | string | No | Completion message |
+| `agentId` | string | No | Agent ID for completing runbook in agent-specific stack |
 
 **Example:**
 ```json

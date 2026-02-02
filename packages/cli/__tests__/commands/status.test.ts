@@ -298,6 +298,24 @@ describe('complete command', () => {
 
     expect(result.stdout).toContain('No active runbook');
   });
+
+  it('includes message in JSON output', async () => {
+    runCli('run --prompted runbooks/simple.runbook.md', workspace);
+
+    const result = runCli(['complete', 'Early exit - tests passed', '--json'], workspace);
+
+    const output = JSON.parse(result.stdout);
+    expect(output.message).toBe('Early exit - tests passed');
+  });
+
+  it('uses default message when none provided', async () => {
+    runCli('run --prompted runbooks/simple.runbook.md', workspace);
+
+    const result = runCli('complete --json', workspace);
+
+    const output = JSON.parse(result.stdout);
+    expect(output.message).toBe('Runbook completed successfully');
+  });
 });
 
 describe('status with runbookSrc', () => {

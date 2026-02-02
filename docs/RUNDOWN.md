@@ -443,14 +443,26 @@ rundown stop --agent <agentId>
 
 Deletes runbook state and clears from session.
 
-#### `rundown complete [message]` - Mark Complete
+#### `rundown complete [message]` - Force Early Completion
 
-Force runbook completion (success).
+Manually complete a runbook before reaching the final step.
+
+**Note:** Runbooks auto-complete when the final step's PASS transition executes and there are no more steps. This command is only needed for early exit scenarios.
 
 ```bash
-rundown complete [message]                  # Mark as success with optional message
-rundown complete "All tasks finished"       # Complete with custom message
+rundown complete                            # Force completion from current step
+rundown complete "Skipping remaining steps" # Complete with message
+rundown complete --agent myAgent            # Complete runbook in agent-specific stack
 ```
+
+**When to use:**
+- Early exit when remaining steps are unnecessary
+- Agent-driven workflows requiring explicit completion
+- Graceful exit from steps without explicit completion transitions
+
+**Comparison with `stop`:**
+- `complete` - Marks runbook as **successful**, preserves state
+- `stop` - Marks runbook as **aborted/failed**, deletes state
 
 ### State Transitions
 
@@ -937,7 +949,7 @@ Both runbook state and session tracking survive:
 # Lifecycle
 rundown run <file>           # Start runbook
 rundown stop [message]       # Abort runbook with optional message
-rundown complete [message]   # Mark complete with optional message
+rundown complete [message]   # Force early completion (auto-complete on final step)
 
 # Transitions
 rundown pass                 # Step succeeded (aliases: yes, ok)

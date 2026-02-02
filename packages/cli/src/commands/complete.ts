@@ -9,13 +9,21 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
 /**
- * Registers the 'complete' command for marking runbooks as complete.
+ * Registers the 'complete' command for manually completing runbooks.
+ *
+ * Note: Runbooks auto-complete when the final step's PASS transition executes.
+ * This command is for forcing early completion from any step, bypassing
+ * remaining steps. Use cases include:
+ * - Early exit when remaining steps are unnecessary
+ * - Agent-driven completion where manual override is needed
+ * - Testing/debugging workflows
+ *
  * @param program - Commander program instance to register the command on
  */
 export function registerCompleteCommand(program: Command): void {
   program
     .command('complete')
-    .description('Mark current runbook as complete')
+    .description('Force early completion of current runbook (runbooks auto-complete on final step)')
     .argument('[message]', 'Completion message')
     .option('--agent <agentId>', 'Complete runbook in agent-specific stack')
     .option('--json', 'Output as JSON for programmatic use')

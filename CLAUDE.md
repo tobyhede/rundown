@@ -28,7 +28,7 @@ rundown fail             # Mark current step as failed (alias: no)
 rundown goto <n>         # Jump to specific step number
 rundown status           # Show current state
 rundown stop [message]   # Abort runbook with optional message
-rundown complete [message] # Mark complete with optional message
+rundown complete [message] # Force early completion (runbooks auto-complete on final step)
 rundown stash            # Pause enforcement (stash active runbook)
 rundown pop              # Resume enforcement (restore stashed runbook)
 rundown ls               # List active runbooks
