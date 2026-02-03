@@ -38,6 +38,7 @@
     "@rundown-org/core": "*",
     "@rundown-org/parser": "*",
     "commander": "^14.0.2",
+    "handlebars": "^4.7.8",
     "js-yaml": "^4.1.1",
     "minimatch": "^10.1.1",
     "zod": "^3.25.76",

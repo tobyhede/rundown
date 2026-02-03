@@ -8,18 +8,16 @@
  * @module helpers/transitions
  */
 
-import * as fs from 'fs/promises';
 import type { AnyActorRef } from 'xstate';
 import {
   RunbookStateManager,
-  parseRunbook,
   countNumberedSteps,
   type Step,
   type RunbookState,
   type StepPosition,
   type StepId,
 } from '@rundown-org/core';
-import { resolveRunbookFile } from './resolve-runbook.js';
+import { getRunbookFromState } from './runbook-loader.js';
 import {
   runExecutionLoop,
   formatActionForDisplay,
@@ -161,6 +159,8 @@ export async function resolveActiveState(
  * @param cwd - Current working directory
  * @param agentId - Optional agent ID
  * @returns TransitionContext or null if no active runbook
+ * @throws Error if state is missing runbookSrc (corrupted state)
+ * @throws Error if runbook engine fails to initialize
  */
 export async function buildTransitionContext(
   output: OutputEmitter,
@@ -174,13 +174,8 @@ export async function buildTransitionContext(
     return null;
   }
 
-  const runbookPath = await resolveRunbookFile(cwd, state.runbook);
-  if (!runbookPath) {
-    throw new Error(`Runbook file ${state.runbook} not found`);
-  }
-
-  const content = await fs.readFile(runbookPath, 'utf8');
-  const steps = parseRunbook(content);
+  const readonlySteps = getRunbookFromState(state, cwd);
+  const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
   const actor = await manager.createActor(state.id, steps);
   if (!actor) {
     throw new Error('Failed to initialize runbook engine');

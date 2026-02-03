@@ -1,20 +1,19 @@
 // packages/cli/src/commands/pop.ts
 
-import * as fs from 'fs/promises';
 import type { Command } from 'commander';
 import {
   RunbookStateManager,
-  parseRunbook,
   countNumberedSteps,
   type ActionBlockData,
 } from '@rundown-org/core';
-import { getCwd, findRunbookFile } from '../helpers/context.js';
+import { getCwd } from '../helpers/context.js';
 import {
   getStepRetryMax,
   buildMetadata,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
 /**
  * Registers the 'pop' command for resuming stashed runbooks.
@@ -42,12 +41,7 @@ export function registerPopCommand(program: Command): void {
             return;
           }
 
-          const runbookPath = await findRunbookFile(cwd, state.runbook);
-          if (!runbookPath) {
-            throw new Error(`Runbook file ${state.runbook} not found`);
-          }
-          const content = await fs.readFile(runbookPath, 'utf8');
-          const steps = parseRunbook(content);
+          const steps = getRunbookFromState(state, cwd);
           const currentStepIndex = steps.findIndex(s => s.name === state.step);
           const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
           const totalSteps = countNumberedSteps(steps);

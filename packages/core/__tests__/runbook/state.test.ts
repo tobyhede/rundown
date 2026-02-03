@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, rm, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
@@ -538,6 +538,51 @@ describe('RunbookStateManager', () => {
     it('returns false for nonexistent parent', async () => {
       const result = await manager.isParentPrompted('nonexistent');
       expect(result).toBe(false);
+    });
+  });
+
+  describe('runbookSrc storage', () => {
+    it('should store runbookSrc when provided to create()', async () => {
+      const runbookSrc = '# Test Runbook\n\n## 1. Step 1\n\nRendered content';
+
+      const state = await manager.create('test.runbook.md', mockRunbook, {
+        runbookPath: 'test.runbook.md',
+        runbookSrc,
+      });
+
+      expect(state.runbookSrc).toBe(runbookSrc);
+
+      // Verify persistence
+      const loaded = await manager.load(state.id);
+      expect(loaded?.runbookSrc).toBe(runbookSrc);
+    });
+
+    it('should allow runbookSrc to be undefined', async () => {
+      const state = await manager.create('test.runbook.md', mockRunbook, {
+        runbookPath: 'test.runbook.md',
+      });
+
+      expect(state.runbookSrc).toBeUndefined();
+    });
+  });
+
+  describe('file permissions', () => {
+    it('should set restrictive file permissions on state files', async () => {
+      // Skip on Windows - permission bits are not reliable
+      if (process.platform === 'win32') {
+        return;
+      }
+
+      const state = await manager.create('test.runbook.md', mockRunbook, {
+        runbookPath: 'test.runbook.md',
+      });
+
+      const statePath = join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const stats = await stat(statePath);
+
+      // Check mode is 0o600 (owner read/write only)
+      // Note: mode includes file type bits, so mask with 0o777
+      expect(stats.mode & 0o777).toBe(0o600);
     });
   });
 });

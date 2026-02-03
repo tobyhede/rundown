@@ -20,6 +20,9 @@ import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
+import { collect } from './echo.js';
+import { collectVariables } from '../services/variable-discovery.js';
+import { renderTemplate } from '../services/template-renderer.js';
 
 /**
  * Emit RUNBOOK_STARTED event with metadata.
@@ -49,7 +52,16 @@ export function registerRunCommand(program: Command): void {
     .option('--agent <agentId>', 'Bind agent to pending step')
     .option('--prompted', 'Prompted mode: show commands without auto-executing')
     .option('--json', 'Output execution events as JSON')
-    .action(async (file: string | undefined, options: { step?: string; agent?: string; prompted?: boolean; json?: boolean }) => {
+    .option('--var-file <path>', 'Load variables from YAML file')
+    .option('--var <key=value>', 'Set variable (repeatable)', collect, [])
+    .action(async (file: string | undefined, options: {
+      step?: string;
+      agent?: string;
+      prompted?: boolean;
+      json?: boolean;
+      varFile?: string;
+      var?: string[];
+    }) => {
       // OutputEmitter for non-loop output (step_queued, agent_bound)
       const output = new OutputEmitter({ json: options.json });
 
@@ -103,8 +115,23 @@ export function registerRunCommand(program: Command): void {
             process.exit(1);
           }
 
-          const content = await fs.readFile(filePath, 'utf8');
-          const runbook = parseRunbookDocument(content, path.basename(filePath));
+          // Load and render template
+          const rawContent = await fs.readFile(filePath, 'utf8');
+          const variables = await collectVariables(
+            { varFile: options.varFile, var: options.var },
+            cwd
+          );
+          let runbookSrc: string;
+          try {
+            runbookSrc = renderTemplate(rawContent, variables);
+          } catch (err) {
+            output.error(`Template error: ${(err as Error).message}`, 'TEMPLATE_ERROR');
+            output.flush();
+            process.exit(1);
+          }
+
+          // Parse expanded content
+          const runbook = parseRunbookDocument(runbookSrc, path.basename(filePath));
 
           if (runbook.steps.length === 0) {
             output.error('Runbook has no steps', 'VALIDATION_ERROR', {
@@ -118,7 +145,8 @@ export function registerRunCommand(program: Command): void {
           const state = await manager.create(file, runbook, {
             runbookPath,
             prompted: options.prompted,
-            agentId: options.agent  // Pass agent ID
+            agentId: options.agent,  // Pass agent ID
+            runbookSrc,  // Store expanded content
           });
 
           await manager.pushRunbook(state.id, options.agent);
@@ -186,8 +214,23 @@ export function registerRunCommand(program: Command): void {
               process.exit(1);
             }
 
-            const content = await fs.readFile(runbookPath, 'utf8');
-            const runbook = parseRunbookDocument(content, path.basename(runbookPath));
+            // Load and render child template (inherit parent's variables context)
+            const rawContent = await fs.readFile(runbookPath, 'utf8');
+            const variables = await collectVariables(
+              { varFile: options.varFile, var: options.var },
+              cwd
+            );
+            let childRunbookSrc: string;
+            try {
+              childRunbookSrc = renderTemplate(rawContent, variables);
+            } catch (err) {
+              output.error(`Template error: ${(err as Error).message}`, 'TEMPLATE_ERROR');
+              output.flush();
+              process.exit(1);
+            }
+
+            // Parse expanded content
+            const runbook = parseRunbookDocument(childRunbookSrc, path.basename(runbookPath));
 
             if (runbook.steps.length === 0) {
               output.error('Child runbook has no steps', 'VALIDATION_ERROR', {
@@ -207,7 +250,8 @@ export function registerRunCommand(program: Command): void {
               agentId: options.agent,
               parentRunbookId: state.id,
               parentStepId: pending.stepId,
-              prompted: parentPrompted  // Inherit from parent
+              prompted: parentPrompted,  // Inherit from parent
+              runbookSrc: childRunbookSrc,  // Store expanded child content
             });
 
             await manager.updateAgentBinding(state.id, options.agent, {

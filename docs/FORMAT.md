@@ -130,6 +130,25 @@ where scenario is:
 
 ---
 
+## Template Variable Preprocessing
+
+Before parsing, runbook content is preprocessed to expand template variables.
+
+Template variables use Handlebars double-brace syntax: `{{variableName}}`
+
+```
+{{identifier}}  =>  value (from variable sources)
+{{undefined}}   =>  {{undefined}} (preserved as literal text)
+```
+
+**Variable name pattern (for --var flags):** `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
+
+> Note: Variable names from `--var-file` and auto-discovered config files are accepted as-is without validation.
+
+**Important:** Template variables (`{{var}}`) are distinct from dynamic step identifiers (`{N}`, `{n}`), which use single braces and are handled by the parser.
+
+---
+
 ## Expansion Rules
 
 Syntactic sugar is expanded before execution:

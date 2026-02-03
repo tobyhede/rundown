@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { writeFile, rm } from 'fs/promises';
+import { join } from 'path';
 import {
   createTestWorkspace,
   runCli,
@@ -295,5 +297,69 @@ describe('complete command', () => {
     const result = runCli('complete', workspace);
 
     expect(result.stdout).toContain('No active runbook');
+  });
+
+  it('includes message in JSON output', async () => {
+    runCli('run --prompted runbooks/simple.runbook.md', workspace);
+
+    const result = runCli(['complete', 'Early exit - tests passed', '--json'], workspace);
+
+    const output = JSON.parse(result.stdout);
+    expect(output.message).toBe('Early exit - tests passed');
+  });
+
+  it('uses default message when none provided', async () => {
+    runCli('run --prompted runbooks/simple.runbook.md', workspace);
+
+    const result = runCli('complete --json', workspace);
+
+    const output = JSON.parse(result.stdout);
+    expect(output.message).toBe('Runbook completed successfully');
+  });
+});
+
+describe('status with runbookSrc', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('should compute step total from runbookSrc', async () => {
+    // Create a runbook with variable
+    const runbookContent = `# Test Runbook
+
+## 1. First Step
+- PASS: CONTINUE
+
+\`\`\`bash
+rd echo {{message}}
+\`\`\`
+
+## 2. Second Step
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo done
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+    // Run with variable to store runbookSrc
+    runCli('run test.runbook.md --var message=hello --prompted', workspace);
+
+    // Delete the source file to prove we're using runbookSrc, not disk
+    await rm(join(workspace.cwd, 'test.runbook.md'));
+
+    // Status should work using runbookSrc (not disk fallback)
+    const result = runCli('status --json', workspace);
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.position.total).toBe(2);
   });
 });

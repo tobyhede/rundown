@@ -131,14 +131,24 @@ describe('pop command', () => {
 
   it('outputs error when step not found in runbook', async () => {
     // Create a state file with a step that doesn't exist in the runbook
+    // runbookSrc must be present for pop to read from stored content
     const runbookId = 'wf-2025-01-28-test01';
     const stateFile = join(workspace.statePath(), `${runbookId}.json`);
+    const runbookSrc = `# Test Runbook
+
+## 1. First step
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo "hello"
+\`\`\`
+`;
     const state = {
       id: runbookId,
       runbook: 'runbooks/simple.runbook.md',
       runbookPath: join(workspace.cwd, 'runbooks', 'simple.runbook.md'),
       title: 'Test Runbook',
-      step: 'NonExistentStep', // Step that doesn't exist
+      step: 'NonExistentStep', // Step that doesn't exist in runbookSrc
       stepName: 'A step that does not exist',
       retryCount: 0,
       variables: {},
@@ -147,6 +157,7 @@ describe('pop command', () => {
       agentBindings: {},
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      runbookSrc, // Include runbookSrc so pop can read steps
     };
     await writeFile(stateFile, JSON.stringify(state, null, 2));
 

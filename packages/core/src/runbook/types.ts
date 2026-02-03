@@ -95,4 +95,7 @@ export interface RunbookState {
   readonly lastAction?: 'START' | 'CONTINUE' | 'GOTO' | 'COMPLETE' | 'STOP' | 'RETRY';
 
   readonly snapshot?: unknown;
+
+  /** Runbook source content (rendered from template), frozen at run time */
+  readonly runbookSrc?: string;
 }

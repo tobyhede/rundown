@@ -35,6 +35,7 @@ Rundown transforms static documentation into interactive, stateful CLI workflows
 - **State persistence** - Runbook progress survives context clears
 - **XState compilation** - Runbooks compile to state machines for reliable execution
 - **CLI control** - Simple commands to run, pass, fail, and navigate runbooks
+- **Template variables** - Parameterize runbooks with `{{variable}}` syntax
 
 ## Security
 
@@ -112,6 +113,8 @@ The `rd` command is an alias for `rundown`.
 | Command | Description |
 |---------|-------------|
 | `rundown run <file>` | Start a runbook |
+| `rundown run <file> --var key=value` | Set template variable (repeatable) |
+| `rundown run <file> --var-file path` | Load variables from YAML file |
 | `rundown pass` | Mark current step as passed (evaluates PASS condition) |
 | `rundown fail` | Mark current step as failed (evaluates FAIL condition) |
 | `rundown goto <n>` | Jump to step number |

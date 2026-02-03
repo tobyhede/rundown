@@ -1,21 +1,20 @@
 // packages/cli/src/commands/status.ts
 
-import * as fs from 'fs/promises';
 import type { Command } from 'commander';
 import {
   RunbookStateManager,
-  parseRunbook,
   stepIdToString,
   countNumberedSteps,
   type ActionBlockData,
 } from '@rundown-org/core';
-import { getCwd, getStepTotal, findRunbookFile } from '../helpers/context.js';
+import { getCwd } from '../helpers/context.js';
 import {
   getStepRetryMax,
   buildMetadata,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
 /**
  * Internal data structure for status command output.
@@ -88,7 +87,10 @@ export function registerStatusCommand(program: Command): void {
         if (stashedId && !state) {
           const stashed = await manager.load(stashedId);
           if (stashed) {
-            const totalSteps = await getStepTotal(cwd, stashed.runbook);
+            const steps = getRunbookFromState(stashed, cwd);
+            const totalSteps = steps.length > 0 && steps[0].isDynamic
+              ? '{N}'
+              : countNumberedSteps(steps);
             const metadata = buildMetadata(stashed);
 
             const statusData: StatusOutputData = {
@@ -116,12 +118,7 @@ export function registerStatusCommand(program: Command): void {
         }
 
         // Case 3: Active runbook
-        const runbookPath = await findRunbookFile(cwd, state.runbook);
-        if (!runbookPath) {
-          throw new Error(`Runbook file ${state.runbook} not found`);
-        }
-        const content = await fs.readFile(runbookPath, 'utf8');
-        const steps = parseRunbook(content);
+        const steps = getRunbookFromState(state, cwd);
         const isDynamic = steps.length > 0 && steps[0].isDynamic;
         // For dynamic runbooks, find step by checking if it's the dynamic template
         const currentStepIndex = isDynamic ? 0 : steps.findIndex(s => s.name === state.step);

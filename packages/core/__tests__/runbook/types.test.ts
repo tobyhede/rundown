@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import type { StepNumber, Action, SubtaskState, Substep } from '../../src/runbook/types.js';
+import type { StepNumber, Action, SubtaskState, Substep, RunbookState } from '../../src/runbook/types.js';
 
 describe('SubtaskState type', () => {
   it('has required fields', () => {
@@ -95,5 +95,26 @@ describe('Substep interface', () => {
       }
     };
     expect(substep.transitions?.pass.action.type).toBe('CONTINUE');
+  });
+});
+
+describe('RunbookState runbookSrc field', () => {
+  it('should include runbookSrc field', () => {
+    const state: RunbookState = {
+      id: 'wf-2026-01-29-abc123',
+      runbook: 'test.runbook.md',
+      runbookPath: 'test.runbook.md',
+      step: '1',
+      stepName: 'Test step',
+      retryCount: 0,
+      variables: {},
+      steps: [],
+      pendingSteps: [],
+      agentBindings: {},
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      runbookSrc: '# Test Runbook\n\n## 1. Test Step',
+    };
+    expect(state.runbookSrc).toBe('# Test Runbook\n\n## 1. Test Step');
   });
 });
