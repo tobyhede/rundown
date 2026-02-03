@@ -568,6 +568,11 @@ describe('RunbookStateManager', () => {
 
   describe('file permissions', () => {
     it('should set restrictive file permissions on state files', async () => {
+      // Skip on Windows - permission bits are not reliable
+      if (process.platform === 'win32') {
+        return;
+      }
+
       const state = await manager.create('test.runbook.md', mockRunbook, {
         runbookPath: 'test.runbook.md',
       });

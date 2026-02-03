@@ -121,7 +121,14 @@ export function registerRunCommand(program: Command): void {
             { varFile: options.varFile, var: options.var },
             cwd
           );
-          const runbookSrc = renderTemplate(rawContent, variables);
+          let runbookSrc: string;
+          try {
+            runbookSrc = renderTemplate(rawContent, variables);
+          } catch (err) {
+            output.error(`Template error: ${(err as Error).message}`, 'TEMPLATE_ERROR');
+            output.flush();
+            process.exit(1);
+          }
 
           // Parse expanded content
           const runbook = parseRunbookDocument(runbookSrc, path.basename(filePath));
@@ -213,7 +220,14 @@ export function registerRunCommand(program: Command): void {
               { varFile: options.varFile, var: options.var },
               cwd
             );
-            const childRunbookSrc = renderTemplate(rawContent, variables);
+            let childRunbookSrc: string;
+            try {
+              childRunbookSrc = renderTemplate(rawContent, variables);
+            } catch (err) {
+              output.error(`Template error: ${(err as Error).message}`, 'TEMPLATE_ERROR');
+              output.flush();
+              process.exit(1);
+            }
 
             // Parse expanded content
             const runbook = parseRunbookDocument(childRunbookSrc, path.basename(runbookPath));

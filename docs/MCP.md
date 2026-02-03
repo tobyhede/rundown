@@ -445,7 +445,7 @@ Force early completion of a runbook (runbooks auto-complete on final step).
 }
 ```
 
-**CLI Equivalent:** `rundown complete [<message>] --json`
+**CLI Equivalent:** `rundown complete [<message>] [--agent <agentId>] --json`
 
 ---
 

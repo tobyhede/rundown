@@ -288,12 +288,12 @@ Rundown supports template variables using Handlebars syntax `{{variableName}}` f
 
 ### Syntax
 
-```markdown
+````markdown
 ## 1. Deploy to {{environment}}
 ```bash
 npm run deploy --env={{environment}} --version={{version}}
 ```
-```
+````
 
 ### Variable Sources
 

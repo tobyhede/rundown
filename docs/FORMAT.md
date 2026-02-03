@@ -141,7 +141,9 @@ Template variables use Handlebars double-brace syntax: `{{variableName}}`
 {{undefined}}   =>  {{undefined}} (preserved as literal text)
 ```
 
-**Variable name pattern:** `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
+**Variable name pattern (for --var flags):** `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
+
+> Note: Variable names from `--var-file` and auto-discovered config files are accepted as-is without validation.
 
 **Important:** Template variables (`{{var}}`) are distinct from dynamic step identifiers (`{N}`, `{n}`), which use single braces and are handled by the parser.
 

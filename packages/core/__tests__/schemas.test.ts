@@ -201,21 +201,7 @@ describe('Action schema-derived type', () => {
 
 describe('RunbookStateSchema runbookSrc', () => {
   it('should accept runbookSrc field', () => {
-    const validState = {
-      id: 'wf-test-123',
-      runbook: 'test.md',
-      runbookPath: 'test.md',
-      step: '1',
-      stepName: 'Test',
-      retryCount: 0,
-      variables: {},
-      steps: [],
-      pendingSteps: [],
-      agentBindings: {},
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      runbookSrc: '# Rendered content',
-    };
+    const validState = createValidState({ runbookSrc: '# Rendered content' });
 
     const result = RunbookStateSchema.safeParse(validState);
     expect(result.success).toBe(true);
@@ -225,20 +211,7 @@ describe('RunbookStateSchema runbookSrc', () => {
   });
 
   it('should allow runbookSrc to be undefined', () => {
-    const validState = {
-      id: 'wf-test-123',
-      runbook: 'test.md',
-      runbookPath: 'test.md',
-      step: '1',
-      stepName: 'Test',
-      retryCount: 0,
-      variables: {},
-      steps: [],
-      pendingSteps: [],
-      agentBindings: {},
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const validState = createValidState();
 
     const result = RunbookStateSchema.safeParse(validState);
     expect(result.success).toBe(true);

@@ -536,6 +536,8 @@ rd echo "Project: {{project_name}}, Task: {{task_name}}"
       runCli('run --step 1 runbooks/child.runbook.md', workspace);
 
       // Bind agent with additional task-specific variable
+      // Variables must be explicitly passed to child runbooks via --var flags
+      // when binding agents. There is no automatic inheritance from parent context.
       const result = runCli('run --agent test-agent --var task_name=BuildTask --var project_name=MyProject', workspace);
       expect(result.exitCode).toBe(0);
 

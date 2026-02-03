@@ -6,6 +6,7 @@ import {
   parseStepIdFromString,
   stepIdToString,
   countNumberedSteps,
+  type Step,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
@@ -52,9 +53,9 @@ export function registerGotoCommand(program: Command): void {
           process.exit(1);
         }
 
-        let steps;
+        let steps: Step[];
         try {
-          steps = getRunbookFromState(state, cwd);
+          steps = [...getRunbookFromState(state, cwd)];
         } catch (err) {
           output.error(`Runbook state error: ${(err as Error).message}`, 'STATE_ERROR');
           output.flush();
@@ -104,8 +105,8 @@ export function registerGotoCommand(program: Command): void {
           }
         }
 
-        // Create XState actor (spread to convert readonly to mutable)
-        const actor = await manager.createActor(state.id, [...steps]);
+        // Create XState actor
+        const actor = await manager.createActor(state.id, steps);
         if (!actor) {
           output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
           output.flush();
@@ -121,7 +122,7 @@ export function registerGotoCommand(program: Command): void {
         // Update state from XState (single source of truth)
         // Note: We call updateFromActor to persist the new state, but don't use the return value
         // since we show "from" position in the action block
-        await manager.updateFromActor(state.id, actor, [...steps]);
+        await manager.updateFromActor(state.id, actor, steps);
 
         // Update lastAction and CLEAR lastResult (prevent stale PASS/FAIL leaking)
         await manager.update(state.id, {
@@ -153,7 +154,7 @@ export function registerGotoCommand(program: Command): void {
 
         // Continue with execution loop
         // Goto doesn't have --agent option, so use default stack
-        const loopResult = await runExecutionLoop(manager, state.id, [...steps], cwd, !!state.prompted, undefined, emitter);
+        const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, undefined, emitter);
 
         // Flush any remaining output
         output.flush();

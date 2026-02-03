@@ -86,6 +86,9 @@ export async function loadVariablesFromFile(
     // Convert all values to strings
     const result: Record<string, string> = {};
     for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'object' && value !== null) {
+        console.warn(`Warning: Variable "${key}" has complex value, coerced to string`);
+      }
       result[key] = String(value);
     }
     return result;
