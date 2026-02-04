@@ -367,7 +367,7 @@ export function createRunbook(options: CreateRunbookOptions): string {
     if (vars && Object.keys(vars).length > 0) {
       lines.push('vars:');
       for (const [key, value] of Object.entries(vars)) {
-        lines.push(`  ${key}: ${value}`);
+        lines.push(`  ${key}: ${String(value)}`);
       }
     }
     lines.push('---');
@@ -380,7 +380,7 @@ export function createRunbook(options: CreateRunbookOptions): string {
 
   // Steps
   steps.forEach((step, index) => {
-    lines.push(`## ${index + 1}. ${step.title}`);
+    lines.push(`## ${String(index + 1)}. ${step.title}`);
     if (step.pass) lines.push(`- PASS: ${step.pass}`);
     if (step.fail) lines.push(`- FAIL: ${step.fail}`);
     lines.push('');
