@@ -8,6 +8,85 @@ Rundown is a format for defining executable runbooks using Markdown.
 
 ---
 
+## Quick Reference for AI Agents
+
+Rundown = executable Markdown runbooks. Steps are H2 headers with identifiers, optional transitions, and content (prompt/code/substeps/runbooks).
+
+### Document Hierarchy
+
+| Level | Purpose | Example |
+|-------|---------|---------|
+| H1 | Title (optional) | `# Deploy Service` |
+| H2 | Step | `## 1 Build` |
+| H3 | Substep | `### 1.1 Compile` |
+
+### Step Identifiers
+
+| Format | Type | Usage |
+|--------|------|-------|
+| `1`, `2` | Static | Sequential steps |
+| `1.1`, `1.2` | Static substep | Nested sequence |
+| `{N}` | Dynamic | Loop template (repeatable) |
+| `{N}.{n}` | Dynamic substep | Nested loop |
+| `Name` | Named | GOTO target only (skipped by CONTINUE) |
+
+Rules: Static steps numbered 1, 2, 3... One dynamic step per level.
+
+### Transitions
+
+```
+- PASS [ALL|ANY]: action
+- FAIL [ALL|ANY]: action
+```
+
+Aliases: YES=PASS, NO=FAIL.
+
+### Default Behaviors (Pessimistic)
+
+| Condition | Default |
+|-----------|---------|
+| PASS without modifier | PASS ALL |
+| FAIL without modifier | FAIL ANY |
+| PASS omitted | PASS ALL: CONTINUE |
+| FAIL omitted | FAIL ANY: STOP |
+
+### Actions
+
+| Action | Effect |
+|--------|--------|
+| `CONTINUE` | Next step in sequence |
+| `COMPLETE [msg]` | Success termination |
+| `STOP [msg]` | Halt execution |
+| `GOTO N` | Jump to step N |
+| `GOTO NEXT` | Next dynamic instance |
+| `RETRY [n] [action]` | Retry n times, then action |
+
+### Code Blocks
+
+| Tag | Behavior |
+|-----|----------|
+| `bash`, `sh`, `shell` | Execute; exit 0=PASS, else FAIL |
+| `bash prompt`, `prompt` | Display only, never execute |
+| other (`json`, etc.) | Display only |
+
+One code block per step maximum.
+
+### Template Variables
+
+- `{{variable}}` - Expanded at run time via `--var name=value`
+- `{N}`, `{n}` - Dynamic step identifiers (not variables)
+
+Undefined variables preserved as literal text.
+
+### Step Content Order
+
+When present, content MUST appear in order:
+1. Transitions (bullet list)
+2. Prompt (text)
+3. Body (code block OR substeps OR runbooks)
+
+---
+
 ## Table of Contents
 
 - [Syntax Synopsis](#syntax-synopsis)
@@ -371,5 +450,7 @@ Parsers and executors must adhere to strict validation:
 
 Executable examples and conformance test cases are maintained in the `packages/parser/fixtures/conformance/` directory.
 
-- **Valid Runbooks**: `packages/parser/fixtures/conformance/valid/` (symlinks to `runbooks/patterns/` for shared examples)
+- **Valid Runbooks**: `packages/parser/fixtures/conformance/valid/` contains symlinks to `runbooks/patterns/` - browse the patterns directory directly for example runbooks
 - **Invalid Runbooks (Error Cases)**: `packages/parser/fixtures/conformance/invalid/`
+
+> **Tip:** For browsable examples, see `runbooks/patterns/` directly. The symlinks in `valid/` are for conformance testing.

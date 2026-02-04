@@ -186,9 +186,10 @@ export function parseRunbookDocument(
 
 ## CLI Output Standards
 
-New CLI commands MUST use `OutputEmitter` for consistent output with format-agnostic rendering:
+New CLI commands MUST use `OutputEmitter` for consistent output with format-agnostic rendering. Import paths are relative to `packages/cli/src/commands/`:
 
 ```typescript
+// In packages/cli/src/commands/your-command.ts
 import { OutputEmitter } from '../services/output-emitter.js';
 
 const output = new OutputEmitter({ json: options.json });
@@ -206,7 +207,7 @@ output.action({ action, from, result, at });
 output.flush();
 ```
 
-For direct table formatting without JSON support, use `formatTable` from `../helpers/table-formatter.js`.
+For direct table formatting without JSON support, use `formatTable` from `../helpers/table-formatter.js` (also relative to commands/).
 
 Key conventions:
 - UPPERCASE headers, 2-space column separators

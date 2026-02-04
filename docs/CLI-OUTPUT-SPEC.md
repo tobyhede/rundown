@@ -589,10 +589,12 @@ Available: success, failure
 **JSON:**
 ```json
 {
-  "error": true,
-  "message": "Scenario \"unknown\" not found",
-  "available": ["success", "failure"],
-  "result": false
+  "result": false,
+  "error": "Scenario \"unknown\" not found",
+  "code": "SCENARIO_NOT_FOUND",
+  "details": {
+    "available": ["success", "failure"]
+  }
 }
 ```
 

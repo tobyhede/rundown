@@ -4,6 +4,8 @@ version: 1.0.0
 
 # Rundown Format
 
+Formal BNF-style grammar for Rundown runbook syntax. See [SPEC.md](./SPEC.md) for prose explanations and examples.
+
 ## Grammar Notation
 
 | Symbol | Meaning |
@@ -78,6 +80,8 @@ where code_block is:
 where info_string is:
   [ language ] [ " " "prompt" ]
 
+Note: `prompt` alone (without a language) is valid for text-only prompts, e.g., ` ```prompt `.
+
 where runbooks is:
   - runbook_path [ ... ]
 
@@ -130,52 +134,56 @@ where scenario is:
 
 ---
 
-## Template Variable Preprocessing
+## Template Variables
 
-Before parsing, runbook content is preprocessed to expand template variables.
+| Pattern             | Variable  | Expansion                               |
+|---------------------|-----------|-----------------------------------------|
+| `{{VariableName}}`  | defined   | literal variable value                  |
+| `{{VariableName}}`  | undefined | preserved as literal `{{VariableName}}` |
 
-Template variables use Handlebars double-brace syntax: `{{variableName}}`
 
-```
-{{identifier}}  =>  value (from variable sources)
-{{undefined}}   =>  {{undefined}} (preserved as literal text)
-```
+VariableName: `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 
-**Variable name pattern (for --var flags):** `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
-
-> Note: Variable names from `--var-file` and auto-discovered config files are accepted as-is without validation.
-
-**Important:** Template variables (`{{var}}`) are distinct from dynamic step identifiers (`{N}`, `{n}`), which use single braces and are handled by the parser.
+Note: `{{VariableName}}` (template) vs `{N}`, `{n}` (dynamic identifiers) use different brace counts.
 
 ---
 
 ## Expansion Rules
 
-Syntactic sugar is expanded before execution:
+### Transition Aliases
 
-```
--- Transition aliases
-YES X  =>  PASS X
-NO X   =>  FAIL X
+| Input | Expands To |
+|-------|------------|
+| `YES X` | `PASS X` |
+| `NO X` | `FAIL X` |
 
--- Modifier defaults
-PASS: X  =>  PASS ALL: X
-FAIL: X  =>  FAIL ANY: X
+### Modifier Defaults
 
--- RETRY defaults
-RETRY          =>  RETRY 1 STOP
-RETRY n        =>  RETRY n STOP
-RETRY n action =>  RETRY n action
+| Input | Expands To |
+|-------|------------|
+| `PASS: X` | `PASS ALL: X` |
+| `FAIL: X` | `FAIL ANY: X` |
 
--- Implicit transitions (when none defined)
-<none>  =>  - PASS ALL: CONTINUE
-            - FAIL ANY: STOP
+### RETRY Defaults
 
--- Partial transition defaults
-When only PASS defined  =>  FAIL defaults to FAIL ANY: STOP
-When only FAIL defined  =>  PASS defaults to PASS ALL: CONTINUE
+| Input | Expands To |
+|-------|------------|
+| `RETRY`          | `RETRY 1 STOP` |
+| `RETRY n`        | `RETRY n STOP` |
+| `RETRY n action` | `RETRY n action` |
 
--- Code block semantics
-```bash | sh | shell            =>  Command (Executable)
-```{language} prompt            =>  Command (rd prompt '...' - outputs content in fences)
-```{other language or no lang}  =>  Command (rd prompt '...' - outputs content in fences)
+### Implicit Transitions
+
+| Condition         | Expands To |
+|-------------------|------------|
+| None defined      | `PASS ALL: CONTINUE` + `FAIL ANY: STOP` |
+| Only PASS defined | Adds `FAIL ANY: STOP` |
+| Only FAIL defined | Adds `PASS ALL: CONTINUE` |
+
+### Code Block Semantics
+
+| Info String | Behavior |
+|------------------------|----------|
+| `bash`, `sh`, `shell`  | Execute; exit 0=PASS, non-zero=FAIL |
+| `{language} prompt`    | Output only  |
+| other / none           | Output only  |

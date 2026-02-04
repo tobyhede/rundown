@@ -155,6 +155,8 @@ The server delegates all operations to the CLI with `--json` flag for machine-re
 | `complete` | Force early completion | - | `message`, `agentId` |
 | `stop` | Stop runbook | - | `message` |
 
+> **Note:** The CLI `stash` and `pop` commands are not exposed via MCP. These commands manage local session state which is typically not needed in MCP agent workflows.
+
 ---
 
 ### validate
@@ -190,7 +192,7 @@ List active or available runbooks.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `all` | boolean | No | List available runbook files (default: active only) |
-| `tags` | string | No | Filter by tags (comma-separated) |
+| `tags` | string | No | Filter by tags (comma-separated, requires `all: true`) |
 
 **Example - List active runbooks:**
 ```json

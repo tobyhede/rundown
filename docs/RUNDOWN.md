@@ -303,7 +303,9 @@ Variables are collected from multiple sources with the following precedence (hig
 |--------|-------------|
 | `--var key=value` | CLI flags (repeatable, highest priority) |
 | `--var-file path` | YAML file specified on command line |
-| `.rundown/config.yaml` | Auto-discovered from cwd upward |
+| `.rundown/config.yaml` | Auto-discovered from cwd upward, stops at git root |
+| Frontmatter `vars:` field | Variables defined in runbook frontmatter |
+| Built-in defaults | System-provided variables (Date, DateTime, Year, etc.) |
 
 ### Auto-Discovery
 
