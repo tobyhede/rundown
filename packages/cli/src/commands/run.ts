@@ -25,20 +25,6 @@ import { collectVariables, extractVarsFromMarkdown } from '../services/variable-
 import { renderTemplate } from '../services/template-renderer.js';
 
 /**
- * Merge frontmatter vars with collected variables, frontmatter as lowest precedence.
- *
- * @param frontmatterVars - Variables extracted from runbook frontmatter
- * @param variables - Variables from CLI flags or config files
- * @returns Merged variables with CLI/config taking precedence over frontmatter
- */
-function mergeWithFrontmatter(
-  frontmatterVars: Record<string, string>,
-  variables: Record<string, string>
-): Record<string, string> {
-  return { ...frontmatterVars, ...variables };
-}
-
-/**
  * Emit RUNBOOK_STARTED event with metadata.
  */
 function emitRunbookStarted(
@@ -132,12 +118,10 @@ export function registerRunCommand(program: Command): void {
           // Load and render template
           const rawContent = await fs.readFile(filePath, 'utf8');
           const frontmatterVars = extractVarsFromMarkdown(rawContent);
-          const variables = await collectVariables(
-            { varFile: options.varFile, var: options.var },
+          const mergedVariables = await collectVariables(
+            { varFile: options.varFile, var: options.var, frontmatterVars },
             cwd
           );
-          // Merge with frontmatter vars as lowest precedence
-          const mergedVariables = mergeWithFrontmatter(frontmatterVars, variables);
           let runbookSrc: string;
           try {
             runbookSrc = renderTemplate(rawContent, mergedVariables);
@@ -234,12 +218,10 @@ export function registerRunCommand(program: Command): void {
             // Load and render child template (inherit parent's variables context)
             const rawContent = await fs.readFile(runbookPath, 'utf8');
             const frontmatterVars = extractVarsFromMarkdown(rawContent);
-            const variables = await collectVariables(
-              { varFile: options.varFile, var: options.var },
+            const mergedVariables = await collectVariables(
+              { varFile: options.varFile, var: options.var, frontmatterVars },
               cwd
             );
-            // Merge with frontmatter vars as lowest precedence
-            const mergedVariables = mergeWithFrontmatter(frontmatterVars, variables);
             let childRunbookSrc: string;
             try {
               childRunbookSrc = renderTemplate(rawContent, mergedVariables);

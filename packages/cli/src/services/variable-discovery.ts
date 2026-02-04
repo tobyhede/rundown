@@ -22,6 +22,35 @@ import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 /**
+ * Normalize a raw variables object to Record<string, string>.
+ *
+ * Validates keys match identifier pattern, converts values to strings,
+ * and warns on invalid keys or complex values.
+ *
+ * @param vars - Raw variables object with unknown value types
+ * @param source - Label for warning messages (e.g., "frontmatter var", "variable")
+ * @returns Normalized variables with string values only
+ */
+function normalizeVariables(
+  vars: Record<string, unknown>,
+  source: string = 'variable'
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(vars)) {
+    if (!VALID_IDENTIFIER.test(key)) {
+      console.warn(`Warning: Ignoring ${source} with invalid key: ${key}`);
+      continue;
+    }
+    if (typeof value === 'object' && value !== null) {
+      console.warn(`Warning: Ignoring ${source} "${key}" with complex value`);
+      continue;
+    }
+    result[key] = String(value);
+  }
+  return result;
+}
+
+/**
  * Returns built-in default template variables.
  *
  * These have the lowest precedence and can be overridden by any other source
@@ -94,10 +123,6 @@ export function mergeVariables(
 /**
  * Load variables from a YAML file.
  *
- * Variable names must be valid identifiers (start with letter/underscore,
- * contain only letters, digits, underscores). Invalid keys are ignored with a warning.
- * All values are converted to strings for consistency with other variable sources.
- *
  * @param filePath - Path to the YAML file
  * @returns Variables object, or empty object if file doesn't exist or is invalid
  */
@@ -112,19 +137,11 @@ export async function loadVariablesFromFile(
       return {};
     }
 
-    // Convert all values to strings, validating keys
+    // Convert all values to strings
     const result: Record<string, string> = {};
     for (const [key, value] of Object.entries(parsed)) {
-      // Validate key is a valid identifier
-      if (!VALID_IDENTIFIER.test(key)) {
-        console.warn(`Warning: Ignoring variable with invalid key: ${key}`);
-        continue;
-      }
-
-      // Skip complex values (objects/arrays) - they can't be meaningfully stringified
       if (typeof value === 'object' && value !== null) {
-        console.warn(`Warning: Ignoring variable "${key}" with complex value`);
-        continue;
+        console.warn(`Warning: Variable "${key}" has complex value, coerced to string`);
       }
       result[key] = String(value);
     }
@@ -168,10 +185,9 @@ export function extractVarsFromMarkdown(
       continue;
     }
 
-    // Skip complex values (objects/arrays) - they can't be meaningfully stringified
+    // Convert value to string, warn for complex values
     if (typeof value === 'object' && value !== null) {
-      console.warn(`Warning: Ignoring frontmatter var "${key}" with complex value`);
-      continue;
+      console.warn(`Warning: Frontmatter var "${key}" has complex value, coerced to string`);
     }
     result[key] = String(value);
   }

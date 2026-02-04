@@ -104,42 +104,58 @@ describe('getBuiltinVariables', () => {
 describe('mergeVariables', () => {
   it('should merge with --var overriding --var-file', () => {
     const builtins = {};
+    const frontmatter = {};
     const discovered = { a: '1', b: '2' };
     const fromFile = { b: '3', c: '4' };
     const fromFlags = { c: '5' };
 
-    const result = mergeVariables(builtins, discovered, fromFile, fromFlags);
+    const result = mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
 
     expect(result).toEqual({ a: '1', b: '3', c: '5' });
   });
 
-  it('should apply precedence: flags > file > discovered > builtins', () => {
+  it('should apply precedence: flags > file > discovered > frontmatter > builtins', () => {
     const builtins = { shared: 'builtin', only_builtin: 'b' };
+    const frontmatter = { shared: 'frontmatter', only_frontmatter: 'fm' };
     const discovered = { shared: 'discovered', only_discovered: 'd' };
     const fromFile = { shared: 'file', only_file: 'f' };
     const fromFlags = { shared: 'flag', only_flag: 'g' };
 
-    const result = mergeVariables(builtins, discovered, fromFile, fromFlags);
+    const result = mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
 
     expect(result).toEqual({
       shared: 'flag',
       only_builtin: 'b',
+      only_frontmatter: 'fm',
       only_discovered: 'd',
       only_file: 'f',
       only_flag: 'g',
     });
   });
 
-  it('should allow builtins to be overridden by discovered', () => {
+  it('should allow builtins to be overridden by frontmatter', () => {
     const builtins = { Date: '2000-01-01', WorkPath: '.work' };
+    const frontmatter = { Date: '2024-06-15' };
+    const discovered = {};
+    const fromFile = {};
+    const fromFlags = {};
+
+    const result = mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
+
+    expect(result.Date).toBe('2024-06-15');
+    expect(result.WorkPath).toBe('.work');
+  });
+
+  it('should allow frontmatter to be overridden by discovered', () => {
+    const builtins = { Date: '2000-01-01' };
+    const frontmatter = { Date: '2024-01-01' };
     const discovered = { Date: '2024-06-15' };
     const fromFile = {};
     const fromFlags = {};
 
-    const result = mergeVariables(builtins, discovered, fromFile, fromFlags);
+    const result = mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
 
     expect(result.Date).toBe('2024-06-15');
-    expect(result.WorkPath).toBe('.work');
   });
 });
 
@@ -540,6 +556,86 @@ describe('collectVariables', () => {
     );
 
     expect(result.abs_key).toBe('abs_value');
+  });
+
+  it('should include frontmatter vars when provided', async () => {
+    const result = await collectVariables(
+      {
+        frontmatterVars: { fm_key: 'fm_value', custom: 'from_frontmatter' },
+      },
+      tmpDir
+    );
+
+    expect(result.fm_key).toBe('fm_value');
+    expect(result.custom).toBe('from_frontmatter');
+
+    // Built-ins still present
+    expect(result).toHaveProperty('Date');
+    expect(result).toHaveProperty('WorkPath');
+  });
+
+  it('should allow frontmatter vars to override builtins', async () => {
+    const result = await collectVariables(
+      {
+        frontmatterVars: { Date: '2020-01-01', WorkPath: 'fm-work' },
+      },
+      tmpDir
+    );
+
+    expect(result.Date).toBe('2020-01-01');
+    expect(result.WorkPath).toBe('fm-work');
+  });
+
+  it('should allow discovered config to override frontmatter vars', async () => {
+    const rundownDir = path.join(tmpDir, '.rundown');
+    await fs.mkdir(rundownDir, { recursive: true });
+    await fs.writeFile(
+      path.join(rundownDir, 'config.yaml'),
+      'shared: from_discovered'
+    );
+
+    const result = await collectVariables(
+      {
+        frontmatterVars: { shared: 'from_frontmatter' },
+      },
+      tmpDir
+    );
+
+    expect(result.shared).toBe('from_discovered');
+  });
+
+  it('should apply full precedence: flags > file > discovered > frontmatter > builtins', async () => {
+    // Setup discovered config
+    const rundownDir = path.join(tmpDir, '.rundown');
+    await fs.mkdir(rundownDir, { recursive: true });
+    await fs.writeFile(
+      path.join(rundownDir, 'config.yaml'),
+      'shared: from_discovered\nkey_discovered: value_discovered'
+    );
+
+    // Setup var file
+    const varFilePath = path.join(tmpDir, 'vars.yaml');
+    await fs.writeFile(varFilePath, 'shared: from_file\nkey_file: value_file');
+
+    const result = await collectVariables(
+      {
+        frontmatterVars: { shared: 'from_frontmatter', key_frontmatter: 'value_frontmatter' },
+        varFile: varFilePath,
+        var: ['shared=from_flag', 'key_flag=value_flag'],
+      },
+      tmpDir
+    );
+
+    // Verify precedence: flags > file > discovered > frontmatter > builtins
+    expect(result.shared).toBe('from_flag');
+    expect(result.key_frontmatter).toBe('value_frontmatter');
+    expect(result.key_discovered).toBe('value_discovered');
+    expect(result.key_file).toBe('value_file');
+    expect(result.key_flag).toBe('value_flag');
+
+    // Built-ins still present
+    expect(result).toHaveProperty('Date');
+    expect(result).toHaveProperty('WorkPath');
   });
 });
 
