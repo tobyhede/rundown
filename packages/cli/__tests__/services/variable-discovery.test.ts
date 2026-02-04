@@ -199,18 +199,15 @@ describe('loadVariablesFromFile', () => {
     expect(result).toEqual({});
   });
 
-  it('should map array YAML to numeric-keyed object', async () => {
+  it('should ignore array YAML values (numeric keys are invalid identifiers)', async () => {
     const filePath = path.join(tmpDir, 'array.yaml');
     await fs.writeFile(filePath, '- item1\n- item2\n- item3');
 
     const result = await loadVariablesFromFile(filePath);
 
-    // Arrays are treated as objects with numeric keys by Object.entries()
-    expect(result).toEqual({
-      '0': 'item1',
-      '1': 'item2',
-      '2': 'item3',
-    });
+    // Arrays are treated as objects with numeric keys by Object.entries(),
+    // but numeric keys don't match VALID_IDENTIFIER pattern so they're ignored
+    expect(result).toEqual({});
   });
 
   it('should return empty object if YAML content is not an object (string)', async () => {
@@ -671,7 +668,7 @@ vars:
     warnSpy.mockRestore();
   });
 
-  it('should warn and stringify complex values', () => {
+  it('should warn and skip complex values', () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(jest.fn());
 
     const markdown = `---
@@ -685,12 +682,12 @@ vars:
 
     const result = extractVarsFromMarkdown(markdown);
 
+    // Complex values are skipped, not coerced to "[object Object]"
     expect(result).toEqual({
       simple: 'value',
-      complex: '[object Object]',
     });
 
-    expect(warnSpy).toHaveBeenCalledWith('Warning: Frontmatter var "complex" has complex value, coerced to string');
+    expect(warnSpy).toHaveBeenCalledWith('Warning: Ignoring frontmatter var "complex" with complex value');
 
     warnSpy.mockRestore();
   });

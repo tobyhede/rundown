@@ -121,9 +121,10 @@ export async function loadVariablesFromFile(
         continue;
       }
 
-      // Convert value to string, warn for complex values
+      // Skip complex values (objects/arrays) - they can't be meaningfully stringified
       if (typeof value === 'object' && value !== null) {
-        console.warn(`Warning: Variable "${key}" has complex value, coerced to string`);
+        console.warn(`Warning: Ignoring variable "${key}" with complex value`);
+        continue;
       }
       result[key] = String(value);
     }
@@ -167,9 +168,10 @@ export function extractVarsFromMarkdown(
       continue;
     }
 
-    // Convert value to string, warn for complex values
+    // Skip complex values (objects/arrays) - they can't be meaningfully stringified
     if (typeof value === 'object' && value !== null) {
-      console.warn(`Warning: Frontmatter var "${key}" has complex value, coerced to string`);
+      console.warn(`Warning: Ignoring frontmatter var "${key}" with complex value`);
+      continue;
     }
     result[key] = String(value);
   }
