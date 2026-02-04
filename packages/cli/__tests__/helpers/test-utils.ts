@@ -309,3 +309,92 @@ export function findActionOutput(stdout: string): Record<string, unknown> | null
   }
   return null;
 }
+
+
+/**
+ * Configuration for a runbook step.
+ */
+export interface StepConfig {
+  /** Step title (after the number) */
+  title: string;
+  /** PASS transition (e.g., 'COMPLETE', 'CONTINUE', 'GOTO 2') */
+  pass?: string;
+  /** FAIL transition (e.g., 'STOP', 'RETRY 2') */
+  fail?: string;
+  /** Bash command to execute */
+  command?: string;
+  /** Additional markdown content before command block */
+  content?: string;
+}
+
+/**
+ * Options for creating a test runbook.
+ */
+export interface CreateRunbookOptions {
+  /** Runbook name (appears in frontmatter) */
+  name?: string;
+  /** Template variables (appears in frontmatter vars:) */
+  vars?: Record<string, string | number | boolean>;
+  /** Runbook steps */
+  steps: StepConfig[];
+  /** Custom title (defaults to 'Test') */
+  title?: string;
+}
+
+/**
+ * Create runbook markdown content for tests.
+ *
+ * @param options - Configuration for the runbook
+ * @returns Runbook markdown string
+ *
+ * @example
+ * ```typescript
+ * const content = createRunbook({
+ *   vars: { message: 'hello' },
+ *   steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }]
+ * });
+ * ```
+ */
+export function createRunbook(options: CreateRunbookOptions): string {
+  const { name, vars, steps, title = 'Test' } = options;
+
+  const lines: string[] = [];
+
+  // Frontmatter (only if name or vars present)
+  if (name || vars) {
+    lines.push('---');
+    if (name) lines.push(`name: ${name}`);
+    if (vars && Object.keys(vars).length > 0) {
+      lines.push('vars:');
+      for (const [key, value] of Object.entries(vars)) {
+        lines.push(`  ${key}: ${value}`);
+      }
+    }
+    lines.push('---');
+    lines.push('');
+  }
+
+  // Title
+  lines.push(`# ${title}`);
+  lines.push('');
+
+  // Steps
+  steps.forEach((step, index) => {
+    lines.push(`## ${index + 1}. ${step.title}`);
+    if (step.pass) lines.push(`- PASS: ${step.pass}`);
+    if (step.fail) lines.push(`- FAIL: ${step.fail}`);
+    lines.push('');
+    if (step.content) {
+      lines.push(step.content);
+      lines.push('');
+    }
+    if (step.command) {
+      lines.push('```bash');
+      lines.push(step.command);
+      lines.push('```');
+      lines.push('');
+    }
+  });
+
+  return lines.join('\n');
+}
