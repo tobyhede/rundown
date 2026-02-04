@@ -4,6 +4,7 @@ import { join } from 'path';
 import {
   createTestWorkspace,
   runCli,
+  createRunbook,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -30,15 +31,9 @@ describe('Template Variables Integration', () => {
   });
 
   describe('variable precedence', () => {
-    const runbookContent = `# Test
-
-## 1. Echo
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo {{message}}
-\`\`\`
-`;
+    const runbookContent = createRunbook({
+      steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }],
+    });
 
     beforeEach(async () => {
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
@@ -128,17 +123,168 @@ rd echo {{message}}
     });
   });
 
+  describe('frontmatter vars precedence', () => {
+    it('uses frontmatter vars when no other source provides value', async () => {
+      const runbookContent = createRunbook({
+        name: 'test-runbook',
+        vars: { message: 'from-frontmatter' },
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli('run test.runbook.md --json', workspace);
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo from-frontmatter');
+    });
+
+    it('--var overrides frontmatter vars', async () => {
+      const runbookContent = createRunbook({
+        name: 'test-runbook',
+        vars: { message: 'from-frontmatter' },
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli(
+        'run test.runbook.md --var message=from-flag --json',
+        workspace
+      );
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo from-flag');
+    });
+
+    it('--var-file overrides frontmatter vars', async () => {
+      const runbookContent = createRunbook({
+        name: 'test-runbook',
+        vars: { message: 'from-frontmatter' },
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+      await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: from-file');
+
+      const result = runCli(
+        'run test.runbook.md --var-file vars.yaml --json',
+        workspace
+      );
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo from-file');
+    });
+
+    it('config.yaml overrides frontmatter vars', async () => {
+      const runbookContent = createRunbook({
+        name: 'test-runbook',
+        vars: { message: 'from-frontmatter' },
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      // Create auto-discovered config
+      await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+      await writeFile(
+        join(workspace.cwd, '.rundown', 'config.yaml'),
+        'message: from-config'
+      );
+
+      const result = runCli('run test.runbook.md --json', workspace);
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo from-config');
+    });
+
+    it('frontmatter vars work with multiple variables', async () => {
+      const runbookContent = createRunbook({
+        name: 'test-runbook',
+        vars: { greeting: 'Hello', name: 'World', count: 42 },
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo "{{greeting}} {{name}} {{count}}"' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli('run test.runbook.md --json', workspace);
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo "Hello World 42"');
+    });
+
+    it('--var partially overrides frontmatter vars (other vars use defaults)', async () => {
+      const runbookContent = createRunbook({
+        name: 'test-runbook',
+        vars: { greeting: 'Hello', count: 42 },
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo "{{greeting}}, count is {{count}}"' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli(
+        'run test.runbook.md --var greeting=Hi --json',
+        workspace
+      );
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      // greeting overridden to "Hi", count stays at frontmatter default "42"
+      expect(commandStartedEvent.command).toBe('rd echo "Hi, count is 42"');
+    });
+
+    it('frontmatter vars work in child runbooks', async () => {
+      // Test frontmatter vars by running child runbook directly (not via Mode 3)
+      // This verifies the vars are extracted and applied during run
+      const childRunbook = createRunbook({
+        name: 'child-runbook',
+        vars: { task_name: 'DefaultTask' },
+        title: 'Child Runbook',
+        steps: [{ title: 'Execute task', pass: 'COMPLETE', command: 'rd echo {{task_name}}' }],
+      });
+
+      await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
+
+      // Run child runbook directly with --json to capture NDJSON events
+      const result = runCli('run child.runbook.md --json', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Verify the command was expanded with the frontmatter default variable
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent!.command).toBe('rd echo DefaultTask');
+    });
+  });
+
   describe('missing variables', () => {
     it('preserves undefined variables as literal text', async () => {
-      const runbookContent = `# Test
-
-## 1. Echo
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo "{{undefined_var}}"
-\`\`\`
-`;
+      const runbookContent = createRunbook({
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo "{{undefined_var}}"' }],
+      });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
       const result = runCli('run test.runbook.md --json', workspace);
@@ -183,22 +329,13 @@ rd echo "Instance {{command}}"
 
   describe('resume with frozen runbookSrc', () => {
     it('should use stored runbookSrc in pass command', async () => {
-      const runbookContent = `# Test Runbook
-
-## 1. First Step
-- PASS: CONTINUE
-
-\`\`\`bash
-rd echo {{message}}
-\`\`\`
-
-## 2. Second Step
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo done
-\`\`\`
-`;
+      const runbookContent = createRunbook({
+        title: 'Test Runbook',
+        steps: [
+          { title: 'First Step', pass: 'CONTINUE', command: 'rd echo {{message}}' },
+          { title: 'Second Step', pass: 'COMPLETE', command: 'rd echo done' },
+        ],
+      });
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
@@ -222,23 +359,13 @@ rd echo done
     });
 
     it('should use stored runbookSrc in fail command', async () => {
-      const runbookContent = `# Test Runbook
-
-## 1. First Step
-- PASS: CONTINUE
-- FAIL: RETRY 1
-
-\`\`\`bash
-rd echo {{message}}
-\`\`\`
-
-## 2. Second Step
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo done
-\`\`\`
-`;
+      const runbookContent = createRunbook({
+        title: 'Test Runbook',
+        steps: [
+          { title: 'First Step', pass: 'CONTINUE', fail: 'RETRY 1', command: 'rd echo {{message}}' },
+          { title: 'Second Step', pass: 'COMPLETE', command: 'rd echo done' },
+        ],
+      });
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
@@ -258,22 +385,13 @@ rd echo done
     });
 
     it('should use stored runbookSrc in goto command', async () => {
-      const runbookContent = `# Test Runbook
-
-## 1. First Step
-- PASS: CONTINUE
-
-\`\`\`bash
-rd echo {{message}}
-\`\`\`
-
-## 2. Second Step
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo done
-\`\`\`
-`;
+      const runbookContent = createRunbook({
+        title: 'Test Runbook',
+        steps: [
+          { title: 'First Step', pass: 'CONTINUE', command: 'rd echo {{message}}' },
+          { title: 'Second Step', pass: 'COMPLETE', command: 'rd echo done' },
+        ],
+      });
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
@@ -293,22 +411,13 @@ rd echo done
     });
 
     it('should use stored runbookSrc in complete command', async () => {
-      const runbookContent = `# Test Runbook
-
-## 1. First Step
-- PASS: CONTINUE
-
-\`\`\`bash
-rd echo {{message}}
-\`\`\`
-
-## 2. Second Step
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo done
-\`\`\`
-`;
+      const runbookContent = createRunbook({
+        title: 'Test Runbook',
+        steps: [
+          { title: 'First Step', pass: 'CONTINUE', command: 'rd echo {{message}}' },
+          { title: 'Second Step', pass: 'COMPLETE', command: 'rd echo done' },
+        ],
+      });
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
@@ -325,22 +434,13 @@ rd echo done
     });
 
     it('should use stored runbookSrc in status command', async () => {
-      const runbookContent = `# Test Runbook
-
-## 1. First Step
-- PASS: CONTINUE
-
-\`\`\`bash
-rd echo {{message}}
-\`\`\`
-
-## 2. Second Step
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo done
-\`\`\`
-`;
+      const runbookContent = createRunbook({
+        title: 'Test Runbook',
+        steps: [
+          { title: 'First Step', pass: 'CONTINUE', command: 'rd echo {{message}}' },
+          { title: 'Second Step', pass: 'COMPLETE', command: 'rd echo done' },
+        ],
+      });
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
@@ -354,22 +454,13 @@ rd echo done
     });
 
     it('should use stored runbookSrc in pop command', async () => {
-      const runbookContent = `# Test Runbook
-
-## 1. First Step
-- PASS: CONTINUE
-
-\`\`\`bash
-rd echo {{message}}
-\`\`\`
-
-## 2. Second Step
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo done
-\`\`\`
-`;
+      const runbookContent = createRunbook({
+        title: 'Test Runbook',
+        steps: [
+          { title: 'First Step', pass: 'CONTINUE', command: 'rd echo {{message}}' },
+          { title: 'Second Step', pass: 'COMPLETE', command: 'rd echo done' },
+        ],
+      });
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
@@ -398,24 +489,16 @@ rd echo done
   describe('Mode 3 child runbook variable inheritance', () => {
     it('should expand child runbook variables and store in runbookSrc', async () => {
       // Create parent runbook that delegates to child
-      const parentRunbook = `# Parent Runbook
-
-## 1. Dispatch work
-- PASS: COMPLETE
-
-Delegate work to agent.
-`;
+      const parentRunbook = createRunbook({
+        title: 'Parent Runbook',
+        steps: [{ title: 'Dispatch work', pass: 'COMPLETE', content: 'Delegate work to agent.' }],
+      });
 
       // Create child runbook with template variables
-      const childRunbook = `# Child Runbook
-
-## 1. Execute task
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo {{task_name}}
-\`\`\`
-`;
+      const childRunbook = createRunbook({
+        title: 'Child Runbook',
+        steps: [{ title: 'Execute task', pass: 'COMPLETE', command: 'rd echo {{task_name}}' }],
+      });
 
       // Set up runbooks directory
       const runbooksDir = join(workspace.cwd, 'runbooks');
@@ -464,23 +547,15 @@ rd echo {{task_name}}
 
     it('should handle child runbook with missing variables', async () => {
       // Create parent and child runbooks
-      const parentRunbook = `# Parent Runbook
+      const parentRunbook = createRunbook({
+        title: 'Parent Runbook',
+        steps: [{ title: 'Dispatch work', pass: 'COMPLETE', content: 'Delegate work to agent.' }],
+      });
 
-## 1. Dispatch work
-- PASS: COMPLETE
-
-Delegate work to agent.
-`;
-
-      const childRunbook = `# Child Runbook
-
-## 1. Execute task
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo "Task: {{task_name}}"
-\`\`\`
-`;
+      const childRunbook = createRunbook({
+        title: 'Child Runbook',
+        steps: [{ title: 'Execute task', pass: 'COMPLETE', command: 'rd echo "Task: {{task_name}}"' }],
+      });
 
       const runbooksDir = join(workspace.cwd, 'runbooks');
       await mkdir(runbooksDir, { recursive: true });
@@ -506,23 +581,15 @@ rd echo "Task: {{task_name}}"
 
     it('should inherit parent variables in child runbook', async () => {
       // Create parent and child runbooks
-      const parentRunbook = `# Parent Runbook
+      const parentRunbook = createRunbook({
+        title: 'Parent Runbook',
+        steps: [{ title: 'Dispatch work', pass: 'COMPLETE', content: 'Delegate work to agent.' }],
+      });
 
-## 1. Dispatch work
-- PASS: COMPLETE
-
-Delegate work to agent.
-`;
-
-      const childRunbook = `# Child Runbook
-
-## 1. Execute task
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo "Project: {{project_name}}, Task: {{task_name}}"
-\`\`\`
-`;
+      const childRunbook = createRunbook({
+        title: 'Child Runbook',
+        steps: [{ title: 'Execute task', pass: 'COMPLETE', command: 'rd echo "Project: {{project_name}}, Task: {{task_name}}"' }],
+      });
 
       const runbooksDir = join(workspace.cwd, 'runbooks');
       await mkdir(runbooksDir, { recursive: true });

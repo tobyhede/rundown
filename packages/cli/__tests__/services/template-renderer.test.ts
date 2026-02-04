@@ -20,6 +20,15 @@ describe('renderTemplate', () => {
     expect(result).toBe('## 1. Run {{undefined_var}}');
   });
 
+  it('should preserve missing variables with original spacing', () => {
+    const markdown = '## 1. Run {{ undefined_var }}';
+    const variables = {};
+
+    const result = renderTemplate(markdown, variables);
+
+    expect(result).toBe('## 1. Run {{ undefined_var }}');
+  });
+
   it('should not escape markdown characters', () => {
     const markdown = '## 1. {{step_name}}';
     const variables = { step_name: 'Test & Verify <code>' };

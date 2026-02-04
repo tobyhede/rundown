@@ -52,16 +52,46 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 1. `--var key=value` flags (highest priority, repeatable)
 2. `--var-file path` contents (YAML format)
 3. `.rundown/config.yaml` (auto-discovered from cwd upward, stops at git root)
+4. Frontmatter `vars:` field
+5. Built-in defaults (lowest priority)
 
-**Example:**
+**Built-in Variables:**
+| Variable | Example Value | Description |
+|----------|---------------|-------------|
+| `Date` | `2026-02-04` | Current date (YYYY-MM-DD) |
+| `DateTime` | `2026-02-04T10:30:00.000Z` | Full ISO 8601 timestamp |
+| `Year` | `2026` | Current year |
+| `Month` | `02` | Current month (01-12) |
+| `Day` | `04` | Current day (01-31) |
+| `WorkPath` | `.work` | Default artifact directory |
+
+Built-in variables use PascalCase and can be overridden by any other source.
+
+**CLI Example:**
 ```bash
 rundown run deploy.md --var environment=staging --var version=1.2.3
+```
+
+**Frontmatter Example:**
+```yaml
+---
+name: my-runbook
+vars:
+  environment: development
+  port: 3000
+  debug: true
+---
+# My Runbook
+
+## 1. Start server
+Server running on port {{ port }} in {{ environment }} mode.
 ```
 
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
 - Template variables (`{{var}}`) differ from dynamic step references (`{N}`)
+- Frontmatter vars support string, number, and boolean values (converted to strings)
 
 ## Schema Output
 

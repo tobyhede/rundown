@@ -13,12 +13,62 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
 
 /**
  * Valid identifier pattern for variable names.
  * Must start with letter or underscore, followed by letters, digits, or underscores.
  */
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+/**
+ * Normalize a raw variables object to Record<string, string>.
+ *
+ * Validates keys match identifier pattern, converts values to strings,
+ * and warns on invalid keys or complex values.
+ *
+ * @param vars - Raw variables object with unknown value types
+ * @param source - Label for warning messages (e.g., "frontmatter var", "variable")
+ * @returns Normalized variables with string values only
+ */
+function normalizeVariables(
+  vars: Record<string, unknown>,
+  source = 'variable'
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(vars)) {
+    if (!VALID_IDENTIFIER.test(key)) {
+      console.warn(`Warning: Ignoring ${source} with invalid key: ${key}`);
+      continue;
+    }
+    if (typeof value === 'object' && value !== null) {
+      console.warn(`Warning: Ignoring ${source} "${key}" with complex value`);
+      continue;
+    }
+    result[key] = String(value);
+  }
+  return result;
+}
+
+/**
+ * Returns built-in default template variables.
+ *
+ * These have the lowest precedence and can be overridden by any other source
+ * (frontmatter, config file, --var-file, or --var flags).
+ *
+ * @returns Built-in variables with PascalCase names
+ */
+export function getBuiltinVariables(): Record<string, string> {
+  const now = new Date();
+  return {
+    Date: now.toISOString().slice(0, 10), // YYYY-MM-DD
+    DateTime: now.toISOString(), // Full ISO timestamp
+    Year: String(now.getFullYear()), // YYYY
+    Month: String(now.getMonth() + 1).padStart(2, '0'), // MM (01-12)
+    Day: String(now.getDate()).padStart(2, '0'), // DD (01-31)
+    WorkPath: '.work', // Default artifact directory
+  };
+}
 
 /**
  * Parse a --var flag value in key=value format.
@@ -48,18 +98,26 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
  * 1. --var flags (fromFlags)
  * 2. --var-file contents (fromFile)
  * 3. Auto-discovered .rundown/config.yaml (discovered)
+ * 4. Frontmatter vars (frontmatter)
+ * 5. Built-in defaults (builtins) - lowest precedence
  *
+ * @param builtins - Built-in default variables (lowest precedence)
+ * @param frontmatter - Variables from runbook frontmatter
  * @param discovered - Variables from auto-discovery
  * @param fromFile - Variables from --var-file
- * @param fromFlags - Variables from --var flags
+ * @param fromFlags - Variables from --var flags (highest precedence)
  * @returns Merged variables object
  */
 export function mergeVariables(
+  builtins: Record<string, string>,
+  frontmatter: Record<string, string>,
   discovered: Record<string, string>,
   fromFile: Record<string, string>,
   fromFlags: Record<string, string>
 ): Record<string, string> {
   return {
+    ...builtins,
+    ...frontmatter,
     ...discovered,
     ...fromFile,
     ...fromFlags,
@@ -83,18 +141,37 @@ export async function loadVariablesFromFile(
       return {};
     }
 
-    // Convert all values to strings
-    const result: Record<string, string> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === 'object' && value !== null) {
-        console.warn(`Warning: Variable "${key}" has complex value, coerced to string`);
-      }
-      result[key] = String(value);
-    }
-    return result;
+    return normalizeVariables(parsed as Record<string, unknown>);
   } catch {
     return {};
   }
+}
+
+
+/**
+ * Extract template variables from markdown frontmatter.
+ *
+ * Extracts the `vars` field from YAML frontmatter without requiring full
+ * schema validation. This allows frontmatter defaults to be applied before
+ * template rendering (which must happen before full parsing).
+ *
+ * Variable names must be valid identifiers (start with letter/underscore,
+ * contain only letters, digits, underscores). Invalid keys are ignored with a warning.
+ * All values are converted to strings for consistency with other variable sources.
+ *
+ * @param markdown - Raw markdown content with optional frontmatter
+ * @returns Variables from frontmatter vars field, or empty object if none
+ */
+export function extractVarsFromMarkdown(
+  markdown: string
+): Record<string, string> {
+  const { frontmatter } = extractRawFrontmatter(markdown);
+
+  if (!frontmatter || typeof frontmatter.vars !== 'object' || frontmatter.vars === null) {
+    return {};
+  }
+
+  return normalizeVariables(frontmatter.vars as Record<string, unknown>, 'frontmatter var');
 }
 
 /**
@@ -150,18 +227,31 @@ export async function discoverVariables(
 /**
  * Collect all variables from CLI options and auto-discovery.
  *
- * @param options - CLI options containing varFile and var flags
+ * Precedence (highest to lowest):
+ * 1. --var flags
+ * 2. --var-file contents
+ * 3. Auto-discovered .rundown/config.yaml
+ * 4. Frontmatter vars
+ * 5. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath)
+ *
+ * @param options - CLI options containing varFile, var flags, and frontmatterVars
  * @param cwd - Current working directory
  * @returns Merged variables with proper precedence
  */
 export async function collectVariables(
-  options: { varFile?: string; var?: string[] },
+  options: { varFile?: string; var?: string[]; frontmatterVars?: Record<string, string> },
   cwd: string
 ): Promise<Record<string, string>> {
-  // 1. Auto-discover from .rundown/config.yaml
+  // 1. Get built-in defaults (lowest precedence)
+  const builtins = getBuiltinVariables();
+
+  // 2. Frontmatter vars (second lowest)
+  const frontmatter = options.frontmatterVars ?? {};
+
+  // 3. Auto-discover from .rundown/config.yaml
   const discovered = await discoverVariables(cwd);
 
-  // 2. Load from --var-file if provided
+  // 4. Load from --var-file if provided
   let fromFile: Record<string, string> = {};
   if (options.varFile) {
     const varFilePath = path.isAbsolute(options.varFile)
@@ -170,7 +260,7 @@ export async function collectVariables(
     fromFile = await loadVariablesFromFile(varFilePath);
   }
 
-  // 3. Parse --var flags
+  // 5. Parse --var flags (highest precedence)
   const fromFlags: Record<string, string> = {};
   if (options.var) {
     for (const flag of options.var) {
@@ -183,6 +273,6 @@ export async function collectVariables(
     }
   }
 
-  // 4. Merge with precedence
-  return mergeVariables(discovered, fromFile, fromFlags);
+  // 6. Merge with precedence: builtins < frontmatter < discovered < fromFile < fromFlags
+  return mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
 }
