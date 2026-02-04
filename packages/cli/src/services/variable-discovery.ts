@@ -61,11 +61,11 @@ function normalizeVariables(
 export function getBuiltinVariables(): Record<string, string> {
   const now = new Date();
   return {
-    Date: now.toISOString().slice(0, 10), // YYYY-MM-DD
-    DateTime: now.toISOString(), // Full ISO timestamp
-    Year: String(now.getFullYear()), // YYYY
-    Month: String(now.getMonth() + 1).padStart(2, '0'), // MM (01-12)
-    Day: String(now.getDate()).padStart(2, '0'), // DD (01-31)
+    Date: now.toISOString().slice(0, 10), // YYYY-MM-DD (UTC)
+    DateTime: now.toISOString(), // Full ISO timestamp (UTC)
+    Year: String(now.getUTCFullYear()), // YYYY (UTC)
+    Month: String(now.getUTCMonth() + 1).padStart(2, '0'), // MM (01-12, UTC)
+    Day: String(now.getUTCDate()).padStart(2, '0'), // DD (01-31, UTC)
     WorkPath: '.work', // Default artifact directory
   };
 }
