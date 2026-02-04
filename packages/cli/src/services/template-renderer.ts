@@ -54,6 +54,8 @@ export function renderTemplate(
   );
 
   // Resolve placeholders while preserving original spacing for undefined vars.
+  // Re-register helper on each call - intentional, as it needs closure access to
+  // placeholderEntries and variables which differ per invocation.
   handlebars.registerHelper('__rd_resolve__', (index: number) => {
     const entry = placeholderEntries.at(index);
     if (!entry) return '';

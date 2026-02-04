@@ -94,6 +94,10 @@ export function mergeVariables(
 /**
  * Load variables from a YAML file.
  *
+ * Variable names must be valid identifiers (start with letter/underscore,
+ * contain only letters, digits, underscores). Invalid keys are ignored with a warning.
+ * All values are converted to strings for consistency with other variable sources.
+ *
  * @param filePath - Path to the YAML file
  * @returns Variables object, or empty object if file doesn't exist or is invalid
  */
@@ -108,9 +112,16 @@ export async function loadVariablesFromFile(
       return {};
     }
 
-    // Convert all values to strings
+    // Convert all values to strings, validating keys
     const result: Record<string, string> = {};
     for (const [key, value] of Object.entries(parsed)) {
+      // Validate key is a valid identifier
+      if (!VALID_IDENTIFIER.test(key)) {
+        console.warn(`Warning: Ignoring variable with invalid key: ${key}`);
+        continue;
+      }
+
+      // Convert value to string, warn for complex values
       if (typeof value === 'object' && value !== null) {
         console.warn(`Warning: Variable "${key}" has complex value, coerced to string`);
       }
