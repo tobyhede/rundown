@@ -10,6 +10,7 @@ export interface RunbookFrontmatter {
   version?: string;       // Optional: semantic version
   author?: string;        // Optional
   tags?: string[];        // Optional: categorization
+  vars?: Record<string, string | number | boolean>;  // Optional: default template variables
 }
 
 /**
@@ -24,6 +25,7 @@ export const RunbookFrontmatterSchema = z.object({
   version: z.string().optional(),
   author: z.string().optional(),
   tags: z.array(z.string()).optional(),
+  vars: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
 });
 
 /**

@@ -128,6 +128,249 @@ rd echo {{message}}
     });
   });
 
+  describe('frontmatter vars precedence', () => {
+    it('uses frontmatter vars when no other source provides value', async () => {
+      const runbookContent = `---
+name: test-runbook
+vars:
+  message: from-frontmatter
+---
+# Test
+
+## 1. Echo
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo {{message}}
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli('run test.runbook.md --json', workspace);
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo from-frontmatter');
+    });
+
+    it('--var overrides frontmatter vars', async () => {
+      const runbookContent = `---
+name: test-runbook
+vars:
+  message: from-frontmatter
+---
+# Test
+
+## 1. Echo
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo {{message}}
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli(
+        'run test.runbook.md --var message=from-flag --json',
+        workspace
+      );
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo from-flag');
+    });
+
+    it('--var-file overrides frontmatter vars', async () => {
+      const runbookContent = `---
+name: test-runbook
+vars:
+  message: from-frontmatter
+---
+# Test
+
+## 1. Echo
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo {{message}}
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+      await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: from-file');
+
+      const result = runCli(
+        'run test.runbook.md --var-file vars.yaml --json',
+        workspace
+      );
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo from-file');
+    });
+
+    it('config.yaml overrides frontmatter vars', async () => {
+      const runbookContent = `---
+name: test-runbook
+vars:
+  message: from-frontmatter
+---
+# Test
+
+## 1. Echo
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo {{message}}
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      // Create auto-discovered config
+      await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+      await writeFile(
+        join(workspace.cwd, '.rundown', 'config.yaml'),
+        'message: from-config'
+      );
+
+      const result = runCli('run test.runbook.md --json', workspace);
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo from-config');
+    });
+
+    it('frontmatter vars work with multiple variables', async () => {
+      const runbookContent = `---
+name: test-runbook
+vars:
+  greeting: Hello
+  name: World
+  count: 42
+---
+# Test
+
+## 1. Echo
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo "{{greeting}} {{name}} {{count}}"
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli('run test.runbook.md --json', workspace);
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo "Hello World 42"');
+    });
+
+    it('--var partially overrides frontmatter vars (other vars use defaults)', async () => {
+      const runbookContent = `---
+name: test-runbook
+vars:
+  greeting: Hello
+  count: 42
+---
+# Test
+
+## 1. Echo
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo "{{greeting}}, count is {{count}}"
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli(
+        'run test.runbook.md --var greeting=Hi --json',
+        workspace
+      );
+
+      expect(result.exitCode).toBe(0);
+
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+
+      expect(commandStartedEvent).toBeDefined();
+      // greeting overridden to "Hi", count stays at frontmatter default "42"
+      expect(commandStartedEvent.command).toBe('rd echo "Hi, count is 42"');
+    });
+
+    it('frontmatter vars work in child runbooks', async () => {
+      // Create parent runbook
+      const parentRunbook = `# Parent Runbook
+
+## 1. Dispatch work
+- PASS: COMPLETE
+
+Delegate work to agent.
+`;
+
+      // Create child runbook with frontmatter vars
+      const childRunbook = `---
+name: child-runbook
+vars:
+  task_name: DefaultTask
+---
+# Child Runbook
+
+## 1. Execute task
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo {{task_name}}
+\`\`\`
+`;
+
+      const runbooksDir = join(workspace.cwd, 'runbooks');
+      await mkdir(runbooksDir, { recursive: true });
+      await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+      await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+      // Start parent runbook in prompted mode
+      let result = runCli('run runbooks/parent.runbook.md --prompted', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Queue step with child runbook
+      result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Bind agent (no --var override, should use frontmatter default)
+      result = runCli('run --agent test-agent --json', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // The child runbook should have used the frontmatter default
+      // Pass the step to complete and check the command
+      result = runCli('pass --agent test-agent --json', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const passOutput = JSON.parse(result.stdout);
+      expect(passOutput.result).toBe(true);
+    });
+  });
+
   describe('missing variables', () => {
     it('preserves undefined variables as literal text', async () => {
       const runbookContent = `# Test

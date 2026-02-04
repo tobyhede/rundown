@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { discoverVariables, parseVarFlag, mergeVariables, loadVariablesFromFile, collectVariables } from '../../src/services/variable-discovery.js';
+import { discoverVariables, parseVarFlag, mergeVariables, loadVariablesFromFile, collectVariables, extractVarsFromMarkdown } from '../../src/services/variable-discovery.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -400,6 +400,184 @@ describe('collectVariables', () => {
 
     expect(result).toEqual({
       abs_key: 'abs_value',
+    });
+  });
+});
+
+describe('extractVarsFromMarkdown', () => {
+  it('should extract vars from valid frontmatter', () => {
+    const markdown = `---
+name: test-runbook
+vars:
+  greeting: Hello
+  count: 42
+  enabled: true
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({
+      greeting: 'Hello',
+      count: '42',
+      enabled: 'true',
+    });
+  });
+
+  it('should return empty object when no frontmatter present', () => {
+    const markdown = `# No Frontmatter
+Just content here.`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({});
+  });
+
+  it('should return empty object when frontmatter has no vars field', () => {
+    const markdown = `---
+name: test-runbook
+description: A test runbook
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({});
+  });
+
+  it('should return empty object when vars is null', () => {
+    const markdown = `---
+name: test-runbook
+vars: null
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({});
+  });
+
+  it('should return empty object when vars is not an object', () => {
+    const markdown = `---
+name: test-runbook
+vars: "not an object"
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({});
+  });
+
+  it('should convert numbers to strings', () => {
+    const markdown = `---
+name: test-runbook
+vars:
+  port: 3000
+  pi: 3.14159
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({
+      port: '3000',
+      pi: '3.14159',
+    });
+  });
+
+  it('should convert booleans to strings', () => {
+    const markdown = `---
+name: test-runbook
+vars:
+  debug: true
+  production: false
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({
+      debug: 'true',
+      production: 'false',
+    });
+  });
+
+  it('should reject invalid identifier keys', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(jest.fn());
+
+    const markdown = `---
+name: test-runbook
+vars:
+  valid_key: value1
+  invalid-key: value2
+  123invalid: value3
+  _valid: value4
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({
+      valid_key: 'value1',
+      _valid: 'value4',
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith('Warning: Ignoring frontmatter var with invalid key: invalid-key');
+    expect(warnSpy).toHaveBeenCalledWith('Warning: Ignoring frontmatter var with invalid key: 123invalid');
+
+    warnSpy.mockRestore();
+  });
+
+  it('should warn and stringify complex values', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(jest.fn());
+
+    const markdown = `---
+name: test-runbook
+vars:
+  simple: value
+  complex:
+    nested: object
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({
+      simple: 'value',
+      complex: '[object Object]',
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith('Warning: Frontmatter var "complex" has complex value, coerced to string');
+
+    warnSpy.mockRestore();
+  });
+
+  it('should handle empty vars object', () => {
+    const markdown = `---
+name: test-runbook
+vars: {}
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({});
+  });
+
+  it('should handle frontmatter with only vars field', () => {
+    // Note: This would fail schema validation in the parser,
+    // but extractVarsFromMarkdown uses raw extraction without validation
+    const markdown = `---
+vars:
+  key: value
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+
+    expect(result).toEqual({
+      key: 'value',
     });
   });
 });

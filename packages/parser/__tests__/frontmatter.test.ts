@@ -90,6 +90,127 @@ description: Never closed
     expect(result.frontmatter).toBeNull();
     expect(result.content).toBe(markdown);
   });
+
+  it('extracts frontmatter with vars field containing strings', () => {
+    const markdown = `---
+name: my-runbook
+vars:
+  greeting: Hello
+  name: World
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('my-runbook');
+    expect(result.frontmatter?.vars).toEqual({
+      greeting: 'Hello',
+      name: 'World',
+    });
+  });
+
+  it('extracts frontmatter with vars field containing numbers', () => {
+    const markdown = `---
+name: my-runbook
+vars:
+  port: 3000
+  pi: 3.14159
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.vars).toEqual({
+      port: 3000,
+      pi: 3.14159,
+    });
+  });
+
+  it('extracts frontmatter with vars field containing booleans', () => {
+    const markdown = `---
+name: my-runbook
+vars:
+  debug: true
+  production: false
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.vars).toEqual({
+      debug: true,
+      production: false,
+    });
+  });
+
+  it('extracts frontmatter with vars field containing mixed types', () => {
+    const markdown = `---
+name: my-runbook
+vars:
+  name: test-app
+  port: 8080
+  debug: true
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.vars).toEqual({
+      name: 'test-app',
+      port: 8080,
+      debug: true,
+    });
+  });
+
+  it('extracts frontmatter with empty vars object', () => {
+    const markdown = `---
+name: my-runbook
+vars: {}
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.vars).toEqual({});
+  });
+
+  it('returns null frontmatter when vars contains invalid types (arrays)', () => {
+    const markdown = `---
+name: my-runbook
+vars:
+  items:
+    - one
+    - two
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    // Schema validation should fail for array values
+    expect(result.frontmatter).toBeNull();
+    expect(result.content).toBe(markdown);
+  });
+
+  it('returns null frontmatter when vars contains invalid types (nested objects)', () => {
+    const markdown = `---
+name: my-runbook
+vars:
+  config:
+    nested: value
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    // Schema validation should fail for nested object values
+    expect(result.frontmatter).toBeNull();
+    expect(result.content).toBe(markdown);
+  });
 });
 
 describe('nameFromFilename()', () => {

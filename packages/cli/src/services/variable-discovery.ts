@@ -13,6 +13,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
 
 /**
  * Valid identifier pattern for variable names.
@@ -95,6 +96,50 @@ export async function loadVariablesFromFile(
   } catch {
     return {};
   }
+}
+
+
+/**
+ * Extract template variables from markdown frontmatter.
+ *
+ * Extracts the `vars` field from YAML frontmatter without requiring full
+ * schema validation. This allows frontmatter defaults to be applied before
+ * template rendering (which must happen before full parsing).
+ *
+ * Variable names must be valid identifiers (start with letter/underscore,
+ * contain only letters, digits, underscores). Invalid keys are silently ignored.
+ * All values are converted to strings for consistency with other variable sources.
+ *
+ * @param markdown - Raw markdown content with optional frontmatter
+ * @returns Variables from frontmatter vars field, or empty object if none
+ */
+export function extractVarsFromMarkdown(
+  markdown: string
+): Record<string, string> {
+  const { frontmatter } = extractRawFrontmatter(markdown);
+
+  if (!frontmatter || typeof frontmatter.vars !== 'object' || frontmatter.vars === null) {
+    return {};
+  }
+
+  const vars = frontmatter.vars as Record<string, unknown>;
+  const result: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(vars)) {
+    // Validate key is a valid identifier
+    if (!VALID_IDENTIFIER.test(key)) {
+      console.warn(`Warning: Ignoring frontmatter var with invalid key: ${key}`);
+      continue;
+    }
+
+    // Convert value to string, warn for complex values
+    if (typeof value === 'object' && value !== null) {
+      console.warn(`Warning: Frontmatter var "${key}" has complex value, coerced to string`);
+    }
+    result[key] = String(value);
+  }
+
+  return result;
 }
 
 /**

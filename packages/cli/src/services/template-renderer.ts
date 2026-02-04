@@ -13,12 +13,7 @@ import Handlebars from 'handlebars';
 // Create isolated instance to avoid polluting global Handlebars
 const handlebars = Handlebars.create();
 
-// Register helper that preserves undefined variables as literal text
-handlebars.registerHelper('helperMissing', function (...args: unknown[]) {
-  // Last argument is the options object with the variable name
-  const options = args[args.length - 1] as { name: string };
-  return new handlebars.SafeString(`{{${options.name}}}`);
-});
+const TEMPLATE_VAR_REGEX = /{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}/g;
 
 /**
  * Render Handlebars variables in markdown content.
@@ -48,7 +43,30 @@ export function renderTemplate(
   markdown: string,
   variables: Record<string, string>
 ): string {
+  const placeholderEntries: { name: string; raw: string }[] = [];
+  const withPlaceholders = markdown.replace(
+    TEMPLATE_VAR_REGEX,
+    (raw, name: string) => {
+      const index = placeholderEntries.length;
+      placeholderEntries.push({ name, raw });
+      return `{{__rd_resolve__ ${index.toString()}}}`;
+    }
+  );
+
+  // Resolve placeholders while preserving original spacing for undefined vars.
+  handlebars.registerHelper('__rd_resolve__', (index: number) => {
+    const entry = placeholderEntries.at(index);
+    if (!entry) return '';
+    const value = Object.prototype.hasOwnProperty.call(variables, entry.name)
+      ? variables[entry.name]
+      : undefined;
+    if (value === undefined) {
+      return new handlebars.SafeString(entry.raw);
+    }
+    return value;
+  });
+
   // Compile with noEscape to preserve markdown characters
-  const template = handlebars.compile(markdown, { noEscape: true });
+  const template = handlebars.compile(withPlaceholders, { noEscape: true });
   return template(variables);
 }

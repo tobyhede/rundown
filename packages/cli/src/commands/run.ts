@@ -21,7 +21,7 @@ import { runExecutionLoop } from '../services/execution.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import { collect } from './echo.js';
-import { collectVariables } from '../services/variable-discovery.js';
+import { collectVariables, extractVarsFromMarkdown } from '../services/variable-discovery.js';
 import { renderTemplate } from '../services/template-renderer.js';
 
 /**
@@ -47,7 +47,7 @@ function emitRunbookStarted(
 export function registerRunCommand(program: Command): void {
   program
     .command('run [file]')
-    .description('Run a runbook or queue a step')
+    .description('Start a runbook, queue a step, or bind an agent')
     .option('--step <stepId>', 'Mark step as started (adds to pending queue)')
     .option('--agent <agentId>', 'Bind agent to pending step')
     .option('--prompted', 'Prompted mode: show commands without auto-executing')
@@ -117,13 +117,16 @@ export function registerRunCommand(program: Command): void {
 
           // Load and render template
           const rawContent = await fs.readFile(filePath, 'utf8');
+          const frontmatterVars = extractVarsFromMarkdown(rawContent);
           const variables = await collectVariables(
             { varFile: options.varFile, var: options.var },
             cwd
           );
+          // Merge with frontmatter vars as lowest precedence
+          const mergedVariables = { ...frontmatterVars, ...variables };
           let runbookSrc: string;
           try {
-            runbookSrc = renderTemplate(rawContent, variables);
+            runbookSrc = renderTemplate(rawContent, mergedVariables);
           } catch (err) {
             output.error(`Template error: ${(err as Error).message}`, 'TEMPLATE_ERROR');
             output.flush();
@@ -216,13 +219,16 @@ export function registerRunCommand(program: Command): void {
 
             // Load and render child template (inherit parent's variables context)
             const rawContent = await fs.readFile(runbookPath, 'utf8');
+            const frontmatterVars = extractVarsFromMarkdown(rawContent);
             const variables = await collectVariables(
               { varFile: options.varFile, var: options.var },
               cwd
             );
+            // Merge with frontmatter vars as lowest precedence
+            const mergedVariables = { ...frontmatterVars, ...variables };
             let childRunbookSrc: string;
             try {
-              childRunbookSrc = renderTemplate(rawContent, variables);
+              childRunbookSrc = renderTemplate(rawContent, mergedVariables);
             } catch (err) {
               output.error(`Template error: ${(err as Error).message}`, 'TEMPLATE_ERROR');
               output.flush();
