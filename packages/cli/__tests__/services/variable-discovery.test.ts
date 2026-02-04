@@ -692,6 +692,18 @@ vars: null
     expect(result).toEqual({});
   });
 
+  it('should convert null values to string "null"', () => {
+    const markdown = `---
+name: test-runbook
+vars:
+  nullable: null
+---
+# Content`;
+
+    const result = extractVarsFromMarkdown(markdown);
+    expect(result).toEqual({ nullable: 'null' });
+  });
+
   it('should return empty object when vars is not an object', () => {
     const markdown = `---
 name: test-runbook

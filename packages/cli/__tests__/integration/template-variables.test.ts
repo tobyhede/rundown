@@ -257,13 +257,8 @@ describe('Template Variables Integration', () => {
     });
 
     it('frontmatter vars work in child runbooks', async () => {
-      // Create parent runbook
-      const parentRunbook = createRunbook({
-        title: 'Parent Runbook',
-        steps: [{ title: 'Dispatch work', pass: 'COMPLETE', content: 'Delegate work to agent.' }],
-      });
-
-      // Create child runbook with frontmatter vars
+      // Test frontmatter vars by running child runbook directly (not via Mode 3)
+      // This verifies the vars are extracted and applied during run
       const childRunbook = createRunbook({
         name: 'child-runbook',
         vars: { task_name: 'DefaultTask' },
@@ -271,30 +266,17 @@ describe('Template Variables Integration', () => {
         steps: [{ title: 'Execute task', pass: 'COMPLETE', command: 'rd echo {{task_name}}' }],
       });
 
-      const runbooksDir = join(workspace.cwd, 'runbooks');
-      await mkdir(runbooksDir, { recursive: true });
-      await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
-      await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+      await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
 
-      // Start parent runbook in prompted mode
-      let result = runCli('run runbooks/parent.runbook.md --prompted', workspace);
+      // Run child runbook directly with --json to capture NDJSON events
+      const result = runCli('run child.runbook.md --json', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Queue step with child runbook
-      result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
-      expect(result.exitCode).toBe(0);
-
-      // Bind agent (no --var override, should use frontmatter default)
-      result = runCli('run --agent test-agent --json', workspace);
-      expect(result.exitCode).toBe(0);
-
-      // The child runbook should have used the frontmatter default
-      // Pass the step to complete and check the command
-      result = runCli('pass --agent test-agent --json', workspace);
-      expect(result.exitCode).toBe(0);
-
-      const passOutput = JSON.parse(result.stdout);
-      expect(passOutput.result).toBe(true);
+      // Verify the command was expanded with the frontmatter default variable
+      const events = parseNdjsonEvents(result.stdout);
+      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent!.command).toBe('rd echo DefaultTask');
     });
   });
 

@@ -33,7 +33,7 @@ const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
  */
 function normalizeVariables(
   vars: Record<string, unknown>,
-  source: string = 'variable'
+  source = 'variable'
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(vars)) {
@@ -98,22 +98,26 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
  * 1. --var flags (fromFlags)
  * 2. --var-file contents (fromFile)
  * 3. Auto-discovered .rundown/config.yaml (discovered)
- * 4. Built-in defaults (builtins) - lowest precedence
+ * 4. Frontmatter vars (frontmatter)
+ * 5. Built-in defaults (builtins) - lowest precedence
  *
  * @param builtins - Built-in default variables (lowest precedence)
+ * @param frontmatter - Variables from runbook frontmatter
  * @param discovered - Variables from auto-discovery
  * @param fromFile - Variables from --var-file
- * @param fromFlags - Variables from --var flags
+ * @param fromFlags - Variables from --var flags (highest precedence)
  * @returns Merged variables object
  */
 export function mergeVariables(
   builtins: Record<string, string>,
+  frontmatter: Record<string, string>,
   discovered: Record<string, string>,
   fromFile: Record<string, string>,
   fromFlags: Record<string, string>
 ): Record<string, string> {
   return {
     ...builtins,
+    ...frontmatter,
     ...discovered,
     ...fromFile,
     ...fromFlags,
@@ -137,15 +141,7 @@ export async function loadVariablesFromFile(
       return {};
     }
 
-    // Convert all values to strings
-    const result: Record<string, string> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === 'object' && value !== null) {
-        console.warn(`Warning: Variable "${key}" has complex value, coerced to string`);
-      }
-      result[key] = String(value);
-    }
-    return result;
+    return normalizeVariables(parsed as Record<string, unknown>);
   } catch {
     return {};
   }
@@ -175,24 +171,7 @@ export function extractVarsFromMarkdown(
     return {};
   }
 
-  const vars = frontmatter.vars as Record<string, unknown>;
-  const result: Record<string, string> = {};
-
-  for (const [key, value] of Object.entries(vars)) {
-    // Validate key is a valid identifier
-    if (!VALID_IDENTIFIER.test(key)) {
-      console.warn(`Warning: Ignoring frontmatter var with invalid key: ${key}`);
-      continue;
-    }
-
-    // Convert value to string, warn for complex values
-    if (typeof value === 'object' && value !== null) {
-      console.warn(`Warning: Frontmatter var "${key}" has complex value, coerced to string`);
-    }
-    result[key] = String(value);
-  }
-
-  return result;
+  return normalizeVariables(frontmatter.vars as Record<string, unknown>, 'frontmatter var');
 }
 
 /**
@@ -252,23 +231,27 @@ export async function discoverVariables(
  * 1. --var flags
  * 2. --var-file contents
  * 3. Auto-discovered .rundown/config.yaml
- * 4. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath)
+ * 4. Frontmatter vars
+ * 5. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath)
  *
- * @param options - CLI options containing varFile and var flags
+ * @param options - CLI options containing varFile, var flags, and frontmatterVars
  * @param cwd - Current working directory
  * @returns Merged variables with proper precedence
  */
 export async function collectVariables(
-  options: { varFile?: string; var?: string[] },
+  options: { varFile?: string; var?: string[]; frontmatterVars?: Record<string, string> },
   cwd: string
 ): Promise<Record<string, string>> {
   // 1. Get built-in defaults (lowest precedence)
   const builtins = getBuiltinVariables();
 
-  // 2. Auto-discover from .rundown/config.yaml
+  // 2. Frontmatter vars (second lowest)
+  const frontmatter = options.frontmatterVars ?? {};
+
+  // 3. Auto-discover from .rundown/config.yaml
   const discovered = await discoverVariables(cwd);
 
-  // 3. Load from --var-file if provided
+  // 4. Load from --var-file if provided
   let fromFile: Record<string, string> = {};
   if (options.varFile) {
     const varFilePath = path.isAbsolute(options.varFile)
@@ -277,7 +260,7 @@ export async function collectVariables(
     fromFile = await loadVariablesFromFile(varFilePath);
   }
 
-  // 4. Parse --var flags (highest precedence)
+  // 5. Parse --var flags (highest precedence)
   const fromFlags: Record<string, string> = {};
   if (options.var) {
     for (const flag of options.var) {
@@ -290,6 +273,6 @@ export async function collectVariables(
     }
   }
 
-  // 5. Merge with precedence: builtins < discovered < fromFile < fromFlags
-  return mergeVariables(builtins, discovered, fromFile, fromFlags);
+  // 6. Merge with precedence: builtins < frontmatter < discovered < fromFile < fromFlags
+  return mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
 }
