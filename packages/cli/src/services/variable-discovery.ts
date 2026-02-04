@@ -22,6 +22,26 @@ import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 /**
+ * Returns built-in default template variables.
+ *
+ * These have the lowest precedence and can be overridden by any other source
+ * (frontmatter, config file, --var-file, or --var flags).
+ *
+ * @returns Built-in variables with PascalCase names
+ */
+export function getBuiltinVariables(): Record<string, string> {
+  const now = new Date();
+  return {
+    Date: now.toISOString().slice(0, 10), // YYYY-MM-DD
+    DateTime: now.toISOString(), // Full ISO timestamp
+    Year: String(now.getFullYear()), // YYYY
+    Month: String(now.getMonth() + 1).padStart(2, '0'), // MM (01-12)
+    Day: String(now.getDate()).padStart(2, '0'), // DD (01-31)
+    WorkPath: '.work', // Default artifact directory
+  };
+}
+
+/**
  * Parse a --var flag value in key=value format.
  *
  * Variable names must be valid identifiers (start with letter/underscore,
@@ -49,18 +69,22 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
  * 1. --var flags (fromFlags)
  * 2. --var-file contents (fromFile)
  * 3. Auto-discovered .rundown/config.yaml (discovered)
+ * 4. Built-in defaults (builtins) - lowest precedence
  *
+ * @param builtins - Built-in default variables (lowest precedence)
  * @param discovered - Variables from auto-discovery
  * @param fromFile - Variables from --var-file
  * @param fromFlags - Variables from --var flags
  * @returns Merged variables object
  */
 export function mergeVariables(
+  builtins: Record<string, string>,
   discovered: Record<string, string>,
   fromFile: Record<string, string>,
   fromFlags: Record<string, string>
 ): Record<string, string> {
   return {
+    ...builtins,
     ...discovered,
     ...fromFile,
     ...fromFlags,
@@ -107,7 +131,7 @@ export async function loadVariablesFromFile(
  * template rendering (which must happen before full parsing).
  *
  * Variable names must be valid identifiers (start with letter/underscore,
- * contain only letters, digits, underscores). Invalid keys are silently ignored.
+ * contain only letters, digits, underscores). Invalid keys are ignored with a warning.
  * All values are converted to strings for consistency with other variable sources.
  *
  * @param markdown - Raw markdown content with optional frontmatter
@@ -195,6 +219,12 @@ export async function discoverVariables(
 /**
  * Collect all variables from CLI options and auto-discovery.
  *
+ * Precedence (highest to lowest):
+ * 1. --var flags
+ * 2. --var-file contents
+ * 3. Auto-discovered .rundown/config.yaml
+ * 4. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath)
+ *
  * @param options - CLI options containing varFile and var flags
  * @param cwd - Current working directory
  * @returns Merged variables with proper precedence
@@ -203,10 +233,13 @@ export async function collectVariables(
   options: { varFile?: string; var?: string[] },
   cwd: string
 ): Promise<Record<string, string>> {
-  // 1. Auto-discover from .rundown/config.yaml
+  // 1. Get built-in defaults (lowest precedence)
+  const builtins = getBuiltinVariables();
+
+  // 2. Auto-discover from .rundown/config.yaml
   const discovered = await discoverVariables(cwd);
 
-  // 2. Load from --var-file if provided
+  // 3. Load from --var-file if provided
   let fromFile: Record<string, string> = {};
   if (options.varFile) {
     const varFilePath = path.isAbsolute(options.varFile)
@@ -215,7 +248,7 @@ export async function collectVariables(
     fromFile = await loadVariablesFromFile(varFilePath);
   }
 
-  // 3. Parse --var flags
+  // 4. Parse --var flags (highest precedence)
   const fromFlags: Record<string, string> = {};
   if (options.var) {
     for (const flag of options.var) {
@@ -228,6 +261,6 @@ export async function collectVariables(
     }
   }
 
-  // 4. Merge with precedence
-  return mergeVariables(discovered, fromFile, fromFlags);
+  // 5. Merge with precedence: builtins < discovered < fromFile < fromFlags
+  return mergeVariables(builtins, discovered, fromFile, fromFlags);
 }
