@@ -1,5 +1,4 @@
 import { z } from 'zod';
-export * from '@rundown-org/parser';
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -110,6 +109,13 @@ export const CommandSchema = z.object({
 });
 
 export type ValidatedSessionState = z.infer<typeof SessionStateSchema>;
+
+// Re-export parser schemas needed by consumers
+export {
+  StepIdSchema,
+  ActionSchema,
+  TransitionsSchema,
+} from '@rundown-org/parser';
 
 import {
   StepIdSchema

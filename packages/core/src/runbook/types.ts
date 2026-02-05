@@ -1,6 +1,16 @@
 // src/runbook/types.ts
 
-export * from '@rundown-org/parser';
+// Re-export parser types needed by core package consumers
+export type {
+  Step,
+  Substep,
+  Action,
+  Transitions,
+  TransitionObject,
+  Runbook,
+  StepId,
+} from '@rundown-org/parser';
+
 import { type StepId } from '@rundown-org/parser';
 
 /**

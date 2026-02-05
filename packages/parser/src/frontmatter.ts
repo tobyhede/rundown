@@ -1,5 +1,5 @@
+import matter from 'gray-matter';
 import { z } from 'zod';
-import * as yaml from 'js-yaml';
 
 /**
  * Runbook frontmatter metadata
@@ -11,10 +11,12 @@ export interface RunbookFrontmatter {
   author?: string;        // Optional
   tags?: string[];        // Optional: categorization
   vars?: Record<string, string | number | boolean>;  // Optional: default template variables
+  [key: string]: unknown; // Allow unknown fields
 }
 
 /**
- * Zod schema for validating runbook frontmatter
+ * Zod schema for validating runbook frontmatter.
+ * Uses .passthrough() to allow unknown fields like 'skill' to be preserved.
  */
 export const RunbookFrontmatterSchema = z.object({
   name: z
@@ -26,7 +28,7 @@ export const RunbookFrontmatterSchema = z.object({
   author: z.string().optional(),
   tags: z.array(z.string()).optional(),
   vars: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-});
+}).passthrough();
 
 /**
  * Type derived from Zod schema
@@ -34,7 +36,7 @@ export const RunbookFrontmatterSchema = z.object({
 export type RunbookFrontmatterType = z.infer<typeof RunbookFrontmatterSchema>;
 
 /**
- * Extract YAML frontmatter from markdown content.
+ * Extract YAML frontmatter from markdown content using gray-matter.
  *
  * Parses YAML frontmatter enclosed in --- delimiters at the start of
  * a markdown file. Returns both the parsed frontmatter and the remaining
@@ -43,7 +45,8 @@ export type RunbookFrontmatterType = z.infer<typeof RunbookFrontmatterSchema>;
  * Frontmatter requirements:
  * - Must be at the start of the file
  * - Must be enclosed in --- delimiters
- * - Must be valid YAML conforming to RunbookFrontmatterSchema
+ * - Must be valid YAML with a 'name' field conforming to RunbookFrontmatterSchema
+ * - Unknown fields are preserved via .passthrough()
  *
  * @param markdown - The raw markdown content to parse
  * @returns Object containing parsed frontmatter (or null if missing/invalid)
@@ -53,57 +56,35 @@ export function extractFrontmatter(markdown: string): {
   frontmatter: RunbookFrontmatter | null;
   content: string;
 } {
-  const trimmed = markdown.trim();
-
-  // Check if starts with ---
-  if (!trimmed.startsWith('---')) {
-    return {
-      frontmatter: null,
-      content: markdown,
-    };
-  }
-
-  // Find the closing --- delimiter
-  const lines = trimmed.split('\n');
-  let endIndex = -1;
-
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i].trim() === '---') {
-      endIndex = i;
-      break;
-    }
-  }
-
-  // If no closing delimiter found, treat as regular content
-  if (endIndex === -1) {
-    return {
-      frontmatter: null,
-      content: markdown,
-    };
-  }
+  let data: Record<string, unknown>;
+  let content: string;
 
   try {
-    // Extract YAML content between delimiters
-    const yamlContent = lines.slice(1, endIndex).join('\n');
-    const parsed = yaml.load(yamlContent) as Record<string, unknown>;
-
-    // Validate against schema
-    const validated = RunbookFrontmatterSchema.parse(parsed);
-
-    // Extract remaining content (after closing ---)
-    const remaining = lines.slice(endIndex + 1).join('\n').trimStart();
-
-    return {
-      frontmatter: validated,
-      content: remaining,
-    };
+    const result = matter(markdown);
+    data = result.data;
+    content = result.content;
   } catch {
-    // If YAML parsing or validation fails, return null and original content
-    return {
-      frontmatter: null,
-      content: markdown,
-    };
+    // gray-matter throws on invalid YAML syntax
+    return { frontmatter: null, content: markdown };
   }
+
+  // No frontmatter present
+  if (Object.keys(data).length === 0) {
+    return { frontmatter: null, content: markdown };
+  }
+
+  // Validate with Zod (passthrough allows unknown fields)
+  const result = RunbookFrontmatterSchema.safeParse(data);
+
+  if (!result.success) {
+    // Log validation errors in debug mode, but still return content stripped of frontmatter
+    if (process.env.RUNDOWN_LOG_LEVEL === 'debug') {
+      console.error('Frontmatter validation error:', result.error.format());
+    }
+    return { frontmatter: null, content };
+  }
+
+  return { frontmatter: result.data as RunbookFrontmatter, content };
 }
 
 /**
