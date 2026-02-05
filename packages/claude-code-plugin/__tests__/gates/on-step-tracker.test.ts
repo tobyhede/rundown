@@ -1,4 +1,4 @@
-// packages/claude-code-plugin/__tests__/gates/workflow-step-tracker.test.ts
+// packages/claude-code-plugin/__tests__/gates/on-step-tracker.test.ts
 import { jest, expect, describe, it, beforeEach } from '@jest/globals';
 import type { HookInput } from '../../src/shared/index.js';
 
@@ -8,9 +8,9 @@ jest.unstable_mockModule('../../src/workflow/hooks/step-tracker.js', () => ({
   trackStepDispatch: mockTrackStepDispatch
 }));
 
-const { execute } = await import('../../src/gates/workflow-step-tracker.js');
+const { execute } = await import('../../src/gates/on-step-tracker.js');
 
-describe('workflow-step-tracker gate', () => {
+describe('on-step-tracker gate', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });

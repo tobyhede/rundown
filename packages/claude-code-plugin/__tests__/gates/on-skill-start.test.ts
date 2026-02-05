@@ -1,4 +1,4 @@
-// packages/claude-code-plugin/__tests__/gates/workflow-skill-start.test.ts
+// packages/claude-code-plugin/__tests__/gates/on-skill-start.test.ts
 import { jest, expect, describe, it, beforeEach } from '@jest/globals';
 import type { HookInput } from '../../src/shared/index.js';
 
@@ -13,25 +13,25 @@ jest.unstable_mockModule('fs', () => ({
   readFileSync: mockReadFileSync
 }));
 
-const { execute, parseWorkflowFromFrontmatter } =
-  await import('../../src/gates/workflow-skill-start.js');
+const { execute, parseRunbookFromFrontmatter } =
+  await import('../../src/gates/on-skill-start.js');
 
-describe('workflow-skill-start gate', () => {
+describe('on-skill-start gate', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  describe('parseWorkflowFromFrontmatter', () => {
-    it('extracts workflow field from frontmatter', () => {
+  describe('parseRunbookFromFrontmatter', () => {
+    it('extracts runbook field from frontmatter', () => {
       const content = `---
 name: verify
 description: Verify something
-workflow: verify.runbook.md
+runbook: verify.runbook.md
 ---
 
 # Skill content`;
 
-      const result = parseWorkflowFromFrontmatter(content);
+      const result = parseRunbookFromFrontmatter(content);
 
       expect(result).toBe('verify.runbook.md');
     });
@@ -39,20 +39,20 @@ workflow: verify.runbook.md
     it('returns undefined when no frontmatter', () => {
       const content = '# Just a heading\n\nSome content';
 
-      const result = parseWorkflowFromFrontmatter(content);
+      const result = parseRunbookFromFrontmatter(content);
 
       expect(result).toBeUndefined();
     });
 
-    it('returns undefined when no workflow field', () => {
+    it('returns undefined when no runbook field', () => {
       const content = `---
 name: simple-skill
-description: No workflow
+description: No runbook
 ---
 
 # Content`;
 
-      const result = parseWorkflowFromFrontmatter(content);
+      const result = parseRunbookFromFrontmatter(content);
 
       expect(result).toBeUndefined();
     });
@@ -82,15 +82,15 @@ description: No workflow
       expect(result).toEqual({});
     });
 
-    it('starts workflow when skill has workflow in frontmatter', async () => {
+    it('starts runbook when skill has runbook in frontmatter', async () => {
       const skillContent = `---
 name: verify
-workflow: verify.runbook.md
+runbook: verify.runbook.md
 ---
 # Content`;
 
       mockReadFileSync.mockReturnValue(skillContent);
-      mockExecFileSync.mockReturnValue(Buffer.from('Started workflow'));
+      mockExecFileSync.mockReturnValue(Buffer.from('Started runbook'));
 
       // Set plugin root for skill discovery
       const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
@@ -105,7 +105,7 @@ workflow: verify.runbook.md
       const result = await execute(input);
 
       expect(result).toEqual({
-        additionalContext: 'Started workflow: verify.runbook.md'
+        additionalContext: 'Started runbook: verify.runbook.md'
       });
       expect(mockExecFileSync).toHaveBeenCalledWith(
         'rundown',

@@ -1,4 +1,4 @@
-// packages/claude-code-plugin/__tests__/gates/workflow-command-start.test.ts
+// packages/claude-code-plugin/__tests__/gates/on-command-start.test.ts
 import { jest, expect, describe, it, beforeEach } from '@jest/globals';
 import type { HookInput } from '../../src/shared/index.js';
 
@@ -14,9 +14,9 @@ jest.unstable_mockModule('fs', () => ({
 }));
 
 const { execute, parseRunbookFromFrontmatter } =
-  await import('../../src/gates/workflow-command-start.js');
+  await import('../../src/gates/on-command-start.js');
 
-describe('workflow-command-start gate', () => {
+describe('on-command-start gate', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });

@@ -3,10 +3,10 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 
 /**
- * Workflow Skill Start Gate
+ * On Skill Start Gate
  *
- * Parses skill frontmatter for `workflow:` field and auto-starts
- * the declared workflow when a skill begins.
+ * Parses skill frontmatter for `runbook:` field and auto-starts
+ * the declared runbook when a skill begins.
  */
 export function execute(input: HookInput): Promise<GateResult> {
   // Only handle SkillStart
@@ -18,31 +18,31 @@ export function execute(input: HookInput): Promise<GateResult> {
   if (!skillName) return Promise.resolve({});
 
   // Find skill file and parse frontmatter
-  const workflow = findSkillWorkflow(skillName, input.cwd);
-  if (!workflow) return Promise.resolve({});
+  const runbook = findSkillRunbook(skillName, input.cwd);
+  if (!runbook) return Promise.resolve({});
 
-  // Validate workflow path to prevent command injection and path traversal
-  if (!/^[\w./-]+$/.test(workflow) || workflow.includes('..')) {
-    void logger.warn('Invalid workflow path rejected', { workflow, skill: skillName });
+  // Validate runbook path to prevent command injection and path traversal
+  if (!/^[\w./-]+$/.test(runbook) || runbook.includes('..')) {
+    void logger.warn('Invalid runbook path rejected', { runbook, skill: skillName });
     return Promise.resolve({});
   }
 
-  // Start workflow via CLI (using execFileSync to prevent shell injection)
+  // Start runbook via CLI (using execFileSync to prevent shell injection)
   try {
-    execFileSync('rundown', ['run', workflow], { cwd: input.cwd, stdio: 'pipe' });
+    execFileSync('rundown', ['run', runbook], { cwd: input.cwd, stdio: 'pipe' });
     return Promise.resolve({
-      additionalContext: `Started workflow: ${workflow}`
+      additionalContext: `Started runbook: ${runbook}`
     });
   } catch {
-    // Graceful degradation - workflow start failed
+    // Graceful degradation - runbook start failed
     return Promise.resolve({});
   }
 }
 
 /**
- * Find skill SKILL.md and extract workflow from frontmatter
+ * Find skill SKILL.md and extract runbook from frontmatter
  */
-function findSkillWorkflow(skillName: string, cwd: string): string | undefined {
+function findSkillRunbook(skillName: string, cwd: string): string | undefined {
   // Parse namespace:name format
   const colonIndex = skillName.indexOf(':');
   // SECURITY: Sanitize components
@@ -71,8 +71,8 @@ function findSkillWorkflow(skillName: string, cwd: string): string | undefined {
   for (const skillPath of searchPaths) {
     try {
       const content = fs.readFileSync(skillPath, 'utf8');
-      const workflow = parseWorkflowFromFrontmatter(content);
-      if (workflow) return workflow;
+      const runbook = parseRunbookFromFrontmatter(content);
+      if (runbook) return runbook;
     } catch {
       continue;
     }
@@ -83,14 +83,14 @@ function findSkillWorkflow(skillName: string, cwd: string): string | undefined {
 
 
 /**
- * Parse workflow field from YAML frontmatter
+ * Parse runbook field from YAML frontmatter
  */
-export function parseWorkflowFromFrontmatter(content: string): string | undefined {
+export function parseRunbookFromFrontmatter(content: string): string | undefined {
   // Match YAML frontmatter block (supports both LF and CRLF line endings)
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
   if (!match) return undefined;
 
-  // Extract workflow field from frontmatter
-  const workflowMatch = /^workflow:\s*(.+)$/m.exec(match[1]);
-  return workflowMatch?.[1];
+  // Extract runbook field from frontmatter
+  const runbookMatch = /^runbook:\s*(.+)$/m.exec(match[1]);
+  return runbookMatch?.[1];
 }
