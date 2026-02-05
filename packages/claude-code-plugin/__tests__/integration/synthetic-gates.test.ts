@@ -9,6 +9,34 @@ describe('synthetic event gates integration', () => {
   let testDir: string;
   let originalPluginRoot: string | undefined;
 
+  /**
+   * Helper to write plugin config enabling SlashCommandStart gate
+   */
+  function writePluginConfig(): void {
+    fs.writeFileSync(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify({
+        gates: { 'on-command-start': {} },
+        hooks: { SlashCommandStart: { gates: ['on-command-start'] } }
+      })
+    );
+  }
+
+  /**
+   * Helper to create a command file with runbook frontmatter
+   */
+  function createCommandFile(name: string, runbook: string): void {
+    const commandsDir = path.join(testDir, '.claude', 'commands');
+    fs.mkdirSync(commandsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(commandsDir, `${name}.md`),
+      `---
+runbook: ${runbook}
+---
+# Test Command`
+    );
+  }
+
   beforeEach(() => {
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rundown-test-synthetic-gates-'));
     fs.mkdirSync(path.join(testDir, '.claude'), { recursive: true });
@@ -36,24 +64,8 @@ describe('synthetic event gates integration', () => {
   });
 
   it('SlashCommandStart with command file containing runbook triggers execution', async () => {
-    // Write plugin config to enable SlashCommandStart gate
-    fs.writeFileSync(
-      path.join(testDir, 'rundown-plugin.json'),
-      JSON.stringify({
-        gates: { 'on-command-start': {} },
-        hooks: { SlashCommandStart: { gates: ['on-command-start'] } }
-      })
-    );
-
-    const commandsDir = path.join(testDir, '.claude', 'commands');
-    fs.mkdirSync(commandsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(commandsDir, 'test-cmd.md'),
-      `---
-runbook: test-runbook
----
-# Test Command`
-    );
+    writePluginConfig();
+    createCommandFile('test-cmd', 'test-runbook');
 
     const input: HookInput = {
       hook_event_name: 'SlashCommandStart',
@@ -70,24 +82,8 @@ runbook: test-runbook
   });
 
   it('gate output includes rd usage instructions on error', async () => {
-    // Write plugin config to enable SlashCommandStart gate
-    fs.writeFileSync(
-      path.join(testDir, 'rundown-plugin.json'),
-      JSON.stringify({
-        gates: { 'on-command-start': {} },
-        hooks: { SlashCommandStart: { gates: ['on-command-start'] } }
-      })
-    );
-
-    const commandsDir = path.join(testDir, '.claude', 'commands');
-    fs.mkdirSync(commandsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(commandsDir, 'test-cmd.md'),
-      `---
-runbook: nonexistent-runbook
----
-# Test Command`
-    );
+    writePluginConfig();
+    createCommandFile('test-cmd', 'nonexistent-runbook');
 
     const input: HookInput = {
       hook_event_name: 'SlashCommandStart',
@@ -103,14 +99,8 @@ runbook: nonexistent-runbook
   });
 
   it('context injection appears before gate output', async () => {
-    // Write plugin config to enable SlashCommandStart gate
-    fs.writeFileSync(
-      path.join(testDir, 'rundown-plugin.json'),
-      JSON.stringify({
-        gates: { 'on-command-start': {} },
-        hooks: { SlashCommandStart: { gates: ['on-command-start'] } }
-      })
-    );
+    writePluginConfig();
+    createCommandFile('test-cmd', 'test-runbook');
 
     // Create context injection file
     const contextDir = path.join(testDir, '.claude', 'context');
@@ -118,17 +108,6 @@ runbook: nonexistent-runbook
     fs.writeFileSync(
       path.join(contextDir, 'test-cmd-start.md'),
       '## INJECTED CONTEXT\nThis should appear first.'
-    );
-
-    // Create command with runbook
-    const commandsDir = path.join(testDir, '.claude', 'commands');
-    fs.mkdirSync(commandsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(commandsDir, 'test-cmd.md'),
-      `---
-runbook: test-runbook
----
-# Test Command`
     );
 
     const input: HookInput = {

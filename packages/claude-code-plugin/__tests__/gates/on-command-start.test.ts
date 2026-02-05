@@ -1,5 +1,5 @@
 // packages/claude-code-plugin/__tests__/gates/on-command-start.test.ts
-import { jest, expect, describe, it, beforeEach } from '@jest/globals';
+import { jest, expect, describe, it, beforeEach, afterEach } from '@jest/globals';
 import type { HookInput } from '../../src/shared/index.js';
 
 const mockRundown = jest.fn();
@@ -17,8 +17,20 @@ const { execute, parseRunbookFromFrontmatter } =
   await import('../../src/gates/on-command-start.js');
 
 describe('on-command-start gate', () => {
+  let originalPluginRoot: string | undefined;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+    process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
+  });
+
+  afterEach(() => {
+    if (originalPluginRoot !== undefined) {
+      process.env.CLAUDE_PLUGIN_ROOT = originalPluginRoot;
+    } else {
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+    }
   });
 
   describe('parseRunbookFromFrontmatter', () => {
@@ -100,10 +112,6 @@ runbook: write-plan
       mockReadFileSync.mockReturnValue(commandContent);
       mockRundown.mockReturnValue('File: write-plan.md\nAction: START\n\n## 1. First Step');
 
-      // Set plugin root for command discovery
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
-
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
@@ -116,9 +124,10 @@ runbook: write-plan
       expect(result.additionalContext).toContain('rd pass');
       expect(result.additionalContext).toContain('rd fail');
       expect(result.additionalContext).toContain('rd status');
+      expect(result.additionalContext).toContain('rd goto');
+      expect(result.additionalContext).toContain('IMPORTANT');
+      expect(result.additionalContext).toContain('Current State');
       expect(mockRundown).toHaveBeenCalledWith(['run', 'write-plan'], '/test');
-
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
     });
 
     it('handles command without namespace', async () => {
@@ -130,9 +139,6 @@ runbook: my-runbook
       mockReadFileSync.mockReturnValue(commandContent);
       mockRundown.mockReturnValue('Started runbook');
 
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
-
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
@@ -142,8 +148,6 @@ runbook: my-runbook
       const result = await execute(input);
 
       expect(result.additionalContext).toContain('RUNBOOK ACTIVE: my-runbook');
-
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
     });
 
     it('formats error with recovery instructions on exec failure', async () => {
@@ -159,9 +163,6 @@ runbook: broken-runbook
         throw error;
       });
 
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
-
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
@@ -173,8 +174,32 @@ runbook: broken-runbook
       expect(result.additionalContext).toContain('RUNBOOK ERROR: broken-runbook');
       expect(result.additionalContext).toContain('Manual Recovery');
       expect(result.additionalContext).toContain('rd run broken-runbook');
+    });
 
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+    it('prioritizes stdout over stderr when both present in error', async () => {
+      const commandContent = `---
+runbook: test-runbook
+---
+# Content`;
+
+      mockReadFileSync.mockReturnValue(commandContent);
+      mockRundown.mockImplementation(() => {
+        const error = new Error('Command failed');
+        (error as any).stdout = 'stdout output';
+        (error as any).stderr = 'stderr output';
+        throw error;
+      });
+
+      const input: HookInput = {
+        hook_event_name: 'SlashCommandStart',
+        cwd: '/test',
+        command: 'test-cmd'
+      };
+
+      const result = await execute(input);
+
+      expect(result.additionalContext).toContain('stdout output');
+      expect(result.additionalContext).not.toContain('stderr output');
     });
 
     it('uses stderr when stdout not available in error', async () => {
@@ -190,9 +215,6 @@ runbook: test-runbook
         throw error;
       });
 
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
-
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
@@ -202,8 +224,6 @@ runbook: test-runbook
       const result = await execute(input);
 
       expect(result.additionalContext).toContain('Permission denied');
-
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
     });
 
     it('uses error message when stdout/stderr not available', async () => {
@@ -217,9 +237,6 @@ runbook: test-runbook
         throw new Error('ENOENT: file not found');
       });
 
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
-
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
@@ -229,17 +246,12 @@ runbook: test-runbook
       const result = await execute(input);
 
       expect(result.additionalContext).toContain('ENOENT: file not found');
-
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
     });
 
     it('returns empty when command file not found', async () => {
       mockReadFileSync.mockImplementation(() => {
         throw new Error('File not found');
       });
-
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
 
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
@@ -250,8 +262,6 @@ runbook: test-runbook
       const result = await execute(input);
 
       expect(result).toEqual({});
-
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
     });
 
     it('rejects invalid runbook paths with traversal', async () => {
@@ -261,9 +271,6 @@ runbook: ../../../etc/passwd
 # Content`;
 
       mockReadFileSync.mockReturnValue(commandContent);
-
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
 
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
@@ -275,8 +282,6 @@ runbook: ../../../etc/passwd
 
       expect(result).toEqual({});
       expect(mockRundown).not.toHaveBeenCalled();
-
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
     });
 
     it('rejects runbook paths with special characters', async () => {
@@ -286,9 +291,6 @@ runbook: test; rm -rf /
 # Content`;
 
       mockReadFileSync.mockReturnValue(commandContent);
-
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
 
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
@@ -300,72 +302,6 @@ runbook: test; rm -rf /
 
       expect(result).toEqual({});
       expect(mockRundown).not.toHaveBeenCalled();
-
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
-    });
-  });
-
-  describe('output formatting', () => {
-    it('formats successful start with instructions', async () => {
-      const commandContent = `---
-runbook: test-runbook
----
-# Content`;
-
-      mockReadFileSync.mockReturnValue(commandContent);
-      mockRundown.mockReturnValue('File: test.md\nAction: START\n\n## 1. First Step\nDo something');
-
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
-
-      const input: HookInput = {
-        hook_event_name: 'SlashCommandStart',
-        cwd: '/test',
-        command: 'test-cmd'
-      };
-
-      const result = await execute(input);
-
-      expect(result.additionalContext).toContain('RUNBOOK ACTIVE: test-runbook');
-      expect(result.additionalContext).toContain('rd pass');
-      expect(result.additionalContext).toContain('rd fail');
-      expect(result.additionalContext).toContain('rd status');
-      expect(result.additionalContext).toContain('rd goto');
-      expect(result.additionalContext).toContain('IMPORTANT');
-      expect(result.additionalContext).toContain('Current State');
-
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
-    });
-
-    it('formats error with recovery instructions', async () => {
-      const commandContent = `---
-runbook: bad-runbook
----
-# Content`;
-
-      mockReadFileSync.mockReturnValue(commandContent);
-      mockRundown.mockImplementation(() => {
-        const e = new Error('fail');
-        (e as any).stdout = 'Runbook not found';
-        throw e;
-      });
-
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
-
-      const input: HookInput = {
-        hook_event_name: 'SlashCommandStart',
-        cwd: '/test',
-        command: 'test-cmd'
-      };
-
-      const result = await execute(input);
-
-      expect(result.additionalContext).toContain('RUNBOOK ERROR: bad-runbook');
-      expect(result.additionalContext).toContain('Manual Recovery');
-      expect(result.additionalContext).toContain('rd run bad-runbook');
-
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
     });
   });
 });
