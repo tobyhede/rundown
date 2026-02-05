@@ -35,6 +35,7 @@ rd echo git worktree add -b feature/new-work ../new-worktree
 ```
 
 ## 3 Verify Setup
+
 - PASS: COMPLETE "Worktree created successfully."
 - FAIL: STOP "Worktree verification failed."
 

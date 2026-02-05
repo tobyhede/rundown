@@ -13,6 +13,11 @@ const __dirname = dirname(__filename);
 const runbooksDir = join(__dirname, '..', 'runbooks');
 const cliPath = join(__dirname, '..', '..', 'cli', 'dist', 'cli.js');
 
+if (!existsSync(cliPath)) {
+  console.error(`CLI not found at ${cliPath}. Build the CLI first.`);
+  process.exit(1);
+}
+
 /**
  * Recursively find all .runbook.md files in a directory.
  * @param {string} dir - Directory to search

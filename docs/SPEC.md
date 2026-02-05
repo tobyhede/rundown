@@ -34,7 +34,7 @@ Rules: Static steps numbered 1, 2, 3... One dynamic step per level.
 
 ### Transitions
 
-```
+```text
 - PASS [ALL|ANY]: action
 - FAIL [ALL|ANY]: action
 ```

@@ -1,6 +1,6 @@
 ---
 name: Implementation Plan Template
-description: Template for writing detailed plans structurd into small, self-contained, granular tasks and subtasks.
+description: Template for writing detailed plans structured into small, self-contained, granular tasks and subtasks.
 use_when: Writing detailed implementation plans.
 version: 1.0.0
 ---

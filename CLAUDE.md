@@ -131,6 +131,7 @@ Use `namespace:name` syntax for explicit source targeting:
 | `rundown:write-plan` | Explicit: from plugin only |
 
 **Examples:**
+
 ```bash
 rd run write-plan              # Resolves via priority chain
 rd run rundown:write-plan      # Explicit: from plugin

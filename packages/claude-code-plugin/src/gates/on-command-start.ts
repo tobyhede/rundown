@@ -35,7 +35,7 @@ export function execute(input: HookInput): Promise<GateResult> {
     });
   } catch (error) {
     const execError = error as { message?: string; stdout?: string; stderr?: string };
-    const errorOutput = execError.stdout || execError.stderr || execError.message || 'Unknown error';
+    const errorOutput = execError.stdout ?? execError.stderr ?? execError.message ?? 'Unknown error';
     return Promise.resolve({
       additionalContext: formatRunbookError(runbook, errorOutput)
     });

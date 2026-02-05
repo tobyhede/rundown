@@ -10,6 +10,7 @@ Rundown runbooks are markdown docs that define steps, commands, and transition r
 The CLI executes the runbook, guiding agents (and humans) step-by-step through the process.
 
 ## Quick Reference
+
 `rd run <file>` then for each step:
   - Command: wait
   - Prompt: act then `rd pass` or `rd fail`
@@ -81,6 +82,7 @@ Execution flow:
 
 
 ## Supporting Commands
+
 | Command               | Description                                                 |
 | --------------------- | ----------------------------------------------------------- |
 | run [file]            |  Start a runbook, queue a step, or bind an agent            |

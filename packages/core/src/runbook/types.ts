@@ -1,15 +1,58 @@
 // src/runbook/types.ts
 
 // Re-export parser types needed by core package consumers
-export type {
-  Step,
-  Substep,
-  Action,
-  Transitions,
-  TransitionObject,
-  Runbook,
-  StepId,
-} from '@rundown-org/parser';
+
+/**
+ * A step within a runbook (H2 header section).
+ *
+ * Steps can be numeric ("1", "2"), named ("ErrorHandler"), or dynamic ("{N}").
+ * @see {@link @rundown-org/parser!Step}
+ */
+export type { Step } from '@rundown-org/parser';
+
+/**
+ * A substep within a step (H3 header section).
+ *
+ * Substeps represent smaller units of work within a parent step.
+ * @see {@link @rundown-org/parser!Substep}
+ */
+export type { Substep } from '@rundown-org/parser';
+
+/**
+ * A transition action defining what happens after a step completes.
+ *
+ * Actions include CONTINUE, COMPLETE, STOP, and GOTO with optional targets.
+ * @see {@link @rundown-org/parser!Action}
+ */
+export type { Action } from '@rundown-org/parser';
+
+/**
+ * Step transition configuration for pass/fail outcomes.
+ *
+ * Can be a simple TransitionObject or separate pass/fail configurations.
+ * @see {@link @rundown-org/parser!Transitions}
+ */
+export type { Transitions } from '@rundown-org/parser';
+
+/**
+ * A single transition configuration with kind, retry count, and action.
+ * @see {@link @rundown-org/parser!TransitionObject}
+ */
+export type { TransitionObject } from '@rundown-org/parser';
+
+/**
+ * A complete parsed runbook definition with metadata and steps.
+ * @see {@link @rundown-org/parser!Runbook}
+ */
+export type { Runbook } from '@rundown-org/parser';
+
+/**
+ * Identifies a step within a runbook by name and optional instance.
+ *
+ * Used to reference steps in transitions and state tracking.
+ * @see {@link @rundown-org/parser!StepId}
+ */
+export type { StepId } from '@rundown-org/parser';
 
 import { type StepId } from '@rundown-org/parser';
 

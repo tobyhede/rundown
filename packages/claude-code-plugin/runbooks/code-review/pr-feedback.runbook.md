@@ -42,6 +42,7 @@ rd echo npm test
 ```
 
 ## 4 Commit Changes
+
 - PASS: COMPLETE "Feedback addressed and committed."
 - FAIL: STOP "Failed to commit changes."
 
