@@ -80,9 +80,8 @@ name: invalid name with spaces
     expect(result.content.trim()).toBe('# Content');
   });
 
-  it('treats unclosed frontmatter (only opening ---) as all-frontmatter', () => {
-    // gray-matter without closing --- treats entire document as frontmatter
-    // This is edge case behavior - proper runbooks should have closing ---
+  it('extracts frontmatter when no content follows closing delimiter', () => {
+    // Edge case: frontmatter-only document with no content after closing ---
     const markdown = `---
 name: my-runbook
 description: Test

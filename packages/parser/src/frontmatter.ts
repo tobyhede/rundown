@@ -48,6 +48,10 @@ export type RunbookFrontmatterType = z.infer<typeof RunbookFrontmatterSchema>;
  * - Must be valid YAML with a 'name' field conforming to RunbookFrontmatterSchema
  * - Unknown fields are preserved via .passthrough()
  *
+ * Note: When validation fails, content is still stripped of frontmatter.
+ * The original markdown is only returned when gray-matter itself fails to parse
+ * the YAML syntax or when no frontmatter is present.
+ *
  * @param markdown - The raw markdown content to parse
  * @returns Object containing parsed frontmatter (or null if missing/invalid)
  *          and the remaining content with frontmatter removed
@@ -84,7 +88,7 @@ export function extractFrontmatter(markdown: string): {
     return { frontmatter: null, content };
   }
 
-  return { frontmatter: result.data as RunbookFrontmatter, content };
+  return { frontmatter: result.data, content };
 }
 
 /**
