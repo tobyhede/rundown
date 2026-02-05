@@ -38,7 +38,7 @@ describe('Built-in Runbook Validation', () => {
   const runbooks = findRunbooks(runbooksDir);
 
   if (runbooks.length === 0) {
-    it.skip('no runbooks found in runbooks/ directory', () => {});
+    it.skip('no runbooks found in runbooks/ directory', () => { /* empty */ });
     return;
   }
 
