@@ -109,6 +109,44 @@ This enables programmatic validation of CLI output against the schema.
 
 State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown/session.json` (active runbook tracking). Runbook source files are discovered from `.claude/rundown/runbooks/`. All persist across context clears.
 
+## Runbook Discovery
+
+Runbooks are discovered from multiple sources with the following priority (highest to lowest):
+
+| Source | Location | Description |
+|--------|----------|-------------|
+| Project | `.claude/rundown/runbooks/` | Project-local runbooks |
+| Plugin | `$CLAUDE_PLUGIN_ROOT/runbooks/` | Plugin-provided runbooks |
+| Bundled | CLI package `dist/runbooks/` | Bundled pattern runbooks |
+
+Directories are scanned recursively, so subdirectory structures like `planning/write-plan.runbook.md` are supported.
+
+### Namespace Syntax
+
+Use `namespace:name` syntax for explicit source targeting:
+
+| Syntax | Resolution |
+|--------|------------|
+| `write-plan` | Priority chain: project → plugin → bundled |
+| `rundown:write-plan` | Explicit: from plugin only |
+
+**Examples:**
+```bash
+rd run write-plan              # Resolves via priority chain
+rd run rundown:write-plan      # Explicit: from plugin
+rd run rundown:nonexistent     # Error: not found in rundown namespace
+```
+
+The `rundown` namespace maps to the plugin source (`@rundown-org/claude-code-plugin`).
+
+### Listing Runbooks
+
+```bash
+rd ls --all                    # List all discoverable runbooks with source
+```
+
+Output shows NAME, SOURCE, DESCRIPTION, and TAGS columns. The SOURCE column indicates where each runbook was found (project, plugin, or bundled).
+
 ## Policy Options
 
 These options are registered at the program level and can be used with any subcommand:

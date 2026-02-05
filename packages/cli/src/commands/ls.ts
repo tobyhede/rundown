@@ -42,7 +42,11 @@ export function registerLsCommand(program: Command): void {
             output.list(runbooks, [
               {
                 header: 'NAME',
-                key: (w) => w.source === 'plugin' ? `${w.name} [${w.source}]` : w.name
+                key: 'name'
+              },
+              {
+                header: 'SOURCE',
+                key: 'source'
               },
               {
                 header: 'DESCRIPTION',
