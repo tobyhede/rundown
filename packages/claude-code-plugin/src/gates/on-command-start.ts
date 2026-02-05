@@ -1,5 +1,5 @@
 import { type HookInput, type GateResult, logger, safeJoin, sanitizePathSegment } from '../shared/index.js';
-import { execFileSync } from 'child_process';
+import { rundown } from '../workflow/hooks/rundown.js';
 import * as fs from 'fs';
 
 /**
@@ -27,16 +27,64 @@ export function execute(input: HookInput): Promise<GateResult> {
     return Promise.resolve({});
   }
 
-  // Start runbook via CLI (using execFileSync to prevent shell injection)
+  // Start runbook via CLI and capture output
   try {
-    execFileSync('rundown', ['run', runbook], { cwd: input.cwd, stdio: 'pipe' });
+    const output = rundown(['run', runbook], input.cwd);
     return Promise.resolve({
-      additionalContext: `Started runbook: ${runbook}`
+      additionalContext: formatRunbookOutput(runbook, output)
     });
-  } catch {
-    // Graceful degradation - runbook start failed
-    return Promise.resolve({});
+  } catch (error) {
+    const execError = error as { message?: string; stdout?: string; stderr?: string };
+    const errorOutput = execError.stdout || execError.stderr || execError.message || 'Unknown error';
+    return Promise.resolve({
+      additionalContext: formatRunbookError(runbook, errorOutput)
+    });
   }
+}
+
+/**
+ * Format successful runbook start output with instructions
+ */
+function formatRunbookOutput(runbook: string, output: string): string {
+  return `
+---
+## RUNBOOK ACTIVE: ${runbook}
+
+The runbook has been started automatically. You MUST follow the runbook steps.
+
+### How to Use
+- \`rd pass\` / \`rd yes\` - Mark step complete, advance
+- \`rd fail\` / \`rd no\` - Mark step failed, branch
+- \`rd status\` - See current step
+- \`rd goto <n>\` - Jump to step
+
+### Current State
+\`\`\`
+${output.trim()}
+\`\`\`
+
+**IMPORTANT**: Follow runbook prompts. Do NOT skip steps.
+---
+`.trim();
+}
+
+/**
+ * Format runbook error with recovery instructions
+ */
+function formatRunbookError(runbook: string, error: string): string {
+  return `
+---
+## RUNBOOK ERROR: ${runbook}
+
+### Error
+\`\`\`
+${error.trim()}
+\`\`\`
+
+### Manual Recovery
+\`rd run ${runbook}\`
+---
+`.trim();
 }
 
 /**

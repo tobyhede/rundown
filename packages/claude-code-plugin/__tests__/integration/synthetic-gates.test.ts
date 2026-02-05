@@ -7,14 +7,21 @@ import * as os from 'os';
 
 describe('synthetic event gates integration', () => {
   let testDir: string;
+  let originalPluginRoot: string | undefined;
 
   beforeEach(() => {
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rundown-test-synthetic-gates-'));
     fs.mkdirSync(path.join(testDir, '.claude'), { recursive: true });
+    originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
   });
 
   afterEach(() => {
     fs.rmSync(testDir, { recursive: true, force: true });
+    if (originalPluginRoot !== undefined) {
+      process.env.CLAUDE_PLUGIN_ROOT = originalPluginRoot;
+    } else {
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+    }
   });
 
   it('dispatches SlashCommandStart through on-command-start gate', async () => {
@@ -29,6 +36,15 @@ describe('synthetic event gates integration', () => {
   });
 
   it('SlashCommandStart with command file containing runbook triggers execution', async () => {
+    // Write plugin config to enable SlashCommandStart gate
+    fs.writeFileSync(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify({
+        gates: { 'on-command-start': {} },
+        hooks: { SlashCommandStart: { gates: ['on-command-start'] } }
+      })
+    );
+
     const commandsDir = path.join(testDir, '.claude', 'commands');
     fs.mkdirSync(commandsDir, { recursive: true });
     fs.writeFileSync(
@@ -45,9 +61,93 @@ runbook: test-runbook
       cwd: testDir
     };
 
-    // Gate will try to run runbook - it will fail (runbook not found) but should not throw
+    // Gate executes - runbook not found results in error output (not a block)
     const result = await dispatch(input);
     expect(result.blockReason).toBeUndefined();
+    // Gate returns formatted error output
+    expect(result.context).toBeDefined();
+    expect(result.context).toMatch(/RUNBOOK ERROR/);
+  });
+
+  it('gate output includes rd usage instructions on error', async () => {
+    // Write plugin config to enable SlashCommandStart gate
+    fs.writeFileSync(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify({
+        gates: { 'on-command-start': {} },
+        hooks: { SlashCommandStart: { gates: ['on-command-start'] } }
+      })
+    );
+
+    const commandsDir = path.join(testDir, '.claude', 'commands');
+    fs.mkdirSync(commandsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(commandsDir, 'test-cmd.md'),
+      `---
+runbook: nonexistent-runbook
+---
+# Test Command`
+    );
+
+    const input: HookInput = {
+      hook_event_name: 'SlashCommandStart',
+      command: 'test-cmd',
+      cwd: testDir
+    };
+
+    const result = await dispatch(input);
+    expect(result.context).toBeDefined();
+    // Error output includes manual recovery instructions
+    expect(result.context).toContain('Manual Recovery');
+    expect(result.context).toContain('rd run nonexistent-runbook');
+  });
+
+  it('context injection appears before gate output', async () => {
+    // Write plugin config to enable SlashCommandStart gate
+    fs.writeFileSync(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify({
+        gates: { 'on-command-start': {} },
+        hooks: { SlashCommandStart: { gates: ['on-command-start'] } }
+      })
+    );
+
+    // Create context injection file
+    const contextDir = path.join(testDir, '.claude', 'context');
+    fs.mkdirSync(contextDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(contextDir, 'test-cmd-start.md'),
+      '## INJECTED CONTEXT\nThis should appear first.'
+    );
+
+    // Create command with runbook
+    const commandsDir = path.join(testDir, '.claude', 'commands');
+    fs.mkdirSync(commandsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(commandsDir, 'test-cmd.md'),
+      `---
+runbook: test-runbook
+---
+# Test Command`
+    );
+
+    const input: HookInput = {
+      hook_event_name: 'SlashCommandStart',
+      command: 'test-cmd',
+      cwd: testDir
+    };
+
+    const result = await dispatch(input);
+    expect(result.context).toBeDefined();
+
+    // Find positions of content markers
+    const injectedPos = result.context!.indexOf('INJECTED CONTEXT');
+    const runbookPos = result.context!.indexOf('RUNBOOK');
+
+    // Context injection should appear before gate output
+    expect(injectedPos).toBeGreaterThanOrEqual(0);
+    expect(runbookPos).toBeGreaterThanOrEqual(0);
+    expect(injectedPos).toBeLessThan(runbookPos);
   });
 
   it('dispatches SkillStart through on-skill-start gate', async () => {
