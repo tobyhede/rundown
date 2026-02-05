@@ -16,7 +16,7 @@ Write a detailed implementation plan for a feature or task.
 
 Use the Writing Plans Skill.
 
-Path: `.{{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.md`.
+Path: `{{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.md`
 
 
 --
@@ -25,10 +25,4 @@ Path: `.{{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.md`.
 ## InvokeSkill Invoke the Writing Plans Skill
 - YES: GOTO 2
 
-Skill(skill: "rundown:writing-plans")
-
-```xml prompt
-  <invoke name="Skill">
-    <parameter name="skill">rundown:writing-plans</parameter>
-  </invoke>
-```
+Skill(skill: "writing-plans")

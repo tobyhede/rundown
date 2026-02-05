@@ -72,6 +72,24 @@ describe('parseRunbook with substep runbooks', () => {
   });
 });
 
+describe('inline code preservation', () => {
+  it('preserves inline code in step description', () => {
+    const md = `## 1. Path: \`/some/path\`
+Content here.`;
+    const steps = parseRunbook(md);
+    expect(steps[0].description).toBe('Path: `/some/path`');
+  });
+
+  it('preserves inline code in prompt text', () => {
+    const md = `## 1. Execute
+- PASS: CONTINUE
+
+Run the command \`npm install\` first.`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toContain('`npm install`');
+  });
+});
+
 describe('code block flexibility', () => {
   it('supports sh and shell aliases for commands', () => {
     const markdown = `## 1. Sh

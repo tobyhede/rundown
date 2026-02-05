@@ -46,6 +46,9 @@ function extractText(node: PhrasingContent | Heading | Paragraph | ListItem): st
   if (node.type === 'text') {
     return (node as { value: string }).value;
   }
+  if (node.type === 'inlineCode') {
+    return `\`${(node as { value: string }).value}\``;
+  }
   if ('children' in node && Array.isArray(node.children)) {
     return node.children.map((child) => extractText(child as PhrasingContent | Heading | Paragraph | ListItem)).join('');
   }
