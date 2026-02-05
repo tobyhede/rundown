@@ -17,7 +17,40 @@ describe('synthetic event gates integration', () => {
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
-  it('dispatches SkillStart through workflow-skill-start gate', async () => {
+  it('dispatches SlashCommandStart through on-command-start gate', async () => {
+    const input: HookInput = {
+      hook_event_name: 'SlashCommandStart',
+      command: 'rundown:write-plan',
+      cwd: testDir
+    };
+
+    const result = await dispatch(input);
+    expect(result.blockReason).toBeUndefined();
+  });
+
+  it('SlashCommandStart with command file containing runbook triggers execution', async () => {
+    const commandsDir = path.join(testDir, '.claude', 'commands');
+    fs.mkdirSync(commandsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(commandsDir, 'test-cmd.md'),
+      `---
+runbook: test-runbook
+---
+# Test Command`
+    );
+
+    const input: HookInput = {
+      hook_event_name: 'SlashCommandStart',
+      command: 'test-cmd',
+      cwd: testDir
+    };
+
+    // Gate will try to run runbook - it will fail (runbook not found) but should not throw
+    const result = await dispatch(input);
+    expect(result.blockReason).toBeUndefined();
+  });
+
+  it('dispatches SkillStart through on-skill-start gate', async () => {
     const input: HookInput = {
       hook_event_name: 'SkillStart',
       skill: 'rundown:verify',
@@ -31,20 +64,20 @@ describe('synthetic event gates integration', () => {
     expect(result.blockReason).toBeUndefined();
   });
 
-  it('dispatches SubagentStart through workflow-subagent-start gate', async () => {
+  it('dispatches SubagentStart through on-subagent-start gate', async () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStart',
       agent_id: 'test-agent-123',
       cwd: testDir
     };
 
-    // Should not throw - gate handles gracefully when no workflow active
+    // Should not throw - gate handles gracefully when no runbook active
     const result = await dispatch(input);
 
     expect(result.blockReason).toBeUndefined();
   });
 
-  it('dispatches SubagentStop through workflow-subagent-stop gate', async () => {
+  it('dispatches SubagentStop through on-subagent-stop gate', async () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       agent_id: 'test-agent-123',
