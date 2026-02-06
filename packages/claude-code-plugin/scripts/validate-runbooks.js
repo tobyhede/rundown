@@ -3,7 +3,7 @@
  * Validate all built-in runbooks pass syntax validation.
  * Pattern: mirrors packages/cli/scripts/copy-runbooks.js structure
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { readdirSync, statSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -46,7 +46,7 @@ if (runbooks.length === 0) {
 let failed = 0;
 for (const runbook of runbooks) {
   try {
-    execSync(`node "${cliPath}" check "${runbook}"`, { stdio: 'pipe' });
+    execFileSync('node', [cliPath, 'check', runbook], { stdio: 'pipe' });
     console.log(`PASS: ${runbook}`);
   } catch (error) {
     console.error(`FAIL: ${runbook}`);

@@ -39,15 +39,19 @@ Follow any project‑specific guidelines provided for this task.
 The plan header must include these sections:
 
 ### Goal
+
 Clear, concise description of the desired outcome.
 
 ### Architecture & Approach
+
 High-level solution design, critical components, data and integrations.
 
 ### Constraints & Assumptions
+
 Hard constraints and assumptions (performance, security, scalability, maintainability, etc).
 
 ### Dependencies (Optional)
+
 Required services, frameworks, libraries, documentation, upstream changes, etc.
 
 ### Context (Optional)

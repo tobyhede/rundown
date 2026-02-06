@@ -29,4 +29,4 @@ Path: `{{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.md`
 
 - YES: GOTO 2
 
-Tool: `Skill(skill: "rundown:using-rundown")`
+Tool: `Skill(skill: "rundown:writing-plans")`
