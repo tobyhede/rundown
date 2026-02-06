@@ -2,6 +2,8 @@
 name: Write Plan
 description: Write detailed implementation plans using the Writing Plans skill
 skill: writing-plans
+vars:
+  FeatureName: feature
 ---
 
 # Write Plan
@@ -20,7 +22,7 @@ Use the Writing Plans Skill.
 Path: `{{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.md`
 
 
---
+---
 
 
 ## InvokeSkill Invoke the Writing Plans Skill

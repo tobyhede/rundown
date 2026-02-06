@@ -13,8 +13,8 @@ jest.unstable_mockModule('fs', () => ({
   readFileSync: mockReadFileSync
 }));
 
-const { execute, parseRunbookFromFrontmatter } =
-  await import('../../src/gates/on-skill-start.js');
+const { execute } = await import('../../src/gates/on-skill-start.js');
+const { parseRunbookFromFrontmatter } = await import('../../src/shared/frontmatter.js');
 
 describe('on-skill-start gate', () => {
   beforeEach(() => {

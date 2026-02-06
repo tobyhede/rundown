@@ -1,12 +1,15 @@
-import { type HookInput, type GateResult, logger, safeJoin, sanitizePathSegment } from '../shared/index.js';
+import { type HookInput, type GateResult, logger, safeJoin, sanitizePathSegment, parseRunbookFromFrontmatter } from '../shared/index.js';
 import { rundown } from '../workflow/hooks/rundown.js';
 import * as fs from 'fs';
 
 /**
- * Workflow Command Start Gate
+ * Execute the command start gate.
  *
  * Parses command frontmatter for `runbook:` field and auto-starts
  * the declared runbook when a slash command is invoked.
+ *
+ * @param input - The hook input containing event details and context
+ * @returns Gate result with optional additional context from runbook execution
  */
 export function execute(input: HookInput): Promise<GateResult> {
   // Only handle SlashCommandStart
@@ -128,15 +131,3 @@ function findCommandRunbook(commandName: string, cwd: string): string | undefine
   return undefined;
 }
 
-/**
- * Parse runbook field from YAML frontmatter
- */
-export function parseRunbookFromFrontmatter(content: string): string | undefined {
-  // Match YAML frontmatter block (supports both LF and CRLF line endings)
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
-  if (!match) return undefined;
-
-  // Extract runbook field from frontmatter
-  const runbookMatch = /^runbook:\s*(.+)$/m.exec(match[1]);
-  return runbookMatch?.[1];
-}

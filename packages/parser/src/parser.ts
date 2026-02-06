@@ -47,7 +47,10 @@ function extractText(node: PhrasingContent | Heading | Paragraph | ListItem): st
     return (node as { value: string }).value;
   }
   if (node.type === 'inlineCode') {
-    return `\`${(node as { value: string }).value}\``;
+    const value = (node as { value: string }).value;
+    // Escape backticks in inline code to prevent parsing issues
+    const escaped = value.replace(/`/g, '\\`');
+    return `\`${escaped}\``;
   }
   if ('children' in node && Array.isArray(node.children)) {
     return node.children.map((child) => extractText(child as PhrasingContent | Heading | Paragraph | ListItem)).join('');

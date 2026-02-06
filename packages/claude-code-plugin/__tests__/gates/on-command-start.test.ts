@@ -13,8 +13,8 @@ jest.unstable_mockModule('fs', () => ({
   readFileSync: mockReadFileSync
 }));
 
-const { execute, parseRunbookFromFrontmatter } =
-  await import('../../src/gates/on-command-start.js');
+const { execute } = await import('../../src/gates/on-command-start.js');
+const { parseRunbookFromFrontmatter } = await import('../../src/shared/frontmatter.js');
 
 describe('on-command-start gate', () => {
   let originalPluginRoot: string | undefined;

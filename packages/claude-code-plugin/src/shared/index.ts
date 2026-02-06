@@ -19,3 +19,4 @@ export * from './config.js';
 // Utilities
 export * from './utils.js';
 export * from './logger.js';
+export * from './frontmatter.js';

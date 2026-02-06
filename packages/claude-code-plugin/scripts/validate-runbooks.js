@@ -50,11 +50,11 @@ for (const runbook of runbooks) {
     console.log(`PASS: ${runbook}`);
   } catch (error) {
     console.error(`FAIL: ${runbook}`);
-    if (error.stderr) {
-      console.error(error.stderr.toString());
-    } else if (error.message) {
-      console.error(error.message);
-    }
+    // Extract error message from execSync error object
+    const stderr = error.stderr?.toString();
+    const stdout = error.stdout?.toString();
+    const message = stderr || stdout || error.message || 'Unknown error';
+    console.error(message);
     failed++;
   }
 }
