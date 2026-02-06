@@ -2,8 +2,41 @@
 # Fetch PR review comments and write structured JSON to .work/pr-feedback/
 set -euo pipefail
 
-REPO="${1:?Usage: fetch-pr-comments.sh <owner/repo> <pr_number>}"
-PR="${2:?Usage: fetch-pr-comments.sh <owner/repo> <pr_number>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "$0")"
+
+usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME [options] <owner/repo> <pr_number>
+
+  Fetch PR review comments and write structured JSON to .work/pr-feedback/
+
+Options:
+  -h, --help  Show this help
+
+Examples:
+  $SCRIPT_NAME tobyhede/rundown 11
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -*)        echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    *)         break ;;
+  esac
+done
+
+command -v gh >/dev/null || { echo "Error: gh (GitHub CLI) required" >&2; exit 2; }
+
+if [[ $# -lt 2 ]]; then
+  echo "Error: missing required arguments" >&2
+  usage >&2
+  exit 1
+fi
+
+REPO="$1"
+PR="$2"
 OUTDIR=".work/pr-feedback"
 mkdir -p "$OUTDIR"
 

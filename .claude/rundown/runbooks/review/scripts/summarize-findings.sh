@@ -2,10 +2,35 @@
 # Parse raw comments into structured findings with severity extraction
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "$0")"
+
+usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME [options]
+
+  Parse raw PR comments into structured findings with severity extraction.
+  Reads from .work/pr-feedback/raw-comments.jsonl (run fetch-pr-comments.sh first).
+
+Options:
+  -h, --help  Show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -*)        echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    *)         break ;;
+  esac
+done
+
+command -v jq >/dev/null || { echo "Error: jq required" >&2; exit 2; }
+
 OUTDIR=".work/pr-feedback"
 RAW="$OUTDIR/raw-comments.jsonl"
 
-[ -f "$RAW" ] || { echo "No comments file found. Run fetch first."; exit 1; }
+[ -f "$RAW" ] || { echo "Error: $RAW not found. Run fetch-pr-comments.sh first." >&2; exit 1; }
 
 # Extract CodeRabbit severity from body, classify source
 jq -r '
