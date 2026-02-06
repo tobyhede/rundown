@@ -85,6 +85,43 @@ When present, content MUST appear in order:
 2. Prompt (text)
 3. Body (code block OR substeps OR runbooks)
 
+### Authoring Conventions
+
+**Transitions: Always explicit.** Write both PASS and FAIL transitions on every step, even when they match the defaults. Transitions define control flow — the most important aspect of a runbook. Omitting them saves two lines but forces the reader to recall default behavior.
+
+```markdown
+## 1 Build
+- PASS: CONTINUE
+- FAIL: STOP
+```
+
+**Messages: Only when they add information.** STOP and COMPLETE accept optional messages. Include a message only when it provides context the step title does not — typically actionable guidance on what went wrong or what to check. Omit when the step title makes the outcome self-evident.
+
+```markdown
+## 1 Compile
+- PASS: CONTINUE
+- FAIL: STOP
+```
+
+Not:
+```markdown
+## 1 Compile
+- FAIL: STOP "Compilation failed."
+```
+
+Good use of a message — adds actionable context:
+```markdown
+## 1 Authenticate
+- FAIL: STOP "Check that gh is authenticated: run gh auth status"
+```
+
+Better use of a message (no message) - include actionable context in the step itself:
+```markdown
+## 1 Github Authentication
+- FAIL: STOP
+```
+
+
 ---
 
 ## Table of Contents

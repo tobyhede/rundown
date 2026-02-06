@@ -180,6 +180,12 @@ Note: `{{VariableName}}` (template) vs `{N}`, `{n}` (dynamic identifiers) use di
 | Only PASS defined | Adds `FAIL ANY: STOP` |
 | Only FAIL defined | Adds `PASS ALL: CONTINUE` |
 
+**Convention:** Always write both transitions explicitly. The parser supports implicit defaults, but runbooks should be readable without memorizing the default table.
+
+### Message Convention
+
+STOP and COMPLETE accept optional messages. Include a message only when it provides context beyond what the step title already communicates — such as actionable guidance or diagnostic hints. Omit when the step title makes the outcome self-evident.
+
 ### Code Block Semantics
 
 | Info String | Behavior |
