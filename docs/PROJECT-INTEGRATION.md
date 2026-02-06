@@ -22,6 +22,22 @@ Place runbooks in `.claude/rundown/runbooks/` at your project root:
 
 Subdirectory structure is supported — runbooks are discovered recursively.
 
+### Version Control
+
+Runbooks and scripts in `.claude/rundown/runbooks/` can be committed to share workflows with your team. Runtime state should stay ignored:
+
+```gitignore
+# Ignore runtime state, commit runbooks
+.claude/rundown/runs/
+.claude/rundown/session.json
+```
+
+To keep runbooks as local-only project files instead, ignore the entire directory:
+
+```gitignore
+.claude/rundown/
+```
+
 ## Discovery
 
 List all discoverable runbooks (project, plugin, and bundled):
