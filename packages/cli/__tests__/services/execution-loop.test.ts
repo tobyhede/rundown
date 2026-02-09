@@ -133,7 +133,7 @@ describe('runExecutionLoop', () => {
       getPersistedSnapshot: jest.fn().mockReturnValue({
         status: 'active',
         value: '2',
-        context: { lastAction: 'CONTINUE' }
+        context: { lastAction: { type: 'CONTINUE' } }
       })
     };
     mockManager.createActor.mockResolvedValue(mockActor);
@@ -177,7 +177,7 @@ describe('runExecutionLoop', () => {
       getPersistedSnapshot: jest.fn().mockReturnValue({
         status: 'done',
         value: 'COMPLETE',
-        context: { lastAction: 'COMPLETE' }
+        context: { lastAction: { type: 'COMPLETE' } }
       })
     };
     mockManager.createActor.mockResolvedValue(mockActor);

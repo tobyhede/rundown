@@ -16,6 +16,7 @@ import {
   type RunbookState,
   type StepPosition,
   type StepId,
+  type LastAction,
 } from '@rundown-org/core';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
@@ -257,18 +258,28 @@ export function buildPositions(
 }
 
 /**
- * Derive actionType from formatted action string.
+ * Derive actionType from structured LastAction.
  *
- * @param action - Formatted action string (e.g., 'GOTO 3', 'RETRY (1/3)')
- * @returns Action type
+ * Maps the discriminated union type to the simplified ActionType used
+ * for display-layer result computation. GOTO_NEXT is treated as GOTO.
+ *
+ * @param lastAction - The structured LastAction from XState context
+ * @returns Action type for display-layer use
  */
-export function parseActionType(action: string): ActionType {
-  if (action.startsWith('GOTO')) {
-    return 'GOTO';
-  } else if (action.startsWith('RETRY')) {
-    return 'RETRY';
-  } else {
-    return action as 'CONTINUE' | 'COMPLETE' | 'STOP';
+export function parseActionType(lastAction: LastAction | undefined): ActionType {
+  if (!lastAction) return 'CONTINUE';
+  switch (lastAction.type) {
+    case 'GOTO':
+    case 'GOTO_NEXT':
+      return 'GOTO';
+    case 'RETRY':
+      return 'RETRY';
+    case 'COMPLETE':
+      return 'COMPLETE';
+    case 'STOP':
+      return 'STOP';
+    default:
+      return 'CONTINUE';
   }
 }
 
@@ -510,11 +521,11 @@ export async function executeTransition(
   );
 
   // Derive action type and compute result
-  const actionType = parseActionType(action);
+  const actionType = parseActionType(lastActionFromContext);
   const actionResult = config.computeActionResult(actionType);
 
-  // Update lastAction and lastResult in persistent state
-  await manager.update(state.id, { lastAction: actionType, lastResult: config.lastResult });
+  // Update lastAction and lastResult in persistent state (pass structured object directly)
+  await manager.update(state.id, { lastAction: lastActionFromContext, lastResult: config.lastResult });
 
   // Build positions for output
   const isDynamic = steps.length > 0 && steps[0].isDynamic;

@@ -126,7 +126,7 @@ export function registerGotoCommand(program: Command): void {
 
         // Update lastAction and CLEAR lastResult (prevent stale PASS/FAIL leaking)
         await manager.update(state.id, {
-          lastAction: 'GOTO',
+          lastAction: { type: 'GOTO', target: target.step, ...(target.substep && { substep: target.substep }) },
           lastResult: undefined  // CRITICAL: Clear stale result on manual goto
         });
 

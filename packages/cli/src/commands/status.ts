@@ -136,11 +136,23 @@ export function registerStatusCommand(program: Command): void {
         let actionBlockData: ActionBlockData | undefined;
         if (state.lastAction) {
           const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
-          actionBlockData = {
-            action: state.lastAction === 'GOTO' ? `GOTO ${state.step}` :
-                    state.lastAction === 'RETRY' ? `RETRY (${String(state.retryCount)}/${String(retryMaxForAction)})` :
-                    state.lastAction,
-          };
+          let actionStr: string;
+          switch (state.lastAction.type) {
+            case 'GOTO':
+              actionStr = state.lastAction.substep
+                ? `GOTO ${state.lastAction.target}.${state.lastAction.substep}`
+                : `GOTO ${state.lastAction.target}`;
+              break;
+            case 'GOTO_NEXT':
+              actionStr = 'GOTO NEXT';
+              break;
+            case 'RETRY':
+              actionStr = `RETRY (${String(state.retryCount)}/${String(retryMaxForAction)})`;
+              break;
+            default:
+              actionStr = state.lastAction.type;
+          }
+          actionBlockData = { action: actionStr };
           if (state.lastResult) {
             actionBlockData.result = state.lastResult === 'pass';
           }

@@ -21,6 +21,7 @@ import {
   countNumberedSteps,
   extractDisplayCommand,
   type ExecutionEventEmitter,
+  type LastAction,
 } from '@rundown-org/core';
 import {
   isInternalRdCommand,
@@ -319,11 +320,8 @@ export async function runExecutionLoop(
       substepInstance
     );
 
-    // Update lastAction in state
-    const actionType = action.startsWith('GOTO') ? 'GOTO' :
-                       action.startsWith('RETRY') ? 'RETRY' :
-                       action as 'CONTINUE' | 'COMPLETE' | 'STOP';
-    await manager.update(runbookId, { lastAction: actionType });
+    // Update lastAction in state (pass structured object directly — no lossy conversion)
+    await manager.update(runbookId, { lastAction: lastActionFromContext });
 
     // Compute prev display step (for action block output)
     const prevDisplayStep = isDynamicRunbook && prevInstance !== undefined
@@ -456,7 +454,7 @@ export async function runExecutionLoop(
  * Used for type-safe extraction of action and retry info from persisted snapshots.
  */
 interface SnapshotContext {
-  lastAction?: string;
+  lastAction?: LastAction;
   retryMax?: number;
   nextInstance?: boolean;
   nextSubstepInstance?: boolean;
@@ -466,9 +464,9 @@ interface SnapshotContext {
  * Extract the lastAction from an XState snapshot in a type-safe way.
  *
  * @param snapshot - The persisted XState snapshot
- * @returns The lastAction string or undefined
+ * @returns The structured LastAction or undefined
  */
-export function extractLastAction(snapshot: unknown): string | undefined {
+export function extractLastAction(snapshot: unknown): LastAction | undefined {
   if (
     snapshot &&
     typeof snapshot === 'object' &&
@@ -509,11 +507,11 @@ export function extractRetryMax(snapshot: unknown): number {
 /**
  * Format action for display, resolving placeholders and adding retry details.
  *
- * Reads the lastAction from XState context (source of truth) and formats
+ * Reads the structured LastAction from XState context (source of truth) and formats
  * it for user-friendly display. Resolves {N} and {n} placeholders to actual
  * instance numbers, and appends retry count info for RETRY actions.
  *
- * @param lastAction - The lastAction value from XState context
+ * @param lastAction - The structured LastAction from XState context
  * @param retryCount - Current retry count
  * @param retryMax - Maximum retries allowed
  * @param instance - Step instance number for resolving {N} placeholders
@@ -521,26 +519,37 @@ export function extractRetryMax(snapshot: unknown): number {
  * @returns Formatted action string for display
  */
 export function formatActionForDisplay(
-  lastAction: string | undefined,
+  lastAction: LastAction | undefined,
   retryCount: number,
   retryMax: number,
   instance?: number,
   substepInstance?: number
 ): string {
   if (!lastAction) return 'CONTINUE';
-  if (lastAction === 'RETRY') {
-    return `RETRY (${String(retryCount)}/${String(retryMax)})`;
-  }
 
-  // Resolve {N} and {n} placeholders with actual instance numbers
-  let result = lastAction;
-  if (instance !== undefined && result.includes('{N}')) {
-    result = result.replace(/\{N\}/g, String(instance));
+  switch (lastAction.type) {
+    case 'RETRY':
+      return `RETRY (${String(retryCount)}/${String(retryMax)})`;
+    case 'GOTO': {
+      let target = lastAction.target;
+      if (instance !== undefined) {
+        target = target.replace(/\{N\}/g, String(instance));
+      }
+      let result = `GOTO ${target}`;
+      if (lastAction.substep) {
+        let substep = lastAction.substep;
+        if (substepInstance !== undefined) {
+          substep = substep.replace(/\{n\}/g, String(substepInstance));
+        }
+        result = `GOTO ${target}.${substep}`;
+      }
+      return result;
+    }
+    case 'GOTO_NEXT':
+      return 'GOTO NEXT';
+    default:
+      return lastAction.type;
   }
-  if (substepInstance !== undefined && result.includes('{n}')) {
-    result = result.replace(/\{n\}/g, String(substepInstance));
-  }
-  return result;
 }
 
 /**

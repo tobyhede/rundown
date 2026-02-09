@@ -159,7 +159,7 @@ export function registerRunCommand(program: Command): void {
           }
 
           // Update lastAction
-          await manager.update(state.id, { lastAction: 'START' });
+          await manager.update(state.id, { lastAction: { type: 'START' } });
 
           // Create emitter bridged to unified output
           const emitter = createBridgedEmitter(state, output);
@@ -263,7 +263,7 @@ export function registerRunCommand(program: Command): void {
             await manager.pushRunbook(childState.id, options.agent);
 
             // Update lastAction
-            await manager.update(childState.id, { lastAction: 'START' });
+            await manager.update(childState.id, { lastAction: { type: 'START' } });
 
             // Create emitter for CHILD runbook (uses childState, NOT state!)
             const emitter = createBridgedEmitter(childState, output);
