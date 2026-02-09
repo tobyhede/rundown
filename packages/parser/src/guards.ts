@@ -1,4 +1,4 @@
-import type { Step, Substep, Command } from './ast.js';
+import type { Step, Substep, Command, ForClause } from './ast.js';
 
 /**
  * Type guard: checks if a step or substep has a prompt defined.
@@ -56,4 +56,17 @@ export function hasRunbooks<T extends Step | Substep>(
   unit: T
 ): unit is T & { workflows: readonly string[] } {
   return unit.workflows !== undefined && unit.workflows.length > 0;
+}
+
+/**
+ * Type guard: checks if a step has a FOR loop clause defined.
+ *
+ * When this guard returns true, TypeScript narrows the type to include
+ * a non-undefined forClause property.
+ *
+ * @param step - The Step to check
+ * @returns True if the step has a ForClause defined, enabling type narrowing
+ */
+export function hasForClause(step: Step): step is Step & { forClause: ForClause } {
+  return step.forClause !== undefined;
 }

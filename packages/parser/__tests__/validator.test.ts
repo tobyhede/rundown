@@ -671,4 +671,165 @@ describe('validator strict rules', () => {
       expect(errors.some(e => e.message.includes('requires dynamic step context'))).toBe(true);
     });
   });
+
+  describe('FOR validation', () => {
+    it('rejects FOR step without substeps', () => {
+      const steps: Step[] = [{
+        name: '1',
+        isDynamic: false,
+        description: 'Step with FOR but no substeps',
+        forClause: { start: 1, end: 10 },
+      }];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('must have at least one substep'))).toBe(true);
+    });
+
+    it('accepts FOR step with substeps', () => {
+      const steps: Step[] = [{
+        name: '1',
+        isDynamic: false,
+        description: 'Step with FOR and substeps',
+        forClause: { start: 1, end: 10 },
+        substeps: [{
+          id: '1',
+          description: 'Substep',
+          isDynamic: false,
+        }],
+      }];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('must have at least one substep'))).toBe(false);
+    });
+
+    it('rejects NEXT outside FOR substep context', () => {
+      const steps: Step[] = [{
+        name: '1',
+        isDynamic: false,
+        description: 'Non-FOR step',
+        substeps: [{
+          id: '1',
+          description: 'Substep with NEXT',
+          isDynamic: false,
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        }],
+      }];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('NEXT is only valid within substeps of a FOR step'))).toBe(true);
+    });
+
+    it('rejects BREAK outside FOR substep context', () => {
+      const steps: Step[] = [{
+        name: '1',
+        isDynamic: false,
+        description: 'Non-FOR step',
+        substeps: [{
+          id: '1',
+          description: 'Substep with BREAK',
+          isDynamic: false,
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'BREAK' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        }],
+      }];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('BREAK is only valid within substeps of a FOR step'))).toBe(true);
+    });
+
+    it('accepts NEXT in substep of FOR step', () => {
+      const steps: Step[] = [{
+        name: '1',
+        isDynamic: false,
+        description: 'FOR step',
+        forClause: { start: 1, end: 10 },
+        substeps: [{
+          id: '1',
+          description: 'Substep',
+          isDynamic: false,
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        }],
+      }];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('NEXT is only valid'))).toBe(false);
+    });
+
+    it('rejects NEXT on parent FOR step itself', () => {
+      const steps: Step[] = [{
+        name: '1',
+        isDynamic: false,
+        description: 'FOR step with NEXT on itself',
+        forClause: { start: 1, end: 10 },
+        transitions: {
+          all: true,
+          pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+          fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+        },
+        substeps: [{
+          id: '1',
+          description: 'Substep',
+          isDynamic: false,
+        }],
+      }];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('cannot appear on the FOR step itself'))).toBe(true);
+    });
+
+    it('rejects GOTO AT targeting non-FOR step', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Source step',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: '2', at: 3 } } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Target step without FOR',
+        },
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('GOTO AT is only valid when the target step has a FOR clause'))).toBe(true);
+    });
+
+    it('accepts GOTO AT targeting FOR step', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Source step',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: '2', at: 1 } } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'FOR target step',
+          forClause: { start: 1, end: 10 },
+          substeps: [{
+            id: '1',
+            description: 'Substep',
+            isDynamic: false,
+          }],
+        },
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('GOTO AT is only valid'))).toBe(false);
+    });
+  });
 });

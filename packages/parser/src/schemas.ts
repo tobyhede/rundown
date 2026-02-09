@@ -11,12 +11,39 @@ import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 export const MAX_STEP_NUMBER = 999999;
 
 /**
+ * Pattern matching Handlebars-style template variable references.
+ *
+ * Matches strings like `{{VarName}}` where the variable name follows
+ * standard identifier rules (letter/underscore start, alphanumeric body).
+ */
+export const TEMPLATE_VAR_PATTERN = /^\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}$/;
+
+/**
  * Zod schema for Command
  */
 export const CommandSchema = z.object({
   code: z.string(),
   lang: z.string().optional(),
 });
+
+/**
+ * Zod schema for ForClause
+ *
+ * Validates FOR loop range specifications with numeric or template variable bounds.
+ */
+export const ForClauseSchema = z.object({
+  variable: z.string().regex(NAMED_IDENTIFIER_PATTERN).optional(),
+  start: z.union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)]),
+  end: z.union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)]),
+}).refine(
+  (data) => {
+    if (typeof data.start === 'number' && typeof data.end === 'number') {
+      return data.start <= data.end;
+    }
+    return true;
+  },
+  { message: 'FOR range start must not exceed end' }
+);
 
 /**
  * Schema for step names in Step.name field.
@@ -51,6 +78,7 @@ export const StepIdSchema = z.object({
     step: z.string(),
     substep: z.string().optional(),
   }).optional(),
+  at: z.union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)]).optional(),
 }).refine(
   (data) => {
     // NEXT without qualifier cannot have substep
@@ -81,6 +109,8 @@ export const ActionSchema = z.union([
   z.object({ type: z.literal('COMPLETE'), message: z.string().optional() }),
   z.object({ type: z.literal('STOP'), message: z.string().optional() }),
   z.object({ type: z.literal('GOTO'), target: StepIdSchema }),
+  z.object({ type: z.literal('NEXT') }),
+  z.object({ type: z.literal('BREAK') }),
 ]);
 
 export type Action = Readonly<z.output<typeof ActionSchema>>;
@@ -141,6 +171,7 @@ export const SubstepSchema = z.object({
 export const StepSchema = z.object({
   name: StepNameSchema,                  // REQUIRED: "1", "ErrorHandler", "{N}"
   isDynamic: z.boolean(),
+  forClause: ForClauseSchema.optional(),
   description: z.string(),
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(),  // .min(1) prevents empty strings

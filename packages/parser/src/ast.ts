@@ -19,6 +19,21 @@ export interface Command {
 }
 
 /**
+ * FOR loop clause defining iteration range for a step.
+ *
+ * Parsed from `- FOR variable IN start TO end` bullet syntax.
+ * When attached to a step, its substeps execute once per iteration.
+ */
+export interface ForClause {
+  /** Named loop variable (e.g., "batch"), undefined if unnamed */
+  readonly variable?: string;
+  /** Start of iteration range (number literal or template variable reference) */
+  readonly start: number | string;
+  /** End of iteration range (number literal or template variable reference) */
+  readonly end: number | string;
+}
+
+/**
  * A substep within a step (H3 header)
  */
 export interface Substep {
@@ -55,6 +70,8 @@ export interface Step {
   readonly name: string;
   /** True for dynamic steps using {N} template */
   readonly isDynamic: boolean;
+  /** FOR loop clause defining iteration range */
+  readonly forClause?: ForClause;
   /** Human-readable description from the step header */
   readonly description: string;
   /** Executable command from code block */

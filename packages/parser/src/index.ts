@@ -15,6 +15,7 @@ export {
   parseConditional,
   convertToTransitions,
   extractSubstepHeader,
+  parseForClause,
   extractRunbookList,
   isExecutableCodeBlock,
   isPromptCodeBlock,
@@ -41,4 +42,4 @@ export type {
   RunbookFrontmatter,
   RunbookFrontmatterType
 } from './frontmatter.js';
-export { hasPrompt, hasCommand, hasSubsteps, hasRunbooks } from './guards.js';
+export { hasPrompt, hasCommand, hasSubsteps, hasRunbooks, hasForClause } from './guards.js';

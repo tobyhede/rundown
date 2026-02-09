@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseAction, extractRunbookList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, validateNEXTUsage, type ParsedConditional } from '../src/index.js';
+import { parseAction, extractRunbookList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, validateNEXTUsage, parseForClause, type ParsedConditional } from '../src/index.js';
 import { formatAction, isExecutableCodeBlock } from '../src/helpers.js';
 
 describe('parseAction GOTO NEXT', () => {
@@ -8,9 +8,14 @@ describe('parseAction GOTO NEXT', () => {
     expect(result).toEqual({ type: 'GOTO', target: { step: 'NEXT' } });
   });
 
-  it('parses standalone NEXT as GOTO NEXT', () => {
+  it('parses standalone NEXT as first-class NEXT action', () => {
     const result = parseAction('NEXT');
-    expect(result).toEqual({ type: 'GOTO', target: { step: 'NEXT' } });
+    expect(result).toEqual({ type: 'NEXT' });
+  });
+
+  it('parses standalone BREAK as first-class BREAK action', () => {
+    const result = parseAction('BREAK');
+    expect(result).toEqual({ type: 'BREAK' });
   });
 });
 
@@ -805,6 +810,18 @@ describe('stepIdToString', () => {
   it('formats NEXT target', () => {
     expect(stepIdToString({ step: 'NEXT' })).toBe('NEXT');
   });
+
+  it('formats step with AT', () => {
+    expect(stepIdToString({ step: '3', at: 1 })).toBe('3 AT 1');
+  });
+
+  it('formats step.substep with AT', () => {
+    expect(stepIdToString({ step: '3', substep: '1', at: 2 })).toBe('3.1 AT 2');
+  });
+
+  it('formats step with template variable AT', () => {
+    expect(stepIdToString({ step: '3', at: '{{Index}}' })).toBe('3 AT {{Index}}');
+  });
 });
 
 describe('stepIdEquals', () => {
@@ -838,6 +855,18 @@ describe('stepIdEquals', () => {
 
   it('returns true for equal NEXT targets', () => {
     expect(stepIdEquals({ step: 'NEXT' }, { step: 'NEXT' })).toBe(true);
+  });
+
+  it('returns true for equal AT values', () => {
+    expect(stepIdEquals({ step: '3', at: 1 }, { step: '3', at: 1 })).toBe(true);
+  });
+
+  it('returns false when one has AT and one does not', () => {
+    expect(stepIdEquals({ step: '3', at: 1 }, { step: '3' })).toBe(false);
+  });
+
+  it('returns false for different AT values', () => {
+    expect(stepIdEquals({ step: '3', at: 1 }, { step: '3', at: 2 })).toBe(false);
   });
 });
 
@@ -1129,6 +1158,40 @@ describe('validateNEXTUsage with RETRY containing NEXT', () => {
   });
 });
 
+describe('validateNEXTUsage with first-class NEXT/BREAK', () => {
+  it('rejects first-class NEXT outside FOR context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'NEXT' }, retry: 0, modifier: null, raw: 'NEXT' },
+    ];
+    expect(() => { validateNEXTUsage(conditionals, false, false, false); }).toThrow(
+      'NEXT is only valid within substeps of a FOR step'
+    );
+  });
+
+  it('accepts first-class NEXT in FOR context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'NEXT' }, retry: 0, modifier: null, raw: 'NEXT' },
+    ];
+    expect(() => { validateNEXTUsage(conditionals, false, false, true); }).not.toThrow();
+  });
+
+  it('rejects first-class BREAK outside FOR context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'BREAK' }, retry: 0, modifier: null, raw: 'BREAK' },
+    ];
+    expect(() => { validateNEXTUsage(conditionals, false, false, false); }).toThrow(
+      'BREAK is only valid within substeps of a FOR step'
+    );
+  });
+
+  it('accepts first-class BREAK in FOR context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'BREAK' }, retry: 0, modifier: null, raw: 'BREAK' },
+    ];
+    expect(() => { validateNEXTUsage(conditionals, false, false, true); }).not.toThrow();
+  });
+});
+
 describe('isExecutableCodeBlock edge cases', () => {
   it('returns false for null input', () => {
     expect(isExecutableCodeBlock(null)).toBe(false);
@@ -1251,7 +1314,7 @@ describe('ParsedConditional with retry property', () => {
     expect(result).toEqual({
       type: 'pass',
       retry: 0,
-      action: { type: 'GOTO', target: { step: 'NEXT' } },
+      action: { type: 'NEXT' },
       modifier: null,
       raw: 'NEXT'
     });
@@ -1262,9 +1325,132 @@ describe('ParsedConditional with retry property', () => {
     expect(result).toEqual({
       type: 'fail',
       retry: 2,
-      action: { type: 'GOTO', target: { step: 'NEXT' } },
+      action: { type: 'NEXT' },
       modifier: null,
       raw: 'RETRY 2 NEXT'
+    });
+  });
+});
+
+describe('parseStepIdFromString with AT syntax', () => {
+  it('parses numeric step with AT', () => {
+    expect(parseStepIdFromString('3 AT 1')).toEqual({ step: '3', at: 1 });
+  });
+
+  it('parses step.substep with AT', () => {
+    expect(parseStepIdFromString('3.1 AT 2')).toEqual({ step: '3', substep: '1', at: 2 });
+  });
+
+  it('parses step with template variable AT', () => {
+    expect(parseStepIdFromString('3 AT {{Index}}')).toEqual({ step: '3', at: '{{Index}}' });
+  });
+
+  it('parses named step with AT', () => {
+    expect(parseStepIdFromString('ErrorHandler AT 5')).toEqual({ step: 'ErrorHandler', at: 5 });
+  });
+
+  it('rejects AT with zero', () => {
+    expect(parseStepIdFromString('3 AT 0')).toBeNull();
+  });
+
+  it('rejects AT with negative', () => {
+    expect(parseStepIdFromString('3 AT -1')).toBeNull();
+  });
+
+  it('rejects AT with invalid template', () => {
+    expect(parseStepIdFromString('3 AT {Index}')).toBeNull();
+  });
+
+  it('still works without AT (backward compat)', () => {
+    expect(parseStepIdFromString('3')).toEqual({ step: '3' });
+    expect(parseStepIdFromString('3.1')).toEqual({ step: '3', substep: '1' });
+  });
+});
+
+describe('parseForClause', () => {
+  describe('full form: FOR variable IN start TO end', () => {
+    it('parses named variable with numeric range', () => {
+      expect(parseForClause('FOR batch IN 1 TO 10')).toEqual({ variable: 'batch', start: 1, end: 10 });
+    });
+
+    it('parses named variable with template end', () => {
+      expect(parseForClause('FOR batch IN 1 TO {{Max}}')).toEqual({ variable: 'batch', start: 1, end: '{{Max}}' });
+    });
+
+    it('parses named variable with template start and end', () => {
+      expect(parseForClause('FOR item IN {{Start}} TO {{End}}')).toEqual({ variable: 'item', start: '{{Start}}', end: '{{End}}' });
+    });
+
+    it('parses underscore variable name', () => {
+      expect(parseForClause('FOR _idx IN 1 TO 5')).toEqual({ variable: '_idx', start: 1, end: 5 });
+    });
+  });
+
+  describe('unnamed range: FOR start TO end', () => {
+    it('parses numeric range', () => {
+      expect(parseForClause('FOR 1 TO 10')).toEqual({ start: 1, end: 10 });
+    });
+
+    it('parses template end', () => {
+      expect(parseForClause('FOR 1 TO {{Max}}')).toEqual({ start: 1, end: '{{Max}}' });
+    });
+  });
+
+  describe('named count: FOR variable IN count', () => {
+    it('parses numeric count (start defaults to 1)', () => {
+      expect(parseForClause('FOR batch IN 10')).toEqual({ variable: 'batch', start: 1, end: 10 });
+    });
+
+    it('parses template count', () => {
+      expect(parseForClause('FOR batch IN {{Count}}')).toEqual({ variable: 'batch', start: 1, end: '{{Count}}' });
+    });
+  });
+
+  describe('unnamed count: FOR count', () => {
+    it('parses numeric count (start defaults to 1)', () => {
+      expect(parseForClause('FOR 10')).toEqual({ start: 1, end: 10 });
+    });
+
+    it('parses template count', () => {
+      expect(parseForClause('FOR {{Count}}')).toEqual({ start: 1, end: '{{Count}}' });
+    });
+  });
+
+  describe('invalid inputs', () => {
+    it('returns null for non-FOR text', () => {
+      expect(parseForClause('PASS: CONTINUE')).toBeNull();
+    });
+
+    it('returns null for bare FOR without arguments', () => {
+      expect(parseForClause('FOR')).toBeNull();
+    });
+
+    it('returns null for FOR with space but no arguments', () => {
+      expect(parseForClause('FOR ')).toBeNull();
+    });
+
+    it('returns null for zero as count', () => {
+      expect(parseForClause('FOR 0')).toBeNull();
+    });
+
+    it('returns null for negative count', () => {
+      expect(parseForClause('FOR -1')).toBeNull();
+    });
+
+    it('returns null for invalid variable name', () => {
+      expect(parseForClause('FOR 1batch IN 1 TO 10')).toBeNull();
+    });
+
+    it('returns null for invalid template format', () => {
+      expect(parseForClause('FOR {Count}')).toBeNull();
+    });
+
+    it('returns null for non-numeric, non-template end', () => {
+      expect(parseForClause('FOR 1 TO abc')).toBeNull();
+    });
+
+    it('returns null for text that starts with FOR but is not valid', () => {
+      expect(parseForClause('FOR something weird here')).toBeNull();
     });
   });
 });

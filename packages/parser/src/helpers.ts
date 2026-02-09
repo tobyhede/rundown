@@ -5,10 +5,12 @@ import {
 } from './types.js';
 import {
   type Action,
-  type Transitions
+  type Transitions,
+  TEMPLATE_VAR_PATTERN
 } from './schemas.js';
 import { MAX_STEP_NUMBER } from './schemas.js';
 import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
+import type { ForClause } from './ast.js';
 
 /**
  * Parse a quoted string or single-word identifier.
@@ -257,6 +259,81 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
 }
 
 /**
+ * Parse a FOR loop clause from bullet text.
+ *
+ * Recognizes these grammar variants:
+ * - `FOR variable IN start TO end` (full form)
+ * - `FOR start TO end` (unnamed, range)
+ * - `FOR variable IN count` (named, count only — start defaults to 1)
+ * - `FOR count` (unnamed, count only — start defaults to 1)
+ *
+ * Bounds can be positive integers or template variable references ({{VarName}}).
+ *
+ * @param text - The bullet text (after `- ` prefix), e.g. "FOR batch IN 1 TO 10"
+ * @returns Parsed ForClause, or null if text is not a valid FOR clause
+ */
+export function parseForClause(text: string): ForClause | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('FOR ')) return null;
+
+  const rest = trimmed.slice(4).trim();
+  if (!rest) return null;
+
+  // Try to parse a bound value (positive integer or {{TemplateVar}})
+  const parseBound = (s: string): number | string | null => {
+    const num = parseInt(s, 10);
+    if (!isNaN(num) && String(num) === s && num > 0) return num;
+    if (TEMPLATE_VAR_PATTERN.test(s)) return s;
+    return null;
+  };
+
+  // Pattern 1: FOR variable IN start TO end
+  // Pattern 2: FOR variable IN count (start defaults to 1)
+  const namedMatch = /^([a-zA-Z_][a-zA-Z0-9_]*)\s+IN\s+(.+)$/.exec(rest);
+  if (namedMatch) {
+    const variable = namedMatch[1];
+    const rangeStr = namedMatch[2].trim();
+
+    // Try "start TO end"
+    const toMatch = /^(\S+)\s+TO\s+(\S+)$/.exec(rangeStr);
+    if (toMatch) {
+      const start = parseBound(toMatch[1]);
+      const end = parseBound(toMatch[2]);
+      if (start !== null && end !== null) {
+        return { variable, start, end };
+      }
+      return null;
+    }
+
+    // Try single count value
+    const end = parseBound(rangeStr);
+    if (end !== null) {
+      return { variable, start: 1, end };
+    }
+    return null;
+  }
+
+  // Pattern 3: FOR start TO end (unnamed)
+  const rangeMatch = /^(\S+)\s+TO\s+(\S+)$/.exec(rest);
+  if (rangeMatch) {
+    const start = parseBound(rangeMatch[1]);
+    const end = parseBound(rangeMatch[2]);
+    if (start !== null && end !== null) {
+      return { start, end };
+    }
+    return null;
+  }
+
+  // Pattern 4: FOR count (unnamed, count only)
+  const end = parseBound(rest);
+  if (end !== null) {
+    return { start: 1, end };
+  }
+
+  return null;
+}
+
+/**
  * Parse an action string into an Action object.
  *
  * Recognizes these action formats:
@@ -264,7 +341,10 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
  * - COMPLETE / COMPLETE "message" - Mark runbook complete
  * - STOP / STOP "message" - Abort runbook
  * - GOTO target - Jump to specified step/substep
- * - NEXT - Shorthand for GOTO NEXT (dynamic steps only)
+ * - NEXT - First-class action for FOR loops (advance to next iteration)
+ * - BREAK - First-class action for FOR loops (exit loop)
+ *
+ * Note: GOTO NEXT (explicit form) is still supported for legacy dynamic step contexts.
  *
  * @param text - The action string to parse (e.g., "GOTO 2.1", "CONTINUE")
  * @returns Parsed Action object, or null if text is not a recognized action
@@ -324,7 +404,11 @@ export function parseAction(text: string): Action | null {
   }
 
   if (trimmed === 'NEXT') {
-    return { type: 'GOTO', target: { step: 'NEXT' as const } };
+    return { type: 'NEXT' };
+  }
+
+  if (trimmed === 'BREAK') {
+    return { type: 'BREAK' };
   }
 
   return null;
@@ -474,11 +558,15 @@ function resolveAggregationMode(
 }
 
 /**
- * Check if an action contains a NEXT target
+ * Check if an action contains a legacy GOTO NEXT target.
+ *
+ * This checks for the legacy `GOTO NEXT` form (without qualifier),
+ * which is still supported for backward compatibility in dynamic step contexts.
+ * Does NOT match the new first-class `NEXT` action used in FOR loops.
  */
 function containsNEXT(action: Action): boolean {
   if (action.type === 'GOTO' && 'target' in action) {
-    // GOTO NEXT without a qualifier is a bare NEXT action
+    // GOTO NEXT without a qualifier is the legacy dynamic step form
     // GOTO NEXT <target> (with qualifier) is allowed everywhere
     return action.target.step === 'NEXT' && !action.target.qualifier;
   }
@@ -486,32 +574,45 @@ function containsNEXT(action: Action): boolean {
 }
 
 /**
- * Validate that NEXT is only used in dynamic contexts.
+ * Validate that legacy GOTO NEXT is only used in dynamic contexts,
+ * and that first-class NEXT/BREAK are only used in FOR contexts.
  *
- * The NEXT action is a shorthand for advancing to the next dynamic instance.
- * It is valid within dynamic step templates (steps with {N} prefix) OR
- * within dynamic substeps (substeps with {n} suffix).
+ * The legacy `GOTO NEXT` form (without qualifier) is a shorthand for advancing
+ * to the next dynamic instance. It is valid within dynamic step templates
+ * (steps with {N} prefix) OR within dynamic substeps (substeps with {n} suffix).
+ *
+ * The first-class `NEXT` and `BREAK` actions are for FOR loop control flow
+ * and are only valid within substeps of a FOR step.
  *
  * @param conditionals - Array of parsed conditionals to check for NEXT usage
  * @param isDynamicStep - Whether the current step uses dynamic {N} prefix
  * @param isDynamicSubstep - Whether the current substep uses dynamic {n} suffix
- * @throws {RunbookSyntaxError} When NEXT is used outside a dynamic context
+ * @param isForContext - Whether the current context is within a FOR step
+ * @throws {RunbookSyntaxError} When NEXT is used outside a dynamic context or NEXT/BREAK outside FOR context
  */
 export function validateNEXTUsage(
   conditionals: ParsedConditional[],
   isDynamicStep: boolean,
-  isDynamicSubstep = false
+  isDynamicSubstep = false,
+  isForContext = false
 ): void {
-  if (isDynamicStep || isDynamicSubstep) {
-    // NEXT is allowed in dynamic steps or dynamic substeps
-    return;
-  }
-
   for (const conditional of conditionals) {
+    // Check legacy GOTO NEXT — requires dynamic context
     if (containsNEXT(conditional.action)) {
-      throw new RunbookSyntaxError(
-        `NEXT action is only allowed in dynamic contexts (steps with {N} prefix or substeps with {n} suffix)`
-      );
+      if (!isDynamicStep && !isDynamicSubstep) {
+        throw new RunbookSyntaxError(
+          `NEXT action is only allowed in dynamic contexts (steps with {N} prefix or substeps with {n} suffix)`
+        );
+      }
+    }
+
+    // Check first-class NEXT/BREAK — requires FOR context
+    if (conditional.action.type === 'NEXT' || conditional.action.type === 'BREAK') {
+      if (!isForContext) {
+        throw new RunbookSyntaxError(
+          `${conditional.action.type} is only valid within substeps of a FOR step`
+        );
+      }
     }
   }
 }
@@ -677,6 +778,10 @@ export function formatAction(action: Action): string {
       return action.message ? `STOP "${action.message}"` : 'STOP';
     case 'GOTO':
       return `GOTO ${action.target.step}`;
+    case 'NEXT':
+      return 'NEXT';
+    case 'BREAK':
+      return 'BREAK';
     default:
       return 'UNKNOWN';
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { hasPrompt, hasCommand, hasSubsteps, hasRunbooks } from '../src/guards.js';
+import { hasPrompt, hasCommand, hasSubsteps, hasRunbooks, hasForClause } from '../src/guards.js';
 import type { Step, Substep } from '../src/ast.js';
 
 const createStep = (overrides: Partial<Step> = {}): Step => ({
@@ -209,6 +209,53 @@ describe('hasRunbooks', () => {
         // TypeScript should know step.workflows is readonly string[]
         const firstWorkflow: string = step.workflows[0];
         expect(firstWorkflow).toBe('narrowed.runbook.md');
+      }
+    });
+  });
+});
+
+describe('hasForClause', () => {
+  it('returns true when step has forClause defined', () => {
+    const step = createStep({
+      forClause: { start: 1, end: 10 },
+    });
+    expect(hasForClause(step)).toBe(true);
+  });
+
+  it('returns true when step has forClause with variable', () => {
+    const step = createStep({
+      forClause: { variable: 'batch', start: 1, end: 10 },
+    });
+    expect(hasForClause(step)).toBe(true);
+  });
+
+  it('returns true when step has forClause with template variable bounds', () => {
+    const step = createStep({
+      forClause: { variable: 'item', start: 1, end: '{{MaxItems}}' },
+    });
+    expect(hasForClause(step)).toBe(true);
+  });
+
+  it('returns false when step has undefined forClause', () => {
+    const step = createStep({ forClause: undefined });
+    expect(hasForClause(step)).toBe(false);
+  });
+
+  it('returns false when step has no forClause property', () => {
+    const step = createStep();
+    expect(hasForClause(step)).toBe(false);
+  });
+
+  describe('type narrowing', () => {
+    it('narrows type to include non-undefined forClause', () => {
+      const step = createStep({
+        forClause: { variable: 'batch', start: 1, end: 5 },
+      });
+      if (hasForClause(step)) {
+        // TypeScript should know step.forClause is ForClause, not undefined
+        expect(step.forClause.start).toBe(1);
+        expect(step.forClause.end).toBe(5);
+        expect(step.forClause.variable).toBe('batch');
       }
     });
   });

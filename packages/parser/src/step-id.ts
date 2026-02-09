@@ -5,6 +5,7 @@ import type { StepId } from './schemas.js';
  *
  * These keywords have special meaning in the Rundown runbook syntax:
  * - Flow control: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY
+ * - FOR loop: FOR, IN, TO, AT, BREAK
  * - Conditionals: PASS, FAIL, YES, NO
  * - Aggregation: ALL, ANY
  *
@@ -23,6 +24,11 @@ export const RESERVED_WORDS = new Set([
   'NO',
   'ALL',
   'ANY',
+  'BREAK',
+  'FOR',
+  'IN',
+  'TO',
+  'AT',
 ]);
 
 /**
@@ -88,20 +94,40 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
 
   const requireSeparator = options?.requireSeparator ?? false;
 
+  // Handle AT suffix: "3 AT 1", "3.1 AT {{Index}}"
+  const atIndex = input.indexOf(' AT ');
+  let atValue: number | string | undefined;
+  let stepInput = input;
+
+  if (atIndex !== -1) {
+    const atStr = input.slice(atIndex + 4).trim();
+    stepInput = input.slice(0, atIndex).trim();
+
+    // Parse AT value as positive integer or template variable
+    const num = parseInt(atStr, 10);
+    if (!isNaN(num) && String(num) === atStr && num > 0) {
+      atValue = num;
+    } else if (/^\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}$/.test(atStr)) {
+      atValue = atStr;
+    } else {
+      return null; // Invalid AT value
+    }
+  }
+
   // === DYNAMIC STEP HANDLING: {N}.xxx ===
-  if (input.startsWith('{N}.')) {
-    const rest = input.slice(4); // Everything after "{N}."
+  if (stepInput.startsWith('{N}.')) {
+    const rest = stepInput.slice(4); // Everything after "{N}."
 
     // {N}.{n} - dynamic substep
     if (rest === '{n}') {
-      return { step: '{N}', substep: '{n}' };
+      return { step: '{N}', substep: '{n}', ...(atValue !== undefined ? { at: atValue } : {}) };
     }
 
     // {N}.123 - numeric substep
     if (/^\d+$/.test(rest)) {
       const substepNum = parseInt(rest, 10);
       if (substepNum < 1) return null;
-      return { step: '{N}', substep: rest };
+      return { step: '{N}', substep: rest, ...(atValue !== undefined ? { at: atValue } : {}) };
     }
 
     // {N}.Name - named substep (reject reserved words)
@@ -109,14 +135,14 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
       if (isReservedWord(rest)) {
         return null;
       }
-      return { step: '{N}', substep: rest };
+      return { step: '{N}', substep: rest, ...(atValue !== undefined ? { at: atValue } : {}) };
     }
 
     // With separator: {N}.xxx followed by space/dash/colon
     if (requireSeparator) {
       const sepMatch = /^(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*)[\s\-:]/.exec(rest);
       if (sepMatch) {
-        return { step: '{N}', substep: sepMatch[1] };
+        return { step: '{N}', substep: sepMatch[1], ...(atValue !== undefined ? { at: atValue } : {}) };
       }
     }
 
@@ -124,12 +150,12 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
   }
 
   // Accept bare {N} as "restart current dynamic instance"
-  if (input === '{N}') {
-    return { step: '{N}' };
+  if (stepInput === '{N}') {
+    return { step: '{N}', ...(atValue !== undefined ? { at: atValue } : {}) };
   }
 
   // Reject malformed {N}xxx (already handled {N}. above)
-  if (input.startsWith('{N}')) {
+  if (stepInput.startsWith('{N}')) {
     return null;
   }
 
@@ -138,7 +164,7 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
     ? /^(\d+)(?:\.(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*))?[\s\-:]/
     : /^(\d+)(?:\.(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*))?$/;
 
-  const numericMatch = input.match(numericPattern);
+  const numericMatch = stepInput.match(numericPattern);
   if (numericMatch) {
     const stepStr = numericMatch[1];
     const stepNum = parseInt(stepStr, 10);
@@ -159,12 +185,12 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
       if (substepNum < 1) return null;
     }
 
-    return { step: stepStr, substep };
+    return { step: stepStr, substep, ...(atValue !== undefined ? { at: atValue } : {}) };
   }
 
   // === NAMED STEP HANDLING: Cleanup, ErrorHandler.1, ErrorHandler.{n}, ErrorHandler.Recover ===
   const namedPattern = /^([A-Za-z_][A-Za-z0-9_]*)(?:\.(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*))?$/;
-  const namedMatch = namedPattern.exec(input);
+  const namedMatch = namedPattern.exec(stepInput);
   if (namedMatch) {
     const stepName = namedMatch[1];
     const substep = namedMatch[2];
@@ -185,7 +211,7 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
       if (substepNum < 1) return null;
     }
 
-    return { step: stepName, substep };
+    return { step: stepName, substep, ...(atValue !== undefined ? { at: atValue } : {}) };
   }
 
   return null;
@@ -201,11 +227,14 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
  * @returns String representation (e.g., "1", "1.2", "ErrorHandler.Recover")
  */
 export function stepIdToString(stepId: StepId): string {
-  // step is always string now
+  let result = stepId.step;
   if (stepId.substep) {
-    return `${stepId.step}.${stepId.substep}`;
+    result = `${result}.${stepId.substep}`;
   }
-  return stepId.step;
+  if (stepId.at !== undefined) {
+    result = `${result} AT ${stepId.at}`;
+  }
+  return result;
 }
 
 /**
@@ -218,5 +247,5 @@ export function stepIdToString(stepId: StepId): string {
  * @returns True if both StepIds reference the same location
  */
 export function stepIdEquals(a: StepId, b: StepId): boolean {
-  return a.step === b.step && a.substep === b.substep;
+  return a.step === b.step && a.substep === b.substep && a.at === b.at;
 }

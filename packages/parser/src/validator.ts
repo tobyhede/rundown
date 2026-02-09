@@ -142,6 +142,33 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
       });
     }
 
+    // FOR step validation
+    if (step.forClause) {
+      // FOR steps must have substeps
+      if (!hasSubsteps) {
+        errors.push({
+          line: step.line,
+          message: `FOR step "${step.name}" must have at least one substep`
+        });
+      }
+
+      // Parent FOR step must not use NEXT/BREAK in its own transitions
+      if (step.transitions) {
+        if (step.transitions.pass.action.type === 'NEXT' || step.transitions.pass.action.type === 'BREAK') {
+          errors.push({
+            line: step.line,
+            message: `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`
+          });
+        }
+        if (step.transitions.fail.action.type === 'NEXT' || step.transitions.fail.action.type === 'BREAK') {
+          errors.push({
+            line: step.line,
+            message: `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`
+          });
+        }
+      }
+    }
+
     if (step.transitions) {
       validateAction(step.transitions.pass.action, undefined, steps, step, errors);
       validateAction(step.transitions.fail.action, undefined, steps, step, errors);
@@ -205,6 +232,26 @@ export function validateAction(
   }
 
   const isDynamicContext = currentStepObj.isDynamic || isCurrentSubstepDynamic;
+
+  // Validate NEXT/BREAK - only valid in substeps of FOR steps
+  if (action.type === 'NEXT' || action.type === 'BREAK') {
+    // Must be in a substep (currentSubstepId defined)
+    if (!currentSubstepId) {
+      errors.push({
+        line: currentStepObj.line,
+        message: `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`
+      });
+      return;
+    }
+    // Parent step must have a FOR clause
+    if (!currentStepObj.forClause) {
+      errors.push({
+        line: currentStepObj.line,
+        message: `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`
+      });
+    }
+    return;
+  }
 
   if (action.type === 'GOTO') {
     const targetStep = action.target.step;
@@ -346,6 +393,18 @@ export function validateAction(
         return;
       }
 
+      // Validate AT - target must be a FOR step
+      if ('at' in action.target && action.target.at !== undefined) {
+        if (!namedStep.forClause) {
+          const context = getErrorContext(currentStepObj, currentSubstepId);
+          errors.push({
+            line: currentStepObj.line,
+            message: `GOTO AT is only valid when the target step has a FOR clause (step "${targetStep}" has no FOR)`
+          });
+          return;
+        }
+      }
+
       if (targetSubstep) {
         if (!namedStep.substeps || namedStep.substeps.length === 0) {
           const context = getErrorContext(currentStepObj, currentSubstepId);
@@ -381,6 +440,18 @@ export function validateAction(
         message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`
       });
       return;
+    }
+
+    // Validate AT - target must be a FOR step
+    if ('at' in action.target && action.target.at !== undefined) {
+      if (!targetStepObj.forClause) {
+        const context = getErrorContext(currentStepObj, currentSubstepId);
+        errors.push({
+          line: currentStepObj.line,
+          message: `GOTO AT is only valid when the target step has a FOR clause (step "${targetStep}" has no FOR)`
+        });
+        return;
+      }
     }
 
     const isTargetDynamic = targetStepObj.isDynamic;
