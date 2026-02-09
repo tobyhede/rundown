@@ -17,6 +17,10 @@ export function renderAction(action: Action): string {
       return action.message ? `STOP "${action.message}"` : 'STOP';
     case 'GOTO':
       return `GOTO ${stepIdToString(action.target)}`;
+    case 'NEXT':
+      return 'NEXT';
+    case 'BREAK':
+      return 'BREAK';
   }
 }
 

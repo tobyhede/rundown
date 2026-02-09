@@ -189,8 +189,9 @@ describe('Action schema-derived type', () => {
     })).toThrow();
   });
 
-  it('rejects standalone NEXT action (use GOTO NEXT)', () => {
-    expect(() => ActionSchema.parse({ type: 'NEXT' })).toThrow();
+  it('accepts NEXT action for loop control', () => {
+    const parsed = ActionSchema.parse({ type: 'NEXT' });
+    expect(parsed.type).toBe('NEXT');
   });
 
   it('parses DONE action', () => {

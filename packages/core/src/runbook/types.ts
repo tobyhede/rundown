@@ -57,6 +57,26 @@ export type { StepId } from '@rundown-org/parser';
 import { type StepId } from '@rundown-org/parser';
 
 /**
+ * Structured discriminated union for the last action taken by the state machine.
+ *
+ * Replaces the previous string-based representation to preserve full transition
+ * information (e.g., GOTO target) through persistence without lossy conversion.
+ *
+ * `GOTO_NEXT` is a separate variant (not `{ type: 'GOTO', target: 'NEXT' }`) because
+ * it has different semantics — it advances the dynamic instance counter with no specific target.
+ */
+export type LastAction =
+  | { readonly type: 'START' }
+  | { readonly type: 'CONTINUE' }
+  | { readonly type: 'GOTO'; readonly target: string; readonly substep?: string }
+  | { readonly type: 'GOTO_NEXT' }
+  | { readonly type: 'COMPLETE' }
+  | { readonly type: 'STOP' }
+  | { readonly type: 'RETRY' }
+  | { readonly type: 'NEXT' }
+  | { readonly type: 'BREAK' };
+
+/**
  * A step queued for agent binding, optionally with a child runbook.
  * Used in the pending step queue to correlate Step tool dispatch with SubagentStart.
  */
@@ -140,12 +160,19 @@ export interface RunbookState {
     readonly instanceId: string;
   };
 
+  // FOR loop tracking
+  readonly forIteration?: number;
+  readonly forStart?: number;
+  readonly forEnd?: number;
+  readonly forVariable?: string;
+  readonly iterationResults?: readonly ('pass' | 'fail')[];
+
   readonly startedAt: string;
   readonly updatedAt: string;
 
   readonly prompted?: boolean;
   readonly lastResult?: 'pass' | 'fail';
-  readonly lastAction?: 'START' | 'CONTINUE' | 'GOTO' | 'COMPLETE' | 'STOP' | 'RETRY';
+  readonly lastAction?: LastAction;
 
   readonly snapshot?: unknown;
 

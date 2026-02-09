@@ -585,4 +585,96 @@ describe('RunbookStateManager', () => {
       expect(stats.mode & 0o777).toBe(0o600);
     });
   });
+
+  describe('FOR loop context persistence', () => {
+    it('persists FOR fields through round-trip', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      // Update with FOR fields
+      const updated = await manager.update(state.id, {
+        forIteration: 2,
+        forStart: 1,
+        forEnd: 3,
+        forVariable: 'item',
+        iterationResults: ['pass', 'pass']
+      });
+
+      // Verify they're set
+      expect(updated.forIteration).toBe(2);
+      expect(updated.forStart).toBe(1);
+      expect(updated.forEnd).toBe(3);
+      expect(updated.forVariable).toBe('item');
+      expect(updated.iterationResults).toEqual(['pass', 'pass']);
+
+      // Load from disk and verify persistence
+      const loaded = await manager.load(state.id);
+      expect(loaded?.forIteration).toBe(2);
+      expect(loaded?.forStart).toBe(1);
+      expect(loaded?.forEnd).toBe(3);
+      expect(loaded?.forVariable).toBe('item');
+      expect(loaded?.iterationResults).toEqual(['pass', 'pass']);
+    });
+
+    it('syncs FOR context fields from actor snapshot', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step_1',
+          context: {
+            variables: { test: 'value' },
+            retryCount: 0,
+            forIteration: 1,
+            forStart: 1,
+            forEnd: 3,
+            forVariable: 'item',
+            iterationResults: ['pass'],
+            lastAction: { type: 'START' }
+          }
+        })
+      };
+
+      const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
+
+      expect(updated.forIteration).toBe(1);
+      expect(updated.forStart).toBe(1);
+      expect(updated.forEnd).toBe(3);
+      expect(updated.forVariable).toBe('item');
+      expect(updated.iterationResults).toEqual(['pass']);
+      expect(updated.lastAction).toEqual({ type: 'START' });
+    });
+
+    it('clears FOR fields when runbook completes', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      // First, set some FOR fields
+      await manager.update(state.id, {
+        forIteration: 2,
+        forStart: 1,
+        forEnd: 3,
+        forVariable: 'item',
+        iterationResults: ['pass', 'pass']
+      });
+
+      // Now simulate completion via updateFromActor
+      const completeActor = {
+        getPersistedSnapshot: () => ({
+          value: 'COMPLETE',
+          context: {
+            variables: { completed: true },
+            retryCount: 0
+          }
+        })
+      };
+
+      const completed = await manager.updateFromActor(state.id, completeActor as any, mockSteps);
+
+      // FOR fields should be cleared
+      expect(completed.forIteration).toBeUndefined();
+      expect(completed.forStart).toBeUndefined();
+      expect(completed.forEnd).toBeUndefined();
+      expect(completed.forVariable).toBeUndefined();
+      expect(completed.iterationResults).toBeUndefined();
+    });
+  });
 });

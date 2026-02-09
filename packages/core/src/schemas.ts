@@ -182,12 +182,27 @@ export const RunbookStateSchema = z.object({
     runbook: z.string(),
     instanceId: z.string()
   }).optional(),
+  forIteration: z.number().int().positive().optional(),
+  forStart: z.number().int().optional(),
+  forEnd: z.number().int().optional(),
+  forVariable: z.string().optional(),
+  iterationResults: z.array(z.enum(['pass', 'fail'])).optional(),
   startedAt: z.string(),
   updatedAt: z.string(),
   snapshot: z.unknown().optional(), // XState snapshot
   prompted: z.boolean().optional(),
   lastResult: z.enum(['pass', 'fail']).optional(),
-  lastAction: z.enum(['START', 'CONTINUE', 'GOTO', 'COMPLETE', 'STOP', 'RETRY']).optional(),
+  lastAction: z.discriminatedUnion('type', [
+    z.object({ type: z.literal('START') }),
+    z.object({ type: z.literal('CONTINUE') }),
+    z.object({ type: z.literal('GOTO'), target: z.string(), substep: z.string().optional() }),
+    z.object({ type: z.literal('GOTO_NEXT') }),
+    z.object({ type: z.literal('COMPLETE') }),
+    z.object({ type: z.literal('STOP') }),
+    z.object({ type: z.literal('RETRY') }),
+    z.object({ type: z.literal('NEXT') }),
+    z.object({ type: z.literal('BREAK') }),
+  ]).optional(),
   runbookSrc: z.string().optional()
 });
 

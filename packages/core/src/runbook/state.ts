@@ -250,7 +250,16 @@ export class RunbookStateManager {
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         const variables = (snapshot.context?.variables ?? {}) as Record<string, boolean | number | string>;
-        return await this.update(id, { variables, snapshot });
+        return await this.update(id, {
+          variables,
+          snapshot,
+          // Clear FOR loop state on completion
+          forIteration: undefined,
+          forStart: undefined,
+          forEnd: undefined,
+          forVariable: undefined,
+          iterationResults: undefined,
+        });
     }
 
     // Parse step name from XState state value
@@ -272,13 +281,33 @@ export class RunbookStateManager {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const variables = (snapshot.context?.variables ?? {}) as Record<string, boolean | number | string>;
 
+    // FOR loop context
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const forIteration = snapshot.context?.forIteration as number | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const forStart = snapshot.context?.forStart as number | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const forEnd = snapshot.context?.forEnd as number | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const forVariable = snapshot.context?.forVariable as string | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const iterationResults = snapshot.context?.iterationResults as ('pass' | 'fail')[] | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const lastAction = snapshot.context?.lastAction as RunbookState['lastAction'];
+
     return await this.update(id, {
       step: stepName,           // string
       substep,
       stepName: step.description,
       retryCount,
       variables,
-      snapshot
+      snapshot,
+      forIteration,
+      forStart,
+      forEnd,
+      forVariable,
+      iterationResults,
+      lastAction,
     });
   }
 
