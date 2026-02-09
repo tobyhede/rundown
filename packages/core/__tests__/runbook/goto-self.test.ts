@@ -12,8 +12,8 @@ describe('GOTO to self (implicit retry)', () => {
       isDynamic: true,
       transitions: {
         all: false,
-        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-        fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '{N}' } } }
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '{N}' } } }
       }
     }];
 
@@ -47,8 +47,8 @@ describe('GOTO to self (implicit retry)', () => {
       isDynamic: false,
       transitions: {
         all: false,
-        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-        fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '1' } } }
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1' } } }
       }
     }];
 
@@ -71,20 +71,22 @@ describe('GOTO to self (implicit retry)', () => {
     const steps: Step[] = [
       {
         name: '1',
-        title: 'Step One',
+        description: 'Step One',
+        isDynamic: false,
         transitions: {
           all: false,
-          pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-          fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '2' } } }
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '2' } } }
         }
       },
       {
         name: '2',
-        title: 'Step Two',
+        description: 'Step Two',
+        isDynamic: false,
         transitions: {
           all: false,
-          pass: { kind: 'pass', action: { type: 'COMPLETE' } },
-          fail: { kind: 'fail', action: { type: 'STOP' } }
+          pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
         }
       }
     ];
@@ -109,17 +111,19 @@ describe('GOTO to self (implicit retry)', () => {
     const steps: Step[] = [{
       name: '1',
       description: 'Step with substeps',
+      isDynamic: false,
       substeps: [
         {
           id: 'a',
-          title: 'Substep A',
+          description: 'Substep A',
+          isDynamic: false,
           transitions: {
             all: false,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '1', substep: 'a' } } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1', substep: 'a' } } }
           }
         },
-        { id: 'b', title: 'Substep B' }
+        { id: 'b', description: 'Substep B', isDynamic: false }
       ]
     }];
 
@@ -146,17 +150,19 @@ describe('GOTO to self (implicit retry)', () => {
     const steps: Step[] = [{
       name: '1',
       description: 'Step with substeps',
+      isDynamic: false,
       substeps: [
         {
           id: 'a',
-          title: 'Substep A',
+          description: 'Substep A',
+          isDynamic: false,
           transitions: {
             all: false,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '1', substep: 'b' } } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1', substep: 'b' } } }
           }
         },
-        { id: 'b', title: 'Substep B' }
+        { id: 'b', description: 'Substep B', isDynamic: false }
       ]
     }];
 

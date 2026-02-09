@@ -59,8 +59,8 @@ describe('renderStepForCLI', () => {
       command: { code: 'npm test' },
       transitions: {
         all: true,
-        pass: { type: 'CONTINUE' },
-        fail: { type: 'STOP' },
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },
       substeps: [{ id: '1', description: 'Substep', isDynamic: false }],
     };
@@ -204,7 +204,6 @@ describe('substep rendering', () => {
       command: { code: 'npm test', lang: 'bash' } as any,
     };
 
-    // @ts-expect-error - testing new showCommand parameter
     const result = renderStepForCLI(step, undefined, undefined, true);
 
     expect(result).toContain('```bash\nnpm test\n```');
@@ -218,7 +217,6 @@ describe('substep rendering', () => {
       command: { code: 'print("hello")', lang: 'python' } as any,
     };
 
-    // @ts-expect-error - testing new showCommand parameter
     const result = renderStepForCLI(step, undefined, undefined, true);
 
     expect(result).toContain('```python\nprint("hello")\n```');

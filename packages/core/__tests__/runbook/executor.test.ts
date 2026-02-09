@@ -15,7 +15,7 @@ import type { PolicyPrompter } from '../../src/policy/prompter.js';
  * Uses Pick to select only the methods needed by executeCommandWithPolicy.
  */
 function createMockPrompter(
-  requestPermissionResult: { granted: boolean }
+  requestPermissionResult: { granted: boolean; persist: boolean }
 ): Pick<PolicyPrompter, 'requestPermission' | 'requestPersistablePermission' | 'confirmDangerous' | 'reset'> {
   return {
     requestPermission: jest.fn<PolicyPrompter['requestPermission']>().mockResolvedValue(requestPermissionResult),
@@ -151,7 +151,7 @@ describe('executeCommandWithPolicy', () => {
       },
     };
     const evaluator = new PolicyEvaluator(policy);
-    const mockPrompter = createMockPrompter({ granted: true });
+    const mockPrompter = createMockPrompter({ granted: true, persist: false });
 
     const _result = await executeCommandWithPolicy(
       'some-command',
@@ -175,7 +175,7 @@ describe('executeCommandWithPolicy', () => {
       },
     };
     const evaluator = new PolicyEvaluator(policy);
-    const mockPrompter = createMockPrompter({ granted: false });
+    const mockPrompter = createMockPrompter({ granted: false, persist: false });
 
     const result = await executeCommandWithPolicy(
       'some-command',

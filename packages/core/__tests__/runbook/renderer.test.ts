@@ -62,22 +62,22 @@ describe('renderTransitions', () => {
 describe('renderSubstep', () => {
   it('renders substep with parent step number (N.M format)', () => {
     const substep: Substep = { id: '1', description: 'First reviewer', isDynamic: false };
-    expect(renderSubstep(substep, 3)).toBe('### 3.1 First reviewer');
+    expect(renderSubstep(substep, '3')).toBe('### 3.1 First reviewer');
   });
 
   it('renders substep with agent type', () => {
     const substep: Substep = { id: '2', description: 'Second reviewer', agentType: 'code-agent', isDynamic: false };
-    expect(renderSubstep(substep, 1)).toBe('### 1.2 Second reviewer (code-agent)');
+    expect(renderSubstep(substep, '1')).toBe('### 1.2 Second reviewer (code-agent)');
   });
 
   it('renders dynamic substep template', () => {
     const substep: Substep = { id: '{n}', description: 'Execute step', isDynamic: true };
-    expect(renderSubstep(substep, 2)).toBe('### 2.{n} Execute step');
+    expect(renderSubstep(substep, '2')).toBe('### 2.{n} Execute step');
   });
 
   it('renders substep with child runbooks', () => {
     const substep: Substep = { id: '1', description: 'With child runbook', isDynamic: false, workflows: ['task.runbook.md'] };
-    expect(renderSubstep(substep, 1)).toBe('### 1.1 With child runbook [@task.runbook.md]');
+    expect(renderSubstep(substep, '1')).toBe('### 1.1 With child runbook [@task.runbook.md]');
   });
 });
 

@@ -86,11 +86,11 @@ describe('Sandbox Index', () => {
     it('falls back to unsandboxed execution when allowed', async () => {
       Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
-      const { executeCommand } = await import('../../src/runbook/executor.js');
-      (executeCommand as jest.Mock).mockResolvedValue({
+      const executor = await import('../../src/runbook/executor.js');
+      const mockFn = executor.executeCommand as unknown as jest.Mock<() => Promise<{ success: boolean; exitCode: number }>>;
+      mockFn.mockResolvedValue({
         success: true,
         exitCode: 0,
-        stdout: 'hello',
       });
 
       const { executeWithSandbox } = await import('../../src/sandbox/index.js');

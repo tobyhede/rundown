@@ -32,6 +32,7 @@ describe('ExecutionEventEmitter', () => {
       description: 'Test step',
       hasCommand: true,
       isSubstep: false,
+      isDynamic: false,
       prompted: false,
     });
 

@@ -31,7 +31,7 @@ describe('JSONSubscriber', () => {
         action: 'CONTINUE',
         from: { current: '1', total: 2 },
         to: { current: '2', total: 2 },
-        result: 'PASS',
+        result: true,
       }, 2)
     );
 

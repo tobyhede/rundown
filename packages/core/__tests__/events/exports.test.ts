@@ -22,7 +22,7 @@ describe('core exports', () => {
         action: 'CONTINUE',
         from: { current: '1', total: 1 },
         to: { current: '2', total: 2 },
-        result: 'PASS',
+        result: true,
       } satisfies StepTransitionedPayload,
     };
     expect(event.type).toBe('STEP_TRANSITIONED');
