@@ -127,6 +127,24 @@ export interface StepState {
 }
 
 /**
+ * State for a single FOR loop level on the execution stack.
+ */
+export interface ForContext {
+  /** Step name (e.g., "3") that owns this FOR loop */
+  readonly stepId: string;
+  /** Current iteration number (1-based) */
+  readonly iteration: number;
+  /** Start of the iteration range */
+  readonly start: number;
+  /** End of the iteration range (inclusive) */
+  readonly end: number;
+  /** Named loop variable (e.g., "batch") */
+  readonly variable?: string;
+  /** True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence. */
+  readonly implicit?: boolean;
+}
+
+/**
  * Runbook execution state (persisted)
  */
 export interface RunbookState {
@@ -161,10 +179,7 @@ export interface RunbookState {
   };
 
   // FOR loop tracking
-  readonly forIteration?: number;
-  readonly forStart?: number;
-  readonly forEnd?: number;
-  readonly forVariable?: string;
+  readonly forStack?: readonly ForContext[];
   readonly iterationResults?: readonly ('pass' | 'fail')[];
 
   readonly startedAt: string;

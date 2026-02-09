@@ -254,3 +254,93 @@ describe('Transitions schema-derived type', () => {
     expect(parsed.pass.retry).toBe(0);
   });
 });
+
+describe('RunbookStateSchema migration', () => {
+  it('migrates old flat FOR fields to forStack', () => {
+    // Create old-format state with forIteration/forStart/forEnd/forVariable
+    const oldState = createValidState({
+      forIteration: 2,
+      forStart: 1,
+      forEnd: 3,
+      forVariable: 'item'
+    });
+
+    // Parse with RunbookStateSchema
+    const result = RunbookStateSchema.safeParse(oldState);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Verify forStack is created
+      expect(result.data.forStack).toEqual([{
+        stepId: '1',
+        iteration: 2,
+        start: 1,
+        end: 3,
+        variable: 'item'
+      }]);
+      // Verify flat fields are stripped
+      expect(result.data).not.toHaveProperty('forIteration');
+      expect(result.data).not.toHaveProperty('forStart');
+      expect(result.data).not.toHaveProperty('forEnd');
+      expect(result.data).not.toHaveProperty('forVariable');
+    }
+  });
+
+  it('passes through new forStack format unchanged', () => {
+    // Create state with forStack already set
+    const newState = createValidState({
+      forStack: [{ stepId: '2', iteration: 3, start: 1, end: 5, variable: 'x' }]
+    });
+
+    // Parse with RunbookStateSchema
+    const result = RunbookStateSchema.safeParse(newState);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Verify forStack is preserved
+      expect(result.data.forStack).toEqual([{
+        stepId: '2',
+        iteration: 3,
+        start: 1,
+        end: 5,
+        variable: 'x'
+      }]);
+    }
+  });
+
+  it('handles state with no FOR fields', () => {
+    // Create state without any FOR-related fields
+    const cleanState = createValidState();
+
+    // Parse with RunbookStateSchema
+    const result = RunbookStateSchema.safeParse(cleanState);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Verify no forStack (should be undefined) and no errors
+      expect(result.data.forStack).toBeUndefined();
+      expect(result.data).not.toHaveProperty('forIteration');
+      expect(result.data).not.toHaveProperty('forStart');
+      expect(result.data).not.toHaveProperty('forEnd');
+      expect(result.data).not.toHaveProperty('forVariable');
+    }
+  });
+
+  it('accepts forStack with implicit field', () => {
+    const state = createValidState({
+      forStack: [{
+        stepId: '1',
+        iteration: 1,
+        start: 1,
+        end: 1,
+        implicit: true,
+      }],
+    });
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Transform strips implicit entries from forStack
+      expect(result.data.forStack).toBeUndefined();
+    }
+  });
+});

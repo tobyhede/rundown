@@ -182,6 +182,15 @@ export const RunbookStateSchema = z.object({
     runbook: z.string(),
     instanceId: z.string()
   }).optional(),
+  forStack: z.array(z.object({
+    stepId: z.string(),
+    iteration: z.number().int(),
+    start: z.number().int(),
+    end: z.number().int(),
+    variable: z.string().optional(),
+    implicit: z.boolean().optional(),
+  })).optional(),
+  // Backward compat: accept old flat fields for migration
   forIteration: z.number().int().positive().optional(),
   forStart: z.number().int().optional(),
   forEnd: z.number().int().optional(),
@@ -204,6 +213,27 @@ export const RunbookStateSchema = z.object({
     z.object({ type: z.literal('BREAK') }),
   ]).optional(),
   runbookSrc: z.string().optional()
+}).transform((data) => {
+  const { forIteration, forStart, forEnd, forVariable, ...rest } = data;
+  // Migrate old flat FOR fields → forStack
+  if (!rest.forStack && forIteration !== undefined && rest.step) {
+    return {
+      ...rest,
+      forStack: [{
+        stepId: rest.step,
+        iteration: forIteration,
+        start: forStart ?? 1,
+        end: forEnd ?? forIteration,
+        variable: forVariable,
+      }],
+    };
+  }
+  // Strip implicit entries if they leaked into persisted state
+  const forStack = rest.forStack?.filter(fc => !fc.implicit);
+  return {
+    ...rest,
+    forStack: forStack?.length ? forStack : undefined,
+  };
 });
 
 export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;

@@ -1149,8 +1149,9 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' }); // step_2 → step_3_1 (FOR initialized)
 
       expect(actor.getSnapshot().value).toBe('step_3_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(1);
-      expect(actor.getSnapshot().context.forEnd).toBe(3);
+      const top1 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(top1.iteration).toBe(1);
+      expect(top1.end).toBe(3);
 
       // Iteration 1: step_3_1 → step_3_2
       actor.send({ type: 'PASS' });
@@ -1159,7 +1160,8 @@ describe('runbook compiler', () => {
       // Iteration 1: step_3_2 → loop back to step_3_1 (iteration 2)
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_3_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(2);
+      const top2 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(top2.iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
 
       // Iteration 2: step_3_1 → step_3_2
@@ -1169,7 +1171,8 @@ describe('runbook compiler', () => {
       // Iteration 2: step_3_2 → loop back to step_3_1 (iteration 3)
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_3_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(3);
+      const top3 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(top3.iteration).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
       // Iteration 3: step_3_1 → step_3_2
@@ -1179,9 +1182,7 @@ describe('runbook compiler', () => {
       // Iteration 3: step_3_2 → exit loop → step_4
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_4');
-      expect(actor.getSnapshot().context.forIteration).toBeUndefined();
-      expect(actor.getSnapshot().context.forStart).toBeUndefined();
-      expect(actor.getSnapshot().context.forEnd).toBeUndefined();
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
     it('initializes FOR context when FOR step is the first state', () => {
@@ -1222,19 +1223,21 @@ describe('runbook compiler', () => {
 
       // Machine starts at step_1_1 (first substep of FOR step)
       expect(actor.getSnapshot().value).toBe('step_1_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(1);
-      expect(actor.getSnapshot().context.forStart).toBe(1);
-      expect(actor.getSnapshot().context.forEnd).toBe(2);
+      const top = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(top.iteration).toBe(1);
+      expect(top.start).toBe(1);
+      expect(top.end).toBe(2);
 
       // Iteration 1: PASS → loop back (iteration 2)
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_1_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(2);
+      const top2a = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(top2a.iteration).toBe(2);
 
       // Iteration 2: PASS → exit loop
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_2');
-      expect(actor.getSnapshot().context.forIteration).toBeUndefined();
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
     it('exits loop immediately when start equals end (single iteration)', () => {
@@ -1274,12 +1277,13 @@ describe('runbook compiler', () => {
       actor.start();
 
       expect(actor.getSnapshot().value).toBe('step_1_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(5);
+      const topSingle = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topSingle.iteration).toBe(5);
 
       // Single pass should exit loop (5 is not < 5)
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_2');
-      expect(actor.getSnapshot().context.forIteration).toBeUndefined();
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
     it('stores named variable in FOR context', () => {
@@ -1318,7 +1322,8 @@ describe('runbook compiler', () => {
       const actor = createActor(machine);
       actor.start();
 
-      expect(actor.getSnapshot().context.forVariable).toBe('batch');
+      const topVar = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topVar.variable).toBe('batch');
     });
 
     it('records iteration results including failures', () => {
@@ -1359,17 +1364,20 @@ describe('runbook compiler', () => {
 
       // Iteration 1: PASS (forIteration=1, loop back)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().context.forIteration).toBe(2);
+      const topRes1 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topRes1.iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
 
       // Iteration 2: FAIL (forIteration=2, loop back)
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().context.forIteration).toBe(3);
+      const topRes2 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topRes2.iteration).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
 
       // Iteration 3: PASS (forIteration=3, loop back)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().context.forIteration).toBe(4);
+      const topRes3 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topRes3.iteration).toBe(4);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail', 'pass']);
 
       // Iteration 4: PASS (forIteration=4, 4 < 4? NO, exit loop — records final result)
@@ -1468,18 +1476,20 @@ describe('runbook compiler', () => {
       // GOTO from step 1 to step 3
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_3_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(1);
-      expect(actor.getSnapshot().context.forEnd).toBe(2);
+      const topGoto1 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topGoto1.iteration).toBe(1);
+      expect(topGoto1.end).toBe(2);
 
       // Iteration 1: PASS → loop back
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_3_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(2);
+      const topGoto2 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topGoto2.iteration).toBe(2);
 
       // Iteration 2: PASS → exit loop
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_4');
-      expect(actor.getSnapshot().context.forIteration).toBeUndefined();
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
     it('NEXT skips remaining substeps and advances to next iteration', () => {
@@ -1541,24 +1551,27 @@ describe('runbook compiler', () => {
       // Setup step → FOR step first substep
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_3_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(1);
+      const topNext1 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topNext1.iteration).toBe(1);
 
       // Iteration 1: PASS on substep 1 → NEXT → skip substep 2, go to iteration 2's substep 1
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_3_1'); // Loop back to first substep
-      expect(actor.getSnapshot().context.forIteration).toBe(2);
+      const topNext2 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topNext2.iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
 
       // Iteration 2: PASS → NEXT → iteration 3
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_3_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(3);
+      const topNext3 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topNext3.iteration).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
       // Iteration 3 (last): PASS → NEXT → exit loop
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_4'); // Exit to next step
-      expect(actor.getSnapshot().context.forIteration).toBeUndefined();
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
     it('BREAK exits loop immediately regardless of remaining iterations', () => {
@@ -1620,12 +1633,13 @@ describe('runbook compiler', () => {
       // Setup → FOR
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_3_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(1);
+      const topBreak1 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topBreak1.iteration).toBe(1);
 
       // Iteration 1: FAIL on substep 1 → BREAK → exit loop to step 4
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step_4');
-      expect(actor.getSnapshot().context.forIteration).toBeUndefined();
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['fail']);
       expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'BREAK' });
     });
@@ -1668,12 +1682,14 @@ describe('runbook compiler', () => {
 
       // Iteration 1: FAIL → NEXT
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().context.forIteration).toBe(2);
+      const topNextRes1 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topNextRes1.iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['fail']);
 
       // Iteration 2: PASS → NEXT
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().context.forIteration).toBe(3);
+      const topNextRes2 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topNextRes2.iteration).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['fail', 'pass']);
 
       // Iteration 3 (last): PASS → NEXT → exit
@@ -1733,7 +1749,8 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('step_1_2');
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_1_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(2);
+      const topBreakRes1 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topBreakRes1.iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
 
       // Iteration 2: PASS → PASS → loop back
@@ -1741,7 +1758,8 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('step_1_2');
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_1_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(3);
+      const topBreakRes2 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topBreakRes2.iteration).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
       // Iteration 3: PASS → FAIL (BREAK)
@@ -1749,7 +1767,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('step_1_2');
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step_2');
-      expect(actor.getSnapshot().context.forIteration).toBeUndefined();
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass', 'fail']);
     });
 
@@ -1848,15 +1866,17 @@ describe('runbook compiler', () => {
       // GOTO 2 AT 2 → enters FOR step at iteration 2
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_2_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(2);
-      expect(actor.getSnapshot().context.forStart).toBe(1);
-      expect(actor.getSnapshot().context.forEnd).toBe(3);
+      const topAt1 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topAt1.iteration).toBe(2);
+      expect(topAt1.start).toBe(1);
+      expect(topAt1.end).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
 
       // Iteration 2: PASS → loop back to iteration 3
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_2_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(3);
+      const topAt2 = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topAt2.iteration).toBe(3);
 
       // Iteration 3: PASS → exit
       actor.send({ type: 'PASS' });
@@ -1912,8 +1932,9 @@ describe('runbook compiler', () => {
       // GOTO 2 (no AT) → resets to iteration 1 (forClause.start)
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step_2_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(1);
-      expect(actor.getSnapshot().context.forEnd).toBe(2);
+      const topNoAt = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topNoAt.iteration).toBe(1);
+      expect(topNoAt.end).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
     });
 
@@ -1961,10 +1982,11 @@ describe('runbook compiler', () => {
       // Send external GOTO event with AT
       actor.send({ type: 'GOTO', target: { step: '2', at: 3 } });
       expect(actor.getSnapshot().value).toBe('step_2_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(3);
-      expect(actor.getSnapshot().context.forStart).toBe(1);
-      expect(actor.getSnapshot().context.forEnd).toBe(5);
-      expect(actor.getSnapshot().context.forVariable).toBe('batch');
+      const topEvtAt = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topEvtAt.iteration).toBe(3);
+      expect(topEvtAt.start).toBe(1);
+      expect(topEvtAt.end).toBe(5);
+      expect(topEvtAt.variable).toBe('batch');
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
       // AT qualifier is preserved in lastAction for state persistence
       expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'GOTO', target: '2', substep: '1', at: 3 });
@@ -2004,10 +2026,574 @@ describe('runbook compiler', () => {
       // External GOTO without AT to FOR step → reset
       actor.send({ type: 'GOTO', target: { step: '2' } });
       expect(actor.getSnapshot().value).toBe('step_2_1');
-      expect(actor.getSnapshot().context.forIteration).toBe(1);
+      const topEvtNoAt = actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
+      expect(topEvtNoAt.iteration).toBe(1);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
       // No AT qualifier in lastAction
       expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'GOTO', target: '2', substep: '1' });
+    });
+
+    it('GOTO from inside FOR loop to non-FOR step clears forStack', () => {
+      // Step 1: non-FOR step
+      // Step 2: FOR 1..3 with substeps, substep 1 PASS action = GOTO 1
+      // Step 3: exit step
+      // Flow: enter FOR at step 2, PASS substep 1 → GOTO step 1 → forStack cleared
+      // Then GOTO back to step 2 → fresh loop (forStack has new context)
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Non-FOR target',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          forClause: { start: 1, end: 3 },
+          description: 'FOR step',
+          substeps: [
+            {
+              id: '1',
+              description: 'Substep with GOTO out',
+              isDynamic: false,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '1' } } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            },
+            {
+              id: '2',
+              description: 'Substep 2',
+              isDynamic: false,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '3',
+          isDynamic: false,
+          description: 'After loop',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Enter FOR step via GOTO from step 1
+      actor.send({ type: 'PASS' }); // step_1 → step_2_1
+      expect(actor.getSnapshot().value).toBe('step_2_1');
+      const ctx1 = actor.getSnapshot().context;
+      expect(ctx1.forStack.length).toBe(1);
+      expect(ctx1.forStack[0].iteration).toBe(1);
+
+      // PASS substep 1 → GOTO step 1 (non-FOR) — forStack should be cleared
+      actor.send({ type: 'PASS' }); // step_2_1 → step_1
+      expect(actor.getSnapshot().value).toBe('step_1');
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
+      expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
+
+      // Re-enter FOR step → fresh loop context
+      actor.send({ type: 'PASS' }); // step_1 → step_2_1 (fresh FOR)
+      expect(actor.getSnapshot().value).toBe('step_2_1');
+      const ctx2 = actor.getSnapshot().context;
+      expect(ctx2.forStack.length).toBe(1);
+      expect(ctx2.forStack[0].iteration).toBe(1);
+      expect(ctx2.iterationResults).toEqual([]);
+    });
+
+    it('throws on unresolved template variable in FOR bounds', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          forClause: { start: '{{Max}}' as unknown as number, end: 3 },
+          description: 'Unresolved template',
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              isDynamic: false,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            }
+          ]
+        }
+      ];
+
+      expect(() => compileRunbookToMachine(steps)).toThrow(/bounds must be numeric/);
+    });
+
+    it('GOTO AT with unresolved template string falls back to loop start', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Start',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2', at: '{{Offset}}' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          forClause: { start: 1, end: 3 },
+          description: 'FOR loop',
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              isDynamic: false,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '3',
+          isDynamic: false,
+          description: 'Done',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // GOTO 2 AT {{Offset}} — unresolved string should fall back to start (1)
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_2_1');
+      const top = actor.getSnapshot().context.forStack[0];
+      expect(top.iteration).toBe(1); // Falls back to start
+      expect(top.start).toBe(1);
+      expect(top.end).toBe(3);
+    });
+
+    it('GOTO event targeting non-first FOR substep initializes loop context', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Start',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          forClause: { start: 1, end: 3 },
+          description: 'FOR with 2 substeps',
+          substeps: [
+            {
+              id: '1',
+              description: 'First',
+              isDynamic: false,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            },
+            {
+              id: '2',
+              description: 'Second',
+              isDynamic: false,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '3',
+          isDynamic: false,
+          description: 'Done',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Send GOTO event targeting second substep of FOR step
+      actor.send({ type: 'GOTO', target: { step: '2', substep: '2' } });
+      expect(actor.getSnapshot().value).toBe('step_2_2');
+
+      // Should have FOR context initialized (not cleared by buildSimpleGotoAssign)
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack.length).toBe(1);
+      expect(ctx.forStack[0].iteration).toBe(1);
+      expect(ctx.forStack[0].start).toBe(1);
+      expect(ctx.forStack[0].end).toBe(3);
+      expect(ctx.iterationResults).toEqual([]);
+    });
+
+    it('GOTO {N} targeting dynamic FOR step initializes forStack', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Start',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '{N}' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '{N}',
+          isDynamic: true,
+          forClause: { start: 1, end: 2 },
+          description: 'Dynamic FOR step',
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              isDynamic: false,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '3',
+          isDynamic: false,
+          description: 'Done',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // GOTO {N} should initialize FOR context
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_{N}_1');
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack.length).toBe(1);
+      expect(ctx.forStack[0].iteration).toBe(1);
+      expect(ctx.forStack[0].start).toBe(1);
+      expect(ctx.forStack[0].end).toBe(2);
+      expect(ctx.iterationResults).toEqual([]);
+    });
+  });
+
+  const DEFAULT_TRANSITIONS = {
+    all: true,
+    pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+    fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } }
+  };
+
+  describe('implicit 1..1 loop model', () => {
+    it('non-FOR step with substeps creates implicit ForContext on entry', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step with substeps, no FOR',
+          substeps: [
+            { id: '1', description: 'Sub 1', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+          ]
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Next step',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack).toHaveLength(1);
+      expect(ctx.forStack[0]).toEqual({
+        stepId: '1',
+        iteration: 1,
+        start: 1,
+        end: 1,
+        implicit: true,
+      });
+    });
+
+    it('implicit 1..1 loop never loops back on CONTINUE', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step with substeps, no FOR',
+          substeps: [
+            { id: '1', description: 'Sub 1', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+          ]
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Next step',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // substep 1 -> substep 2
+      actor.send({ type: 'PASS' }); // substep 2 -> exits to step 2
+
+      expect(actor.getSnapshot().value).toBe('step_2');
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
+    });
+
+    it('iterationResults is undefined after implicit loop exit', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Single substep, no FOR',
+          substeps: [
+            { id: '1', description: 'Only sub', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+          ]
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Next step',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' });
+
+      expect(actor.getSnapshot().value).toBe('step_2');
+      expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
+    });
+
+    it('GOTO to non-FOR step with substeps initializes implicit ForContext', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Source',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Target with substeps, no FOR',
+          substeps: [
+            { id: '1', description: 'Sub 1', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+          ]
+        },
+        {
+          name: '3',
+          isDynamic: false,
+          description: 'Final',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // GOTO step 2
+
+      expect(actor.getSnapshot().value).toBe('step_2_1');
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack).toHaveLength(1);
+      expect(ctx.forStack[0]).toEqual(
+        expect.objectContaining({ stepId: '2', implicit: true })
+      );
+    });
+
+    it('NEXT in non-FOR step still goes to STOPPED', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step with NEXT but no FOR',
+          substeps: [
+            {
+              id: '1', description: 'Sub', isDynamic: false,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            },
+          ]
+        },
+        { name: '2', isDynamic: false, description: 'Unreachable', transitions: DEFAULT_TRANSITIONS }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
+    it('BREAK in non-FOR step still goes to STOPPED', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Step with BREAK but no FOR',
+          substeps: [
+            {
+              id: '1', description: 'Sub', isDynamic: false,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'BREAK' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            },
+          ]
+        },
+        { name: '2', isDynamic: false, description: 'Unreachable', transitions: DEFAULT_TRANSITIONS }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
+    it('explicit FOR loop behavior is unchanged', () => {
+      // Regression: existing FOR 1..3 must still loop correctly
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          forClause: { start: 1, end: 3 },
+          description: 'FOR step',
+          substeps: [
+            { id: '1', description: 'Sub', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+          ]
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'After loop',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_1_1'); // loops back
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+
+      // Iteration 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_1_1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(3);
+
+      // Iteration 3 (last)
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step_2'); // exits
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass', 'pass']);
+    });
+
+    it('GOTO event to non-FOR substep uses unified ForContext path', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          isDynamic: false,
+          description: 'Source step',
+          substeps: [
+            { id: '1', description: 'Sub', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+          ]
+        },
+        {
+          name: '2',
+          isDynamic: false,
+          description: 'Target with substeps, no FOR',
+          substeps: [
+            { id: '1', description: 'Sub 1', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+          ]
+        },
+        {
+          name: '3',
+          isDynamic: false,
+          description: 'Final',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // External GOTO to step 2's second substep
+      actor.send({ type: 'GOTO', target: { step: '2', substep: '2' } });
+
+      expect(actor.getSnapshot().value).toBe('step_2_2');
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack).toHaveLength(1);
+      expect(ctx.forStack[0]).toEqual(
+        expect.objectContaining({ stepId: '2', implicit: true })
+      );
     });
   });
 });

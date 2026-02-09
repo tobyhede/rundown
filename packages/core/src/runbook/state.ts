@@ -4,6 +4,7 @@ import * as path from 'path';
 import { createActor, type AnyActorRef } from 'xstate';
 import {
   type RunbookState,
+  type ForContext,
   type AgentBinding,
   type PendingStep,
   type Substep,
@@ -147,9 +148,42 @@ export class RunbookStateManager {
     if (!state) return null;
 
     const machine = compileRunbookToMachine(steps);
+
+    // Migrate old snapshot context: flat FOR fields → forStack
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const snapshot = state.snapshot as any;
+    if (snapshot?.context && !snapshot.context.forStack) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ctx = snapshot.context as any;
+      if (ctx.forIteration !== undefined) {
+        // Derive stepId from snapshot.value (authoritative) with state.step fallback
+        const stateValue = snapshot.value as string | undefined;
+        const stepMatch = stateValue ? /^step_([^_]+)/.exec(stateValue) : null;
+        const stepId = stepMatch?.[1] ?? state.step;
+
+        snapshot.context = {
+          ...ctx,
+          forStack: [{
+            stepId,
+            iteration: ctx.forIteration,
+            start: ctx.forStart ?? 1,
+            end: ctx.forEnd ?? ctx.forIteration,
+            variable: ctx.forVariable,
+          }],
+          forIteration: undefined,
+          forStart: undefined,
+          forEnd: undefined,
+          forVariable: undefined,
+        };
+      } else {
+        // No active loop — just ensure forStack exists
+        snapshot.context = { ...ctx, forStack: [] };
+      }
+    }
+
     const actor = createActor(machine, {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-      snapshot: state.snapshot as any
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      snapshot
     });
     actor.start();
     return actor;
@@ -254,10 +288,7 @@ export class RunbookStateManager {
           variables,
           snapshot,
           // Clear FOR loop state on completion
-          forIteration: undefined,
-          forStart: undefined,
-          forEnd: undefined,
-          forVariable: undefined,
+          forStack: undefined,
           iterationResults: undefined,
         });
     }
@@ -283,13 +314,7 @@ export class RunbookStateManager {
 
     // FOR loop context
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const forIteration = snapshot.context?.forIteration as number | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const forStart = snapshot.context?.forStart as number | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const forEnd = snapshot.context?.forEnd as number | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const forVariable = snapshot.context?.forVariable as string | undefined;
+    const forStack = snapshot.context?.forStack as ForContext[] | undefined;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const iterationResults = snapshot.context?.iterationResults as ('pass' | 'fail')[] | undefined;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -302,11 +327,18 @@ export class RunbookStateManager {
       retryCount,
       variables,
       snapshot,
-      forIteration,
-      forStart,
-      forEnd,
-      forVariable,
-      iterationResults,
+      // Filter implicit ForContext entries — don't persist synthetic loop state
+      forStack: (() => {
+        const realForStack = forStack?.filter(fc => !fc.implicit);
+        return realForStack?.length ? realForStack : undefined;
+      })(),
+      // Only clear iterationResults when all stack entries were implicit.
+      // When forStack is empty after explicit FOR exit, iterationResults
+      // must be preserved for parent-step aggregation.
+      iterationResults: (() => {
+        const hasOnlyImplicit = forStack?.length ? forStack.every(fc => fc.implicit) : false;
+        return hasOnlyImplicit ? undefined : iterationResults;
+      })(),
       lastAction,
     });
   }
