@@ -303,6 +303,7 @@ function buildTransition(
 
   if (retry > 0) {
     // Has retry: [retry guard -> stay, exhausted -> action]
+    const exhaustedTransition = buildActionTransition(action, stepName, substepId, steps, resultKind);
     return [
       {
         guard: ({ context }: { context: RunbookContext }) =>
@@ -314,7 +315,8 @@ function buildTransition(
         }),
         target: currentStateId
       },
-      buildActionTransition(action, stepName, substepId, steps, resultKind)
+      // Flatten in case buildActionTransition returns an array (e.g., FOR loop guarded transitions)
+      ...(Array.isArray(exhaustedTransition) ? exhaustedTransition : [exhaustedTransition])
     ];
   }
 
@@ -391,7 +393,8 @@ function buildActionTransition(
             target: firstSubstepStateId,
             actions: assign({
               forStack: ({ context }: { context: RunbookContext }) => {
-                const top = peekForStack(context.forStack)!;
+                const top = peekForStack(context.forStack);
+                if (!top) return context.forStack;
                 return [{ ...top, iteration: top.iteration + 1 }];
               },
               iterationResults: ({ context }: { context: RunbookContext }) => {
@@ -562,8 +565,8 @@ function buildActionTransition(
           return { target: 'STOPPED' };
         }
 
-        // If dynamic step has substeps, use unified ForContext initialization
-        if (dynamicStep.substeps?.length) {
+        // If dynamic step has substeps and no specific substep targeted, use unified ForContext initialization
+        if (dynamicStep.substeps?.length && !action.target.substep) {
           const forClause = dynamicStep.forClause ?? { start: 1, end: 1 } as ForClause;
           const isImplicit = !dynamicStep.forClause;
           const firstSubstepStateId = getFirstSubstepOfStep(dynamicStep);
@@ -577,7 +580,7 @@ function buildActionTransition(
                   : ([] as ('pass' | 'fail')[]),
                 lastAction: buildGotoLastAction(action.target),
                 retryCount: 0,
-                substep: dynamicStep.substeps?.[0]?.id,
+                substep: dynamicStep.substeps[0]?.id,
                 ...CLEAR_NEXT_FLAGS
               })
             };
@@ -610,7 +613,8 @@ function buildActionTransition(
       }
 
       // Handle GOTO to step with substeps (explicit FOR or implicit 1..1)
-      if (targetStepObj.substeps?.length) {
+      // Only use FOR loop path when no specific substep is targeted
+      if (targetStepObj.substeps?.length && !action.target.substep) {
         const forClause = targetStepObj.forClause ?? { start: 1, end: 1 } as ForClause;
         const isImplicit = !targetStepObj.forClause;
         const firstSubstepStateId = getFirstSubstepOfStep(targetStepObj);
@@ -624,7 +628,7 @@ function buildActionTransition(
                 : ([] as ('pass' | 'fail')[]),
               lastAction: buildGotoLastAction(action.target),
               retryCount: 0,
-              substep: targetStepObj.substeps?.[0]?.id,
+              substep: targetStepObj.substeps[0]?.id,
               ...CLEAR_NEXT_FLAGS
             })
           };
@@ -671,7 +675,8 @@ function buildActionTransition(
           target: firstSubstepStateId,
           actions: assign({
             forStack: ({ context }: { context: RunbookContext }) => {
-              const top = peekForStack(context.forStack)!;
+              const top = peekForStack(context.forStack);
+              if (!top) return context.forStack;
               return [{ ...top, iteration: top.iteration + 1 }];
             },
             iterationResults: ({ context }: { context: RunbookContext }) => {
