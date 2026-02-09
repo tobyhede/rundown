@@ -68,7 +68,7 @@ import { type StepId } from '@rundown-org/parser';
 export type LastAction =
   | { readonly type: 'START' }
   | { readonly type: 'CONTINUE' }
-  | { readonly type: 'GOTO'; readonly target: string; readonly substep?: string }
+  | { readonly type: 'GOTO'; readonly target: string; readonly substep?: string; readonly at?: number | string }
   | { readonly type: 'GOTO_NEXT' }
   | { readonly type: 'COMPLETE' }
   | { readonly type: 'STOP' }

@@ -543,6 +543,9 @@ export function formatActionForDisplay(
         }
         result = `GOTO ${target}.${substep}`;
       }
+      if (lastAction.at !== undefined) {
+        result = `${result} AT ${String(lastAction.at)}`;
+      }
       return result;
     }
     case 'GOTO_NEXT':

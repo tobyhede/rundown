@@ -96,6 +96,18 @@ describe('execution action helpers', () => {
         expect(formatActionForDisplay({ type: 'GOTO', target: '2', substep: '3' }, 0, 3)).toBe('GOTO 2.3');
       });
 
+      it('formats GOTO with AT qualifier', () => {
+        expect(formatActionForDisplay({ type: 'GOTO', target: '3', at: 2 }, 0, 3)).toBe('GOTO 3 AT 2');
+      });
+
+      it('formats GOTO with substep and AT qualifier', () => {
+        expect(formatActionForDisplay({ type: 'GOTO', target: '3', substep: '1', at: 5 }, 0, 3)).toBe('GOTO 3.1 AT 5');
+      });
+
+      it('formats GOTO with template variable AT qualifier', () => {
+        expect(formatActionForDisplay({ type: 'GOTO', target: '3', at: '{{Index}}' }, 0, 3)).toBe('GOTO 3 AT {{Index}}');
+      });
+
       it('formats GOTO_NEXT', () => {
         expect(formatActionForDisplay({ type: 'GOTO_NEXT' }, 0, 3)).toBe('GOTO NEXT');
       });

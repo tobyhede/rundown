@@ -80,6 +80,7 @@ function buildGotoLastAction(target: StepId): LastAction {
     type: 'GOTO' as const,
     target: target.step,
     ...(target.substep && { substep: target.substep }),
+    ...(target.at !== undefined && { at: target.at }),
   };
 }
 
@@ -746,7 +747,8 @@ export function compileRunbookToMachine(steps: Step[]) {
               if (event.type !== 'GOTO') return undefined;
               const step = event.target.step;
               const substep = event.target.substep ?? target.substepId;
-              return { type: 'GOTO' as const, target: step, ...(substep && { substep }) };
+              const at = event.target.at;
+              return { type: 'GOTO' as const, target: step, ...(substep && { substep }), ...(at !== undefined && { at }) };
             },
             retryCount: 0,
             substep: ({ event }: { event: RunbookEvent }) =>
@@ -758,7 +760,8 @@ export function compileRunbookToMachine(steps: Step[]) {
               if (event.type !== 'GOTO') return undefined;
               const step = event.target.step;
               const substep = event.target.substep ?? target.substepId;
-              return { type: 'GOTO' as const, target: step, ...(substep && { substep }) };
+              const at = event.target.at;
+              return { type: 'GOTO' as const, target: step, ...(substep && { substep }), ...(at !== undefined && { at }) };
             },
             resolvedSubstepId: ({ event }: { event: RunbookEvent }) =>
               event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,

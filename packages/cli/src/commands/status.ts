@@ -138,11 +138,15 @@ export function registerStatusCommand(program: Command): void {
           const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
           let actionStr: string;
           switch (state.lastAction.type) {
-            case 'GOTO':
-              actionStr = state.lastAction.substep
+            case 'GOTO': {
+              const gotoBase = state.lastAction.substep
                 ? `GOTO ${state.lastAction.target}.${state.lastAction.substep}`
                 : `GOTO ${state.lastAction.target}`;
+              actionStr = state.lastAction.at !== undefined
+                ? `${gotoBase} AT ${String(state.lastAction.at)}`
+                : gotoBase;
               break;
+            }
             case 'GOTO_NEXT':
               actionStr = 'GOTO NEXT';
               break;

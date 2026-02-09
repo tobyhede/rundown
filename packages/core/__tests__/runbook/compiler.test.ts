@@ -1966,6 +1966,8 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.forEnd).toBe(5);
       expect(actor.getSnapshot().context.forVariable).toBe('batch');
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
+      // AT qualifier is preserved in lastAction for state persistence
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'GOTO', target: '2', substep: '1', at: 3 });
     });
 
     it('GOTO event without AT to FOR step resets iteration', () => {
@@ -2004,6 +2006,8 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('step_2_1');
       expect(actor.getSnapshot().context.forIteration).toBe(1);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
+      // No AT qualifier in lastAction
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'GOTO', target: '2', substep: '1' });
     });
   });
 });
