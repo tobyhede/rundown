@@ -22,19 +22,14 @@ Formal BNF-style grammar for Rundown runbook syntax. See [SPEC.md](./SPEC.md) fo
 # title
 [ description ]
 
-{ static_steps | dynamic_step }
+steps
 
-where static_steps is:
-  static_step [ static_step ... ]
+where steps is:
+  step [ step ... ]
 
-where static_step is:
-  "##" integer [ separator ] title
-    [ transition ... ]
-    [ prompt ]
-    {{ code_block | substeps | runbooks }}
-
-where dynamic_step is:
-  "##" "{N}" [ separator ] title
+where step is:
+  "##" step-identifier [ separator ] title
+    [ for_clause ]
     [ transition ... ]
     [ prompt ]
     [{ code_block | substeps | runbooks }]
@@ -55,22 +50,22 @@ where substep is:
     [{ code_block  | runbooks }]
 
 where substep_id is:
-  parent_ref "." { integer | "{n}" }
+  integer                              -- short form (parent prefix omitted)
+  | parent_ref "." { integer | name }  -- qualified form
 
 where parent_ref is:
   integer    -- for static parent
-  | "{N}"    -- for dynamic parent
   | name     -- for named parent
 
 where step-identifier is:
-  integer | "{N}" | name
+  integer | name
 
 where substep-identifier is:
-  step-identifier "." ( integer | "{n}" | name )
+  step-identifier "." ( integer | name )
 
 where name is:
   [A-Za-z_][A-Za-z0-9_]*
-  (case-sensitive; must not be a reserved word: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY)
+  (case-sensitive; must not be a reserved word: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY, BREAK, FOR, IN, TO, AT)
 
 where code_block is:
   "```" [ info_string ]
@@ -92,13 +87,30 @@ where result is:
   action | RETRY [ count ] [ action ]
 
 where action is:
-  CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | RETRY ...
+  CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK | RETRY ...
 
 where message is:
   name | "\"" text "\""
 
 where target is:
-  step-identifier | substep-identifier | "NEXT" | "NEXT" step-identifier | "NEXT" substep-identifier
+  step-identifier [ "AT" index ]
+  | substep-identifier [ "AT" index ]
+
+where index is:
+  integer | "{{" variable_name "}}"
+
+where for_clause is:
+  "- FOR" [ variable_name "IN" ] range
+
+where range is:
+  integer                              -- implicit start (1), end is integer
+  | integer "TO" integer               -- explicit start and end
+  | integer "TO" "{{" variable_name "}}"  -- variable end bound
+  | "{{" variable_name "}}" "TO" integer  -- variable start bound
+  | "{{" variable_name "}}" "TO" "{{" variable_name "}}"  -- variable both bounds
+
+where variable_name is:
+  [a-zA-Z_][a-zA-Z0-9_]*
 
 where frontmatter is:
   "---"
@@ -134,6 +146,39 @@ where scenario is:
 
 ---
 
+## FOR Clause
+
+The FOR clause is a step-level annotation that makes a step iterate its substeps. It appears as a bullet point before transitions.
+
+**Syntax variants:**
+
+| Form | Example | Description |
+|------|---------|-------------|
+| Named variable, explicit range | `- FOR batch IN 1 TO 10` | Iterates 1..10, `{{batch}}` available |
+| No variable, explicit range | `- FOR 1 TO 10` | Iterates 1..10, no named variable |
+| Named variable, implicit start | `- FOR batch IN 10` | Iterates 1..10, `{{batch}}` available |
+| No variable, implicit start | `- FOR 10` | Iterates 1..10, no named variable |
+| Variable bounds | `- FOR batch IN 1 TO {{Max}}` | End bound from template variable |
+
+**Rules:**
+- FOR must appear before transitions in the step's bullet list
+- `NEXT` and `BREAK` actions are only valid within substeps of a FOR step
+- `AT` is only valid when the GOTO target is a FOR step (cross-step allowed, but the target must be FOR and have substeps)
+- Parent FOR step transitions aggregate across iterations using ALL/ANY modifiers
+
+---
+
+## Built-In Variables
+
+| Variable | Value | Available |
+|----------|-------|-----------|
+| `{{Step}}` | Full step identifier (`3`, `3.1`, `ErrorHandler`) | Always |
+| `{{Index}}` | Current loop iteration number (1-based) | Inside FOR steps |
+
+These use PascalCase, consistent with other built-in variables (Date, WorkPath). The loop variable (if named) and `{{Index}}` are expanded per-iteration.
+
+---
+
 ## Template Variables
 
 | Pattern             | Variable  | Expansion                               |
@@ -142,9 +187,7 @@ where scenario is:
 | `{{VariableName}}`  | undefined | preserved as literal `{{VariableName}}` |
 
 
-VariableName: `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
-
-Note: `{{VariableName}}` (template) vs `{N}`, `{n}` (dynamic identifiers) use different brace counts.
+ VariableName: `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 
 ---
 
@@ -171,6 +214,13 @@ Note: `{{VariableName}}` (template) vs `{N}`, `{n}` (dynamic identifiers) use di
 | `RETRY`          | `RETRY 1 STOP` |
 | `RETRY n`        | `RETRY n STOP` |
 | `RETRY n action` | `RETRY n action` |
+
+### GOTO AT Defaults
+
+| Input | Expands To |
+|-------|------------|
+| `GOTO N` (FOR step) | `GOTO N AT 1` |
+| `GOTO N AT I` (FOR step) | `GOTO N AT I` |
 
 ### Implicit Transitions
 

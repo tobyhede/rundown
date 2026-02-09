@@ -2516,7 +2516,7 @@ curl -X POST https://api.example.com/webhook \
 
 ## Composition & Agents
 
-Parent runbooks, agents, and delegation.
+Parent runbooks, agents, and delegation. See [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) for the conceptual models behind these patterns.
 
 ### runbook-composition.runbook.md
 

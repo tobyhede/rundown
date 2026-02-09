@@ -5,6 +5,7 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
 **For syntax and format details, see:**
 - [SPEC.md](./SPEC.md) - Rundown specification
 - [FORMAT.md](./FORMAT.md) - Format grammar and expansion rules
+- [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
 
 ---
 
@@ -732,6 +733,8 @@ rundown prune --all
 
 ## Subagent Dispatch Patterns
 
+> **See also:** [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) for the five orchestration models, agent type conventions, and guidance on choosing a model.
+
 ### Pattern 1: Orchestrator Control
 
 Main agent runs runbook, dispatches subagents for substeps.
@@ -931,6 +934,8 @@ If state becomes corrupted:
 ---
 
 ## Integration with Claude Code
+
+See [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) for agent type conventions and context file discovery.
 
 ### Context Injection
 

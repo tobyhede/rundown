@@ -269,4 +269,5 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 
 - [docs/SPEC.md](docs/SPEC.md) - Rundown specification
 - [docs/MCP.md](docs/MCP.md) - MCP server reference
+- [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
 - [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
