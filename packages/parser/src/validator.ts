@@ -396,7 +396,7 @@ export function validateAction(
       // Validate AT - target must be a FOR step
       if ('at' in action.target && action.target.at !== undefined) {
         if (!namedStep.forClause) {
-          const context = getErrorContext(currentStepObj, currentSubstepId);
+          const _context = getErrorContext(currentStepObj, currentSubstepId);
           errors.push({
             line: currentStepObj.line,
             message: `GOTO AT is only valid when the target step has a FOR clause (step "${targetStep}" has no FOR)`
@@ -445,7 +445,7 @@ export function validateAction(
     // Validate AT - target must be a FOR step
     if ('at' in action.target && action.target.at !== undefined) {
       if (!targetStepObj.forClause) {
-        const context = getErrorContext(currentStepObj, currentSubstepId);
+        const _context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
           message: `GOTO AT is only valid when the target step has a FOR clause (step "${targetStep}" has no FOR)`

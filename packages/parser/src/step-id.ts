@@ -232,7 +232,7 @@ export function stepIdToString(stepId: StepId): string {
     result = `${result}.${stepId.substep}`;
   }
   if (stepId.at !== undefined) {
-    result = `${result} AT ${stepId.at}`;
+    result = `${result} AT ${String(stepId.at)}`;
   }
   return result;
 }

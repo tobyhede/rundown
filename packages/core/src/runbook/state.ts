@@ -150,10 +150,10 @@ export class RunbookStateManager {
     const machine = compileRunbookToMachine(steps);
 
     // Migrate old snapshot context: flat FOR fields → forStack
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // Snapshot migration deals with untyped persisted data — any is unavoidable
+    /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
     const snapshot = state.snapshot as any;
     if (snapshot?.context && !snapshot.context.forStack) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ctx = snapshot.context as any;
       if (ctx.forIteration !== undefined) {
         // Derive stepId from snapshot.value (authoritative) with state.step fallback
@@ -180,6 +180,7 @@ export class RunbookStateManager {
         snapshot.context = { ...ctx, forStack: [] };
       }
     }
+    /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
 
     const actor = createActor(machine, {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
