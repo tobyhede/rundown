@@ -261,16 +261,16 @@ describe('ForClauseSchema', () => {
     expect(ForClauseSchema.safeParse({ variable: 'batch', start: 1, end: 10 }).success).toBe(true);
   });
 
-  it('validates range with template variable end', () => {
-    expect(ForClauseSchema.safeParse({ variable: 'item', start: 1, end: '{{MaxItems}}' }).success).toBe(true);
+  it('rejects template variable end', () => {
+    expect(ForClauseSchema.safeParse({ variable: 'item', start: 1, end: '{{MaxItems}}' }).success).toBe(false);
   });
 
-  it('validates range with template variable start', () => {
-    expect(ForClauseSchema.safeParse({ start: '{{StartIdx}}', end: 10 }).success).toBe(true);
+  it('rejects template variable start', () => {
+    expect(ForClauseSchema.safeParse({ start: '{{StartIdx}}', end: 10 }).success).toBe(false);
   });
 
-  it('validates range with both template variables', () => {
-    expect(ForClauseSchema.safeParse({ start: '{{Start}}', end: '{{End}}' }).success).toBe(true);
+  it('rejects both template variables', () => {
+    expect(ForClauseSchema.safeParse({ start: '{{Start}}', end: '{{End}}' }).success).toBe(false);
   });
 
   it('rejects zero as start', () => {
@@ -313,9 +313,6 @@ describe('ForClauseSchema', () => {
     expect(ForClauseSchema.safeParse({ start: 5, end: 5 }).success).toBe(true);
   });
 
-  it('allows start > end when end is template variable', () => {
-    expect(ForClauseSchema.safeParse({ start: 10, end: '{{Max}}' }).success).toBe(true);
-  });
 });
 
 describe('ActionSchema with NEXT and BREAK', () => {

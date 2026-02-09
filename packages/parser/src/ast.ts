@@ -27,10 +27,10 @@ export interface Command {
 export interface ForClause {
   /** Named loop variable (e.g., "batch"), undefined if unnamed */
   readonly variable?: string;
-  /** Start of iteration range (number literal or template variable reference) */
-  readonly start: number | string;
-  /** End of iteration range (number literal or template variable reference) */
-  readonly end: number | string;
+  /** Start of iteration range (positive integer) */
+  readonly start: number;
+  /** End of iteration range (positive integer) */
+  readonly end: number;
 }
 
 /**

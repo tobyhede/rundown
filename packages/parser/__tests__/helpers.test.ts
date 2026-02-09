@@ -1373,14 +1373,6 @@ describe('parseForClause', () => {
       expect(parseForClause('FOR batch IN 1 TO 10')).toEqual({ variable: 'batch', start: 1, end: 10 });
     });
 
-    it('parses named variable with template end', () => {
-      expect(parseForClause('FOR batch IN 1 TO {{Max}}')).toEqual({ variable: 'batch', start: 1, end: '{{Max}}' });
-    });
-
-    it('parses named variable with template start and end', () => {
-      expect(parseForClause('FOR item IN {{Start}} TO {{End}}')).toEqual({ variable: 'item', start: '{{Start}}', end: '{{End}}' });
-    });
-
     it('parses underscore variable name', () => {
       expect(parseForClause('FOR _idx IN 1 TO 5')).toEqual({ variable: '_idx', start: 1, end: 5 });
     });
@@ -1391,9 +1383,6 @@ describe('parseForClause', () => {
       expect(parseForClause('FOR 1 TO 10')).toEqual({ start: 1, end: 10 });
     });
 
-    it('parses template end', () => {
-      expect(parseForClause('FOR 1 TO {{Max}}')).toEqual({ start: 1, end: '{{Max}}' });
-    });
   });
 
   describe('named count: FOR variable IN count', () => {
@@ -1401,9 +1390,6 @@ describe('parseForClause', () => {
       expect(parseForClause('FOR batch IN 10')).toEqual({ variable: 'batch', start: 1, end: 10 });
     });
 
-    it('parses template count', () => {
-      expect(parseForClause('FOR batch IN {{Count}}')).toEqual({ variable: 'batch', start: 1, end: '{{Count}}' });
-    });
   });
 
   describe('unnamed count: FOR count', () => {
@@ -1411,8 +1397,27 @@ describe('parseForClause', () => {
       expect(parseForClause('FOR 10')).toEqual({ start: 1, end: 10 });
     });
 
-    it('parses template count', () => {
-      expect(parseForClause('FOR {{Count}}')).toEqual({ start: 1, end: '{{Count}}' });
+  });
+
+  describe('rejects unresolved template variables', () => {
+    it('rejects named variable with template end', () => {
+      expect(parseForClause('FOR batch IN 1 TO {{Max}}')).toBeNull();
+    });
+
+    it('rejects named variable with template start and end', () => {
+      expect(parseForClause('FOR item IN {{Start}} TO {{End}}')).toBeNull();
+    });
+
+    it('rejects unnamed range with template end', () => {
+      expect(parseForClause('FOR 1 TO {{Max}}')).toBeNull();
+    });
+
+    it('rejects named count with template variable', () => {
+      expect(parseForClause('FOR batch IN {{Count}}')).toBeNull();
+    });
+
+    it('rejects unnamed count with template variable', () => {
+      expect(parseForClause('FOR {{Count}}')).toBeNull();
     });
   });
 

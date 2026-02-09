@@ -2116,31 +2116,6 @@ describe('runbook compiler', () => {
       expect(ctx2.iterationResults).toEqual([]);
     });
 
-    it('throws on unresolved template variable in FOR bounds', () => {
-      const steps: Step[] = [
-        {
-          name: '1',
-          isDynamic: false,
-          forClause: { start: '{{Max}}' as unknown as number, end: 3 },
-          description: 'Unresolved template',
-          substeps: [
-            {
-              id: '1',
-              description: 'Process',
-              isDynamic: false,
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
-              }
-            }
-          ]
-        }
-      ];
-
-      expect(() => compileRunbookToMachine(steps)).toThrow(/bounds must be numeric/);
-    });
-
     it('GOTO AT with unresolved template string falls back to loop start', () => {
       const steps: Step[] = [
         {

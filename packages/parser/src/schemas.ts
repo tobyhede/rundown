@@ -29,19 +29,14 @@ export const CommandSchema = z.object({
 /**
  * Zod schema for ForClause
  *
- * Validates FOR loop range specifications with numeric or template variable bounds.
+ * Validates FOR loop range specifications with numeric bounds.
  */
 export const ForClauseSchema = z.object({
   variable: z.string().regex(NAMED_IDENTIFIER_PATTERN).optional(),
-  start: z.union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)]),
-  end: z.union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)]),
+  start: z.number().int().positive(),
+  end: z.number().int().positive(),
 }).refine(
-  (data) => {
-    if (typeof data.start === 'number' && typeof data.end === 'number') {
-      return data.start <= data.end;
-    }
-    return true;
-  },
+  (data) => data.start <= data.end,
   { message: 'FOR range start must not exceed end' }
 );
 

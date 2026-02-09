@@ -142,32 +142,6 @@ function getFirstSubstepOfStep(step: Step): string | null {
   return null;
 }
 
-/**
- * Resolve FOR loop bounds from a ForClause, validating that they are numeric.
- * Throws on unresolved template variables (NaN).
- *
- * @param forClause - The FOR clause to resolve bounds from
- * @param stepName - Step name for error reporting
- * @returns Resolved numeric start and end values
- * @throws {Error} When bounds are not numeric (e.g., unresolved template variables)
- */
-function resolveForBounds(
-  forClause: ForClause,
-  stepName: string
-): { start: number; end: number } {
-  const start = typeof forClause.start === 'string'
-    ? Number(forClause.start) : forClause.start;
-  const end = typeof forClause.end === 'string'
-    ? Number(forClause.end) : forClause.end;
-  if (Number.isNaN(start) || Number.isNaN(end)) {
-    throw new Error(
-      `FOR loop on step ${stepName}: bounds must be numeric, ` +
-      `got start=${String(forClause.start)}, end=${String(forClause.end)}`
-    );
-  }
-  return { start, end };
-}
-
 /** Peek at the top of the FOR context stack. */
 function peekForStack(stack: ForContext[]): ForContext | undefined {
   return stack.length > 0 ? stack[stack.length - 1] : undefined;
@@ -206,12 +180,12 @@ function createForContext(
   atValue?: number | string,
   implicit?: boolean
 ): ForContext {
-  const { start, end } = resolveForBounds(forClause, stepName);
-  const iteration = resolveAtValue(atValue, start);
+  const iteration = resolveAtValue(atValue, forClause.start);
   return {
     stepId: stepName,
     iteration,
-    start, end,
+    start: forClause.start,
+    end: forClause.end,
     variable: forClause.variable,
     ...(implicit && { implicit: true }),
   };
@@ -567,7 +541,7 @@ function buildActionTransition(
 
         // If dynamic step has substeps and no specific substep targeted, use unified ForContext initialization
         if (dynamicStep.substeps?.length && !action.target.substep) {
-          const forClause = dynamicStep.forClause ?? { start: 1, end: 1 } as ForClause;
+          const forClause = dynamicStep.forClause ?? { start: 1, end: 1 };
           const isImplicit = !dynamicStep.forClause;
           const firstSubstepStateId = getFirstSubstepOfStep(dynamicStep);
           if (firstSubstepStateId) {
@@ -615,7 +589,7 @@ function buildActionTransition(
       // Handle GOTO to step with substeps (explicit FOR or implicit 1..1)
       // Only use FOR loop path when no specific substep is targeted
       if (targetStepObj.substeps?.length && !action.target.substep) {
-        const forClause = targetStepObj.forClause ?? { start: 1, end: 1 } as ForClause;
+        const forClause = targetStepObj.forClause ?? { start: 1, end: 1 };
         const isImplicit = !targetStepObj.forClause;
         const firstSubstepStateId = getFirstSubstepOfStep(targetStepObj);
         if (firstSubstepStateId) {
@@ -757,13 +731,6 @@ function buildActionTransition(
 // XState snapshot type is not fully typed
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function compileRunbookToMachine(steps: Step[]) {
-  // Validate FOR loop bounds eagerly — fail fast on unresolved template variables
-  for (const step of steps) {
-    if (step.forClause) {
-      resolveForBounds(step.forClause, step.name);
-    }
-  }
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const states: Record<string, any> = {};
 

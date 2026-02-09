@@ -6,7 +6,6 @@ import {
 import {
   type Action,
   type Transitions,
-  TEMPLATE_VAR_PATTERN
 } from './schemas.js';
 import { MAX_STEP_NUMBER } from './schemas.js';
 import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
@@ -267,7 +266,8 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
  * - `FOR variable IN count` (named, count only — start defaults to 1)
  * - `FOR count` (unnamed, count only — start defaults to 1)
  *
- * Bounds can be positive integers or template variable references ({{VarName}}).
+ * Bounds must be positive integers. Unresolved template variables (e.g., `{{Count}}`)
+ * cause the clause to be rejected (returns null).
  *
  * @param text - The bullet text (after `- ` prefix), e.g. "FOR batch IN 1 TO 10"
  * @returns Parsed ForClause, or null if text is not a valid FOR clause
@@ -279,11 +279,10 @@ export function parseForClause(text: string): ForClause | null {
   const rest = trimmed.slice(4).trim();
   if (!rest) return null;
 
-  // Try to parse a bound value (positive integer or {{TemplateVar}})
-  const parseBound = (s: string): number | string | null => {
+  // Try to parse a bound value (positive integer only)
+  const parseBound = (s: string): number | null => {
     const num = parseInt(s, 10);
     if (!isNaN(num) && String(num) === s && num > 0) return num;
-    if (TEMPLATE_VAR_PATTERN.test(s)) return s;
     return null;
   };
 
