@@ -22,6 +22,7 @@ import {
   extractDisplayCommand,
   type ExecutionEventEmitter,
   type LastAction,
+  type ForContext,
 } from '@rundown-org/core';
 import {
   isInternalRdCommand,
@@ -33,6 +34,7 @@ import {
   isPolicyEnforced,
   getSandboxOptions,
 } from './policy-context.js';
+import { expandLoopVariables } from './template-renderer.js';
 
 /**
  * Check if runbook snapshot indicates completion.
@@ -112,6 +114,43 @@ export async function handleNextInstanceFlags(
 }
 
 /**
+ * Build a loop variable map from the current FOR loop state.
+ *
+ * Returns `undefined` when no expansion is needed (no explicit FOR loop active).
+ * Falls back to the step's `forClause` definition when `forStack` is empty
+ * (initial state created without actor snapshot, before first transition).
+ *
+ * @param forStack - Current FOR loop stack from persisted state
+ * @param forClause - FOR clause from the step definition (bootstrap fallback)
+ * @returns Variable map with `Index` and optional named variable, or `undefined`
+ */
+function buildLoopVariables(
+  forStack?: readonly ForContext[],
+  forClause?: Step['forClause']
+): Record<string, string> | undefined {
+  // Primary: use forStack (available after first transition)
+  if (forStack?.length) {
+    const top = forStack[forStack.length - 1];
+    if (top.implicit) return undefined;
+    const vars: Record<string, string> = { Index: String(top.iteration) };
+    if (top.variable) {
+      vars[top.variable] = String(top.iteration);
+    }
+    return vars;
+  }
+  // Bootstrap: first iteration before actor has run
+  if (forClause) {
+    const start = forClause.start;
+    const vars: Record<string, string> = { Index: String(start) };
+    if (forClause.variable) {
+      vars[forClause.variable] = String(start);
+    }
+    return vars;
+  }
+  return undefined;
+}
+
+/**
  * Execute command steps in a loop until:
  * - Runbook completes or stops
  * - A prompt-only step is reached (no command)
@@ -181,6 +220,15 @@ export async function runExecutionLoop(
       ? String(state.substepStates?.length ?? 1)
       : state.substep;
 
+    // Expand FOR loop variables ({{var}}, {{Index}}) for current iteration
+    const loopVars = buildLoopVariables(state.forStack, currentStep.forClause);
+    const expandedDescription = loopVars
+      ? expandLoopVariables(itemToRender.description, loopVars)
+      : itemToRender.description;
+    const expandedPrompt = loopVars && itemToRender.prompt
+      ? expandLoopVariables(itemToRender.prompt, loopVars)
+      : itemToRender.prompt;
+
     // Emit STEP_ENTERED event or print step/substep block
     const stepPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
     if (emitter) {
@@ -188,18 +236,30 @@ export async function runExecutionLoop(
       emitter.emit('STEP_ENTERED', {
         position: stepPosition,
         stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as Step).name,
-        description: itemToRender.description,
-        prompt: itemToRender.prompt,
+        description: expandedDescription,
+        prompt: expandedPrompt,
         hasCommand: !!itemToRender.command,
-        commandCode: itemToRender.command?.code,
+        commandCode: loopVars && itemToRender.command?.code
+          ? expandLoopVariables(itemToRender.command.code, loopVars)
+          : itemToRender.command?.code,
         commandLang: itemToRender.command?.lang,
         isSubstep,
         isDynamic: itemToRender.isDynamic,
         prompted,  // CRITICAL: Pass prompted flag for correct command display
       });
     } else {
+      const renderItem = loopVars
+        ? {
+            ...itemToRender,
+            description: expandedDescription,
+            prompt: expandedPrompt,
+            command: itemToRender.command
+              ? { ...itemToRender.command, code: expandLoopVariables(itemToRender.command.code, loopVars) }
+              : itemToRender.command,
+          }
+        : itemToRender;
       // Temporary fallback only when emitter is not provided.
-      printStepBlock(stepPosition, itemToRender, prompted);
+      printStepBlock(stepPosition, renderItem, prompted);
     }
 
     // If CLI prompted mode, OR no command
@@ -208,15 +268,20 @@ export async function runExecutionLoop(
       return 'waiting';
     }
 
+    // Expand command code for execution (after guard — itemToRender.command is guaranteed)
+    const expandedCommandCode = loopVars
+      ? expandLoopVariables(itemToRender.command.code, loopVars)
+      : itemToRender.command.code;
+
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
     // Use display command (with rd echo wrapper stripped) for cleaner output
     // Fall back to original command if extractDisplayCommand returns empty (e.g., "rd echo --result pass")
-    const extracted = extractDisplayCommand(itemToRender.command.code);
-    const displayCommand = extracted || itemToRender.command.code;
+    const extracted = extractDisplayCommand(expandedCommandCode);
+    const displayCommand = extracted || expandedCommandCode;
     if (emitter) {
       emitter.emit('COMMAND_STARTED', {
-        command: itemToRender.command.code,
+        command: expandedCommandCode,
         displayCommand,
         position: { current: displayStep, total: totalSteps, substep: displaySubstep },
       });
@@ -226,23 +291,23 @@ export async function runExecutionLoop(
     }
     let execResult: ExecutionResult;
 
-    if (isInternalRdCommand(itemToRender.command.code)) {
-      const internalResult = await executeRdCommandInternal(itemToRender.command.code, cwd);
+    if (isInternalRdCommand(expandedCommandCode)) {
+      const internalResult = await executeRdCommandInternal(expandedCommandCode, cwd);
       if (internalResult !== null) {
         execResult = internalResult;
       } else {
         // Fallback to spawn if internal execution not supported for this subcommand
-        execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbookPath);
+        execResult = await executeCommandWithPolicyCheck(expandedCommandCode, cwd, state.runbookPath);
       }
     } else {
-      execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbookPath);
+      execResult = await executeCommandWithPolicyCheck(expandedCommandCode, cwd, state.runbookPath);
     }
 
     // Emit COMMAND_COMPLETED event
     if (emitter) {
       const cmdPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
       emitter.emit('COMMAND_COMPLETED', {
-        command: itemToRender.command.code,
+        command: expandedCommandCode,
         success: execResult.success,
         exitCode: execResult.exitCode,
         position: cmdPosition,
@@ -257,7 +322,7 @@ export async function runExecutionLoop(
       const policyPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
       if (emitter) {
         emitter.emit('POLICY_DENIED', {
-          command: itemToRender.command.code,
+          command: expandedCommandCode,
           reason: execResult.denialReason ?? 'Permission denied',
           position: policyPosition,
         });
@@ -269,7 +334,7 @@ export async function runExecutionLoop(
         });
       } else {
         // Temporary fallback only when emitter is not provided.
-        printPolicyDenied(itemToRender.command.code, execResult.denialReason ?? 'Permission denied');
+        printPolicyDenied(expandedCommandCode, execResult.denialReason ?? 'Permission denied');
       }
       return 'stopped';
     }

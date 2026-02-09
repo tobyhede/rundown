@@ -72,3 +72,25 @@ export function renderTemplate(
   const template = handlebars.compile(withPlaceholders, { noEscape: true });
   return template(variables);
 }
+
+/**
+ * Expand loop variables in text using simple regex substitution.
+ *
+ * Unlike {@link renderTemplate} which uses Handlebars for full template processing,
+ * this function performs lightweight per-iteration variable expansion for FOR loops.
+ * Unmatched variables are preserved as literal `{{name}}` text.
+ *
+ * @param text - Text containing `{{variable}}` placeholders
+ * @param variables - Key-value pairs for substitution (e.g., `{ batch: "2", Index: "2" }`)
+ * @returns Text with matched variables replaced
+ */
+export function expandLoopVariables(
+  text: string,
+  variables: Record<string, string>
+): string {
+  return text.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
+    return Object.prototype.hasOwnProperty.call(variables, name)
+      ? variables[name]
+      : match;
+  });
+}
