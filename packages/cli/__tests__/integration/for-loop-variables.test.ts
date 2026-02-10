@@ -3,7 +3,7 @@ import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 
-describe('FOR loop variable expansion', () => {
+describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
@@ -73,6 +73,163 @@ rd echo item={{item}} index={{Index}}
     const allEventText = JSON.stringify(events);
     expect(allEventText).not.toContain('{{item}}');
     expect(allEventText).not.toContain('{{Index}}');
+  });
+
+  it('expands {{Step}} to step number for a simple step', async () => {
+    await writeFile(
+      join(workspace.cwd, 'step-var-simple.runbook.md'),
+      `---
+name: Step Var Simple
+---
+# Step Var
+
+## 1. Running step {{Step}}
+\`\`\`bash
+rd echo step={{Step}}
+\`\`\`
+
+## 2. Running step {{Step}}
+\`\`\`bash
+rd echo step={{Step}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json step-var-simple.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+    const commandStartedEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'command_started'
+    );
+
+    expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(2);
+    expect(commandStartedEvents.length).toBeGreaterThanOrEqual(2);
+
+    // Step 1 should expand {{Step}} to "1"
+    expect(stepEnteredEvents[0].description).toContain('Running step 1');
+    expect(commandStartedEvents[0].command).toContain('step=1');
+
+    // Step 2 should expand {{Step}} to "2"
+    expect(stepEnteredEvents[1].description).toContain('Running step 2');
+    expect(commandStartedEvents[1].command).toContain('step=2');
+
+    // No raw {{Step}} in any event
+    const allEventText = JSON.stringify(events);
+    expect(allEventText).not.toContain('{{Step}}');
+  });
+
+  it('expands {{Step}} to qualified ID for a substep', async () => {
+    await writeFile(
+      join(workspace.cwd, 'step-var-substep.runbook.md'),
+      `---
+name: Step Var Substep
+---
+# Step Var Substep
+
+## 1. Parent step
+- PASS ALL: CONTINUE
+
+### 1.1 Substep {{Step}}
+\`\`\`bash
+rd echo step={{Step}}
+\`\`\`
+
+### 1.2 Substep {{Step}}
+\`\`\`bash
+rd echo step={{Step}}
+\`\`\`
+
+## 2. Done at {{Step}}
+\`\`\`bash
+rd echo done={{Step}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json step-var-substep.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+    const commandStartedEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'command_started'
+    );
+
+    // Should have substep 1.1, 1.2, and step 2
+    expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(3);
+    expect(commandStartedEvents.length).toBeGreaterThanOrEqual(3);
+
+    // Substep 1.1 → "1.1"
+    expect(stepEnteredEvents[0].description).toContain('Substep 1.1');
+    expect(commandStartedEvents[0].command).toContain('step=1.1');
+
+    // Substep 1.2 → "1.2"
+    expect(stepEnteredEvents[1].description).toContain('Substep 1.2');
+    expect(commandStartedEvents[1].command).toContain('step=1.2');
+
+    // Step 2 → "2" (no substep qualifier)
+    expect(stepEnteredEvents[2].description).toContain('Done at 2');
+    expect(commandStartedEvents[2].command).toContain('done=2');
+  });
+
+  it('expands {{Step}} alongside {{Index}} in FOR loop steps', async () => {
+    await writeFile(
+      join(workspace.cwd, 'step-var-for.runbook.md'),
+      `---
+name: Step Var FOR
+---
+# Step Var FOR
+
+## 1. Loop step
+- FOR i IN 1 TO 2
+- PASS ALL: CONTINUE
+### 1.1 Iteration {{Index}} of step {{Step}}
+\`\`\`bash
+rd echo step={{Step}} index={{Index}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json step-var-for.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+    const commandStartedEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'command_started'
+    );
+
+    expect(stepEnteredEvents).toHaveLength(2);
+    expect(commandStartedEvents).toHaveLength(2);
+
+    // Both {{Step}} and {{Index}} should expand
+    expect(stepEnteredEvents[0].description).toContain('Iteration 1 of step 1.1');
+    expect(commandStartedEvents[0].command).toContain('step=1.1');
+    expect(commandStartedEvents[0].command).toContain('index=1');
+
+    expect(stepEnteredEvents[1].description).toContain('Iteration 2 of step 1.1');
+    expect(commandStartedEvents[1].command).toContain('step=1.1');
+    expect(commandStartedEvents[1].command).toContain('index=2');
   });
 
   it('expands loop variables on first iteration (bootstrap from forClause)', async () => {

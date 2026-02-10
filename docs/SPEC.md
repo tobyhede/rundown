@@ -207,10 +207,10 @@ Rundown provides built-in variables using PascalCase, consistent with existing b
 
 | Variable | Value | Available |
 |----------|-------|-----------|
-| `{{Step}}` | Full step identifier (`3`, `3.1`, `ErrorHandler`) | Always |
+| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`) | Always |
 | `{{Index}}` | Current loop iteration number | Inside FOR steps |
 
-These join the template variable context alongside user-defined variables. `{{Index}}` is only defined inside a FOR loop; outside a loop it is preserved as literal text.
+These join the template variable context alongside user-defined variables. `{{Step}}` is always available and expands to the qualified step identifier. `{{Index}}` is only defined inside a FOR loop; outside a loop it is preserved as literal text.
 
 ### Undefined Variable Behavior
 
@@ -223,7 +223,7 @@ When a variable is not provided, it is preserved as literal text in the output:
 
 Template variables are expanded **once** when `rd run` is invoked. The expanded content is stored in the runbook state, ensuring that resume commands (`pass`, `fail`, `goto`, `status`, `pop`) work consistently without re-rendering.
 
-**FOR loop variables** are expanded **per-iteration**. The loop variable (`{{batch}}`, etc.) and `{{Index}}` are re-evaluated at the start of each iteration, while all other variables retain their initial expansion.
+**Per-step variables** (`{{Step}}`, `{{Index}}`, and named FOR loop variables like `{{batch}}`) are expanded **per-iteration**. `{{Step}}` is re-evaluated at each step; `{{Index}}` and named loop variables are re-evaluated at the start of each FOR iteration. All other variables retain their initial expansion.
 
 ---
 
@@ -496,12 +496,7 @@ Actions determine what happens next.
 | `GOTO 3.1 AT {{Index}}` | Jump to substep 1 of step 3 at current iteration |
 | `GOTO 3` (no AT) | Implies `GOTO 3 AT 1` (reset to first iteration) |
 
-**Named step context:** Named steps inherit loop context. `GOTO ErrorHandler` from inside a FOR preserves `{{Step}}` and `{{Index}}`, enabling generic error handlers:
-
-```markdown
-## ErrorHandler
-- PASS: GOTO {{Step}} AT {{Index}}
-```
+**Named step context:** Named steps inherit loop context. `GOTO ErrorHandler` from inside a FOR preserves `{{Index}}`, enabling error handlers that are aware of the current iteration. Dynamic error handler targets (e.g., computed step references) are not currently supported.
 
 ### NEXT and BREAK
 

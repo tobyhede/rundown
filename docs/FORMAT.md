@@ -110,6 +110,8 @@ where range is:
   | "{{" variable_name "}}" "TO" "{{" variable_name "}}"  -- variable both bounds
   | "{{" variable_name "}}"            -- count-only with template variable
 
+Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result).
+
 where variable_name is:
   [a-zA-Z_][a-zA-Z0-9_]*
 
@@ -173,10 +175,10 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 
 | Variable | Value | Available |
 |----------|-------|-----------|
-| `{{Step}}` | Full step identifier (`3`, `3.1`, `ErrorHandler`) | Always |
+| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`) | Always |
 | `{{Index}}` | Current loop iteration number (1-based) | Inside FOR steps |
 
-These use PascalCase, consistent with other built-in variables (Date, WorkPath). The loop variable (if named) and `{{Index}}` are expanded per-iteration.
+These use PascalCase, consistent with other built-in variables (Date, WorkPath). `{{Step}}` is expanded per-step. The loop variable (if named) and `{{Index}}` are expanded per-iteration.
 
 ---
 

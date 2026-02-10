@@ -64,6 +64,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `Month` | `02` | Current month (01-12) |
 | `Day` | `04` | Current day (01-31) |
 | `WorkPath` | `.work` | Default artifact directory |
+| `Step` | `3.1` | Current qualified step identifier |
 
 Built-in variables use PascalCase and can be overridden by any other source.
 

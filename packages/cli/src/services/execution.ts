@@ -55,40 +55,48 @@ export function isRunbookStopped(snapshot: { status: string; value: unknown }): 
 }
 
 /**
- * Build a loop variable map from the current FOR loop state.
+ * Build per-step dynamic variables for Phase 2 expansion.
  *
- * Returns `undefined` when no expansion is needed (no explicit FOR loop active).
+ * Always returns a variable map containing at least `Step` (the qualified step
+ * identifier). When inside an explicit FOR loop, also includes `Index` and any
+ * named loop variable.
+ *
  * Falls back to the step's `forClause` definition when `forStack` is empty
  * (initial state created without actor snapshot, before first transition).
  *
+ * @param stepId - Current step identifier (e.g., "3" or "ErrorHandler")
+ * @param substepId - Optional substep identifier (e.g., "1")
  * @param forStack - Current FOR loop stack from persisted state
  * @param forClause - FOR clause from the step definition (bootstrap fallback)
- * @returns Variable map with `Index` and optional named variable, or `undefined`
+ * @returns Variable map with `Step` and optional `Index` / named variable
  */
-function buildLoopVariables(
+function buildStepVariables(
+  stepId: string,
+  substepId: string | undefined,
   forStack?: readonly ForContext[],
   forClause?: Step['forClause']
-): Record<string, string> | undefined {
+): Record<string, string> {
+  const step = substepId ? `${stepId}.${substepId}` : stepId;
+  const vars: Record<string, string> = { Step: step };
+
   // Primary: use forStack (available after first transition)
   if (forStack?.length) {
     const top = forStack[forStack.length - 1];
-    if (top.implicit) return undefined;
-    const vars: Record<string, string> = { Index: String(top.iteration) };
-    if (top.variable) {
-      vars[top.variable] = String(top.iteration);
+    if (!top.implicit) {
+      vars.Index = String(top.iteration);
+      if (top.variable) {
+        vars[top.variable] = String(top.iteration);
+      }
     }
-    return vars;
-  }
-  // Bootstrap: first iteration before actor has run
-  if (forClause) {
-    const start = forClause.start;
-    const vars: Record<string, string> = { Index: String(start) };
+  } else if (forClause) {
+    // Bootstrap: first iteration before actor has run
+    vars.Index = String(forClause.start);
     if (forClause.variable) {
-      vars[forClause.variable] = String(start);
+      vars[forClause.variable] = String(forClause.start);
     }
-    return vars;
   }
-  return undefined;
+
+  return vars;
 }
 
 /**
@@ -143,13 +151,11 @@ export async function runExecutionLoop(
 
     const displaySubstep = state.substep;
 
-    // Expand FOR loop variables ({{var}}, {{Index}}) for current iteration
-    const loopVars = buildLoopVariables(state.forStack, currentStep.forClause);
-    const expandedDescription = loopVars
-      ? expandLoopVariables(itemToRender.description, loopVars)
-      : itemToRender.description;
-    const expandedPrompt = loopVars && itemToRender.prompt
-      ? expandLoopVariables(itemToRender.prompt, loopVars)
+    // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration
+    const stepVars = buildStepVariables(state.step, state.substep, state.forStack, currentStep.forClause);
+    const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
+    const expandedPrompt = itemToRender.prompt
+      ? expandLoopVariables(itemToRender.prompt, stepVars)
       : itemToRender.prompt;
 
     // Emit STEP_ENTERED event or print step/substep block
@@ -162,24 +168,22 @@ export async function runExecutionLoop(
         description: expandedDescription,
         prompt: expandedPrompt,
         hasCommand: !!itemToRender.command,
-        commandCode: loopVars && itemToRender.command?.code
-          ? expandLoopVariables(itemToRender.command.code, loopVars)
+        commandCode: itemToRender.command?.code
+          ? expandLoopVariables(itemToRender.command.code, stepVars)
           : itemToRender.command?.code,
         commandLang: itemToRender.command?.lang,
         isSubstep,
         prompted,  // CRITICAL: Pass prompted flag for correct command display
       });
     } else {
-      const renderItem = loopVars
-        ? {
-            ...itemToRender,
-            description: expandedDescription,
-            prompt: expandedPrompt,
-            command: itemToRender.command
-              ? { ...itemToRender.command, code: expandLoopVariables(itemToRender.command.code, loopVars) }
-              : itemToRender.command,
-          }
-        : itemToRender;
+      const renderItem = {
+        ...itemToRender,
+        description: expandedDescription,
+        prompt: expandedPrompt,
+        command: itemToRender.command
+          ? { ...itemToRender.command, code: expandLoopVariables(itemToRender.command.code, stepVars) }
+          : itemToRender.command,
+      };
       // Temporary fallback only when emitter is not provided.
       printStepBlock(stepPosition, renderItem, prompted);
     }
@@ -191,9 +195,7 @@ export async function runExecutionLoop(
     }
 
     // Expand command code for execution (after guard — itemToRender.command is guaranteed)
-    const expandedCommandCode = loopVars
-      ? expandLoopVariables(itemToRender.command.code, loopVars)
-      : itemToRender.command.code;
+    const expandedCommandCode = expandLoopVariables(itemToRender.command.code, stepVars);
 
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
