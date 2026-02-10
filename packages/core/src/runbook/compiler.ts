@@ -46,7 +46,15 @@ export type RunbookEvent =
  * XState transition configuration returned by transition builder functions.
  * Can be a single transition or an array of guarded transitions.
  */
-type TransitionEntry = unknown;
+interface TransitionEntry {
+  target?: string | null;
+  actions?: unknown;
+  guard?: unknown;
+  entry?: unknown;
+  [key: string]: unknown;
+}
+/** XState action returned by assign() — opaque function type. */
+type AssignAction = (...args: never[]) => unknown;
 type TransitionConfig = TransitionEntry | TransitionEntry[];
 
 /**
@@ -183,6 +191,8 @@ function resolveAtValueRuntime(
   const parsed = Number(at);
   if (!Number.isNaN(parsed)) return parsed;
   // Try template variable resolution from current forStack
+  // NOTE: Only resolves from the topmost loop context. Nested loop support
+  // would require walking the full forStack to find matching variable names.
   const top = forStack.length > 0 ? forStack[forStack.length - 1] : undefined;
   if (at === '{{Index}}' && top) {
     return top.iteration;
@@ -257,7 +267,7 @@ function buildSimpleGotoAssign(options: {
   resolvedSubstepId: GotoAssignValue<string | undefined>;
   isGotoToSelf: boolean;
   preserveForContext?: boolean;
-}): TransitionEntry {
+}): AssignAction {
   return assign({
     lastAction: ({ event }: { event: RunbookEvent }) => {
       return typeof options.lastAction === 'function'
@@ -317,7 +327,7 @@ function buildTransition(
       target: currentStateId
     };
     const exhaustedEntries: TransitionEntry[] = Array.isArray(exhaustedTransition)
-      ? (exhaustedTransition as TransitionEntry[])
+      ? exhaustedTransition
       : [exhaustedTransition];
     return [retryGuard, ...exhaustedEntries];
   }
@@ -366,7 +376,7 @@ function buildLoopExitAssign(
   exitTarget: string,
   iterationResult: 'pass' | 'fail',
   isImplicit?: boolean
-): TransitionEntry {
+): AssignAction {
   return assign({
     forStack: [] as ForContext[],
     iterationResults: isImplicit
