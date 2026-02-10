@@ -47,7 +47,6 @@ describe('execution action helpers', () => {
       expect(extractLastAction({ context: { lastAction: { type: 'COMPLETE' } } })).toEqual({ type: 'COMPLETE' });
       expect(extractLastAction({ context: { lastAction: { type: 'RETRY' } } })).toEqual({ type: 'RETRY' });
       expect(extractLastAction({ context: { lastAction: { type: 'GOTO', target: 'ErrorHandler' } } })).toEqual({ type: 'GOTO', target: 'ErrorHandler' });
-      expect(extractLastAction({ context: { lastAction: { type: 'GOTO_NEXT' } } })).toEqual({ type: 'GOTO_NEXT' });
     });
   });
 
@@ -106,36 +105,6 @@ describe('execution action helpers', () => {
 
       it('formats GOTO with template variable AT qualifier', () => {
         expect(formatActionForDisplay({ type: 'GOTO', target: '3', at: '{{Index}}' }, 0, 3)).toBe('GOTO 3 AT {{Index}}');
-      });
-
-      it('formats GOTO_NEXT', () => {
-        expect(formatActionForDisplay({ type: 'GOTO_NEXT' }, 0, 3)).toBe('GOTO NEXT');
-      });
-    });
-
-    describe('placeholder resolution', () => {
-      it('resolves {N} placeholder with instance number', () => {
-        expect(formatActionForDisplay({ type: 'GOTO', target: '{N}', substep: '3' }, 0, 3, 5)).toBe('GOTO 5.3');
-        expect(formatActionForDisplay({ type: 'GOTO', target: '{N}' }, 0, 3, 1)).toBe('GOTO 1');
-      });
-
-      it('resolves {n} placeholder with substep instance number', () => {
-        expect(formatActionForDisplay({ type: 'GOTO', target: '1', substep: '{n}' }, 0, 3, undefined, 3)).toBe('GOTO 1.3');
-        expect(formatActionForDisplay({ type: 'GOTO', target: '{N}', substep: '{n}' }, 0, 3, 2, 5)).toBe('GOTO 2.5');
-      });
-
-      it('resolves multiple placeholders', () => {
-        expect(formatActionForDisplay({ type: 'GOTO', target: '{N}', substep: '{n}' }, 0, 3, 10, 20)).toBe('GOTO 10.20');
-      });
-
-      it('leaves placeholders unresolved when instance not provided', () => {
-        expect(formatActionForDisplay({ type: 'GOTO', target: '{N}', substep: '3' }, 0, 3)).toBe('GOTO {N}.3');
-        expect(formatActionForDisplay({ type: 'GOTO', target: '1', substep: '{n}' }, 0, 3)).toBe('GOTO 1.{n}');
-      });
-
-      it('does not resolve placeholders in non-GOTO actions', () => {
-        expect(formatActionForDisplay({ type: 'CONTINUE' }, 0, 3, 5, 10)).toBe('CONTINUE');
-        expect(formatActionForDisplay({ type: 'STOP' }, 0, 3, 5, 10)).toBe('STOP');
       });
     });
 

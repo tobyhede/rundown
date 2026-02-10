@@ -1,14 +1,11 @@
-import { describe, it, expect, jest } from '@jest/globals';
+import { describe, it, expect } from '@jest/globals';
 import {
   isRunbookComplete,
   isRunbookStopped,
   isValidResult,
   getStepRetryMax,
   deriveAction,
-  handleNextInstanceFlags,
 } from '../../src/services/execution.js';
-// We mock RunbookStateManager
-import type { RunbookStateManager, Step, RunbookState } from '@rundown-org/core';
 
 describe('execution service', () => {
   describe('isRunbookComplete', () => {
@@ -124,123 +121,4 @@ describe('execution service', () => {
     it('returns GOTO for non-sequential substeps', () => {
       expect(deriveAction('1', '1', '1', '3', 0, 0, 0, false, false)).toBe('GOTO 1.3');
     });
-
-    it('resolves placeholders in GOTO', () => {
-      // deriveAction(prevStep, newStep, prevSubstep, newSubstep, ...)
-      // instance=5
-      expect(deriveAction('1', '{N}', undefined, undefined, 0, 0, 0, false, false, 5)).toBe('GOTO 5');
-    });
-
-     it('resolves placeholders in GOTO substep', () => {
-       // instance=5, substepInstance=2
-       // GOTO {N}.{n} -> GOTO 5.2
-       expect(deriveAction('1', '{N}', '1', '{n}', 0, 0, 0, false, false, 5, 2)).toBe('GOTO 5.2');
-    });
-  });
-
-  describe('handleNextInstanceFlags', () => {
-    let mockUpdate: jest.Mock;
-    let mockAddDynamicSubstep: jest.Mock;
-    let mockManager: jest.Mocked<RunbookStateManager>;
-    let mockState: RunbookState;
-
-    beforeEach(() => {
-      mockUpdate = jest.fn();
-      mockAddDynamicSubstep = jest.fn();
-      mockManager = {
-        update: mockUpdate,
-        addDynamicSubstep: mockAddDynamicSubstep,
-      } as unknown as jest.Mocked<RunbookStateManager>;
-
-      mockState = {
-        step: '{N}',
-        instance: 1,
-        runbook: 'test.md',
-        runbookPath: '/path/to/test.md',
-        id: 'run-1',
-        status: 'running',
-        variables: {},
-        retryCount: 0,
-        substepStates: []
-      } as RunbookState;
-    });
-
-    it('increments instance when nextInstance is true', async () => {
-      const snapshot = { context: { nextInstance: true } };
-      mockUpdate.mockResolvedValue({ ...mockState, instance: 2 });
-
-      await handleNextInstanceFlags(
-        snapshot,
-        mockState,
-        mockManager,
-        'run-1',
-        [],
-        false,
-        false
-      );
-
-      expect(mockUpdate).toHaveBeenCalledWith('run-1', {
-        instance: 2,
-        substep: '1'
-      });
-    });
-
-    it('does not increment instance if runbook complete', async () => {
-      const snapshot = { context: { nextInstance: true } };
-      await handleNextInstanceFlags(
-        snapshot,
-        mockState,
-        mockManager,
-        'run-1',
-        [],
-        true, // isComplete
-        false
-      );
-      expect(mockUpdate).not.toHaveBeenCalled();
-    });
-
-    it('handles nextSubstepInstance', async () => {
-      const snapshot = { context: { nextSubstepInstance: true } };
-      const steps = [
-        { name: '{N}', isDynamic: true, substeps: [{ isDynamic: true }] }
-      ] as unknown as Step[];
-
-      mockAddDynamicSubstep.mockResolvedValue('sub-2');
-      mockUpdate.mockResolvedValue({ ...mockState, substep: 'sub-2' });
-
-      await handleNextInstanceFlags(
-        snapshot,
-        mockState,
-        mockManager,
-        'run-1',
-        steps,
-        false,
-        false
-      );
-
-      expect(mockAddDynamicSubstep).toHaveBeenCalledWith('run-1');
-      expect(mockUpdate).toHaveBeenCalledWith('run-1', {
-        substep: 'sub-2'
-      });
-    });
-
-    it('ignores nextSubstepInstance if no dynamic substep in definition', async () => {
-       const snapshot = { context: { nextSubstepInstance: true } };
-       const steps = [
-         { name: '{N}', isDynamic: true, substeps: [{ isDynamic: false }] } // No dynamic substep
-       ] as unknown as Step[];
-
-       await handleNextInstanceFlags(
-         snapshot,
-         mockState,
-         mockManager,
-         'run-1',
-         steps,
-         false,
-         false
-       );
-
-       expect(mockAddDynamicSubstep).not.toHaveBeenCalled();
-    });
-  });
 });

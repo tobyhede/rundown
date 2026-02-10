@@ -206,7 +206,6 @@ describe('runExecutionLoop', () => {
       substeps: [{
         id: '1',
         description: 'Handle {{item}}',
-        isDynamic: false,
         command: { code: 'rd echo item={{item}}', lang: 'bash' },
         transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
       }],
