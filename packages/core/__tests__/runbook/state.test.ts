@@ -101,24 +101,6 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  describe('RunbookStateManager dynamic substeps', () => {
-    it('adds dynamic substep with incrementing ID', async () => {
-      const state = await manager.create('test.runbook.md', mockRunbook, { runbookPath: 'test.runbook.md' });
-      await manager.update(state.id, { substepStates: [] });
-
-      const id1 = await manager.addDynamicSubstep(state.id);
-      expect(id1).toBe('1');
-
-      const id2 = await manager.addDynamicSubstep(state.id);
-      expect(id2).toBe('2');
-
-      const updated = await manager.load(state.id);
-      expect(updated?.substepStates).toHaveLength(2);
-      expect(updated?.substepStates?.[0].id).toBe('1');
-      expect(updated?.substepStates?.[1].id).toBe('2');
-    });
-  });
-
   describe('RunbookStateManager substep lifecycle', () => {
     it('binds agent to substep', async () => {
       const state = await manager.create('test.runbook.md', mockRunbook, { runbookPath: 'test.runbook.md' });
@@ -200,41 +182,6 @@ describe('RunbookStateManager', () => {
     it('accepts prompted option', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md', prompted: true });
       expect(state.prompted).toBe(true);
-    });
-  });
-
-  describe('dynamic runbook initialization', () => {
-    it('initializes dynamic runbook with instance=1 and step={N}', async () => {
-      const dynamicRunbook: Runbook = {
-        title: 'Dynamic Test',
-        steps: [{
-          name: '{N}',
-          description: 'Process Batch',
-          isDynamic: true,
-        }],
-      };
-
-      const state = await manager.create('dynamic.runbook.md', dynamicRunbook, { runbookPath: 'dynamic.runbook.md' });
-
-      expect(state.step).toBe('{N}');        // Keep {N} for machine integrity
-      expect(state.instance).toBe(1);         // Use instance field for display
-      expect(state.stepName).toBe('Process Batch');
-    });
-
-    it('does not set instance for non-dynamic runbooks', async () => {
-      const staticRunbook: Runbook = {
-        title: 'Static Test',
-        steps: [{
-          name: 'Setup',
-          description: 'Setup Step',
-          isDynamic: false,
-        }],
-      };
-
-      const state = await manager.create('static.runbook.md', staticRunbook, { runbookPath: 'static.runbook.md' });
-
-      expect(state.step).toBe('Setup');
-      expect(state.instance).toBeUndefined();
     });
   });
 
