@@ -11,6 +11,7 @@ import { getCwd } from '../helpers/context.js';
 import {
   getStepRetryMax,
   buildMetadata,
+  formatActionForDisplay,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -128,23 +129,7 @@ export function registerStatusCommand(program: Command): void {
         let actionBlockData: ActionBlockData | undefined;
         if (state.lastAction) {
           const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
-          let actionStr: string;
-          switch (state.lastAction.type) {
-            case 'GOTO': {
-              const gotoBase = state.lastAction.substep
-                ? `GOTO ${state.lastAction.target}.${state.lastAction.substep}`
-                : `GOTO ${state.lastAction.target}`;
-              actionStr = state.lastAction.at !== undefined
-                ? `${gotoBase} AT ${String(state.lastAction.at)}`
-                : gotoBase;
-              break;
-            }
-            case 'RETRY':
-              actionStr = `RETRY (${String(state.retryCount)}/${String(retryMaxForAction)})`;
-              break;
-            default:
-              actionStr = state.lastAction.type;
-          }
+          const actionStr = formatActionForDisplay(state.lastAction, state.retryCount, retryMaxForAction);
           actionBlockData = { action: actionStr };
           if (state.lastResult) {
             actionBlockData.result = state.lastResult === 'pass';
