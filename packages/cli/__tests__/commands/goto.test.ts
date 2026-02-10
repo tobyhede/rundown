@@ -68,5 +68,12 @@ describe('goto command', () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('missing required argument');
     });
+
+    it('rejects AT on non-FOR step', async () => {
+      const result = runCli(['goto', '2 AT 5'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('INVALID_AT_TARGET');
+    });
   });
 });

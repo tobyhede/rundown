@@ -66,6 +66,20 @@ export function registerGotoCommand(program: Command): void {
           process.exit(1);
         }
 
+        // Validate AT - target must be a FOR step
+        if (target.at !== undefined) {
+          const step = steps[stepIndex];
+          if (!step.forClause) {
+            output.error(
+              `GOTO AT is only valid when the target step has a FOR clause (step "${target.step}" has no FOR)`,
+              'INVALID_AT_TARGET',
+              { step: target.step, at: target.at }
+            );
+            output.flush();
+            process.exit(1);
+          }
+        }
+
         // Validate substep exists (if specified)
         if (target.substep) {
           const step = steps[stepIndex];
