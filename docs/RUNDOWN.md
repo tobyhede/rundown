@@ -37,7 +37,6 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
 - [Subagent Dispatch Patterns](#subagent-dispatch-patterns)
   - [Pattern 1: Orchestrator Control](#pattern-1-orchestrator-control)
   - [Pattern 2: Agent-Controlled Branching](#pattern-2-agent-controlled-branching)
-  - [Pattern 3: Dynamic Steps](#pattern-3-dynamic-steps)
 - [Output Format](#output-format)
   - [Standard Output Structure](#standard-output-structure)
   - [Key Elements](#key-elements)
@@ -147,7 +146,6 @@ Runbooks compile to XState machines at runtime. Steps become states:
 | `## 1. Title` | `step_1` |
 | `## 2. Title` | `step_2` |
 | `### 2.1 Substep` | `step_2_1` |
-| `### 2.{n} Dynamic` | `step_2_1`, `step_2_2`, ... |
 
 Terminal states: `COMPLETE`, `STOPPED`
 
@@ -272,8 +270,7 @@ Each runbook state file contains:
 ```
 
 Key fields:
-- `step`: Current step identifier (string: "1", "ErrorHandler", "{N}")
-- `instance`: Dynamic runbook instance counter (1, 2, 3, ...)
+- `step`: Current step identifier (string: "1", "ErrorHandler")
 - `substep`: Current substep ID (e.g., "1", "2")
 - `retryCount`: Current retry attempt
 - `steps`: Array of step states for all runbook steps
@@ -349,12 +346,10 @@ Undefined variables are preserved as literal `{{variable}}` text rather than cau
 
 Template variables are expanded **once** at `rd run` time. The expanded content is stored in `state.runbookSrc` to ensure resume commands (`pass`, `fail`, `goto`, `complete`, `status`, `pop`) work consistently without re-rendering.
 
-### Distinction from Dynamic Steps
+### Distinction from Template Usage
 
-Template variables (`{{var}}`) differ from dynamic step syntax:
-- `{{variable}}` - Template variable, expanded before parsing
-- `{N}` - Dynamic step identifier, handled by parser
-- `{n}` - Dynamic substep identifier, handled by parser
+Template variables are expanded before parsing and should not be confused with step identifiers:
+- `{{variable}}` - Template variable, expanded before parsing (e.g., `{{environment}}` becomes `production`)
 
 ---
 
@@ -518,7 +513,6 @@ rundown goto 3.1     # Jump to substep 3.1
 
 **Restrictions:**
 - Target must exist
-- Cannot use `GOTO NEXT` via CLI (runbook-only)
 - Resets retryCount to 0
 - Clears lastResult (prevents stale state)
 
@@ -528,11 +522,6 @@ rundown goto 3.1     # Jump to substep 3.1
 |--------|------------|-------------|
 | `GOTO N` | Any step | Jump to step N (must exist, N ≤ total steps) |
 | `GOTO N.M` | Any step | Jump to substep M of step N |
-| `GOTO {N}.M` | Dynamic step {N} | Jump to substep M within current dynamic instance |
-| `GOTO NEXT` | Dynamic step {N} | Advance to next dynamic instance (N+1) |
-
-**Notes:**
-- `GOTO NEXT` is only valid in runbook transitions, not via CLI
 
 ### Status Commands
 
@@ -681,8 +670,6 @@ rundown goto 3       # Jump to step 3
 rundown goto 2.1     # Jump to substep 1 of step 2
 ```
 
-**Note:** `GOTO NEXT` is only valid in runbook transitions, not via CLI.
-
 ### Task: Pause and Resume a Runbook
 
 ```bash
@@ -742,7 +729,7 @@ Main agent runs runbook, dispatches subagents for substeps.
 **Runbook structure:**
 ```markdown
 ## 2. Execute batch
-### 2.{n} Process item
+### 2.1 Process item
   - task.runbook.md
 
 - PASS ALL: CONTINUE
@@ -787,21 +774,6 @@ If complete: `rundown pass`
 ```
 
 Agent reads step, evaluates condition, runs appropriate CLI command.
-
-### Pattern 3: Dynamic Steps
-
-Repeat step template until work complete.
-
-```markdown
-## {N} Process batch
-- PASS: GOTO NEXT
-- FAIL: STOP
-
-### {N}.1 Execute tasks
-### {N}.2 Verify results
-```
-
-`GOTO NEXT` increments instance number (N=1, N=2, ...) until agent signals completion with `FAIL` or runbook reaches COMPLETE.
 
 ---
 
@@ -921,7 +893,6 @@ Scenario: COMPLETE
 | "Runbook file not found" | Missing runbook | Check file path |
 | "Step N does not exist" | Invalid GOTO target | Check step numbers |
 | "Invalid step target" | Bad goto format | Use "N" or "N.M" |
-| "GOTO NEXT is only valid as runbook transition" | CLI misuse | Only use in runbook transitions |
 
 ### State Recovery
 

@@ -90,7 +90,6 @@ Server running on port {{ port }} in {{ environment }} mode.
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
-- Template variables (`{{var}}`) differ from dynamic step references (`{N}`)
 - Frontmatter vars support string, number, and boolean values (converted to strings)
 
 ## Schema Output

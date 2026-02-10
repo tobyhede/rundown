@@ -29,7 +29,6 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 | Directory | Description |
 |-----------|-------------|
 | `sequential/` | Linear runbooks with numbered steps |
-| `dynamic/` | Runtime-determined iteration using `{N}` placeholder |
 | `named/` | Steps identified by name instead of number |
 | `substeps/` | Nested steps within parent steps |
 | `navigation/` | GOTO patterns for jumping between steps |
