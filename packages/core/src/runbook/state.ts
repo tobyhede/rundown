@@ -322,9 +322,12 @@ export class RunbookStateManager {
     }
 
     // Parse step name from XState state value
-    // Uses [^_]+ to match step name and substep ID (separated by underscore)
-    const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue)
-      ?? /^step_([^_]+)(?:_([^_]+))?$/.exec(stateValue);
+    const primaryMatch = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
+    const legacyMatch = !primaryMatch ? /^step_([^_]+)(?:_([^_]+))?$/.exec(stateValue) : null;
+    if (legacyMatch) {
+      console.warn('Deprecated state-ID format "step_…" detected. Please restart execution to migrate to "step::…" format.');
+    }
+    const match = primaryMatch ?? legacyMatch;
     const stepName = match ? match[1] : steps[0].name;
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
