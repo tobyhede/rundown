@@ -116,25 +116,39 @@ export class RunbookStateManager {
    * Load a runbook state from disk by ID.
    *
    * @param id - The runbook state ID (e.g., 'wf-2025-01-12-abc123')
-   * @returns The loaded RunbookState, or null if not found, invalid, or a legacy dynamic-step snapshot
+   * @returns The loaded RunbookState, or null if not found or invalid
+   * @throws Error if the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
     try {
       const content = await fs.readFile(this.statePath(id), 'utf8');
       const parsed = JSON.parse(content) as unknown;
 
-      // Skip legacy dynamic-step snapshots: GOTO_NEXT action or instance field
-      /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
+      // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field
+      /* eslint-disable @typescript-eslint/no-explicit-any */
       const parsed_any = parsed as any;
-      if (parsed_any?.lastAction?.type === 'GOTO_NEXT' || parsed_any?.instance !== undefined) {
-        return null;
+      if (parsed_any?.lastAction?.type === 'GOTO_NEXT') {
+        throw new Error(
+          'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
+          'Please restart execution from the runbook entrypoint.'
+        );
       }
-      /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
+      if (parsed_any?.instance !== undefined) {
+        throw new Error(
+          'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
+          'Please restart execution from the runbook entrypoint.'
+        );
+      }
+      /* eslint-enable @typescript-eslint/no-explicit-any */
 
       const result = RunbookStateSchema.safeParse(parsed);
       if (!result.success) return null;
       return result.data;
-    } catch {
+    } catch (e) {
+      // Re-throw legacy snapshot errors
+      if (e instanceof Error && e.message.includes('dynamic-step snapshots')) {
+        throw e;
+      }
       return null;
     }
   }
@@ -164,7 +178,9 @@ export class RunbookStateManager {
       if (ctx.forIteration !== undefined) {
         // Derive stepId from snapshot.value (authoritative) with state.step fallback
         const stateValue = snapshot.value as string | undefined;
-        const stepMatch = stateValue ? /^step_([^_]+)/.exec(stateValue) : null;
+        const stepMatch = stateValue
+          ? (/^step::([^:]+)/.exec(stateValue) ?? /^step_([^_]+)/.exec(stateValue))
+          : null;
         const stepId = stepMatch?.[1] ?? state.step;
 
         snapshot.context = {
@@ -302,7 +318,8 @@ export class RunbookStateManager {
 
     // Parse step name from XState state value
     // Uses [^_]+ to match step name and substep ID (separated by underscore)
-    const match = /^step_([^_]+)(?:_([^_]+))?$/.exec(stateValue);
+    const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue)
+      ?? /^step_([^_]+)(?:_([^_]+))?$/.exec(stateValue);
     const stepName = match ? match[1] : steps[0].name;
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access

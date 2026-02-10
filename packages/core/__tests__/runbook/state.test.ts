@@ -125,11 +125,11 @@ describe('RunbookStateManager', () => {
   });
 
   describe('updateFromActor flattened states', () => {
-    it('extracts substep ID from flattened machine state (step_N_M)', async () => {
+    it('extracts substep ID from flattened machine state (step::N::M)', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const actor = {
         getPersistedSnapshot: () => ({
-          value: 'step_1_2',
+          value: 'step::1::2',
           context: { variables: {}, retryCount: 0, substep: '2' }
         })
       };
@@ -139,11 +139,11 @@ describe('RunbookStateManager', () => {
       expect(updated.substep).toBe('2');
     });
 
-    it('extracts step number from simple machine state (step_N)', async () => {
+    it('extracts step number from simple machine state (step::N)', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const actor = {
         getPersistedSnapshot: () => ({
-          value: 'step_3',
+          value: 'step::3',
           context: { variables: {}, retryCount: 0 }
         })
       };
@@ -545,7 +545,7 @@ describe('RunbookStateManager', () => {
 
       const actor = {
         getPersistedSnapshot: () => ({
-          value: 'step_1',
+          value: 'step::1',
           context: {
             variables: { test: 'value' },
             retryCount: 0,
@@ -645,7 +645,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const actor = {
         getPersistedSnapshot: () => ({
-          value: 'step_1_1',
+          value: 'step::1::1',
           context: {
             forStack: [{ stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }],
             iterationResults: [],
@@ -664,7 +664,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const actor = {
         getPersistedSnapshot: () => ({
-          value: 'step_1_1',
+          value: 'step::1::1',
           context: {
             forStack: [{ stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }],
             iterationResults: ['pass'],
@@ -683,7 +683,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const actor = {
         getPersistedSnapshot: () => ({
-          value: 'step_1_1',
+          value: 'step::1::1',
           context: {
             forStack: [{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'batch' }],
             iterationResults: ['pass'],
@@ -703,7 +703,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const actor = {
         getPersistedSnapshot: () => ({
-          value: 'step_2',
+          value: 'step::2',
           context: {
             forStack: [],
             iterationResults: ['pass', 'fail', 'pass'],
@@ -726,7 +726,7 @@ describe('RunbookStateManager', () => {
   });
 
   describe('Legacy snapshot rejection', () => {
-    it('returns null for state with GOTO_NEXT action in lastAction', async () => {
+    it('rejects state with GOTO_NEXT action in lastAction', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       // Manually save legacy state with GOTO_NEXT
@@ -739,10 +739,11 @@ describe('RunbookStateManager', () => {
       };
       await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
 
-      expect(await manager.load(state.id)).toBeNull();
+      // Attempt to load should throw
+      await expect(manager.load(state.id)).rejects.toThrow('dynamic-step snapshots');
     });
 
-    it('returns null for state with instance field', async () => {
+    it('rejects state with instance field', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       // Manually save legacy state with instance field
@@ -755,29 +756,34 @@ describe('RunbookStateManager', () => {
       };
       await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
 
-      expect(await manager.load(state.id)).toBeNull();
+      // Attempt to load should throw
+      await expect(manager.load(state.id)).rejects.toThrow('dynamic-step snapshots');
     });
 
-    it('does not break list() when legacy state files exist', async () => {
-      // Create a valid state
-      const validState = await manager.create('valid.md', mockRunbook, { runbookPath: 'valid.md' });
+    it('provides helpful error message for legacy snapshots', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
-      // Create a legacy state file alongside it
+      // Manually save legacy state with GOTO_NEXT
       const fs = await import('fs/promises');
       const path = await import('path');
-      const legacyPath = path.join(testDir, '.claude/rundown/runs', 'legacy-run.json');
+      const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
       const legacyState = {
-        ...validState,
-        id: 'legacy-run',
+        ...state,
         lastAction: { type: 'GOTO_NEXT' }
       };
-      await fs.writeFile(legacyPath, JSON.stringify(legacyState));
+      await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
 
-      // list() should return the valid state and skip the legacy one
-      const states = await manager.list();
-      expect(states.length).toBeGreaterThanOrEqual(1);
-      expect(states.some(s => s.id === validState.id)).toBe(true);
-      expect(states.some(s => s.id === 'legacy-run')).toBe(false);
+      // Attempt to load should throw with helpful message
+      try {
+        await manager.load(state.id);
+        throw new Error('Should have thrown');
+      } catch (e) {
+        if (e instanceof Error) {
+          expect(e.message).toContain('dynamic-step snapshots');
+          expect(e.message).toContain('no longer supported');
+          expect(e.message).toContain('restart execution');
+        }
+      }
     });
   });
 });

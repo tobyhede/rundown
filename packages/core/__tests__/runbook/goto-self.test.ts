@@ -21,11 +21,11 @@ describe('GOTO to self (implicit retry)', () => {
     actor.start();
 
     expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_1');
+    expect(actor.getSnapshot().value).toBe('step::1');
 
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(1);
-    expect(actor.getSnapshot().value).toBe('step_1');
+    expect(actor.getSnapshot().value).toBe('step::1');
 
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(2);
@@ -65,7 +65,7 @@ describe('GOTO to self (implicit retry)', () => {
     // FAIL with GOTO to different step should reset
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_2');
+    expect(actor.getSnapshot().value).toBe('step::2');
   });
 
   it('should increment retryCount when GOTO targets same step and substep', () => {
@@ -93,12 +93,12 @@ describe('GOTO to self (implicit retry)', () => {
 
     // Initial state - starts at step 1 substep a
     expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_1_a');
+    expect(actor.getSnapshot().value).toBe('step::1::a');
 
     // FAIL with GOTO to same step+substep should increment
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(1);
-    expect(actor.getSnapshot().value).toBe('step_1_a');
+    expect(actor.getSnapshot().value).toBe('step::1::a');
 
     // Second FAIL should increment again
     actor.send({ type: 'FAIL' });
@@ -130,7 +130,7 @@ describe('GOTO to self (implicit retry)', () => {
 
     // Initial state - starts at step 1 substep a
     expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_1_a');
+    expect(actor.getSnapshot().value).toBe('step::1::a');
 
     // Simulate some retries
     actor.send({ type: 'RETRY' });
@@ -140,6 +140,6 @@ describe('GOTO to self (implicit retry)', () => {
     // FAIL with GOTO to same step but different substep should reset
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_1_b');
+    expect(actor.getSnapshot().value).toBe('step::1::b');
   });
 });

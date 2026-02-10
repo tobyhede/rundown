@@ -59,7 +59,13 @@ const DEFAULT_TRANSITIONS: Transitions = {
  * Uses _ instead of . to avoid XState path resolution issues.
  */
 function formatStateId(stepName: string, substepId?: string): string {
-  return substepId ? `step_${stepName}_${substepId}` : `step_${stepName}`;
+  return substepId ? `step::${stepName}::${substepId}` : `step::${stepName}`;
+}
+
+/** Extract substep ID from a state ID string, or undefined if no substep. */
+function extractSubstepFromStateId(stateId: string): string | undefined {
+  const match = /^step::(.+?)::(.+)$/.exec(stateId);
+  return match?.[2];
 }
 
 /** Build a structured GOTO LastAction from a StepId target. */
@@ -76,7 +82,7 @@ function buildGotoLastAction(target: StepId): LastAction {
  * Check if a state represents the first substep of a step with substeps.
  * Returns step info with either the explicit forClause or a synthetic { start: 1, end: 1 }.
  *
- * @param stateId - The state ID to check (e.g., "step_3_1")
+ * @param stateId - The state ID to check (e.g., "step::3::1")
  * @param steps - The full steps array
  * @returns The step, its ForClause (explicit or synthetic), and implicit flag, or null otherwise
  */
@@ -84,7 +90,7 @@ function getStepForFirstSubstep(
   stateId: string,
   steps: Step[]
 ): { step: Step; forClause: ForClause; implicit: boolean } | null {
-  const match = /^step_(.+?)_(.+)$/.exec(stateId);
+  const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
 
   const [, stepName, substepId] = match;
@@ -159,6 +165,24 @@ function resolveAtValue(
   return Number.isNaN(parsed) ? defaultValue : parsed;
 }
 
+/** Resolve AT value at runtime, expanding template variables from forStack context. */
+function resolveAtValueRuntime(
+  at: number | string | undefined,
+  defaultValue: number,
+  forStack: ForContext[]
+): number {
+  if (at === undefined) return defaultValue;
+  if (typeof at === 'number') return at;
+  const parsed = Number(at);
+  if (!Number.isNaN(parsed)) return parsed;
+  // Try template variable resolution from current forStack
+  const top = forStack.length > 0 ? forStack[forStack.length - 1] : undefined;
+  if (top?.variable && at === `{{${top.variable}}}`) {
+    return top.iteration;
+  }
+  return defaultValue;
+}
+
 /**
  * Create a ForContext for a step's FOR clause.
  *
@@ -188,7 +212,7 @@ function createForContext(
 /**
  * Check if a state represents ANY substep of a step with substeps.
  *
- * @param stateId - The state ID to check (e.g., "step_3_2")
+ * @param stateId - The state ID to check (e.g., "step::3::2")
  * @param steps - The full steps array
  * @returns The step, its ForClause (explicit or synthetic), and implicit flag, or null otherwise
  */
@@ -196,7 +220,7 @@ function getStepForSubstep(
   stateId: string,
   steps: Step[]
 ): { step: Step; forClause: ForClause; implicit: boolean } | null {
-  const match = /^step_(.+?)_(.+)$/.exec(stateId);
+  const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
   const [, stepName] = match;
   const step = steps.find(s => s.name === stepName);
@@ -222,6 +246,7 @@ function buildSimpleGotoAssign(options: {
   lastAction: GotoAssignValue<LastAction | undefined>;
   resolvedSubstepId: GotoAssignValue<string | undefined>;
   isGotoToSelf: boolean;
+  preserveForContext?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 }): any {
   return assign({
@@ -235,8 +260,12 @@ function buildSimpleGotoAssign(options: {
         context.retryCount + 1
       : 0,
     substep: options.resolvedSubstepId,
-    forStack: [] as ForContext[],
-    iterationResults: undefined as ('pass' | 'fail')[] | undefined
+    ...(options.preserveForContext
+      ? {}
+      : {
+          forStack: [] as ForContext[],
+          iterationResults: undefined as ('pass' | 'fail')[] | undefined
+        })
   });
 }
 
@@ -384,9 +413,7 @@ function buildActionTransition(
                   },
               lastAction: { type: 'CONTINUE' as const },
               retryCount: 0,
-              substep: target.startsWith('step_') && target.includes('_', 5)
-                ? target.split('_')[2]
-                : undefined
+              substep: extractSubstepFromStateId(target)
             })
           }
         ];
@@ -398,10 +425,7 @@ function buildActionTransition(
         actions: assign({
           lastAction: { type: 'CONTINUE' as const },
           retryCount: 0,
-          // Extract substep from ID: step_N_M -> M
-          substep: target.startsWith('step_') && target.includes('_', 5)
-            ? target.split('_')[2]
-            : undefined
+          substep: extractSubstepFromStateId(target)
         })
       };
     }
@@ -439,7 +463,21 @@ function buildActionTransition(
           return {
             target: firstSubstepStateId,
             actions: assign({
-              forStack: [createForContext(targetStepObj.name, forClause, action.target.at, isImplicit)],
+              forStack: ({ context }: { context: RunbookContext }): ForContext[] => {
+                const iteration = resolveAtValueRuntime(
+                  action.target.at,
+                  forClause.start,
+                  context.forStack
+                );
+                return [{
+                  stepId: targetStepObj.name,
+                  iteration,
+                  start: forClause.start,
+                  end: forClause.end,
+                  variable: forClause.variable,
+                  ...(isImplicit && { implicit: true }),
+                }];
+              },
               iterationResults: isImplicit
                 ? (undefined as ('pass' | 'fail')[] | undefined)
                 : ([] as ('pass' | 'fail')[]),
@@ -458,13 +496,18 @@ function buildActionTransition(
       const currentStateId = formatStateId(stepName, substepId);
       const isGotoToSelf = computedTarget === currentStateId;
 
+      // Detect intra-loop GOTO: target is within same FOR step
+      const currentStep = steps.find(s => s.name === stepName);
+      const isIntraLoopGoto = !!(currentStep?.forClause && targetStepObj.name === stepName);
+
       return {
         target: computedTarget,
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         actions: buildSimpleGotoAssign({
           lastAction: buildGotoLastAction(action.target),
           resolvedSubstepId,
-          isGotoToSelf
+          isGotoToSelf,
+          preserveForContext: isIntraLoopGoto
         })
       };
     }
@@ -516,9 +559,7 @@ function buildActionTransition(
             },
             lastAction: { type: 'NEXT' as const },
             retryCount: 0,
-            substep: exitTarget.startsWith('step_') && exitTarget.includes('_', 5)
-              ? exitTarget.split('_')[2]
-              : undefined
+            substep: extractSubstepFromStateId(exitTarget)
           })
         }
       ];
@@ -546,9 +587,7 @@ function buildActionTransition(
           },
           lastAction: { type: 'BREAK' as const },
           retryCount: 0,
-          substep: exitTarget.startsWith('step_') && exitTarget.includes('_', 5)
-            ? exitTarget.split('_')[2]
-            : undefined
+          substep: extractSubstepFromStateId(exitTarget)
         })
       };
     }
@@ -669,19 +708,39 @@ export function compileRunbookToMachine(steps: Step[]) {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         actions: forStepForTarget
           ? assign({
-            // FOR step entry via GOTO event: initialize FOR context
-            forStack: ({ event }: { event: RunbookEvent }): ForContext[] => {
+            // FOR step entry via GOTO event: initialize or preserve FOR context
+            forStack: ({ context, event }: { context: RunbookContext; event: RunbookEvent }): ForContext[] => {
               if (event.type !== 'GOTO') return [];
-              return [createForContext(
-                forStepForTarget.step.name,
-                forStepForTarget.forClause,
+              // Intra-loop GOTO: preserve existing forStack
+              const top = peekForStack(context.forStack);
+              if (top?.stepId === forStepForTarget.step.name) {
+                return context.forStack;
+              }
+              // Cross-loop or fresh entry: create new context with runtime AT resolution
+              const iteration = resolveAtValueRuntime(
                 event.target.at,
-                forStepForTarget.implicit
-              )];
+                forStepForTarget.forClause.start,
+                context.forStack
+              );
+              return [{
+                stepId: forStepForTarget.step.name,
+                iteration,
+                start: forStepForTarget.forClause.start,
+                end: forStepForTarget.forClause.end,
+                variable: forStepForTarget.forClause.variable,
+                ...(forStepForTarget.implicit && { implicit: true }),
+              }];
             },
-            iterationResults: forStepForTarget.implicit
-              ? (undefined as ('pass' | 'fail')[] | undefined)
-              : ([] as ('pass' | 'fail')[]),
+            iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] | undefined => {
+              // Intra-loop GOTO: preserve existing results
+              const top = peekForStack(context.forStack);
+              if (top?.stepId === forStepForTarget.step.name) {
+                return context.iterationResults;
+              }
+              return forStepForTarget.implicit
+                ? undefined
+                : ([] as ('pass' | 'fail')[]);
+            },
             lastAction: ({ event }: { event: RunbookEvent }): LastAction | undefined => {
               if (event.type !== 'GOTO') return undefined;
               const step = event.target.step;
@@ -747,7 +806,7 @@ export function compileRunbookToMachine(steps: Step[]) {
     },
   }).createMachine({
     id: 'runbook',
-    initial: allStates.length > 0 ? allStates[0].id : 'step_1',
+    initial: allStates.length > 0 ? allStates[0].id : 'step::1',
     context: {
       retryCount: 0,
       retryMax: undefined,
