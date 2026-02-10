@@ -1588,14 +1588,14 @@ describe('runbook compiler', () => {
       expect(top.end).toBe(3);
     });
 
-    it('GOTO AT with loop variable resolves at runtime', () => {
-      // When AT references a loop variable like {{Index}}, it should
+    it('GOTO AT with built-in {{Index}} resolves at runtime', () => {
+      // When AT references built-in {{Index}}, it should
       // resolve to the current iteration value, not fall back to start.
       const steps: Step[] = [
         {
           name: '1',
           description: 'Loop A',
-          forClause: { start: 1, end: 5, variable: 'Index' },
+          forClause: { start: 1, end: 5, variable: 'item' },
           substeps: [
             {
               id: '1',
@@ -1644,6 +1644,66 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' }); // iter 2 → 3
 
       // FAIL at iteration 3 → GOTO 2 AT {{Index}} → should resolve to AT 3
+      actor.send({ type: 'FAIL' });
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe('step::2::1');
+      expect(snap.context.forStack[0].iteration).toBe(3);
+    });
+
+    it('GOTO AT with named loop variable resolves at runtime', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Loop A',
+          forClause: { start: 1, end: 5, variable: 'item' },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: {
+                  type: 'GOTO', target: { step: '2', at: '{{item}}' }
+                }}
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'Loop B',
+          forClause: { start: 1, end: 5 },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '3',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } }
+          }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Advance to iteration 3
+      actor.send({ type: 'PASS' }); // iter 1 -> 2
+      actor.send({ type: 'PASS' }); // iter 2 -> 3
+
+      // FAIL at iteration 3 -> GOTO 2 AT {{item}} -> resolves to AT 3
       actor.send({ type: 'FAIL' });
       const snap = actor.getSnapshot();
       expect(snap.value).toBe('step::2::1');

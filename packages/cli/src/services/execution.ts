@@ -415,6 +415,36 @@ interface SnapshotContext {
   retryMax?: number;
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isLastAction(value: unknown): value is LastAction {
+  if (!isObjectRecord(value) || typeof value.type !== 'string') return false;
+
+  switch (value.type) {
+    case 'START':
+    case 'CONTINUE':
+    case 'COMPLETE':
+    case 'STOP':
+    case 'RETRY':
+    case 'NEXT':
+    case 'BREAK':
+      return true;
+    case 'GOTO':
+      if (typeof value.target !== 'string') return false;
+      if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
+        return false;
+      }
+      if ('at' in value && value.at !== undefined && typeof value.at !== 'number' && typeof value.at !== 'string') {
+        return false;
+      }
+      return true;
+    default:
+      return false;
+  }
+}
+
 /**
  * Extract the lastAction from an XState snapshot in a type-safe way.
  *
@@ -430,7 +460,8 @@ export function extractLastAction(snapshot: unknown): LastAction | undefined {
     typeof snapshot.context === 'object' &&
     'lastAction' in snapshot.context
   ) {
-    return (snapshot.context as SnapshotContext).lastAction;
+    const action = (snapshot.context as SnapshotContext).lastAction;
+    return isLastAction(action) ? action : undefined;
   }
   return undefined;
 }

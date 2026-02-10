@@ -46,8 +46,7 @@ export type RunbookEvent =
  * XState transition configuration returned by transition builder functions.
  * Can be a single transition or an array of guarded transitions.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type TransitionEntry = Record<string, any>;
+type TransitionEntry = unknown;
 type TransitionConfig = TransitionEntry | TransitionEntry[];
 
 /**
@@ -185,6 +184,9 @@ function resolveAtValueRuntime(
   if (!Number.isNaN(parsed)) return parsed;
   // Try template variable resolution from current forStack
   const top = forStack.length > 0 ? forStack[forStack.length - 1] : undefined;
+  if (at === '{{Index}}' && top) {
+    return top.iteration;
+  }
   if (top?.variable && at === `{{${top.variable}}}`) {
     return top.iteration;
   }
@@ -583,8 +585,7 @@ function buildActionTransition(
 // XState snapshot type is not fully typed
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function compileRunbookToMachine(steps: Step[]) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const states: Record<string, any> = {};
+  const states: Record<string, { on: Record<string, unknown>; entry?: unknown }> = {};
 
   // Build a flat list of all states to generate GOTO transitions
   interface StateConfig {

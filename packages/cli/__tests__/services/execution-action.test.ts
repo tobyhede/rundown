@@ -48,6 +48,13 @@ describe('execution action helpers', () => {
       expect(extractLastAction({ context: { lastAction: { type: 'RETRY' } } })).toEqual({ type: 'RETRY' });
       expect(extractLastAction({ context: { lastAction: { type: 'GOTO', target: 'ErrorHandler' } } })).toEqual({ type: 'GOTO', target: 'ErrorHandler' });
     });
+
+    it('rejects malformed lastAction shapes', () => {
+      expect(extractLastAction({ context: { lastAction: { type: 'GOTO' } } })).toBeUndefined();
+      expect(extractLastAction({ context: { lastAction: { type: 'GOTO', target: 42 } } })).toBeUndefined();
+      expect(extractLastAction({ context: { lastAction: { type: 'GOTO', target: '3', at: { bad: true } } } })).toBeUndefined();
+      expect(extractLastAction({ context: { lastAction: { type: 'NOT_REAL' } } })).toBeUndefined();
+    });
   });
 
   describe('formatActionForDisplay', () => {
