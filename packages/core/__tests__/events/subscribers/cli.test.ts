@@ -51,8 +51,7 @@ describe('CLISubscriber', () => {
         description: 'Test step',
         hasCommand: true,
         isSubstep: false,
-        isDynamic: false,
-        prompted: true,
+          prompted: true,
       })
     );
     const output = writer.getOutput();

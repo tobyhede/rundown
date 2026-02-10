@@ -9,7 +9,6 @@ describe('GOTO to self (implicit retry)', () => {
     const steps: Step[] = [{
       name: '1',
       description: 'Retry Step',
-      isDynamic: false,
       transitions: {
         all: false,
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
@@ -37,8 +36,7 @@ describe('GOTO to self (implicit retry)', () => {
       {
         name: '1',
         description: 'Step One',
-        isDynamic: false,
-        transitions: {
+          transitions: {
           all: false,
           pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
           fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '2' } } }
@@ -47,8 +45,7 @@ describe('GOTO to self (implicit retry)', () => {
       {
         name: '2',
         description: 'Step Two',
-        isDynamic: false,
-        transitions: {
+          transitions: {
           all: false,
           pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -76,19 +73,17 @@ describe('GOTO to self (implicit retry)', () => {
     const steps: Step[] = [{
       name: '1',
       description: 'Step with substeps',
-      isDynamic: false,
       substeps: [
         {
           id: 'a',
           description: 'Substep A',
-          isDynamic: false,
-          transitions: {
+              transitions: {
             all: false,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1', substep: 'a' } } }
           }
         },
-        { id: 'b', description: 'Substep B', isDynamic: false }
+        { id: 'b', description: 'Substep B' }
       ]
     }];
 
@@ -115,19 +110,17 @@ describe('GOTO to self (implicit retry)', () => {
     const steps: Step[] = [{
       name: '1',
       description: 'Step with substeps',
-      isDynamic: false,
       substeps: [
         {
           id: 'a',
           description: 'Substep A',
-          isDynamic: false,
-          transitions: {
+              transitions: {
             all: false,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1', substep: 'b' } } }
           }
         },
-        { id: 'b', description: 'Substep B', isDynamic: false }
+        { id: 'b', description: 'Substep B' }
       ]
     }];
 

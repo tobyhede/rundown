@@ -7,7 +7,6 @@ describe('renderStepForCLI', () => {
     const step: Step = {
       name: '1',
       description: 'Install dependencies',
-      isDynamic: false,
       prompt: 'Run npm install to set up project.',
       command: { code: 'npm install' },
     };
@@ -25,7 +24,6 @@ describe('renderStepForCLI', () => {
     const step: Step = {
       name: '2',
       description: 'Review changes',
-      isDynamic: false,
       prompt: 'Review the diff and approve.',
     };
 
@@ -40,7 +38,6 @@ describe('renderStepForCLI', () => {
     const step: Step = {
       name: '3',
       description: 'Run build',
-      isDynamic: false,
       command: { code: 'npm run build' },
     };
 
@@ -55,14 +52,13 @@ describe('renderStepForCLI', () => {
     const step: Step = {
       name: '1',
       description: 'With extras',
-      isDynamic: false,
       command: { code: 'npm test' },
       transitions: {
         all: true,
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },
-      substeps: [{ id: '1', description: 'Substep', isDynamic: false }],
+      substeps: [{ id: '1', description: 'Substep' }],
     };
 
     const result = renderStepForCLI(step);
@@ -78,7 +74,6 @@ describe('step rendering with instance number', () => {
     const step: Step = {
       name: '1',
       description: 'Process Item',
-      isDynamic: false,
       prompt: 'Process item.',
     };
 
@@ -92,7 +87,6 @@ describe('step rendering with instance number', () => {
     const step: Step = {
       name: '1',
       description: 'First step',
-      isDynamic: false,
       prompt: 'Do something.',
     };
 
@@ -105,7 +99,6 @@ describe('step rendering with instance number', () => {
     const step: Step = {
       name: '1',
       description: 'Process',
-      isDynamic: false,
       prompt: 'Process the batch.',
       command: { code: 'process-batch' },
     };
@@ -126,7 +119,6 @@ describe('substep rendering', () => {
     const substep: Substep = {
       id: '1',
       description: 'Process Item',
-      isDynamic: false,
       prompt: 'Process next item.',
     };
 
@@ -140,7 +132,6 @@ describe('substep rendering', () => {
     const substep: Substep = {
       id: '2',
       description: 'Process Item',
-      isDynamic: false,
       prompt: 'Processing item.',
     };
 
@@ -154,7 +145,6 @@ describe('substep rendering', () => {
     const substep: Substep = {
       id: '1',
       description: 'First Substep',
-      isDynamic: false,
       prompt: 'Do the first thing.',
     };
 
@@ -167,7 +157,6 @@ describe('substep rendering', () => {
     const substep: Substep = {
       id: '1',
       description: 'Process Item',
-      isDynamic: false,
       command: { code: 'process-batch' },
     };
 
@@ -184,7 +173,6 @@ describe('substep rendering', () => {
     const step: Step = {
       name: '1',
       description: 'Run tests',
-      isDynamic: false,
       command: { code: 'npm test', lang: 'bash' } as any,
     };
 
@@ -197,7 +185,6 @@ describe('substep rendering', () => {
     const step: Step = {
       name: '1',
       description: 'Run python script',
-      isDynamic: false,
       command: { code: 'print("hello")', lang: 'python' } as any,
     };
 

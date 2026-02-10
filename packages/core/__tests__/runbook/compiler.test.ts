@@ -11,10 +11,9 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Parent',
-          isDynamic: false,
           substeps: [
-            { id: '1', description: 'Child 1', isDynamic: false },
-            { id: '2', description: 'Child 2', isDynamic: false }
+            { id: '1', description: 'Child 1' },
+            { id: '2', description: 'Child 2' }
           ]
         }
       ];
@@ -30,8 +29,7 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          description: 'Simple',
-          isDynamic: false
+          description: 'Simple'
         }
       ];
       const machine = compileRunbookToMachine(steps);
@@ -46,7 +44,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Setup',
           transitions: {
             all: true,
@@ -56,7 +53,6 @@ describe('runbook compiler', () => {
         },
         {
           name: 'ErrorHandler',
-          isDynamic: false,
           description: 'Named step - should be skipped by CONTINUE'
         }
       ];
@@ -74,7 +70,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'First',
           transitions: {
             all: true,
@@ -84,12 +79,10 @@ describe('runbook compiler', () => {
         },
         {
           name: 'ErrorHandler',
-          isDynamic: false,
           description: 'Named - skipped'
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Second'
         }
       ];
@@ -115,7 +108,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1',
           transitions: {
             all: true,
@@ -125,7 +117,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Step 2'
         }
       ];
@@ -143,15 +134,13 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1',
           substeps: [
-            { id: '1', description: 'Substep 1.1', isDynamic: false },
+            { id: '1', description: 'Substep 1.1' },
             {
               id: '2',
               description: 'Substep 1.2',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -161,16 +150,14 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Step 2 (no substeps)'
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'Step 3',
           substeps: [
-            { id: '1', description: 'Substep 3.1', isDynamic: false },
-            { id: '2', description: 'Substep 3.2', isDynamic: false }
+            { id: '1', description: 'Substep 3.1' },
+            { id: '2', description: 'Substep 3.2' }
           ]
         }
       ];
@@ -198,7 +185,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1',
           transitions: {
             all: true,
@@ -219,7 +205,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1',
           transitions: {
             all: true,
@@ -240,7 +225,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1',
           transitions: {
             all: true,
@@ -250,7 +234,6 @@ describe('runbook compiler', () => {
         },
         {
           name: 'ErrorHandler',
-          isDynamic: false,
           description: 'Error handler'
         }
       ];
@@ -266,7 +249,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1',
           transitions: {
             all: true,
@@ -276,12 +258,11 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Step 2',
           substeps: [
-            { id: '1', description: 'Substep 2.1', isDynamic: false },
-            { id: '2', description: 'Substep 2.2', isDynamic: false },
-            { id: '3', description: 'Substep 2.3', isDynamic: false }
+            { id: '1', description: 'Substep 2.1' },
+            { id: '2', description: 'Substep 2.2' },
+            { id: '3', description: 'Substep 2.3' }
           ]
         }
       ];
@@ -297,7 +278,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1',
           transitions: {
             all: true,
@@ -323,12 +303,10 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1'
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Step 2'
         }
       ];
@@ -344,7 +322,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1'
         }
       ];
@@ -364,7 +341,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1',
           transitions: {
             all: true,
@@ -374,7 +350,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Step 2',
           transitions: {
             all: true,
@@ -400,7 +375,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1',
           transitions: {
             all: true,
@@ -410,7 +384,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Step 2',
           transitions: {
             all: true,
@@ -444,7 +417,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step 1',
           transitions: {
             all: true,
@@ -477,7 +449,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Run Tests',
           transitions: {
             all: true,
@@ -487,7 +458,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Recovery and Fix',
           transitions: {
             all: true,
@@ -501,7 +471,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'Commit Changes',
           transitions: {
             all: true,
@@ -542,7 +511,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Run Tests',
           transitions: {
             all: true,
@@ -552,7 +520,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Recovery and Fix',
           transitions: {
             all: true,
@@ -566,7 +533,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'Commit Changes',
           transitions: {
             all: true,
@@ -610,7 +576,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '2',
-          isDynamic: false,
           description: 'Setup',
           transitions: {
             all: true,
@@ -620,15 +585,13 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           forClause: { start: 1, end: 3 },
           description: 'Process batches',
           substeps: [
             {
               id: '1',
               description: 'Fetch',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -637,8 +600,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -648,7 +610,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '4',
-          isDynamic: false,
           description: 'Commit',
           transitions: {
             all: true,
@@ -707,15 +668,13 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           forClause: { start: 1, end: 2 },
           description: 'First step is FOR',
           substeps: [
             {
               id: '1',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -725,7 +684,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -762,15 +720,13 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           forClause: { start: 5, end: 5 },
           description: 'Single iteration',
           substeps: [
             {
               id: '1',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -780,7 +736,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -808,15 +763,13 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           forClause: { variable: 'batch', start: 1, end: 2 },
           description: 'Named loop variable',
           substeps: [
             {
               id: '1',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -826,7 +779,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -848,15 +800,13 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           forClause: { start: 1, end: 4 },
           description: 'Test with failures',
           substeps: [
             {
               id: '1',
               description: 'Single substep',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
@@ -866,7 +816,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -908,7 +857,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           forClause: { start: 1, end: 2 },
           description: 'For without substeps',
           transitions: {
@@ -919,7 +867,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Next',
           transitions: {
             all: true,
@@ -944,7 +891,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Start',
           transitions: {
             all: true,
@@ -954,20 +900,17 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Skipped'
         },
         {
           name: '3',
-          isDynamic: false,
           forClause: { start: 1, end: 2 },
           description: 'FOR entered via GOTO',
           substeps: [
             {
               id: '1',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -977,7 +920,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '4',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -1014,7 +956,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '2',
-          isDynamic: false,
           description: 'Setup',
           transitions: {
             all: true,
@@ -1024,15 +965,13 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           forClause: { start: 1, end: 3 },
           description: 'Process batches',
           substeps: [
             {
               id: '1',
               description: 'Fetch',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1041,8 +980,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Process (skipped by NEXT)',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1052,7 +990,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '4',
-          isDynamic: false,
           description: 'Commit',
           transitions: {
             all: true,
@@ -1096,7 +1033,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '2',
-          isDynamic: false,
           description: 'Setup',
           transitions: {
             all: true,
@@ -1106,15 +1042,13 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           forClause: { start: 1, end: 5 },
           description: 'Process batches',
           substeps: [
             {
               id: '1',
               description: 'Check',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } }
@@ -1123,8 +1057,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1134,7 +1067,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '4',
-          isDynamic: false,
           description: 'Commit',
           transitions: {
             all: true,
@@ -1166,15 +1098,13 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           forClause: { start: 1, end: 3 },
           description: 'Loop with NEXT on fail',
           substeps: [
             {
               id: '1',
               description: 'Step',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'NEXT' } }
@@ -1184,7 +1114,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -1220,15 +1149,13 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           forClause: { start: 1, end: 5 },
           description: 'Loop with early break',
           substeps: [
             {
               id: '1',
               description: 'Increment',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1237,8 +1164,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Check and break',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } }
@@ -1248,7 +1174,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -1293,7 +1218,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'No FOR clause',
           transitions: {
             all: true,
@@ -1316,7 +1240,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'No FOR clause',
           transitions: {
             all: true,
@@ -1339,7 +1262,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Start',
           transitions: {
             all: true,
@@ -1349,15 +1271,13 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           forClause: { start: 1, end: 3 },
           description: 'FOR loop',
           substeps: [
             {
               id: '1',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1367,7 +1287,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -1405,7 +1324,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Start',
           transitions: {
             all: true,
@@ -1415,15 +1333,13 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           forClause: { start: 1, end: 2 },
           description: 'FOR loop',
           substeps: [
             {
               id: '1',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1433,7 +1349,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -1460,20 +1375,17 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Start'
         },
         {
           name: '2',
-          isDynamic: false,
           forClause: { variable: 'batch', start: 1, end: 5 },
           description: 'FOR loop',
           substeps: [
             {
               id: '1',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1483,7 +1395,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -1514,20 +1425,17 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Start'
         },
         {
           name: '2',
-          isDynamic: false,
           forClause: { start: 1, end: 3 },
           description: 'FOR loop',
           substeps: [
             {
               id: '1',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1560,7 +1468,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Non-FOR target',
           transitions: {
             all: true,
@@ -1570,15 +1477,13 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           forClause: { start: 1, end: 3 },
           description: 'FOR step',
           substeps: [
             {
               id: '1',
               description: 'Substep with GOTO out',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '1' } } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1587,8 +1492,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Substep 2',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1598,7 +1502,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'After loop',
           transitions: {
             all: true,
@@ -1638,7 +1541,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Start',
           transitions: {
             all: true,
@@ -1648,15 +1550,13 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           forClause: { start: 1, end: 3 },
           description: 'FOR loop',
           substeps: [
             {
               id: '1',
               description: 'Process',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1666,7 +1566,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -1693,7 +1592,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Start',
           transitions: {
             all: true,
@@ -1703,15 +1601,13 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           forClause: { start: 1, end: 3 },
           description: 'FOR with 2 substeps',
           substeps: [
             {
               id: '1',
               description: 'First',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1720,8 +1616,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Second',
-              isDynamic: false,
-              transitions: {
+                  transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
@@ -1731,7 +1626,6 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'Done',
           transitions: {
             all: true,
@@ -1771,16 +1665,14 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step with substeps, no FOR',
           substeps: [
-            { id: '1', description: 'Sub 1', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
-            { id: '2', description: 'Sub 2', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ]
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Next step',
           transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
         }
@@ -1804,16 +1696,14 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step with substeps, no FOR',
           substeps: [
-            { id: '1', description: 'Sub 1', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
-            { id: '2', description: 'Sub 2', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ]
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Next step',
           transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
         }
@@ -1833,15 +1723,13 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Single substep, no FOR',
           substeps: [
-            { id: '1', description: 'Only sub', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '1', description: 'Only sub', transitions: DEFAULT_TRANSITIONS },
           ]
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Next step',
           transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
         }
@@ -1860,7 +1748,6 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Source',
           transitions: {
             all: true,
@@ -1870,16 +1757,14 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Target with substeps, no FOR',
           substeps: [
-            { id: '1', description: 'Sub 1', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
-            { id: '2', description: 'Sub 2', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ]
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'Final',
           transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
         }
@@ -1902,11 +1787,10 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step with NEXT but no FOR',
           substeps: [
             {
-              id: '1', description: 'Sub', isDynamic: false,
+              id: '1', description: 'Sub',
               transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
@@ -1915,7 +1799,7 @@ describe('runbook compiler', () => {
             },
           ]
         },
-        { name: '2', isDynamic: false, description: 'Unreachable', transitions: DEFAULT_TRANSITIONS }
+        { name: '2', description: 'Unreachable', transitions: DEFAULT_TRANSITIONS }
       ];
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1929,11 +1813,10 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Step with BREAK but no FOR',
           substeps: [
             {
-              id: '1', description: 'Sub', isDynamic: false,
+              id: '1', description: 'Sub',
               transitions: {
                 all: true,
                 pass: { kind: 'pass', retry: 0, action: { type: 'BREAK' } },
@@ -1942,7 +1825,7 @@ describe('runbook compiler', () => {
             },
           ]
         },
-        { name: '2', isDynamic: false, description: 'Unreachable', transitions: DEFAULT_TRANSITIONS }
+        { name: '2', description: 'Unreachable', transitions: DEFAULT_TRANSITIONS }
       ];
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1957,16 +1840,14 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           forClause: { start: 1, end: 3 },
           description: 'FOR step',
           substeps: [
-            { id: '1', description: 'Sub', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS },
           ]
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'After loop',
           transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
         }
@@ -1996,24 +1877,21 @@ describe('runbook compiler', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Source step',
           substeps: [
-            { id: '1', description: 'Sub', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS },
           ]
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Target with substeps, no FOR',
           substeps: [
-            { id: '1', description: 'Sub 1', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
-            { id: '2', description: 'Sub 2', isDynamic: false, transitions: DEFAULT_TRANSITIONS },
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ]
         },
         {
           name: '3',
-          isDynamic: false,
           description: 'Final',
           transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
         }

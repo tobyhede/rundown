@@ -119,12 +119,6 @@ describe('Errors factory - extended coverage', () => {
       expect(error.context.substep).toBeUndefined();
     });
 
-    it('gotoNextNotAllowedViaCli creates correct error', () => {
-      const error = Errors.gotoNextNotAllowedViaCli();
-
-      expect(error).toBeInstanceOf(RundownError);
-      expect(error.code).toBe('RD-403');
-    });
   });
 
   describe('Execution errors', () => {

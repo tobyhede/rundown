@@ -138,12 +138,6 @@ describe('StepId schema-derived type', () => {
     expect(parsed.substep).toBeUndefined();
   });
 
-  it('parses dynamic step with substep', () => {
-    const parsed = StepIdSchema.parse({ step: '{N}', substep: '1' });
-    expect(parsed.step).toBe('{N}');
-    expect(parsed.substep).toBe('1');
-  });
-
   it('parsed StepId is readonly', () => {
     const parsed = StepIdSchema.parse({ step: '5', substep: '2' });
     // TypeScript should prevent: parsed.step = '6';

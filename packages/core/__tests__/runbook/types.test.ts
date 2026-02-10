@@ -67,7 +67,6 @@ describe('Substep interface', () => {
     const substep: Substep = {
       id: '1',
       description: 'Test substep',
-      isDynamic: false,
       command: { code: 'npm test' }
     };
     expect(substep.command?.code).toBe('npm test');
@@ -77,7 +76,6 @@ describe('Substep interface', () => {
     const substep: Substep = {
       id: '1',
       description: 'Test substep',
-      isDynamic: false,
       prompt: 'Do the thing'
     };
     expect(substep.prompt).toBe('Do the thing');
@@ -87,7 +85,6 @@ describe('Substep interface', () => {
     const substep: Substep = {
       id: '1',
       description: 'Test substep',
-      isDynamic: false,
       transitions: {
         all: true,
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },

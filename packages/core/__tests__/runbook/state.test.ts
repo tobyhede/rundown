@@ -10,8 +10,7 @@ describe('RunbookStateManager', () => {
   let manager: RunbookStateManager;
   const mockSteps: Step[] = [{
     name: '1',
-    description: 'Initial step',
-    isDynamic: false
+    description: 'Initial step'
   }];
   const mockRunbook: Runbook = {
     title: 'Test Runbook',
@@ -71,8 +70,8 @@ describe('RunbookStateManager', () => {
   describe('RunbookStateManager substep initialization', () => {
     it('initializes substepStates when step has static substeps', async () => {
       const substeps = [
-        { id: '1', description: 'First reviewer', isDynamic: false, prompts: [] },
-        { id: '2', description: 'Second reviewer', isDynamic: false, prompts: [] }
+        { id: '1', description: 'First reviewer', prompts: [] },
+        { id: '2', description: 'Second reviewer', prompts: [] }
       ];
 
       const state = await manager.create('test.runbook.md', mockRunbook, { runbookPath: 'test.runbook.md' });
@@ -86,18 +85,6 @@ describe('RunbookStateManager', () => {
         agentId: undefined,
         result: undefined
       });
-    });
-
-    it('does not initialize for dynamic substeps', async () => {
-      const substeps = [
-        { id: '{n}', description: 'Dynamic step', isDynamic: true, prompts: [] }
-      ];
-
-      const state = await manager.create('test.runbook.md', mockRunbook, { runbookPath: 'test.runbook.md' });
-      await manager.initializeSubsteps(state.id, substeps);
-
-      const updated = await manager.load(state.id);
-      expect(updated?.substepStates).toEqual([]);
     });
   });
 
@@ -163,8 +150,8 @@ describe('RunbookStateManager', () => {
 
       const steps: Step[] = [
         ...mockSteps,
-        { name: '2', description: 'S2', isDynamic: false },
-        { name: '3', description: 'S3', isDynamic: false }
+        { name: '2', description: 'S2' },
+        { name: '3', description: 'S3' }
       ];
 
       const updated = await manager.updateFromActor(state.id, actor as any, steps);
@@ -729,7 +716,7 @@ describe('RunbookStateManager', () => {
 
       const steps: Step[] = [
         ...mockSteps,
-        { name: '2', description: 'After loop', isDynamic: false }
+        { name: '2', description: 'After loop' }
       ];
 
       const updated = await manager.updateFromActor(state.id, actor as any, steps);

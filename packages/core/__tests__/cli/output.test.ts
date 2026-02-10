@@ -225,8 +225,7 @@ describe('output formatter', () => {
       const step: Step = {
         name: '1',
         description: 'First step',
-        isDynamic: false,
-        prompt: 'Do something.',
+          prompt: 'Do something.',
         command: { code: 'npm test' },
       };
       printStepBlock({ current: '1', total: 3 }, step, undefined, writer);
