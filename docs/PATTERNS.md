@@ -1,7 +1,3 @@
-<!-- GENERATED FILE - DO NOT EDIT DIRECTLY -->
-<!-- Source: runbooks/patterns/README.md -->
-<!-- Regenerate: npm run docs:patterns -->
-
 # Rundown Patterns
 
 Common patterns for Rundown runbooks. See [SPEC.md](../../docs/SPEC.md) for syntax reference.
