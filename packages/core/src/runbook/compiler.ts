@@ -486,39 +486,52 @@ function buildActionTransition(
       }
 
       // Handle GOTO to step with substeps (explicit FOR or implicit 1..1)
-      // Only use FOR loop path when no specific substep is targeted
-      if (targetStepObj.substeps?.length && !action.target.substep) {
+      if (targetStepObj.substeps?.length) {
         const forClause = targetStepObj.forClause ?? { start: 1, end: 1 };
         const isImplicit = !targetStepObj.forClause;
-        const firstSubstepStateId = getFirstSubstepOfStep(targetStepObj);
-        if (firstSubstepStateId) {
-          return {
-            target: firstSubstepStateId,
-            actions: assign({
-              forStack: ({ context }: { context: RunbookContext }): ForContext[] => {
-                const iteration = resolveAtValueRuntime(
-                  action.target.at,
-                  forClause.start,
-                  context.forStack
-                );
-                return [{
-                  stepId: targetStepObj.name,
-                  iteration,
-                  start: forClause.start,
-                  end: forClause.end,
-                  variable: forClause.variable,
-                  ...(isImplicit && { implicit: true }),
-                }];
-              },
-              iterationResults: isImplicit
-                ? (undefined as ('pass' | 'fail')[] | undefined)
-                : ([] as ('pass' | 'fail')[]),
-              lastAction: buildGotoLastAction(action.target),
-              retryCount: 0,
-              substep: targetStepObj.substeps[0]?.id
-            })
-          };
-        }
+        // Target either the specified substep or default to first
+        const resolvedSubstepId = action.target.substep ?? targetStepObj.substeps[0].id;
+        const targetStateId = formatStateId(targetStepObj.name, resolvedSubstepId);
+        const isGotoToSelf = targetStepObj.name === stepName && resolvedSubstepId === substepId;
+        return {
+          target: targetStateId,
+          actions: assign({
+            forStack: ({ context }: { context: RunbookContext }): ForContext[] => {
+              // Intra-loop GOTO: preserve existing forStack
+              const top = peekForStack(context.forStack);
+              if (top?.stepId === targetStepObj.name) {
+                return context.forStack;
+              }
+              // Cross-loop or fresh entry: create new context with runtime AT resolution
+              const iteration = resolveAtValueRuntime(
+                action.target.at,
+                forClause.start,
+                context.forStack
+              );
+              return [{
+                stepId: targetStepObj.name,
+                iteration,
+                start: forClause.start,
+                end: forClause.end,
+                variable: forClause.variable,
+                ...(isImplicit && { implicit: true }),
+              }];
+            },
+            iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] | undefined => {
+              // Intra-loop GOTO: preserve existing results
+              const top = peekForStack(context.forStack);
+              if (top?.stepId === targetStepObj.name) {
+                return context.iterationResults;
+              }
+              return isImplicit ? undefined : ([] as ('pass' | 'fail')[]);
+            },
+            lastAction: buildGotoLastAction(action.target),
+            retryCount: isGotoToSelf
+              ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
+              : 0,
+            substep: resolvedSubstepId
+          })
+        };
       }
 
       const resolvedSubstepId = action.target.substep ??

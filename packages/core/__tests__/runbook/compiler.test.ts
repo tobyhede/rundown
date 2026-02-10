@@ -2066,6 +2066,131 @@ describe('runbook compiler', () => {
       expect(snap.context.forStack).toEqual([]);
     });
 
+    it('GOTO action with substep to cross-loop FOR step initializes forStack', () => {
+      // Step 1 (non-FOR) → PASS: GOTO 2.1 → Step 2 (FOR 1..3)
+      // Verifies that forStack is initialized (not cleared by buildSimpleGotoAssign)
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Source step',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2', substep: '1' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          description: 'FOR target',
+          forClause: { start: 1, end: 3, variable: 'i' },
+          substeps: [
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
+          ]
+        },
+        {
+          name: '3',
+          description: 'Final',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // GOTO 2.1
+      expect(actor.getSnapshot().value).toBe('step::2::1');
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack).toHaveLength(1);
+      expect(ctx.forStack[0].stepId).toBe('2');
+      expect(ctx.forStack[0].iteration).toBe(1);
+      expect(ctx.forStack[0].start).toBe(1);
+      expect(ctx.forStack[0].end).toBe(3);
+      expect(ctx.forStack[0].variable).toBe('i');
+      expect(ctx.iterationResults).toEqual([]);
+    });
+
+    it('GOTO action with substep + AT to FOR step resolves iteration', () => {
+      // Step 1 (non-FOR) → PASS: GOTO 2.1 AT 2 → Step 2 (FOR 1..3) at iteration 2
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Source step',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2', substep: '1', at: 2 } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          description: 'FOR target',
+          forClause: { start: 1, end: 3, variable: 'batch' },
+          substeps: [
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
+          ]
+        },
+        {
+          name: '3',
+          description: 'Final',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // GOTO 2.1 AT 2
+      expect(actor.getSnapshot().value).toBe('step::2::1');
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack).toHaveLength(1);
+      expect(ctx.forStack[0].iteration).toBe(2);
+      expect(ctx.forStack[0].variable).toBe('batch');
+      expect(ctx.iterationResults).toEqual([]);
+      expect(ctx.lastAction).toEqual({ type: 'GOTO', target: '2', substep: '1', at: 2 });
+    });
+
+    it('GOTO action with substep to implicit (non-FOR) step initializes implicit forStack', () => {
+      // Step 1 → PASS: GOTO 2.2 → Step 2 (non-FOR with substeps)
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Source step',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2', substep: '2' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          description: 'Target with substeps, no FOR',
+          substeps: [
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
+          ]
+        },
+        {
+          name: '3',
+          description: 'Final',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // GOTO 2.2
+      expect(actor.getSnapshot().value).toBe('step::2::2');
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack).toHaveLength(1);
+      expect(ctx.forStack[0]).toEqual(
+        expect.objectContaining({ stepId: '2', implicit: true })
+      );
+      expect(ctx.iterationResults).toBeUndefined();
+    });
+
     it('GOTO event to non-FOR substep uses unified ForContext path', () => {
       const steps: Step[] = [
         {

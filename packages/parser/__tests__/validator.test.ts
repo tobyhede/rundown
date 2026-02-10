@@ -370,6 +370,48 @@ describe('validator strict rules', () => {
       expect(errors.some(e => e.message.includes('cannot appear on the FOR step itself'))).toBe(true);
     });
 
+    it('accepts AT-qualified GOTO to self (not a true self-loop)', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'FOR step that GOTOs itself with AT',
+          forClause: { start: 1, end: 5 },
+          substeps: [{
+            id: '1',
+            description: 'Substep',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: '1', at: 1 } } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+          }],
+        },
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('GOTO self creates infinite loop'))).toBe(false);
+    });
+
+    it('rejects non-AT GOTO to self (existing behavior preserved)', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'FOR step that GOTOs itself without AT',
+          forClause: { start: 1, end: 5 },
+          substeps: [{
+            id: '1',
+            description: 'Substep',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: '1', substep: '1' } } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+          }],
+        },
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some(e => e.message.includes('GOTO self creates infinite loop'))).toBe(true);
+    });
+
     it('rejects GOTO AT targeting non-FOR step', () => {
       const steps: Step[] = [
         {

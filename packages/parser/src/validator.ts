@@ -310,7 +310,8 @@ export function validateAction(
     }
 
     // Self-loop detection: compare step names, not numeric values
-    if (targetStep === currentStepObj.name && targetSubstep === currentSubstepId) {
+    // AT-qualified GOTOs change iteration, so they're not true self-loops
+    if (targetStep === currentStepObj.name && targetSubstep === currentSubstepId && action.target.at === undefined) {
       const context = getErrorContext(currentStepObj, currentSubstepId);
       errors.push({
         line: currentStepObj.line,
