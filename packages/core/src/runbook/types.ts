@@ -21,7 +21,7 @@ export type { Substep } from '@rundown-org/parser';
 /**
  * A transition action defining what happens after a step completes.
  *
- * Actions include CONTINUE, COMPLETE, STOP, and GOTO with optional targets.
+ * Actions include CONTINUE, COMPLETE, STOP, GOTO, NEXT, and BREAK with optional targets.
  * @see {@link @rundown-org/parser!Action}
  */
 export type { Action } from '@rundown-org/parser';

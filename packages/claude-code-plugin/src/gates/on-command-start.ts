@@ -10,6 +10,7 @@ import * as fs from 'fs';
  *
  * @param input - The hook input containing event details and context
  * @returns Gate result with optional additional context from runbook execution
+ * @remarks Does not throw — errors are caught internally and appropriate values returned (empty context on error)
  */
 export function execute(input: HookInput): Promise<GateResult> {
   // Only handle SlashCommandStart

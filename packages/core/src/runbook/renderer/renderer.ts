@@ -4,7 +4,7 @@ import { stepIdToString } from '../step-id.js';
 /**
  * Render an Action to DSL string.
  *
- * @param action - The action to render (CONTINUE, COMPLETE, STOP, GOTO)
+ * @param action - The action to render (CONTINUE, COMPLETE, STOP, GOTO, NEXT, BREAK)
  * @returns The DSL string representation of the action
  */
 export function renderAction(action: Action): string {

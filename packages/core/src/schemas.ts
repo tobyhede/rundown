@@ -181,13 +181,14 @@ export const RunbookStateSchema = z.object({
     runbook: z.string(),
     instanceId: z.string()
   }).optional(),
+  // FOR loop tracking: stack of loop contexts for nested loops
   forStack: z.array(z.object({
-    stepId: z.string(),
-    iteration: z.number().int(),
-    start: z.number().int(),
-    end: z.number().int(),
-    variable: z.string().optional(),
-    implicit: z.boolean().optional(),
+    stepId: z.string(),           // Step name (e.g., "3") that owns this FOR loop
+    iteration: z.number().int(),  // Current iteration number (1-based)
+    start: z.number().int(),      // Start of the iteration range
+    end: z.number().int(),        // End of the iteration range (inclusive)
+    variable: z.string().optional(),           // Named loop variable (e.g., "batch")
+    implicit: z.boolean().optional(),          // True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence.
   })).optional(),
   // Backward compat: accept old flat fields for migration
   forIteration: z.number().int().positive().optional(),

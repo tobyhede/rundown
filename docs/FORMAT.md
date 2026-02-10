@@ -108,6 +108,7 @@ where range is:
   | integer "TO" "{{" variable_name "}}"  -- variable end bound
   | "{{" variable_name "}}" "TO" integer  -- variable start bound
   | "{{" variable_name "}}" "TO" "{{" variable_name "}}"  -- variable both bounds
+  | "{{" variable_name "}}"            -- count-only with template variable
 
 where variable_name is:
   [a-zA-Z_][a-zA-Z0-9_]*

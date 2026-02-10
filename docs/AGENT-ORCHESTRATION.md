@@ -174,7 +174,7 @@ Multiple independent agents are dispatched in parallel, their results collected 
 | Security-sensitive | 3+ |
 
 **Example** (from `verifying-by-consensus`):
-```
+```text
 Step(description="1.1 - Review auth changes", subagent_type="code-review-agent")
 Step(description="1.2 - Review auth changes", subagent_type="code-review-agent")
 ```

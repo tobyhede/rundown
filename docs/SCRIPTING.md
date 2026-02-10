@@ -128,7 +128,7 @@ command -v jq >/dev/null || { echo "jq required" >&2; exit 2; }
 
 Put scripts in `scripts/` at the repo root with a clear naming convention:
 
-```
+```text
 scripts/
   build-runbooks.sh
   check-deps.sh

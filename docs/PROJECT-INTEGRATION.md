@@ -6,7 +6,7 @@ How to add rundown runbooks to your project.
 
 Place runbooks in `.claude/rundown/runbooks/` at your project root:
 
-```
+```text
 .claude/rundown/runbooks/
   README.md                              # Convention explainer
   review/
@@ -78,9 +78,9 @@ rd run rundown:write-plan      # Explicit: from plugin only
 - PASS: CONTINUE
 - FAIL: STOP
 
-` ` `bash
+```bash
 .claude/rundown/runbooks/review/scripts/fetch-data.sh {{repo}}
-` ` `
+```
 ```
 
 Benefits:
@@ -187,7 +187,7 @@ bash .claude/rundown/runbooks/review/scripts/fetch-pr-comments.sh tobyhede/rundo
 
 Scripts live alongside their runbook in a `scripts/` directory:
 
-```
+```text
 review/
   pr-feedback.runbook.md
   scripts/

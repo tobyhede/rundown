@@ -245,7 +245,7 @@ output.action({ action, from, result, at });
 output.flush();
 ```
 
-For direct table formatting without JSON support, use `formatTable` from `../helpers/table-formatter.js` (also relative to commands/).
+For direct table formatting (no `--json` flag support), use `formatTable` from `../helpers/table-formatter.js` (also relative to commands/).
 
 Key conventions:
 - UPPERCASE headers, 2-space column separators

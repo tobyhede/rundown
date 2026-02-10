@@ -123,7 +123,6 @@ Better use of a message (no message) - include actionable context in the step it
 - FAIL: STOP
 ```
 
-
 ---
 
 ## Table of Contents
@@ -537,8 +536,8 @@ Parsers and executors must adhere to strict validation:
 5. **Single Command**: Each step/substep may have at most one code block (bash, sh, shell, prompt).
 6. **Recursion**: `RETRY` actions cannot contain another `RETRY`.
 7. **FOR validation**: `NEXT` and `BREAK` are only valid within substeps of a FOR step.
-9. **FOR steps require substeps**: A step with a FOR annotation must contain substeps; FOR is invalid on steps with code blocks or runbooks.
-8. **FOR placement**: The FOR annotation must appear before transitions in the bullet list.
+8. **FOR steps require substeps**: A step with a FOR annotation must contain substeps; FOR is invalid on steps with code blocks or runbooks.
+9. **FOR placement**: The FOR annotation must appear before transitions in the bullet list.
 
 ---
 
