@@ -37,14 +37,12 @@ export interface ForClause {
  * A substep within a step (H3 header)
  */
 export interface Substep {
-  /** Substep identifier: "1", "2", "{n}" for dynamic, or "Name" for named */
+  /** Substep identifier: "1", "2", or "Name" for named */
   readonly id: string;
   /** Human-readable description from the substep header */
   readonly description: string;
   /** Agent type, e.g., "code-review-agent" from "(code-review-agent)" */
   readonly agentType?: string;
-  /** True for dynamic substeps (### N.{n}) */
-  readonly isDynamic: boolean;
   /** Executable command from code block */
   readonly command?: Command;
   /** Single consolidated prompt text */
@@ -63,13 +61,10 @@ export interface Substep {
  * UNIFIED NAMING: All steps have a name.
  * - Numeric steps: name = "1", "2", etc.
  * - Named steps: name = "ErrorHandler", "Cleanup", etc.
- * - Dynamic steps: name = "{N}" (template, expands at runtime)
  */
 export interface Step {
-  /** Step identifier: "1", "ErrorHandler", or "{N}" for dynamic (REQUIRED) */
+  /** Step identifier: "1" or "ErrorHandler" (REQUIRED) */
   readonly name: string;
-  /** True for dynamic steps using {N} template */
-  readonly isDynamic: boolean;
   /** FOR loop clause defining iteration range */
   readonly forClause?: ForClause;
   /** Human-readable description from the step header */

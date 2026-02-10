@@ -42,35 +42,33 @@ export const ForClauseSchema = z.object({
 
 /**
  * Schema for step names in Step.name field.
- * Accepts: "1", "2", "ErrorHandler", "{N}" for dynamic steps.
+ * Accepts: "1", "2", "ErrorHandler" for named steps.
  * Rejects: reserved words (CONTINUE, STOP, etc.)
  */
 export const StepNameSchema = z.string().refine(
   (s) => {
-    if (s === '{N}') return true;
     if (/^\d+$/.test(s)) {
       const num = parseInt(s, 10);
       return num > 0 && num <= MAX_STEP_NUMBER;
     }
     return NAMED_IDENTIFIER_PATTERN.test(s) && !isReservedWord(s);
   },
-  { message: 'Invalid step name: must be positive number, valid identifier, or {N}' }
+  { message: 'Step name must be a positive integer or valid identifier' }
 );
 
 /**
  * Zod schema for StepId
- * step is always a string: "1", "NEXT", "ErrorHandler", "{N}"
+ * step is always a string: "1", "ErrorHandler", or "NEXT" for forward reference
  * qualifier is optional: only present for GOTO NEXT <target>
  */
 export const StepIdSchema = z.object({
   step: z.union([
-    z.literal('{N}'),
     z.literal('NEXT'),
     StepNameSchema,
   ]),
   substep: z.string().optional(),
   qualifier: z.object({
-    step: z.string(),
+    step: StepNameSchema,
     substep: z.string().optional(),
   }).optional(),
   at: z.union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)]).optional(),
@@ -152,7 +150,6 @@ export const SubstepSchema = z.object({
   id: z.string(),
   description: z.string(),
   agentType: z.string().optional(),
-  isDynamic: z.boolean(),
   workflows: z.array(z.string()).readonly().optional(),
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(),  // .min(1) prevents empty strings
@@ -164,8 +161,7 @@ export const SubstepSchema = z.object({
  * Zod schema for Step
  */
 export const StepSchema = z.object({
-  name: StepNameSchema,                  // REQUIRED: "1", "ErrorHandler", "{N}"
-  isDynamic: z.boolean(),
+  name: StepNameSchema,                  // REQUIRED: "1", "ErrorHandler"
   forClause: ForClauseSchema.optional(),
   description: z.string(),
   command: CommandSchema.optional(),

@@ -5,14 +5,12 @@ import type { Step, Substep } from '../src/ast.js';
 const createStep = (overrides: Partial<Step> = {}): Step => ({
   name: '1',
   description: 'Test step',
-  isDynamic: false,
   ...overrides,
 });
 
 const createSubstep = (overrides: Partial<Substep> = {}): Substep => ({
   id: '1',
   description: 'Test substep',
-  isDynamic: false,
   ...overrides,
 });
 

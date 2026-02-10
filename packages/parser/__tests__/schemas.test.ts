@@ -140,8 +140,8 @@ describe('StepIdSchema with named steps', () => {
     expect(StepIdSchema.safeParse({ step: '1' }).success).toBe(true);
   });
 
-  it('accepts {N} dynamic step', () => {
-    expect(StepIdSchema.safeParse({ step: '{N}' }).success).toBe(true);
+  it('rejects {N} dynamic step (no longer supported)', () => {
+    expect(StepIdSchema.safeParse({ step: '{N}' }).success).toBe(false);
   });
 
   it('accepts NEXT', () => {
@@ -171,7 +171,7 @@ describe('StepIdSchema with named steps', () => {
   it('rejects NEXT with both qualifier AND substep', () => {
     expect(StepIdSchema.safeParse({
       step: 'NEXT',
-      qualifier: { step: '{N}' },
+      qualifier: { step: 'Cleanup' },
       substep: '1'
     }).success).toBe(false);
   });
@@ -226,11 +226,6 @@ describe('unified naming schemas', () => {
     expect(result.success).toBe(true);
   });
 
-  it('StepIdSchema accepts {N} for dynamic step references', () => {
-    const result = StepIdSchema.safeParse({ step: '{N}', substep: '1' });
-    expect(result.success).toBe(true);
-  });
-
   it('StepNameSchema rejects reserved words as step names', () => {
     const result = StepIdSchema.safeParse({ step: 'CONTINUE' });
     expect(result.success).toBe(false);
@@ -243,11 +238,6 @@ describe('unified naming schemas', () => {
 
   it('StepNameSchema accepts identifiers', () => {
     const result = StepIdSchema.safeParse({ step: 'ErrorHandler' });
-    expect(result.success).toBe(true);
-  });
-
-  it('StepNameSchema accepts {N} for dynamic steps', () => {
-    const result = StepIdSchema.safeParse({ step: '{N}' });
     expect(result.success).toBe(true);
   });
 });
