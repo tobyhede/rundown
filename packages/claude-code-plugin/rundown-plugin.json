@@ -5,7 +5,8 @@
       "on_pass": "CONTINUE",
       "on_fail": "BLOCK"
     },
-    "on-command-start": {}
+    "on-command-start": {},
+    "on-skill-start": {}
   },
   "hooks": {
     "PostToolUse": {
@@ -14,6 +15,9 @@
     },
     "SlashCommandStart": {
       "gates": ["on-command-start"]
+    },
+    "SkillStart": {
+      "gates": ["on-skill-start"]
     }
   }
 }
