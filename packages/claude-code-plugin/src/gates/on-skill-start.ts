@@ -1,5 +1,5 @@
 import { type HookInput, type GateResult, logger, safeJoin, sanitizePathSegment, parseRunbookFromFrontmatter } from '../shared/index.js';
-import { execFileSync } from 'child_process';
+import { rundown } from '../workflow/hooks/rundown.js';
 import * as fs from 'fs';
 
 /**
@@ -30,9 +30,9 @@ export function execute(input: HookInput): Promise<GateResult> {
     return Promise.resolve({});
   }
 
-  // Start runbook via CLI (using execFileSync to prevent shell injection)
+  // Start runbook via CLI
   try {
-    execFileSync('rundown', ['run', runbook], { cwd: input.cwd, stdio: 'pipe' });
+    rundown(['run', runbook], input.cwd);
     return Promise.resolve({
       additionalContext: `Started runbook: ${runbook}`
     });

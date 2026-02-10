@@ -2,11 +2,11 @@
 import { jest, expect, describe, it, beforeEach } from '@jest/globals';
 import type { HookInput } from '../../src/shared/index.js';
 
-const mockExecFileSync = jest.fn();
+const mockRundown = jest.fn();
 const mockReadFileSync = jest.fn();
 
-jest.unstable_mockModule('child_process', () => ({
-  execFileSync: mockExecFileSync
+jest.unstable_mockModule('../../src/workflow/hooks/rundown.js', () => ({
+  rundown: mockRundown
 }));
 
 jest.unstable_mockModule('fs', () => ({
@@ -68,7 +68,7 @@ description: No runbook
       const result = await execute(input);
 
       expect(result).toEqual({});
-      expect(mockExecFileSync).not.toHaveBeenCalled();
+      expect(mockRundown).not.toHaveBeenCalled();
     });
 
     it('returns empty when no skill name', async () => {
@@ -90,7 +90,7 @@ runbook: verify.runbook.md
 # Content`;
 
       mockReadFileSync.mockReturnValue(skillContent);
-      mockExecFileSync.mockReturnValue(Buffer.from('Started runbook'));
+      mockRundown.mockReturnValue('Started runbook');
 
       // Set plugin root for skill discovery
       const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
@@ -107,10 +107,9 @@ runbook: verify.runbook.md
       expect(result).toEqual({
         additionalContext: 'Started runbook: verify.runbook.md'
       });
-      expect(mockExecFileSync).toHaveBeenCalledWith(
-        'rundown',
+      expect(mockRundown).toHaveBeenCalledWith(
         ['run', 'verify.runbook.md'],
-        expect.objectContaining({ cwd: '/test' })
+        '/test'
       );
 
       process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
