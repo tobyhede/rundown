@@ -275,7 +275,7 @@ export async function runExecutionLoop(
     if (!actor) return 'stopped';
 
     actor.send({ type: execResult.success ? 'PASS' : 'FAIL' });
-    let updatedState = await manager.updateFromActor(runbookId, actor, steps);
+    const updatedState = await manager.updateFromActor(runbookId, actor, steps);
 
     // XState snapshot type is not fully typed
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any

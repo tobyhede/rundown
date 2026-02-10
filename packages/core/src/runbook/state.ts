@@ -125,7 +125,7 @@ export class RunbookStateManager {
       const parsed = JSON.parse(content) as unknown;
 
       // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field
-      /* eslint-disable @typescript-eslint/no-explicit-any */
+      /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
       const parsed_any = parsed as any;
       if (parsed_any?.lastAction?.type === 'GOTO_NEXT') {
         throw new Error(
@@ -139,7 +139,7 @@ export class RunbookStateManager {
           'Please restart execution from the runbook entrypoint.'
         );
       }
-      /* eslint-enable @typescript-eslint/no-explicit-any */
+      /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 
       const result = RunbookStateSchema.safeParse(parsed);
       if (!result.success) return null;

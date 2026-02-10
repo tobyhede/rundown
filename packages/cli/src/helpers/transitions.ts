@@ -447,7 +447,7 @@ export async function executeTransition(
   // Send event
   actor.send({ type: config.eventType });
 
-  let updatedState = await manager.updateFromActor(state.id, actor, steps);
+  const updatedState = await manager.updateFromActor(state.id, actor, steps);
 
   // XState snapshot type is not fully typed
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any

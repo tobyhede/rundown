@@ -33,7 +33,7 @@ export function formatPosition(pos: StepPosition): string {
   if (!isNumberedStepName(pos.current)) {
     return stepPart;
   }
-  return `${stepPart}/${pos.total}`;
+  return `${stepPart}/${String(pos.total)}`;
 }
 
 /**
