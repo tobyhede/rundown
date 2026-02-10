@@ -73,7 +73,7 @@ jq -r '
 # Print summary table
 echo "=== PR Feedback Summary ==="
 echo ""
-echo "Total findings: $(wc -l < "$OUTDIR/findings.jsonl" | tr -d ' ')"
+echo "Total findings: $(grep -c '' < "$OUTDIR/findings.jsonl")"
 echo ""
 echo "By severity:"
 jq -r '.severity' "$OUTDIR/findings.jsonl" | sort | uniq -c | sort -rn
@@ -82,7 +82,7 @@ echo "By source:"
 jq -r '.source' "$OUTDIR/findings.jsonl" | sort | uniq -c | sort -rn
 echo ""
 echo "Already addressed:"
-jq -r 'select(.addressed) | .path' "$OUTDIR/findings.jsonl" | wc -l | tr -d ' '
+jq -r 'select(.addressed) | .path' "$OUTDIR/findings.jsonl" | grep -c '' || echo "0"
 echo ""
 echo "Actionable (not addressed):"
 jq -r 'select(.addressed | not) | "\(.severity)\t\(.path):\(.line)\t\(.category)"' "$OUTDIR/findings.jsonl"

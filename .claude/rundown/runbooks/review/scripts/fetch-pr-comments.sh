@@ -39,7 +39,7 @@ PR="$2"
 OUTDIR=".work/pr-feedback"
 mkdir -p "$OUTDIR"
 
-# Fetch all review comments
+# Fetch all inline review comments
 gh api "repos/${REPO}/pulls/${PR}/comments" \
   --paginate \
   --jq '.[] | {
@@ -51,5 +51,18 @@ gh api "repos/${REPO}/pulls/${PR}/comments" \
     created_at: .created_at,
     url: .html_url
   }' > "$OUTDIR/raw-comments.jsonl"
+
+# Fetch general review comments (non-inline)
+gh api "repos/${REPO}/pulls/${PR}/reviews" \
+  --paginate \
+  --jq '.[] | select(.body != null) | {
+    id: .id,
+    path: null,
+    line: null,
+    user: .user.login,
+    body: .body,
+    created_at: .created_at,
+    url: .html_url
+  }' >> "$OUTDIR/raw-comments.jsonl"
 
 echo "Fetched $(wc -l < "$OUTDIR/raw-comments.jsonl" | tr -d ' ') comments to $OUTDIR/raw-comments.jsonl"

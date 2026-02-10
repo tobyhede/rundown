@@ -15,6 +15,7 @@ Create an isolated worktree for focused development work.
 **DONE WHEN:** Worktree is created and ready for development.
 
 ## 1 Verify Git Repository
+
 - PASS: CONTINUE
 - FAIL: STOP "Not in a git repository."
 
@@ -25,6 +26,7 @@ git rev-parse --git-dir
 ```
 
 ## 2 Create Worktree
+
 - PASS: CONTINUE
 - FAIL: STOP "Failed to create worktree."
 

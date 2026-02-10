@@ -6,7 +6,7 @@ tags:
   - github
 vars:
   repo: tobyhede/rundown
-  pr_number: ""
+  pr_number: "REQUIRED"
 ---
 
 # PR Feedback
@@ -17,6 +17,7 @@ Fetch and triage review feedback from a pull request.
 **DONE WHEN:** All findings triaged (addressed or skipped).
 
 ## 1 Fetch PR Review Comments
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -25,6 +26,7 @@ Fetch and triage review feedback from a pull request.
 ```
 
 ## 2 Review Summary
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -33,6 +35,7 @@ Fetch and triage review feedback from a pull request.
 ```
 
 ## 3 Address Findings
+
 - PASS: CONTINUE
 - FAIL: CONTINUE
 
@@ -41,6 +44,8 @@ For each finding, review the code at the specified path and line, then either
 address the feedback or note why it was skipped.
 
 ## 4 Finalize
+
 - PASS: COMPLETE
+- FAIL: STOP
 
 Summarize what was addressed and what was skipped.
