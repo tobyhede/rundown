@@ -207,7 +207,7 @@ export class TextRenderer implements OutputRenderer {
       file?: string;
       state?: string;
       prompted?: boolean;
-      position?: { current: string; total: string | number; substep?: string };
+      position?: { current: string; total: number; substep?: string };
       step?: { name: string; description?: string };
       lastAction?: { action: string; result?: boolean };
       pending?: string[];

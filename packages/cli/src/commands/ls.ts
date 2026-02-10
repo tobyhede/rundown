@@ -82,10 +82,7 @@ export function registerLsCommand(program: Command): void {
             const status = getStatus(state, active, stashedId);
 
             const totalSteps = await getStepTotal(cwd, state.runbook);
-            // Use state.instance for dynamic runbooks
-            const displayStep = state.instance !== undefined
-              ? String(state.instance)
-              : state.step;
+            const displayStep = state.step;
 
             return {
               ...state,

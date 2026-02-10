@@ -167,7 +167,6 @@ export async function runExecutionLoop(
           : itemToRender.command?.code,
         commandLang: itemToRender.command?.lang,
         isSubstep,
-        isDynamic: itemToRender.isDynamic,
         prompted,  // CRITICAL: Pass prompted flag for correct command display
       });
     } else {

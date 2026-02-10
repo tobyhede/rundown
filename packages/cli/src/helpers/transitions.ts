@@ -26,7 +26,6 @@ import {
   extractRetryMax,
   isRunbookComplete,
   isRunbookStopped,
-  handleNextInstanceFlags,
 } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
@@ -457,10 +456,6 @@ export async function executeTransition(
   const isComplete = isRunbookComplete(snapshot);
   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
   const isStopped = isRunbookStopped(snapshot);
-
-  // Handle NEXT instance/substep flags
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-  updatedState = await handleNextInstanceFlags(snapshot, updatedState, manager, state.id, steps, isComplete, isStopped);
 
   // Read action from XState context (source of truth for retryMax and lastAction)
   const prevStepIndex = steps.findIndex(s => s.name === prevState.step);
