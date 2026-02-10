@@ -64,7 +64,6 @@ interface SubstepBuilder {
   id: string;
   description: string;
   agentType?: string;
-  isDynamic: boolean;
   content: string;
   command?: Command;
   promptText: string;
@@ -77,7 +76,6 @@ interface SubstepBuilder {
 
 interface StepBuilder {
   name: string;
-  isDynamic: boolean;
   description: string;
   command?: Command;
   promptText: string;
@@ -154,7 +152,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       const runbooks = extractRunbookList(ps.content);
 
       // Validate NEXT usage before converting to transitions
-      validateNEXTUsage(ps.pendingConditionals, currentStep.isDynamic, ps.isDynamic, currentStep.forClause !== undefined);
+      validateNEXTUsage(ps.pendingConditionals, currentStep.forClause !== undefined);
 
       const transitions = convertToTransitions(ps.pendingConditionals);
 
@@ -175,7 +173,6 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
         id: ps.id,
         description: ps.description,
         agentType: ps.agentType,
-        isDynamic: ps.isDynamic,
         command: ps.command,
         prompt: promptText.trim() || undefined,
         transitions: transitions ?? undefined,
@@ -220,7 +217,6 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       if (parsed) {
         currentStep = {
           name: parsed.name,
-          isDynamic: parsed.isDynamic,
           description: parsed.description,
           promptText: '',
           hasSeenContent: false,
@@ -249,23 +245,10 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       const parsed = extractSubstepHeader(headingText);
 
       if (parsed) {
-        if (currentStep.isDynamic) {
-          if (parsed.stepRef !== '{N}') {
-            throw new RunbookSyntaxError(
-              `Substep ${headingText} uses numeric prefix but parent step is dynamic ({N})`
-            );
-          }
-        } else {
-          if (parsed.stepRef === '{N}') {
-            throw new RunbookSyntaxError(
-              `Substep ${headingText} uses {N} prefix but parent step ${currentStep.name} is static`
-            );
-          }
-          if (parsed.stepRef !== currentStep.name) {
-            throw new RunbookSyntaxError(
-              `Substep ${headingText} does not belong to step ${currentStep.name}`
-            );
-          }
+        if (parsed.stepRef !== currentStep.name) {
+          throw new RunbookSyntaxError(
+            `Substep ${headingText} does not belong to step ${currentStep.name}`
+          );
         }
 
         const duplicateId = currentStep.substeps.find((s) => s.id === parsed.id);
@@ -276,20 +259,10 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
           );
         }
 
-        const hasStatic = currentStep.substeps.some((s) => !s.isDynamic);
-        const hasDynamic = currentStep.substeps.some((s) => s.isDynamic);
-        if ((hasStatic && parsed.isDynamic) || (hasDynamic && !parsed.isDynamic)) {
-          const stepLabel = currentStep.name;
-          throw new RunbookSyntaxError(
-            `Cannot mix static and dynamic substeps in step ${stepLabel}`
-          );
-        }
-
         currentStep.pendingSubstep = {
           id: parsed.id,
           description: parsed.description,
           agentType: parsed.agentType,
-          isDynamic: parsed.isDynamic,
           content: '',
           command: undefined,
           promptText: '',
@@ -566,14 +539,13 @@ function finalizeStep(
   }
 
   // Validate NEXT usage before converting to transitions
-  validateNEXTUsage(pendingConditionals, step.isDynamic, false, step.forClause !== undefined);
+  validateNEXTUsage(pendingConditionals, step.forClause !== undefined);
 
   const transitions = convertToTransitions(pendingConditionals);
   const runbooks = extractRunbookList(step.content);
 
   return {
     name: step.name,
-    isDynamic: step.isDynamic,
     forClause: step.forClause,
     description: step.description,
     command: step.command,
