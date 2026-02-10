@@ -32,14 +32,6 @@ describe('stepIdToString', () => {
   it('formats step with substep', () => {
     expect(stepIdToString({ step: '2', substep: '1' })).toBe('2.1');
   });
-
-  it('formats dynamic step with substep', () => {
-    expect(stepIdToString({ step: '{N}', substep: '1' })).toBe('{N}.1');
-  });
-
-  it('formats dynamic step with dynamic substep', () => {
-    expect(stepIdToString({ step: '{N}', substep: '{n}' })).toBe('{N}.{n}');
-  });
 });
 
 describe('stepIdEquals', () => {
@@ -71,58 +63,21 @@ describe('stepIdEquals', () => {
     )).toBe(false);
   });
 
-  it('returns true for equal dynamic references', () => {
-    expect(stepIdEquals(
-      { step: '{N}', substep: '1' },
-      { step: '{N}', substep: '1' }
-    )).toBe(true);
-  });
-
-  it('returns false for different dynamic substeps', () => {
-    expect(stepIdEquals(
-      { step: '{N}', substep: '1' },
-      { step: '{N}', substep: '2' }
-    )).toBe(false);
-  });
-
-  it('returns false for dynamic vs numeric step', () => {
-    expect(stepIdEquals(
-      { step: '{N}', substep: '1' },
-      { step: '1', substep: '1' }
-    )).toBe(false);
-  });
 });
 
-describe('dynamic substep references', () => {
-  it('parses {N}.1 as dynamic step with static substep', () => {
-    const result = parseStepIdFromString('{N}.1');
-    expect(result).toEqual({ step: '{N}', substep: '1' });
+describe('removed dynamic formats', () => {
+  it('rejects {N} format', () => {
+    expect(parseStepIdFromString('{N}')).toBeNull();
+    expect(parseStepIdFromString('{N}.1')).toBeNull();
+    expect(parseStepIdFromString('{N}.{n}')).toBeNull();
   });
 
-  it('parses {N}.{n} as fully dynamic reference', () => {
-    const result = parseStepIdFromString('{N}.{n}');
-    expect(result).toEqual({ step: '{N}', substep: '{n}' });
+  it('rejects NEXT format', () => {
+    expect(parseStepIdFromString('NEXT')).toBeNull();
+    expect(parseStepIdFromString('NEXT.1')).toBeNull();
   });
 
-  it('parses {N} alone as valid dynamic step reference', () => {
-    const result = parseStepIdFromString('{N}');
-    expect(result).toEqual({ step: '{N}' });
-  });
-
-  it('rejects {N}.0 (substeps are 1-indexed)', () => {
-    const result = parseStepIdFromString('{N}.0');
-    expect(result).toBeNull();
-  });
-});
-
-describe('NEXT target', () => {
-  it('parses NEXT as valid target', () => {
-    const result = parseStepIdFromString('NEXT');
-    expect(result).toEqual({ step: 'NEXT' });
-  });
-
-  it('rejects NEXT with substep notation', () => {
-    const result = parseStepIdFromString('NEXT.1');
-    expect(result).toBeNull();
+  it('rejects {n} as substep', () => {
+    expect(parseStepIdFromString('1.{n}')).toBeNull();
   });
 });

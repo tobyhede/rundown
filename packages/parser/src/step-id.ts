@@ -63,14 +63,12 @@ export interface ParseStepIdOptions {
  *
  * Supports these formats:
  * - Numeric: "1", "1.2"
- * - Dynamic: "{N}.1", "{N}.{n}", "{N}.Name"
  * - Named: "Cleanup", "ErrorHandler.1", "ErrorHandler.Recover"
- * - Special: "NEXT" (for GOTO NEXT in dynamic contexts)
  *
  * Named steps/substeps must be valid identifiers (no spaces, no quotes).
  * Reserved words (CONTINUE, STOP, etc.) are rejected as identifiers.
  *
- * @param input - The string to parse (e.g., "1.2", "ErrorHandler", "NEXT")
+ * @param input - The string to parse (e.g., "1.2", "ErrorHandler")
  * @param options - Optional parsing configuration
  * @returns Parsed StepId object, or null if input is not a valid step reference
  */
@@ -79,16 +77,6 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
 
   // Reject quoted strings - names must be identifiers
   if (input.startsWith('"')) {
-    return null;
-  }
-
-  // Handle NEXT as special GOTO target
-  if (input === 'NEXT') {
-    return { step: 'NEXT' };
-  }
-
-  // Reject NEXT with substep notation (NEXT.1 is invalid)
-  if (input.startsWith('NEXT.')) {
     return null;
   }
 
@@ -114,55 +102,17 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
     }
   }
 
-  // === DYNAMIC STEP HANDLING: {N}.xxx ===
-  if (stepInput.startsWith('{N}.')) {
-    const rest = stepInput.slice(4); // Everything after "{N}."
-
-    // {N}.{n} - dynamic substep
-    if (rest === '{n}') {
-      return { step: '{N}', substep: '{n}', ...(atValue !== undefined ? { at: atValue } : {}) };
-    }
-
-    // {N}.123 - numeric substep
-    if (/^\d+$/.test(rest)) {
-      const substepNum = parseInt(rest, 10);
-      if (substepNum < 1) return null;
-      return { step: '{N}', substep: rest, ...(atValue !== undefined ? { at: atValue } : {}) };
-    }
-
-    // {N}.Name - named substep (reject reserved words)
-    if (NAMED_IDENTIFIER_PATTERN.test(rest)) {
-      if (isReservedWord(rest)) {
-        return null;
-      }
-      return { step: '{N}', substep: rest, ...(atValue !== undefined ? { at: atValue } : {}) };
-    }
-
-    // With separator: {N}.xxx followed by space/dash/colon
-    if (requireSeparator) {
-      const sepMatch = /^(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*)[\s\-:]/.exec(rest);
-      if (sepMatch) {
-        return { step: '{N}', substep: sepMatch[1], ...(atValue !== undefined ? { at: atValue } : {}) };
-      }
-    }
-
+  // Reject dynamic format placeholders {N}, {n}, and NEXT
+  if (stepInput === '{N}' || stepInput.startsWith('{N}.') ||
+      stepInput === 'NEXT' || stepInput.startsWith('NEXT.') ||
+      stepInput.includes('{n}')) {
     return null;
   }
 
-  // Accept bare {N} as "restart current dynamic instance"
-  if (stepInput === '{N}') {
-    return { step: '{N}', ...(atValue !== undefined ? { at: atValue } : {}) };
-  }
-
-  // Reject malformed {N}xxx (already handled {N}. above)
-  if (stepInput.startsWith('{N}')) {
-    return null;
-  }
-
-  // === NUMERIC STEP HANDLING: 1, 1.2, 1.{n}, 1.Name ===
+  // === NUMERIC STEP HANDLING: 1, 1.2, 1.Name ===
   const numericPattern = requireSeparator
-    ? /^(\d+)(?:\.(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*))?[\s\-:]/
-    : /^(\d+)(?:\.(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*))?$/;
+    ? /^(\d+)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?[\s\-:]/
+    : /^(\d+)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?$/;
 
   const numericMatch = stepInput.match(numericPattern);
   if (numericMatch) {
@@ -188,8 +138,8 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
     return { step: stepStr, substep, ...(atValue !== undefined ? { at: atValue } : {}) };
   }
 
-  // === NAMED STEP HANDLING: Cleanup, ErrorHandler.1, ErrorHandler.{n}, ErrorHandler.Recover ===
-  const namedPattern = /^([A-Za-z_][A-Za-z0-9_]*)(?:\.(\d+|\{n\}|[A-Za-z_][A-Za-z0-9_]*))?$/;
+  // === NAMED STEP HANDLING: Cleanup, ErrorHandler.1, ErrorHandler.Recover ===
+  const namedPattern = /^([A-Za-z_][A-Za-z0-9_]*)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?$/;
   const namedMatch = namedPattern.exec(stepInput);
   if (namedMatch) {
     const stepName = namedMatch[1];
