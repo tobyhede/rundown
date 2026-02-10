@@ -11,6 +11,14 @@ import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 export const MAX_STEP_NUMBER = 999999;
 
 /**
+ * Maximum value for FOR loop bounds.
+ *
+ * Prevents accidentally creating excessively large loop ranges
+ * that would degrade performance or exhaust resources.
+ */
+export const MAX_FOR_BOUND = 10_000;
+
+/**
  * Pattern matching Handlebars-style template variable references.
  *
  * Matches strings like `{{VarName}}` where the variable name follows
@@ -33,8 +41,8 @@ export const CommandSchema = z.object({
  */
 export const ForClauseSchema = z.object({
   variable: z.string().regex(NAMED_IDENTIFIER_PATTERN).optional(),
-  start: z.number().int().positive(),
-  end: z.number().int().positive(),
+  start: z.number().int().positive().max(MAX_FOR_BOUND),
+  end: z.number().int().positive().max(MAX_FOR_BOUND),
 }).refine(
   (data) => data.start <= data.end,
   { message: 'FOR range start must not exceed end' }

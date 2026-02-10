@@ -7,7 +7,7 @@ import {
   type Action,
   type Transitions,
 } from './schemas.js';
-import { MAX_STEP_NUMBER } from './schemas.js';
+import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
 import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 import type { ForClause } from './ast.js';
 
@@ -258,10 +258,10 @@ export function parseForClause(text: string): ForClause | null {
   const rest = trimmed.slice(4).trim();
   if (!rest) return null;
 
-  // Try to parse a bound value (positive integer only)
+  // Try to parse a bound value (positive integer only, capped at MAX_FOR_BOUND)
   const parseBound = (s: string): number | null => {
     const num = parseInt(s, 10);
-    if (!isNaN(num) && String(num) === s && num > 0) return num;
+    if (!isNaN(num) && String(num) === s && num > 0 && num <= MAX_FOR_BOUND) return num;
     return null;
   };
 
@@ -279,6 +279,7 @@ export function parseForClause(text: string): ForClause | null {
       const start = parseBound(toMatch[1]);
       const end = parseBound(toMatch[2]);
       if (start !== null && end !== null) {
+        if (start > end) return null;
         return { variable, start, end };
       }
       return null;
@@ -298,6 +299,7 @@ export function parseForClause(text: string): ForClause | null {
     const start = parseBound(rangeMatch[1]);
     const end = parseBound(rangeMatch[2]);
     if (start !== null && end !== null) {
+      if (start > end) return null;
       return { start, end };
     }
     return null;
