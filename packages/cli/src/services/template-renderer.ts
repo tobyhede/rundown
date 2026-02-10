@@ -76,6 +76,9 @@ export function renderTemplate(
 /**
  * Expand loop variables in text using simple regex substitution.
  *
+ * Phase 2 of variable expansion: per-iteration loop variables (regex).
+ * Phase 1 (Handlebars via renderTemplate) runs once at rd-run startup.
+ *
  * Unlike {@link renderTemplate} which uses Handlebars for full template processing,
  * this function performs lightweight per-iteration variable expansion for FOR loops.
  * Unmatched variables are preserved as literal `{{name}}` text.
