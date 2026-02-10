@@ -55,7 +55,7 @@ describe('parseRunbook with substep runbooks', () => {
 
 ## 1. Dispatch agents
 
-### 1.{n} Review step
+### 1.1 Review step
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -260,22 +260,6 @@ Do something.
     expect(() => parseRunbook(markdown)).toThrow(/substep does not exist/i);
   });
 
-  it('rejects GOTO N.M into dynamic substeps', () => {
-    const markdown = `
-## 1. First
-- PASS: GOTO 2.1
-- FAIL: STOP
-
-## 2. Dynamic
-
-### 2.{n} Agent dispatch
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
-
-Do work.
-`;
-    expect(() => parseRunbook(markdown)).toThrow(/substep does not exist/i);
-  });
 });
 
 describe('substep with prompts', () => {

@@ -27,7 +27,7 @@ function getErrorContext(step: Step, substepId?: string): string {
  * Validates a parsed runbook against Rundown specification rules.
  *
  * Checks for conformance with:
- * - Step pattern rules (numeric vs dynamic vs named steps)
+ * - Step pattern rules (numeric vs named steps)
  * - Sequential numbering for numeric steps
  * - Exclusivity rule (step must have exactly one of: body, substeps, or runbook list)
  * - GOTO target validity and self-loop detection
@@ -207,7 +207,7 @@ export function validateAction(
     const targetSubstep = action.target.substep;
 
     // Handle named step target (not numeric strings - those are handled below)
-    if (typeof targetStep === 'string' && targetStep !== 'NEXT' && targetStep !== '{N}' && !/^\d+$/.test(targetStep)) {
+    if (typeof targetStep === 'string' && !/^\d+$/.test(targetStep)) {
       const namedStep = steps.find(s => s.name === targetStep);
       if (!namedStep) {
         const context = getErrorContext(currentStepObj, currentSubstepId);
@@ -254,7 +254,7 @@ export function validateAction(
     }
 
     // At this point, targetStep is a numeric string (e.g., "1", "2")
-    // We've already handled '{N}', 'NEXT', and named steps above
+    // We've already handled named steps above
     // Look up by name, not array index (named steps can appear anywhere)
     const targetStepObj = steps.find(s => s.name === targetStep);
 
