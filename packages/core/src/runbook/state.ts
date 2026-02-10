@@ -125,21 +125,26 @@ export class RunbookStateManager {
       const parsed = JSON.parse(content) as unknown;
 
       // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field
-      /* eslint-disable @typescript-eslint/no-explicit-any */
-      const parsed_any = parsed as any;
-      if (parsed_any?.lastAction?.type === 'GOTO_NEXT') {
-        throw new Error(
-          'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
-          'Please restart execution from the runbook entrypoint.'
-        );
+      if (typeof parsed === 'object' && parsed !== null) {
+        const obj = parsed as Record<string, unknown>;
+        const lastAction = obj.lastAction;
+        if (
+          typeof lastAction === 'object' &&
+          lastAction !== null &&
+          (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
+        ) {
+          throw new Error(
+            'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
+              'Please restart execution from the runbook entrypoint.',
+          );
+        }
+        if (obj.instance !== undefined) {
+          throw new Error(
+            'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
+              'Please restart execution from the runbook entrypoint.',
+          );
+        }
       }
-      if (parsed_any?.instance !== undefined) {
-        throw new Error(
-          'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
-          'Please restart execution from the runbook entrypoint.'
-        );
-      }
-      /* eslint-enable @typescript-eslint/no-explicit-any */
 
       const result = RunbookStateSchema.safeParse(parsed);
       if (!result.success) return null;

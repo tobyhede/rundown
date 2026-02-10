@@ -43,6 +43,14 @@ export type RunbookEvent =
   | { type: 'GOTO'; target: StepId };
 
 /**
+ * XState transition configuration returned by transition builder functions.
+ * Can be a single transition or an array of guarded transitions.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type TransitionEntry = Record<string, any>;
+type TransitionConfig = TransitionEntry | TransitionEntry[];
+
+/**
  * DEFAULT Transitions according to RUNDOWN-SPEC 1.0.0
  * PASS ALL: CONTINUE
  * FAIL ANY: STOP
@@ -247,8 +255,7 @@ function buildSimpleGotoAssign(options: {
   resolvedSubstepId: GotoAssignValue<string | undefined>;
   isGotoToSelf: boolean;
   preserveForContext?: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-}): any {
+}): TransitionEntry {
   return assign({
     lastAction: ({ event }: { event: RunbookEvent }) => {
       return typeof options.lastAction === 'function'
@@ -289,8 +296,7 @@ function buildTransition(
   stepName: string,
   substepId: string | undefined,
   steps: Step[]
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): any {
+): TransitionConfig {
   const { retry, action, kind } = transition;
   // Normalize kind to pass/fail for iteration result recording
   const resultKind: 'pass' | 'fail' = kind === 'pass' || kind === 'yes' ? 'pass' : 'fail';
@@ -298,20 +304,20 @@ function buildTransition(
   if (retry > 0) {
     // Has retry: [retry guard -> stay, exhausted -> action]
     const exhaustedTransition = buildActionTransition(action, stepName, substepId, steps, resultKind);
-    return [
-      {
-        guard: ({ context }: { context: RunbookContext }) =>
-          context.retryCount < retry,
-        actions: assign({
-          lastAction: { type: 'RETRY' as const },
-          retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
-          retryMax: retry
-        }),
-        target: currentStateId
-      },
-      // Flatten in case buildActionTransition returns an array (e.g., FOR loop guarded transitions)
-      ...(Array.isArray(exhaustedTransition) ? exhaustedTransition : [exhaustedTransition])
-    ];
+    const retryGuard: TransitionEntry = {
+      guard: ({ context }: { context: RunbookContext }) =>
+        context.retryCount < retry,
+      actions: assign({
+        lastAction: { type: 'RETRY' as const },
+        retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
+        retryMax: retry
+      }),
+      target: currentStateId
+    };
+    const exhaustedEntries: TransitionEntry[] = Array.isArray(exhaustedTransition)
+      ? (exhaustedTransition as TransitionEntry[])
+      : [exhaustedTransition];
+    return [retryGuard, ...exhaustedEntries];
   }
 
   // No retry: execute action directly
@@ -361,8 +367,7 @@ function buildActionTransition(
   substepId: string | undefined,
   steps: Step[],
   kind?: 'pass' | 'fail'
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): any {
+): TransitionConfig {
   switch (action.type) {
     case 'CONTINUE': {
       const target = findNextStateId(stepName, substepId, steps);
@@ -502,7 +507,6 @@ function buildActionTransition(
 
       return {
         target: computedTarget,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         actions: buildSimpleGotoAssign({
           lastAction: buildGotoLastAction(action.target),
           resolvedSubstepId,
@@ -705,7 +709,6 @@ export function compileRunbookToMachine(steps: Step[]) {
           return targetStep === target.stepName && event.target.substep === target.substepId;
         },
         target: target.id,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         actions: forStepForTarget
           ? assign({
             // FOR step entry via GOTO event: initialize or preserve FOR context
@@ -770,7 +773,6 @@ export function compileRunbookToMachine(steps: Step[]) {
     states[config.id] = {
       ...entryActions,
       on: {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         PASS: buildTransition(
           config.transitions.pass,
           config.id,
@@ -778,7 +780,6 @@ export function compileRunbookToMachine(steps: Step[]) {
           config.substepId,
           steps
         ),
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         FAIL: buildTransition(
           config.transitions.fail,
           config.id,
