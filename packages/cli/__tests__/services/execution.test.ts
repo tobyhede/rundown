@@ -6,6 +6,7 @@ import {
   getStepRetryMax,
   deriveAction,
 } from '../../src/services/execution.js';
+import type { Step } from '@rundown-org/core';
 
 describe('execution service', () => {
   describe('isRunbookComplete', () => {
@@ -121,4 +122,5 @@ describe('execution service', () => {
     it('returns GOTO for non-sequential substeps', () => {
       expect(deriveAction('1', '1', '1', '3', 0, 0, 0, false, false)).toBe('GOTO 1.3');
     });
+  });
 });
