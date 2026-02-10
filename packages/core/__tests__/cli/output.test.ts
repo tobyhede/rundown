@@ -42,15 +42,7 @@ describe('output formatter', () => {
       );
     });
 
-    it('formats position with string total for dynamic runbooks', () => {
-      expect(formatPosition({ current: '1', total: '{N}' })).toBe('1/1*');
-    });
 
-    it('formats position with substep and string total', () => {
-      expect(formatPosition({ current: '1', total: '{N}', substep: '2' })).toBe(
-        '1.2/1*'
-      );
-    });
 
     it('formats named step without total', () => {
       expect(formatPosition({ current: 'RECOVER', total: 6 })).toBe('RECOVER');
@@ -248,36 +240,7 @@ describe('output formatter', () => {
       expect(output).not.toContain('```');
     });
 
-    it('prints dynamic step with resolved instance number', () => {
-      const step: Step = {
-        name: '{N}',
-        description: 'Process Batch',
-        isDynamic: true,
-        prompt: 'Process the batch.',
-      };
-      printStepBlock({ current: '1', total: '{N}' }, step, undefined, writer);
 
-      const output = writer.getOutput();
-      // Step position is now in action block, not step block
-      expect(output).not.toContain('Step:');
-      expect(output).toContain('## 1. Process Batch');
-      expect(output).not.toContain('## {N}.');
-    });
-
-    it('prints dynamic step with substep and resolved placeholders', () => {
-      const step: Step = {
-        name: '{N}',
-        description: 'Process Batch',
-        isDynamic: true,
-        prompt: 'Process item {n}.',
-      };
-      printStepBlock({ current: '2', total: '{N}', substep: '3' }, step, undefined, writer);
-
-      const output = writer.getOutput();
-      // Step position is now in action block, not step block
-      expect(output).not.toContain('Step:');
-      expect(output).toContain('Process item 3.');
-    });
   });
 
   describe('printCommandExec', () => {

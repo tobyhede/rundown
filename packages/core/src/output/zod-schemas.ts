@@ -80,7 +80,7 @@ export const PositionSchema = z.object({
   /** Current step identifier (e.g., "1", "2", "ErrorHandler") */
   current: z.string().describe('Current step number or identifier'),
   /** Total number of steps (number or "{N}" for dynamic runbooks) */
-  total: z.union([z.number(), z.string()]).describe('Total number of steps or status indicator'),
+  total: z.number().describe('Total number of steps'),
   /** Current substep identifier if applicable */
   substep: z.string().optional().describe('Optional substep identifier'),
 }).describe('Current position within the runbook execution');

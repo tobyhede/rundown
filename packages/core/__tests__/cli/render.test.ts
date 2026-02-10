@@ -73,37 +73,22 @@ describe('renderStepForCLI', () => {
   });
 });
 
-describe('dynamic step rendering', () => {
-  it('substitutes {N} with instance number in heading', () => {
+describe('step rendering with instance number', () => {
+  it('renders step with instance number in heading', () => {
     const step: Step = {
-      name: '{N}',
-      description: 'Process Batch',
-      isDynamic: true,
-      prompt: 'Process batch {N}.',
+      name: '1',
+      description: 'Process Item',
+      isDynamic: false,
+      prompt: 'Process item.',
     };
 
     const result = renderStepForCLI(step, '1');
 
-    expect(result).toContain('## 1. Process Batch');
-    expect(result).toContain('Process batch 1.');
-    expect(result).not.toContain('{N}');
+    expect(result).toContain('## 1. Process Item');
+    expect(result).toContain('Process item.');
   });
 
-  it('substitutes {N} and {n} with instance and substep numbers', () => {
-    const step: Step = {
-      name: '{N}',
-      description: 'Process Batch',
-      isDynamic: true,
-      prompt: 'Process item {n} in batch {N}.',
-    };
-
-    const result = renderStepForCLI(step, '2', '3');
-
-    expect(result).toContain('## 2. Process Batch');
-    expect(result).toContain('Process item 3 in batch 2.');
-  });
-
-  it('leaves non-dynamic steps unchanged', () => {
+  it('renders step with prompt unchanged', () => {
     const step: Step = {
       name: '1',
       description: 'First step',
@@ -118,17 +103,17 @@ describe('dynamic step rendering', () => {
 
   it('does not render command in step output (command shown via printCommandExec)', () => {
     const step: Step = {
-      name: '{N}',
-      description: 'Process Batch',
-      isDynamic: true,
+      name: '1',
+      description: 'Process',
+      isDynamic: false,
       prompt: 'Process the batch.',
-      command: { code: 'process-batch --instance {N} --item {n}' },
+      command: { code: 'process-batch' },
     };
 
     const result = renderStepForCLI(step, '2', '5');
 
     // Heading and prompt are present
-    expect(result).toContain('## 2. Process Batch');
+    expect(result).toContain('## 1. Process');
     expect(result).toContain('Process the batch.');
     // Command is not rendered here - shown via printCommandExec
     expect(result).not.toContain('process-batch');
@@ -139,31 +124,30 @@ describe('dynamic step rendering', () => {
 describe('substep rendering', () => {
   it('renders substep with H3 heading and instance.substep format', () => {
     const substep: Substep = {
-      id: '{n}',
+      id: '1',
       description: 'Process Item',
-      isDynamic: true,
+      isDynamic: false,
       prompt: 'Process next item.',
     };
 
     const result = renderStepForCLI(substep, '1', '2');
 
-    expect(result).toContain('### 1.2. Process Item');
+    expect(result).toContain('### 1.1. Process Item');
     expect(result).toContain('Process next item.');
-    expect(result).not.toContain('{n}');
   });
 
-  it('substitutes {N} and {n} in substep prompt', () => {
+  it('renders substep with different id', () => {
     const substep: Substep = {
-      id: '{n}',
+      id: '2',
       description: 'Process Item',
-      isDynamic: true,
-      prompt: 'Processing item {n} in batch {N}.',
+      isDynamic: false,
+      prompt: 'Processing item.',
     };
 
     const result = renderStepForCLI(substep, '3', '5');
 
-    expect(result).toContain('### 3.5. Process Item');
-    expect(result).toContain('Processing item 5 in batch 3.');
+    expect(result).toContain('### 3.2. Process Item');
+    expect(result).toContain('Processing item.');
   });
 
   it('renders static substep with correct heading', () => {
@@ -181,16 +165,16 @@ describe('substep rendering', () => {
 
   it('does not render substep command in output (shown via printCommandExec)', () => {
     const substep: Substep = {
-      id: '{n}',
+      id: '1',
       description: 'Process Item',
-      isDynamic: true,
-      command: { code: 'process --batch {N} --item {n}' },
+      isDynamic: false,
+      command: { code: 'process-batch' },
     };
 
     const result = renderStepForCLI(substep, '2', '3');
 
     // Heading is present
-    expect(result).toContain('### 2.3. Process Item');
+    expect(result).toContain('### 2.1. Process Item');
     // Command is not rendered - shown via printCommandExec
     expect(result).not.toContain('process');
     expect(result).not.toContain('```');

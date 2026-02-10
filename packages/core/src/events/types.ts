@@ -56,8 +56,6 @@ export interface StepEnteredPayload {
   /** Command language (e.g., 'bash', 'sh') */
   readonly commandLang?: string;
   readonly isSubstep: boolean;
-  /** Whether this step/substep is dynamic (uses {N}/{n} template) */
-  readonly isDynamic: boolean;
   /** Whether runbook is in prompted mode (affects command display) */
   readonly prompted: boolean;
 }

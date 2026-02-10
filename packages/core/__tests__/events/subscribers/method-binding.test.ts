@@ -118,7 +118,6 @@ describe('Subscriber method binding', () => {
         description: 'Test step',
         hasCommand: true,
         isSubstep: false,
-        isDynamic: false,
         prompted: false,
       });
       emitter.emit('COMMAND_STARTED', {

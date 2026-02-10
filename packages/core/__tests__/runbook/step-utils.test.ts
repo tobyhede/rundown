@@ -36,36 +36,29 @@ describe('isNumberedStepName', () => {
 describe('countNumberedSteps', () => {
   it('counts numbered steps only', () => {
     const steps = [
-      { name: '1', isDynamic: false },
-      { name: '2', isDynamic: false },
-      { name: '3', isDynamic: false },
-      { name: 'RECOVER', isDynamic: false },
+      { name: '1' },
+      { name: '2' },
+      { name: '3' },
+      { name: 'RECOVER' },
     ];
     expect(countNumberedSteps(steps)).toBe(3);
   });
 
-  it('includes dynamic steps in count', () => {
+  it('counts numbered steps excluding non-numeric', () => {
     const steps = [
-      { name: '{N}', isDynamic: true },
-    ];
-    expect(countNumberedSteps(steps)).toBe(1);
-  });
-
-  it('counts mixed numbered, named, and dynamic steps correctly', () => {
-    const steps = [
-      { name: '1', isDynamic: false },
-      { name: '2', isDynamic: false },
-      { name: 'RECOVERY', isDynamic: false },
-      { name: '3', isDynamic: false },
-      { name: 'CLEANUP', isDynamic: false },
+      { name: '1' },
+      { name: '2' },
+      { name: 'RECOVERY' },
+      { name: '3' },
+      { name: 'CLEANUP' },
     ];
     expect(countNumberedSteps(steps)).toBe(3);
   });
 
   it('returns 0 for only named steps', () => {
     const steps = [
-      { name: 'SETUP', isDynamic: false },
-      { name: 'CLEANUP', isDynamic: false },
+      { name: 'SETUP' },
+      { name: 'CLEANUP' },
     ];
     expect(countNumberedSteps(steps)).toBe(0);
   });
@@ -76,8 +69,8 @@ describe('countNumberedSteps', () => {
 
   it('handles readonly arrays', () => {
     const steps = [
-      { name: '1', isDynamic: false },
-      { name: '2', isDynamic: false },
+      { name: '1' },
+      { name: '2' },
     ] as const;
     expect(countNumberedSteps(steps)).toBe(2);
   });

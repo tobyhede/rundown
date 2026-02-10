@@ -19,14 +19,13 @@ const SEPARATOR_CHAR = '─';
 const SEPARATOR_WIDTH = 50;
 
 /**
- * Format step position as n/N or n/* for dynamic runbooks.
+ * Format step position as n/N.
  *
  * Formats a StepPosition into a human-readable string like "1/5" or "2.1/5".
- * For dynamic runbooks (total is '{N}'), shows asterisk to indicate unbounded.
  * For named steps (non-numeric like "RECOVER"), omits the total.
  *
  * @param pos - The StepPosition to format
- * @returns Formatted position string (e.g., "1/5", "2.1/5", "1.2/*", "RECOVER")
+ * @returns Formatted position string (e.g., "1/5", "2.1/5", "RECOVER")
  */
 export function formatPosition(pos: StepPosition): string {
   const stepPart = pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
@@ -34,11 +33,7 @@ export function formatPosition(pos: StepPosition): string {
   if (!isNumberedStepName(pos.current)) {
     return stepPart;
   }
-  // For dynamic runbooks, show instance number + asterisk to indicate unbounded
-  if (pos.total === '{N}') {
-    return `${stepPart}/${pos.current}*`;
-  }
-  return `${stepPart}/${String(pos.total)}`;
+  return `${stepPart}/${pos.total}`;
 }
 
 /**

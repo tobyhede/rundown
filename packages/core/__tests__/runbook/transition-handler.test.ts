@@ -7,7 +7,7 @@ describe('GOTO NEXT action handling', () => {
     const step = {
       name: '1',
       description: 'Test',
-      isDynamic: true,
+      
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: 'NEXT' as const } } },
@@ -23,7 +23,7 @@ describe('GOTO NEXT action handling', () => {
     const step = {
       name: '1',
       description: 'Test',
-      isDynamic: true,
+      
       transitions: {
         all: true as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
@@ -41,7 +41,7 @@ describe('evaluatePassCondition', () => {
     const step = {
       name: '1',
       description: 'Test',
-      isDynamic: false,
+      
       transitions: {
         pass: {
           kind: 'pass' as const,
@@ -133,7 +133,7 @@ describe('evaluateFailCondition', () => {
     const step: any = {
       name: '1',
       description: 'Test',
-      isDynamic: false,
+      
       transitions: {
         all: true,
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
@@ -151,7 +151,7 @@ describe('evaluateFailCondition edge cases', () => {
     const step = {
       name: '1',
       description: 'Test step without transitions',
-      isDynamic: false,
+      
     };
 
     const result = evaluateFailCondition(step, 0);
@@ -165,7 +165,7 @@ describe('evaluatePassCondition edge cases', () => {
     const step = {
       name: '1',
       description: 'Test step without transitions',
-      isDynamic: false,
+      
     };
 
     const result = evaluatePassCondition(step);
@@ -176,7 +176,7 @@ describe('evaluatePassCondition edge cases', () => {
     const step: any = {
       name: '1',
       description: 'Test',
-      isDynamic: false,
+      
       transitions: {
         all: true,
         pass: { kind: 'pass', retry: 0, action: { type: 'STOP', message: 'Halted on pass' } },
@@ -214,7 +214,7 @@ describe('evaluateFailCondition with retry property', () => {
   it('returns retry when retry > 0 and count < retry', () => {
     const step: Step = {
       name: '1',
-      isDynamic: false,
+      
       description: 'Test',
       transitions: {
         all: true,
@@ -231,7 +231,7 @@ describe('evaluateFailCondition with retry property', () => {
   it('returns action when retries exhausted', () => {
     const step: Step = {
       name: '1',
-      isDynamic: false,
+      
       description: 'Test',
       transitions: {
         all: true,

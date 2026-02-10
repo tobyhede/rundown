@@ -55,7 +55,7 @@ export function renderTransitions(transitions: Transitions): string {
  * agent type suffix, and runbook references.
  *
  * @param substep - The Substep to render
- * @param parentStepName - The parent step name (e.g., "1", "ErrorHandler", "{N}")
+ * @param parentStepName - The parent step name (e.g., "1", "ErrorHandler")
  * @returns Markdown H3 header string for the substep
  */
 export function renderSubstep(substep: Substep, parentStepName: string): string {
@@ -76,7 +76,7 @@ export function renderSubstep(substep: Substep, parentStepName: string): string 
 export function renderStep(step: Step): string {
   const lines: string[] = [];
 
-  // Header - use step.name directly (already "{N}" for dynamic, "1" for numeric)
+  // Header - use step.name directly
   const stepId = step.name;
   lines.push(`## ${stepId}. ${step.description}`);
   lines.push('');
