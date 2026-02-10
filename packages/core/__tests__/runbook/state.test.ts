@@ -726,7 +726,7 @@ describe('RunbookStateManager', () => {
   });
 
   describe('Legacy snapshot rejection', () => {
-    it('rejects state with GOTO_NEXT action in lastAction', async () => {
+    it('returns null for state with GOTO_NEXT action in lastAction', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       // Manually save legacy state with GOTO_NEXT
@@ -739,11 +739,10 @@ describe('RunbookStateManager', () => {
       };
       await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
 
-      // Attempt to load should throw
-      await expect(manager.load(state.id)).rejects.toThrow('dynamic-step snapshots');
+      expect(await manager.load(state.id)).toBeNull();
     });
 
-    it('rejects state with instance field', async () => {
+    it('returns null for state with instance field', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       // Manually save legacy state with instance field
@@ -756,34 +755,29 @@ describe('RunbookStateManager', () => {
       };
       await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
 
-      // Attempt to load should throw
-      await expect(manager.load(state.id)).rejects.toThrow('dynamic-step snapshots');
+      expect(await manager.load(state.id)).toBeNull();
     });
 
-    it('provides helpful error message for legacy snapshots', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+    it('does not break list() when legacy state files exist', async () => {
+      // Create a valid state
+      const validState = await manager.create('valid.md', mockRunbook, { runbookPath: 'valid.md' });
 
-      // Manually save legacy state with GOTO_NEXT
+      // Create a legacy state file alongside it
       const fs = await import('fs/promises');
       const path = await import('path');
-      const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const legacyPath = path.join(testDir, '.claude/rundown/runs', 'legacy-run.json');
       const legacyState = {
-        ...state,
+        ...validState,
+        id: 'legacy-run',
         lastAction: { type: 'GOTO_NEXT' }
       };
-      await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
+      await fs.writeFile(legacyPath, JSON.stringify(legacyState));
 
-      // Attempt to load should throw with helpful message
-      try {
-        await manager.load(state.id);
-        throw new Error('Should have thrown');
-      } catch (e) {
-        if (e instanceof Error) {
-          expect(e.message).toContain('dynamic-step snapshots');
-          expect(e.message).toContain('no longer supported');
-          expect(e.message).toContain('restart execution');
-        }
-      }
+      // list() should return the valid state and skip the legacy one
+      const states = await manager.list();
+      expect(states.length).toBeGreaterThanOrEqual(1);
+      expect(states.some(s => s.id === validState.id)).toBe(true);
+      expect(states.some(s => s.id === 'legacy-run')).toBe(false);
     });
   });
 });
