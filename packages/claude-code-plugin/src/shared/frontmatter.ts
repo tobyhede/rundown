@@ -24,5 +24,5 @@ export function parseRunbookFromFrontmatter(content: string): string | undefined
 
   // Extract runbook field from frontmatter
   const runbookMatch = /^runbook:\s*(.+)$/m.exec(match[1]);
-  return runbookMatch?.[1];
+  return runbookMatch?.[1]?.trim();
 }

@@ -50,9 +50,12 @@ function extractText(node: PhrasingContent | Heading | Paragraph | ListItem): st
   }
   if (node.type === 'inlineCode') {
     const value = (node as { value: string }).value;
-    // Escape backticks in inline code to prevent parsing issues
-    const escaped = value.replace(/`/g, '\\`');
-    return `\`${escaped}\``;
+    // Use double-backtick wrapping per CommonMark spec for inline code containing backticks
+    // This avoids the need to escape backticks and is more readable
+    if (value.includes('`')) {
+      return `\`\` ${value} \`\``;
+    }
+    return `\`${value}\``;
   }
   if ('children' in node && Array.isArray(node.children)) {
     return node.children.map((child) => extractText(child as PhrasingContent | Heading | Paragraph | ListItem)).join('');

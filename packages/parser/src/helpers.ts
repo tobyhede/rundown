@@ -270,6 +270,7 @@ export function parseForClause(text: string): ForClause | null {
   const namedMatch = /^([a-zA-Z_][a-zA-Z0-9_]*)\s+IN\s+(.+)$/.exec(rest);
   if (namedMatch) {
     const variable = namedMatch[1];
+    if (isReservedWord(variable)) return null;
     const rangeStr = namedMatch[2].trim();
 
     // Try "start TO end"

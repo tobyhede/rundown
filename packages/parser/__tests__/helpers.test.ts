@@ -1198,6 +1198,18 @@ describe('parseForClause', () => {
       expect(parseForClause('FOR 1 TO {{Max}}')).toBeNull();
     });
 
+    it('rejects unnamed range with template start', () => {
+      expect(parseForClause('FOR {{Start}} TO 10')).toBeNull();
+    });
+
+    it('rejects named variable with template start', () => {
+      expect(parseForClause('FOR batch IN {{Start}} TO 10')).toBeNull();
+    });
+
+    it('rejects named variable with numeric start and template end', () => {
+      expect(parseForClause('FOR batch IN 1 TO {{End}}')).toBeNull();
+    });
+
     it('rejects named count with template variable', () => {
       expect(parseForClause('FOR batch IN {{Count}}')).toBeNull();
     });
@@ -1230,6 +1242,13 @@ describe('parseForClause', () => {
 
     it('returns null for invalid variable name', () => {
       expect(parseForClause('FOR 1batch IN 1 TO 10')).toBeNull();
+    });
+
+    it('returns null for reserved word as variable name', () => {
+      expect(parseForClause('FOR PASS IN 1 TO 10')).toBeNull();
+      expect(parseForClause('FOR FAIL IN 1 TO 5')).toBeNull();
+      expect(parseForClause('FOR GOTO IN 1 TO 3')).toBeNull();
+      expect(parseForClause('FOR TO IN 1 TO 5')).toBeNull();
     });
 
     it('returns null for invalid template format', () => {
