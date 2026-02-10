@@ -69,7 +69,6 @@ export type LastAction =
   | { readonly type: 'START' }
   | { readonly type: 'CONTINUE' }
   | { readonly type: 'GOTO'; readonly target: string; readonly substep?: string; readonly at?: number | string }
-  | { readonly type: 'GOTO_NEXT' }
   | { readonly type: 'COMPLETE' }
   | { readonly type: 'STOP' }
   | { readonly type: 'RETRY' }
@@ -154,7 +153,6 @@ export interface RunbookState {
   readonly title?: string;
   readonly description?: string;
   readonly step: string;           // UNIFIED: "1", "ErrorHandler", "{N}"
-  readonly instance?: number;      // NEW: Dynamic runbook instance counter (1, 2, 3, ...)
   readonly substep?: string;
   readonly stepName: string;       // Human-readable description
   readonly retryCount: number;

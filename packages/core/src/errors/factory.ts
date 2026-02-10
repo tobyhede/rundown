@@ -52,9 +52,6 @@ export const Errors = {
       line,
     }),
 
-  gotoNextNotAllowedViaCli: (): RundownError =>
-    new RundownError('GOTO_NEXT_CLI_INVALID'),
-
   // Execution
   engineInitFailed: (cause?: Error): RundownError =>
     new RundownError('ENGINE_INIT_FAILED', {}, cause),

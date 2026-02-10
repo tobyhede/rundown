@@ -61,9 +61,6 @@ export function registerPopCommand(program: Command): void {
                   : gotoBase;
                 break;
               }
-              case 'GOTO_NEXT':
-                actionStr = 'GOTO NEXT';
-                break;
               case 'RETRY':
                 actionStr = `RETRY (${String(state.retryCount)}/${String(retryMaxForAction)})`;
                 break;

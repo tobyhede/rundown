@@ -137,14 +137,6 @@ export const ErrorCodes = {
     description: 'Step numbers must be sequential starting from 1.',
     docSlug: 'invalid-step-sequence',
   },
-  GOTO_NEXT_CLI_INVALID: {
-    code: 'RD-403',
-    category: ErrorCategory.VALIDATION,
-    title: 'GOTO NEXT not valid via CLI',
-    description:
-      'GOTO NEXT is only valid in runbook transitions, not via the CLI.',
-    docSlug: 'goto-next-cli-invalid',
-  },
 
   // Execution Errors (5xx)
   ENGINE_INIT_FAILED: {

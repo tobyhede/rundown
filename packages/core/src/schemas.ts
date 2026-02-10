@@ -155,7 +155,6 @@ export const RunbookStateSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
   step: RunbookStepSchema, // UNIFIED: "1", "ErrorHandler", "{N}"
-  instance: z.number().int().positive().optional(), // Dynamic runbook instance (1, 2, 3, ...)
   substep: z.string().optional(),
   stepName: z.string(),
   retryCount: z.number().nonnegative().int(),
@@ -205,7 +204,6 @@ export const RunbookStateSchema = z.object({
     z.object({ type: z.literal('START') }),
     z.object({ type: z.literal('CONTINUE') }),
     z.object({ type: z.literal('GOTO'), target: z.string(), substep: z.string().optional(), at: z.union([z.number().int().positive(), z.string()]).optional() }),
-    z.object({ type: z.literal('GOTO_NEXT') }),
     z.object({ type: z.literal('COMPLETE') }),
     z.object({ type: z.literal('STOP') }),
     z.object({ type: z.literal('RETRY') }),
