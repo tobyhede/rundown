@@ -16,10 +16,6 @@ export interface RunbookContext {
   retryMax?: number;
   /** Current substep ID within the active step */
   substep?: string;
-  /** Flag indicating transition to next dynamic step instance */
-  nextInstance?: boolean;
-  /** Flag indicating transition to next dynamic substep instance */
-  nextSubstepInstance?: boolean;
   /** User-defined runbook variables */
   variables: Record<string, boolean | number | string>;
   /** Last action taken by the state machine (source of truth for transition type) */
@@ -57,8 +53,6 @@ const DEFAULT_TRANSITIONS: Transitions = {
   fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
 };
 
-/** Clears dynamic instance flags to prevent stale state */
-const CLEAR_NEXT_FLAGS = { nextInstance: undefined, nextSubstepInstance: undefined } as const;
 
 /**
  * Internal helper to format state IDs for the XState machine.
@@ -242,19 +236,16 @@ function buildSimpleGotoAssign(options: {
       : 0,
     substep: options.resolvedSubstepId,
     forStack: [] as ForContext[],
-    iterationResults: undefined as ('pass' | 'fail')[] | undefined,
-    ...CLEAR_NEXT_FLAGS
+    iterationResults: undefined as ('pass' | 'fail')[] | undefined
   });
 }
 
 /**
  * Check if a step is a numbered step (vs named step).
- * Numbered steps: "1", "2", "10", "{N}" (dynamic)
+ * Numbered steps: "1", "2", "10"
  * Named steps: "ErrorHandler", "Cleanup", "Recovery"
  */
 function isNumberedStep(step: Step): boolean {
-  // Dynamic steps are part of the numbered sequence
-  if (step.isDynamic) return true;
   // Numeric step names: 1, 2, 3, etc.
   return /^\d+$/.test(step.name);
 }
@@ -377,8 +368,7 @@ function buildActionTransition(
               },
               lastAction: { type: 'CONTINUE' as const },
               retryCount: 0,
-              substep: currentStep.substeps?.[0]?.id,
-              ...CLEAR_NEXT_FLAGS
+              substep: currentStep.substeps?.[0]?.id
             })
           },
           {
@@ -396,8 +386,7 @@ function buildActionTransition(
               retryCount: 0,
               substep: target.startsWith('step_') && target.includes('_', 5)
                 ? target.split('_')[2]
-                : undefined,
-              ...CLEAR_NEXT_FLAGS
+                : undefined
             })
           }
         ];
@@ -412,8 +401,7 @@ function buildActionTransition(
           // Extract substep from ID: step_N_M -> M
           substep: target.startsWith('step_') && target.includes('_', 5)
             ? target.split('_')[2]
-            : undefined,
-          ...CLEAR_NEXT_FLAGS
+            : undefined
         })
       };
     }
@@ -421,163 +409,18 @@ function buildActionTransition(
       return {
         target: 'COMPLETE',
         actions: assign({
-          lastAction: { type: 'COMPLETE' as const },
-          ...CLEAR_NEXT_FLAGS
+          lastAction: { type: 'COMPLETE' as const }
         })
       };
     case 'STOP':
       return {
         target: 'STOPPED',
         actions: assign({
-          lastAction: { type: 'STOP' as const },
-          ...CLEAR_NEXT_FLAGS
+          lastAction: { type: 'STOP' as const }
         })
       };
     case 'GOTO': {
       const targetStep = action.target.step;
-
-      // Handle GOTO NEXT - context-sensitive
-      if (targetStep === 'NEXT') {
-        const qualifier = action.target.qualifier;
-
-        // === QUALIFIED FORMS ===
-        if (qualifier) {
-          // GOTO NEXT X.{n} - advance substep instance in step X
-          // Does NOT require {N} step - works with static steps too (e.g., GOTO NEXT 1.{n})
-          if (qualifier.substep === '{n}') {
-            // Resolve target step: {N} means the dynamic step, otherwise use literal step name
-            let targetStepName: string;
-            if (qualifier.step === '{N}') {
-              const dynamicStep = steps.find(s => s.isDynamic);
-              if (!dynamicStep) {
-                return { target: 'STOPPED' };
-              }
-              targetStepName = dynamicStep.name;
-            } else {
-              targetStepName = qualifier.step;
-            }
-
-            const targetStepObj = steps.find(s => s.name === targetStepName);
-            const dynSubstep = targetStepObj?.substeps?.find(s => s.isDynamic);
-
-            if (!dynSubstep) {
-              return { target: 'STOPPED' };
-            }
-
-            return {
-              target: formatStateId(targetStepName, dynSubstep.id),
-              actions: assign({
-                lastAction: { type: 'GOTO_NEXT' as const },
-                retryCount: 0,
-                substep: dynSubstep.id,
-                nextSubstepInstance: true
-              })
-            };
-          }
-
-          // GOTO NEXT {N} - advance step instance (requires dynamic step)
-          if (qualifier.step === '{N}' && !qualifier.substep) {
-            const dynamicStep = steps.find(s => s.isDynamic);
-            if (!dynamicStep) {
-              return { target: 'STOPPED' };
-            }
-            const nextSubstepId = dynamicStep.substeps?.[0]?.id;
-            return {
-              target: formatStateId(dynamicStep.name, nextSubstepId),
-              actions: assign({
-                lastAction: { type: 'GOTO_NEXT' as const },
-                retryCount: 0,
-                substep: nextSubstepId,
-                nextInstance: true
-              })
-            };
-          }
-        }
-
-        // === UNQUALIFIED NEXT - context-sensitive ===
-        // Check if current substep is dynamic
-        const currentStep = steps.find(s => s.name === stepName);
-        const currentSubstep = currentStep?.substeps?.find(s => s.id === substepId);
-
-        if (currentSubstep?.isDynamic) {
-          // In dynamic substep context (e.g., 1.{n} or {N}.{n}): advance substep only
-          // Does NOT require {N} step - works with static parent step too
-          return {
-            target: formatStateId(stepName, substepId),
-            actions: assign({
-              lastAction: { type: 'GOTO_NEXT' as const },
-              retryCount: 0,
-              substep: substepId,
-              nextSubstepInstance: true
-            })
-          };
-        }
-
-        // Fallback: advance step instance (requires dynamic step)
-        const dynamicStep = steps.find(s => s.isDynamic);
-        if (!dynamicStep) {
-          return { target: 'STOPPED' };
-        }
-        const nextSubstepId = dynamicStep.substeps?.[0]?.id;
-        return {
-          target: formatStateId(dynamicStep.name, nextSubstepId),
-          actions: assign({
-            lastAction: { type: 'GOTO_NEXT' as const },
-            retryCount: 0,
-            substep: nextSubstepId,
-            nextInstance: true
-          })
-        };
-      }
-
-      // Handle dynamic {N} and {N}.M references
-      if (targetStep === '{N}') {
-        // {N} requires a dynamic step - validator should catch this,
-        // but fail safely if it reaches the compiler
-        const dynamicStep = steps.find(s => s.isDynamic);
-        if (!dynamicStep) {
-          return { target: 'STOPPED' };
-        }
-
-        // If dynamic step has substeps and no specific substep targeted, use unified ForContext initialization
-        if (dynamicStep.substeps?.length && !action.target.substep) {
-          const forClause = dynamicStep.forClause ?? { start: 1, end: 1 };
-          const isImplicit = !dynamicStep.forClause;
-          const firstSubstepStateId = getFirstSubstepOfStep(dynamicStep);
-          if (firstSubstepStateId) {
-            return {
-              target: firstSubstepStateId,
-              actions: assign({
-                forStack: [createForContext(dynamicStep.name, forClause, action.target.at, isImplicit)],
-                iterationResults: isImplicit
-                  ? (undefined as ('pass' | 'fail')[] | undefined)
-                  : ([] as ('pass' | 'fail')[]),
-                lastAction: buildGotoLastAction(action.target),
-                retryCount: 0,
-                substep: dynamicStep.substeps[0]?.id,
-                ...CLEAR_NEXT_FLAGS
-              })
-            };
-          }
-        }
-
-        // Non-FOR dynamic step
-        const resolvedSubstepId = action.target.substep ??
-          (dynamicStep.substeps?.[0]?.id);
-        const computedTarget = formatStateId(dynamicStep.name, resolvedSubstepId);
-        const currentStateId = formatStateId(stepName, substepId);
-        const isGotoToSelf = computedTarget === currentStateId;
-
-        return {
-          target: computedTarget,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          actions: buildSimpleGotoAssign({
-            lastAction: buildGotoLastAction(action.target),
-            resolvedSubstepId,
-            isGotoToSelf
-          })
-        };
-      }
 
       // Named/numeric step target (both are strings now)
       const targetStepObj = steps.find(s => s.name === targetStep);
@@ -602,8 +445,7 @@ function buildActionTransition(
                 : ([] as ('pass' | 'fail')[]),
               lastAction: buildGotoLastAction(action.target),
               retryCount: 0,
-              substep: targetStepObj.substeps[0]?.id,
-              ...CLEAR_NEXT_FLAGS
+              substep: targetStepObj.substeps[0]?.id
             })
           };
         }
@@ -631,7 +473,7 @@ function buildActionTransition(
       const currentStep = steps.find(s => s.name === stepName);
       if (!currentStep?.forClause) {
         // NEXT outside FOR loop - should not happen (validator catches this)
-        return { target: 'STOPPED', actions: assign({ lastAction: { type: 'NEXT' as const }, ...CLEAR_NEXT_FLAGS }) };
+        return { target: 'STOPPED', actions: assign({ lastAction: { type: 'NEXT' as const } }) };
       }
 
       const firstSubstepStateId = getFirstSubstepOfStep(currentStep);
@@ -659,8 +501,7 @@ function buildActionTransition(
             },
             lastAction: { type: 'NEXT' as const },
             retryCount: 0,
-            substep: currentStep.substeps?.[0]?.id,
-            ...CLEAR_NEXT_FLAGS
+            substep: currentStep.substeps?.[0]?.id
           })
         },
         {
@@ -677,8 +518,7 @@ function buildActionTransition(
             retryCount: 0,
             substep: exitTarget.startsWith('step_') && exitTarget.includes('_', 5)
               ? exitTarget.split('_')[2]
-              : undefined,
-            ...CLEAR_NEXT_FLAGS
+              : undefined
           })
         }
       ];
@@ -688,7 +528,7 @@ function buildActionTransition(
       const currentStep = steps.find(s => s.name === stepName);
       if (!currentStep?.forClause) {
         // BREAK outside FOR loop - should not happen (validator catches this)
-        return { target: 'STOPPED', actions: assign({ lastAction: { type: 'BREAK' as const }, ...CLEAR_NEXT_FLAGS }) };
+        return { target: 'STOPPED', actions: assign({ lastAction: { type: 'BREAK' as const } }) };
       }
 
       const lastSubstep = currentStep.substeps?.[currentStep.substeps.length - 1];
@@ -708,8 +548,7 @@ function buildActionTransition(
           retryCount: 0,
           substep: exitTarget.startsWith('step_') && exitTarget.includes('_', 5)
             ? exitTarget.split('_')[2]
-            : undefined,
-          ...CLEAR_NEXT_FLAGS
+            : undefined
         })
       };
     }
@@ -852,8 +691,7 @@ export function compileRunbookToMachine(steps: Step[]) {
             },
             retryCount: 0,
             substep: ({ event }: { event: RunbookEvent }) =>
-              event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
-            ...CLEAR_NEXT_FLAGS
+              event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined
           })
           : buildSimpleGotoAssign({
             lastAction: ({ event }: { event: RunbookEvent }): LastAction | undefined => {
@@ -914,8 +752,6 @@ export function compileRunbookToMachine(steps: Step[]) {
       retryCount: 0,
       retryMax: undefined,
       substep: undefined,
-      nextInstance: undefined,
-      nextSubstepInstance: undefined,
       variables: {},
       lastAction: undefined,
       lastMessage: undefined,

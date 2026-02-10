@@ -4,41 +4,6 @@ import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import type { Step } from '../../src/runbook/types.js';
 
 describe('GOTO to self (implicit retry)', () => {
-  it('should increment retryCount when GOTO targets current step via {N}', () => {
-    // Use name: '{N}' to match how parser represents dynamic steps
-    const steps: Step[] = [{
-      name: '{N}',
-      description: 'Dynamic step',
-      isDynamic: true,
-      transitions: {
-        all: false,
-        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-        fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '{N}' } } }
-      }
-    }];
-
-    const machine = compileRunbookToMachine(steps);
-    const actor = createActor(machine);
-    actor.start();
-
-    // Initial state - state ID is step_{N} (string, not nested object)
-    expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_{N}');
-
-    // First FAIL - should increment retryCount (GOTO to self)
-    actor.send({ type: 'FAIL' });
-    expect(actor.getSnapshot().context.retryCount).toBe(1);
-    expect(actor.getSnapshot().value).toBe('step_{N}');
-
-    // Second FAIL - should increment again
-    actor.send({ type: 'FAIL' });
-    expect(actor.getSnapshot().context.retryCount).toBe(2);
-
-    // Third FAIL - should increment again
-    actor.send({ type: 'FAIL' });
-    expect(actor.getSnapshot().context.retryCount).toBe(3);
-  });
-
   it('should increment retryCount when GOTO targets current step by numeric name', () => {
     // Tests non-dynamic step that uses GOTO to itself by step number
     const steps: Step[] = [{
