@@ -113,23 +113,7 @@ describe('renderStep', () => {
   });
 });
 
-describe('renderStep with dynamic steps', () => {
-  it('renders dynamic step with substeps', () => {
-    const step: Step = {
-      name: '{N}',
-      description: 'Execute task',
-      substeps: [
-        { id: '1', description: 'Implement' },
-        { id: '2', description: 'Test' }
-      ]
-    };
-
-    const rendered = renderStep(step);
-    expect(rendered).toContain('## {N}. Execute task');
-    expect(rendered).toContain('### {N}.1 Implement');
-    expect(rendered).toContain('### {N}.2 Test');
-  });
-
+describe('renderStep', () => {
   it('renders static step unchanged', () => {
     const step: Step = {
       name: '1',
@@ -141,7 +125,7 @@ describe('renderStep with dynamic steps', () => {
   });
 });
 
-describe('renderSubstep with dynamic parent', () => {
+describe('renderSubstep with parent prefix', () => {
   it('uses numeric prefix for static parent', () => {
     const substep: Substep = {
       id: '1',

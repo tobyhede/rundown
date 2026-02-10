@@ -57,11 +57,10 @@ export function parseQuotedOrIdentifier(text: string): string {
  *
  * Represents the structured data extracted from substep headers like:
  * - "1.2 Description" (numeric)
- * - "{N}.1 Description" (dynamic step, static substep)
  * - "ErrorHandler.Recover Description (agent)" (named with agent type)
  */
 export interface ParsedSubstepHeader {
-  /** Reference to parent step: "1", "{N}", or named identifier like "ErrorHandler" */
+  /** Reference to parent step: "1" or named identifier like "ErrorHandler" */
   stepRef: string;
   /** Substep identifier: numeric string or named identifier */
   id: string;
@@ -181,7 +180,6 @@ function isValidSubstepId(s: string): boolean {
  *
  * Parses substep headers in these formats:
  * - Numeric: "1.2" or "1.2 Description"
- * - Dynamic: "{N}.1", "1.{n}", "{N}.{n}" (with optional description)
  * - Named: "1.Cleanup", "ErrorHandler.Recover" (with optional description)
  * - With agent: "1.2 Description (agent-type)" or "1.2 (agent-type)"
  *
