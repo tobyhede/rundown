@@ -86,8 +86,8 @@ Execution flow:
 | Command               | Description                                                 |
 | --------------------- | ----------------------------------------------------------- |
 | run [file]            |  Start a runbook, queue a step, or bind an agent            |
-| pass|yes [options]    |  Mark current step as passed (triggers PASS transition)     |
-| fail|no [options]     |  Mark current step as failed (triggers FAIL transition)     |
+| `pass` / `yes` [options] |  Mark current step as passed (triggers PASS transition)  |
+| `fail` / `no` [options]  |  Mark current step as failed (triggers FAIL transition)  |
 | status [options]      |  Show current runbook state                                 |
 | stop [options]        |  Abort current runbook                                      |
 | help [command]        |  display help for command                                   |

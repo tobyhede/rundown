@@ -16,6 +16,22 @@ jest.unstable_mockModule('fs', () => ({
 const { execute } = await import('../../src/gates/on-command-start.js');
 const { parseRunbookFromFrontmatter } = await import('../../src/shared/frontmatter.js');
 
+/**
+ * Configure mockReadFileSync to return content only when the path
+ * contains the expected command name, throwing ENOENT for all other paths.
+ * This ensures tests verify the correct file path is constructed.
+ */
+function mockReadForCommand(commandName: string, content: string): void {
+  mockReadFileSync.mockImplementation((filePath: string) => {
+    if (filePath.includes(`/${commandName}.md`)) {
+      return content;
+    }
+    const err = new Error(`ENOENT: no such file or directory, open '${filePath}'`) as NodeJS.ErrnoException;
+    err.code = 'ENOENT';
+    throw err;
+  });
+}
+
 describe('on-command-start gate', () => {
   let originalPluginRoot: string | undefined;
 
@@ -109,7 +125,7 @@ runbook: write-plan
 ---
 # Content`;
 
-      mockReadFileSync.mockReturnValue(commandContent);
+      mockReadForCommand('write-plan', commandContent);
       mockRundown.mockReturnValue('File: write-plan.md\nAction: START\n\n## 1. First Step');
 
       const input: HookInput = {
@@ -140,7 +156,7 @@ runbook: my-runbook
 ---
 # Content`;
 
-      mockReadFileSync.mockReturnValue(commandContent);
+      mockReadForCommand('my-command', commandContent);
       mockRundown.mockReturnValue('Started runbook');
 
       const input: HookInput = {
@@ -160,7 +176,7 @@ runbook: broken-runbook
 ---
 # Content`;
 
-      mockReadFileSync.mockReturnValue(commandContent);
+      mockReadForCommand('test-cmd', commandContent);
       mockRundown.mockImplementation(() => {
         const error = new Error('Command failed');
         (error as any).stdout = 'Runbook not found: broken-runbook';
@@ -186,7 +202,7 @@ runbook: test-runbook
 ---
 # Content`;
 
-      mockReadFileSync.mockReturnValue(commandContent);
+      mockReadForCommand('test-cmd', commandContent);
       mockRundown.mockImplementation(() => {
         const error = new Error('Command failed');
         (error as any).stdout = 'stdout output';
@@ -212,7 +228,7 @@ runbook: test-runbook
 ---
 # Content`;
 
-      mockReadFileSync.mockReturnValue(commandContent);
+      mockReadForCommand('test-cmd', commandContent);
       mockRundown.mockImplementation(() => {
         const error = new Error('Command failed');
         (error as any).stderr = 'Permission denied';
@@ -236,7 +252,7 @@ runbook: test-runbook
 ---
 # Content`;
 
-      mockReadFileSync.mockReturnValue(commandContent);
+      mockReadForCommand('test-cmd', commandContent);
       mockRundown.mockImplementation(() => {
         throw new Error('ENOENT: file not found');
       });
@@ -274,7 +290,7 @@ runbook: ../../../etc/passwd
 ---
 # Content`;
 
-      mockReadFileSync.mockReturnValue(commandContent);
+      mockReadForCommand('malicious', commandContent);
 
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
@@ -294,7 +310,7 @@ runbook: test; rm -rf /
 ---
 # Content`;
 
-      mockReadFileSync.mockReturnValue(commandContent);
+      mockReadForCommand('injection', commandContent);
 
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',

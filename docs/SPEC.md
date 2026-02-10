@@ -427,7 +427,7 @@ Example:
 Transitions define the control flow based on the result of a step or substep.
 
 **Syntax:**
-```
+```text
 - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: action
 ```
 
