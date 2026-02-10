@@ -188,6 +188,11 @@ describe('Action schema-derived type', () => {
     expect(parsed.type).toBe('NEXT');
   });
 
+  it('accepts BREAK action for loop control', () => {
+    const parsed = ActionSchema.parse({ type: 'BREAK' });
+    expect(parsed.type).toBe('BREAK');
+  });
+
   it('parses DONE action', () => {
     const parsed = ActionSchema.parse({ type: 'COMPLETE' });
     expect(parsed.type).toBe('COMPLETE');

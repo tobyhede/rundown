@@ -1,5 +1,5 @@
 // packages/claude-code-plugin/__tests__/gates/on-skill-start.test.ts
-import { jest, expect, describe, it, beforeEach } from '@jest/globals';
+import { jest, expect, describe, it, beforeEach, afterEach } from '@jest/globals';
 import type { HookInput } from '../../src/shared/index.js';
 
 const mockRundown = jest.fn();
@@ -17,8 +17,19 @@ const { execute } = await import('../../src/gates/on-skill-start.js');
 const { parseRunbookFromFrontmatter } = await import('../../src/shared/frontmatter.js');
 
 describe('on-skill-start gate', () => {
+  let originalPluginRoot: string | undefined;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  });
+
+  afterEach(() => {
+    if (originalPluginRoot !== undefined) {
+      process.env.CLAUDE_PLUGIN_ROOT = originalPluginRoot;
+    } else {
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+    }
   });
 
   describe('parseRunbookFromFrontmatter', () => {
@@ -56,6 +67,14 @@ description: No runbook
 
       expect(result).toBeUndefined();
     });
+
+    it('handles CRLF line endings', () => {
+      const content = '---\r\nname: test\r\nrunbook: test-runbook\r\n---\r\n# Content';
+
+      const result = parseRunbookFromFrontmatter(content);
+
+      expect(result).toBe('test-runbook');
+    });
   });
 
   describe('execute', () => {
@@ -91,9 +110,6 @@ runbook: verify.runbook.md
 
       mockReadFileSync.mockReturnValue(skillContent);
       mockRundown.mockReturnValue('Started runbook');
-
-      // Set plugin root for skill discovery
-      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
       process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
 
       const input: HookInput = {
@@ -111,8 +127,6 @@ runbook: verify.runbook.md
         ['run', 'verify.runbook.md'],
         '/test'
       );
-
-      process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
     });
   });
 });

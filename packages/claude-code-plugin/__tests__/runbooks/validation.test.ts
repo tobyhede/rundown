@@ -49,27 +49,23 @@ describe('Built-in Runbook Validation', () => {
 
   describe.each(runbookEntries)('%s', (_relativePath, runbookPath) => {
     const content = readFileSync(runbookPath, 'utf-8');
+    const runbook = parseRunbookDocument(content, runbookPath, { skipValidation: true });
 
     it('parses without syntax errors', () => {
-      expect(() => {
-        parseRunbookDocument(content, runbookPath, { skipValidation: true });
-      }).not.toThrow();
+      expect(runbook).toBeDefined();
     });
 
     it('passes validation checks', () => {
-      const runbook = parseRunbookDocument(content, runbookPath, { skipValidation: true });
       const errors = validateRunbook(runbook.steps);
       expect(errors).toEqual([]);
     });
 
     it('has required metadata', () => {
-      const runbook = parseRunbookDocument(content, runbookPath, { skipValidation: true });
       expect(runbook.name).toBeDefined();
       expect(typeof runbook.name).toBe('string');
     });
 
     it('has at least one step', () => {
-      const runbook = parseRunbookDocument(content, runbookPath, { skipValidation: true });
       expect(runbook.steps.length).toBeGreaterThan(0);
     });
   });

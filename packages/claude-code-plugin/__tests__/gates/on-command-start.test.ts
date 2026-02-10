@@ -127,6 +127,10 @@ runbook: write-plan
       expect(result.additionalContext).toContain('rd goto');
       expect(result.additionalContext).toContain('IMPORTANT');
       expect(result.additionalContext).toContain('Current State');
+      expect(mockReadFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('write-plan'),
+        'utf8'
+      );
       expect(mockRundown).toHaveBeenCalledWith(['run', 'write-plan'], '/test');
     });
 
