@@ -1,6 +1,5 @@
-import { type HookInput, type GateResult, logger, safeJoin, sanitizePathSegment, parseRunbookFromFrontmatter } from '../shared/index.js';
+import { type HookInput, type GateResult, logger, safeJoin, isValidRunbookPath, findRunbookByFrontmatter } from '../shared/index.js';
 import { rundown } from '../workflow/hooks/rundown.js';
-import * as fs from 'fs';
 
 /**
  * Execute the command start gate.
@@ -22,11 +21,13 @@ export function execute(input: HookInput): Promise<GateResult> {
   if (!commandName) return Promise.resolve({});
 
   // Find command file and parse frontmatter
-  const runbook = findCommandRunbook(commandName, input.cwd);
+  const runbook = findRunbookByFrontmatter(commandName, input.cwd, {
+    buildPath: (root, name) => safeJoin(root, 'commands', `${name}.md`),
+  });
   if (!runbook) return Promise.resolve({});
 
   // Validate runbook path to prevent command injection and path traversal
-  if (!/^[\w./-]+$/.test(runbook) || runbook.includes('..')) {
+  if (!isValidRunbookPath(runbook)) {
     void logger.warn('Invalid runbook path rejected', { runbook, command: commandName });
     return Promise.resolve({});
   }
@@ -90,45 +91,3 @@ ${error.trim()}
 ---
 `.trim();
 }
-
-/**
- * Find command .md file and extract runbook from frontmatter
- */
-function findCommandRunbook(commandName: string, cwd: string): string | undefined {
-  // Parse namespace:name format (e.g., "rundown:write-plan" -> "write-plan")
-  const colonIndex = commandName.indexOf(':');
-  const name = sanitizePathSegment(colonIndex >= 0 ? commandName.substring(colonIndex + 1) : commandName);
-
-  // Search paths for command file
-  const searchPaths: string[] = [];
-
-  // Plugin commands (via CLAUDE_PLUGIN_ROOT)
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-  if (pluginRoot) {
-    try {
-      searchPaths.push(safeJoin(pluginRoot, 'commands', `${name}.md`));
-    } catch {
-      // Path traversal attempt - skip
-    }
-  }
-
-  // Project commands
-  try {
-    searchPaths.push(safeJoin(cwd, '.claude', 'commands', `${name}.md`));
-  } catch {
-    // Path traversal attempt - skip
-  }
-
-  for (const cmdPath of searchPaths) {
-    try {
-      const content = fs.readFileSync(cmdPath, 'utf8');
-      const runbook = parseRunbookFromFrontmatter(content);
-      if (runbook) return runbook;
-    } catch {
-      continue;
-    }
-  }
-
-  return undefined;
-}
-

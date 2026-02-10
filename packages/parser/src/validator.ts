@@ -151,6 +151,35 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
 }
 
 /**
+ * Validate that a GOTO AT target has a FOR clause.
+ *
+ * @param action - The GOTO action with target StepId
+ * @param targetStepObj - The resolved target step
+ * @param targetStep - The target step name (for error messages)
+ * @param currentStepObj - The step containing the GOTO (for error line)
+ * @param errors - Array to which validation errors are appended (mutated)
+ * @returns True if valid (or no AT), false if invalid AT target
+ */
+function validateGotoAtTarget(
+  action: { target: { at?: number | string } },
+  targetStepObj: Step,
+  targetStep: string,
+  currentStepObj: Step,
+  errors: ValidationError[]
+): boolean {
+  if ('at' in action.target && action.target.at !== undefined) {
+    if (!targetStepObj.forClause) {
+      errors.push({
+        line: currentStepObj.line,
+        message: `GOTO AT is only valid when the target step has a FOR clause (step "${targetStep}" has no FOR)`,
+      });
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Validates a single action within a step or substep context.
  *
  * Performs validation including:
@@ -218,17 +247,7 @@ export function validateAction(
         return;
       }
 
-      // Validate AT - target must be a FOR step
-      if ('at' in action.target && action.target.at !== undefined) {
-        if (!namedStep.forClause) {
-          const _context = getErrorContext(currentStepObj, currentSubstepId);
-          errors.push({
-            line: currentStepObj.line,
-            message: `GOTO AT is only valid when the target step has a FOR clause (step "${targetStep}" has no FOR)`
-          });
-          return;
-        }
-      }
+      if (!validateGotoAtTarget(action, namedStep, targetStep, currentStepObj, errors)) return;
 
       if (targetSubstep) {
         if (!namedStep.substeps || namedStep.substeps.length === 0) {
@@ -267,18 +286,7 @@ export function validateAction(
       return;
     }
 
-    // Validate AT - target must be a FOR step
-    if ('at' in action.target && action.target.at !== undefined) {
-      if (!targetStepObj.forClause) {
-        const _context = getErrorContext(currentStepObj, currentSubstepId);
-        errors.push({
-          line: currentStepObj.line,
-          message: `GOTO AT is only valid when the target step has a FOR clause (step "${targetStep}" has no FOR)`
-        });
-        return;
-      }
-    }
-
+    if (!validateGotoAtTarget(action, targetStepObj, targetStep, currentStepObj, errors)) return;
 
     if (targetSubstep) {
       if (!targetStepObj.substeps || targetStepObj.substeps.length === 0) {

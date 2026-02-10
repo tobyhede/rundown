@@ -1,6 +1,5 @@
-import { type HookInput, type GateResult, logger, safeJoin, sanitizePathSegment, parseRunbookFromFrontmatter } from '../shared/index.js';
+import { type HookInput, type GateResult, logger, safeJoin, isValidRunbookPath, findRunbookByFrontmatter } from '../shared/index.js';
 import { rundown } from '../workflow/hooks/rundown.js';
-import * as fs from 'fs';
 
 /**
  * Execute the skill start gate.
@@ -22,11 +21,13 @@ export function execute(input: HookInput): Promise<GateResult> {
   if (!skillName) return Promise.resolve({});
 
   // Find skill file and parse frontmatter
-  const runbook = findSkillRunbook(skillName, input.cwd);
+  const runbook = findRunbookByFrontmatter(skillName, input.cwd, {
+    buildPath: (root, name) => safeJoin(root, 'skills', name, 'SKILL.md'),
+  });
   if (!runbook) return Promise.resolve({});
 
   // Validate runbook path to prevent command injection and path traversal
-  if (!/^[\w./-]+$/.test(runbook) || runbook.includes('..')) {
+  if (!isValidRunbookPath(runbook)) {
     void logger.warn('Invalid runbook path rejected', { runbook, skill: skillName });
     return Promise.resolve({});
   }
@@ -41,46 +42,4 @@ export function execute(input: HookInput): Promise<GateResult> {
     // Graceful degradation - runbook start failed
     return Promise.resolve({});
   }
-}
-
-/**
- * Find skill SKILL.md and extract runbook from frontmatter
- */
-function findSkillRunbook(skillName: string, cwd: string): string | undefined {
-  // Parse namespace:name format
-  const colonIndex = skillName.indexOf(':');
-  // SECURITY: Sanitize components
-  const name = sanitizePathSegment(colonIndex >= 0 ? skillName.substring(colonIndex + 1) : skillName);
-
-  // Search paths for SKILL.md
-  const searchPaths: string[] = [];
-
-  // Plugin skills (via CLAUDE_PLUGIN_ROOT)
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-  if (pluginRoot) {
-    try {
-      searchPaths.push(safeJoin(pluginRoot, 'skills', name, 'SKILL.md'));
-    } catch {
-      // Path traversal attempt or other path error - skip plugin path
-    }
-  }
-
-  // User skills (in project .claude directory)
-  try {
-    searchPaths.push(safeJoin(cwd, '.claude', 'skills', name, 'SKILL.md'));
-  } catch {
-    // Path traversal attempt or other path error - skip user path
-  }
-
-  for (const skillPath of searchPaths) {
-    try {
-      const content = fs.readFileSync(skillPath, 'utf8');
-      const runbook = parseRunbookFromFrontmatter(content);
-      if (runbook) return runbook;
-    } catch {
-      continue;
-    }
-  }
-
-  return undefined;
 }

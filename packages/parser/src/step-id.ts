@@ -190,7 +190,7 @@ export function stepIdToString(stepId: StepId): string {
 /**
  * Compare two StepIds for equality.
  *
- * Two StepIds are equal if both their step and substep components match.
+ * Two StepIds are equal if their step, substep, and at components all match.
  *
  * @param a - First StepId to compare
  * @param b - Second StepId to compare

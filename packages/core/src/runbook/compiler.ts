@@ -358,6 +358,57 @@ function findNextStateId(stepName: string, substepId: string | undefined, steps:
   return 'COMPLETE';
 }
 
+/** Build the exit-loop assign action for CONTINUE/NEXT/BREAK at the last substep. */
+function buildLoopExitAssign(
+  actionType: 'CONTINUE' | 'NEXT' | 'BREAK',
+  exitTarget: string,
+  iterationResult: 'pass' | 'fail',
+  isImplicit?: boolean
+): TransitionEntry {
+  return assign({
+    forStack: [] as ForContext[],
+    iterationResults: isImplicit
+      ? (undefined as ('pass' | 'fail')[] | undefined)
+      : ({ context }: { context: RunbookContext }) => {
+          const results = context.iterationResults ?? [];
+          return [...results, iterationResult];
+        },
+    lastAction: { type: actionType },
+    retryCount: 0,
+    substep: extractSubstepFromStateId(exitTarget),
+  });
+}
+
+/** Build the loop-back guarded transition shared by CONTINUE and NEXT. */
+function buildLoopBackTransition(
+  actionType: 'CONTINUE' | 'NEXT',
+  firstSubstepStateId: string | null,
+  iterationResult: 'pass' | 'fail',
+  firstSubstepId: string | undefined
+): TransitionEntry {
+  return {
+    guard: ({ context }: { context: RunbookContext }) => {
+      const top = peekForStack(context.forStack);
+      return top !== undefined && top.iteration < top.end;
+    },
+    target: firstSubstepStateId,
+    actions: assign({
+      forStack: ({ context }: { context: RunbookContext }) => {
+        const top = peekForStack(context.forStack);
+        if (!top) return context.forStack;
+        return [{ ...top, iteration: top.iteration + 1 }];
+      },
+      iterationResults: ({ context }: { context: RunbookContext }) => {
+        const results = context.iterationResults ?? [];
+        return [...results, iterationResult];
+      },
+      lastAction: { type: actionType },
+      retryCount: 0,
+      substep: firstSubstepId,
+    }),
+  };
+}
+
 /**
  * Build XState transition config from a terminal Action.
  */
@@ -383,44 +434,8 @@ function buildActionTransition(
         const isImplicit = !currentStep.forClause;
 
         return [
-          {
-            // Guard: more iterations remain (always false for implicit 1..1)
-            guard: ({ context }: { context: RunbookContext }) => {
-              const top = peekForStack(context.forStack);
-              return top !== undefined && top.iteration < top.end;
-            },
-            target: firstSubstepStateId,
-            actions: assign({
-              forStack: ({ context }: { context: RunbookContext }) => {
-                const top = peekForStack(context.forStack);
-                if (!top) return context.forStack;
-                return [{ ...top, iteration: top.iteration + 1 }];
-              },
-              iterationResults: ({ context }: { context: RunbookContext }) => {
-                const results = context.iterationResults ?? [];
-                return [...results, iterationResult];
-              },
-              lastAction: { type: 'CONTINUE' as const },
-              retryCount: 0,
-              substep: currentStep.substeps?.[0]?.id
-            })
-          },
-          {
-            // Default: exit loop
-            target,
-            actions: assign({
-              forStack: [] as ForContext[],
-              iterationResults: isImplicit
-                ? (undefined as ('pass' | 'fail')[] | undefined)
-                : ({ context }: { context: RunbookContext }) => {
-                    const results = context.iterationResults ?? [];
-                    return [...results, iterationResult];
-                  },
-              lastAction: { type: 'CONTINUE' as const },
-              retryCount: 0,
-              substep: extractSubstepFromStateId(target)
-            })
-          }
+          buildLoopBackTransition('CONTINUE', firstSubstepStateId, iterationResult, currentStep.substeps?.[0]?.id),
+          { target, actions: buildLoopExitAssign('CONTINUE', target, iterationResult, isImplicit) }
         ];
       }
 
@@ -529,43 +544,8 @@ function buildActionTransition(
       const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
 
       return [
-        {
-          // Guard: more iterations remain
-          guard: ({ context }: { context: RunbookContext }) => {
-            const top = peekForStack(context.forStack);
-            return top !== undefined && top.iteration < top.end;
-          },
-          target: firstSubstepStateId,
-          actions: assign({
-            forStack: ({ context }: { context: RunbookContext }) => {
-              const top = peekForStack(context.forStack);
-              if (!top) return context.forStack;
-              return [{ ...top, iteration: top.iteration + 1 }];
-            },
-            iterationResults: ({ context }: { context: RunbookContext }) => {
-              const results = context.iterationResults ?? [];
-              return [...results, iterationResult];
-            },
-            lastAction: { type: 'NEXT' as const },
-            retryCount: 0,
-            substep: currentStep.substeps?.[0]?.id
-          })
-        },
-        {
-          // Default: last iteration, exit loop
-          target: exitTarget,
-          actions: assign({
-            forStack: [] as ForContext[],
-            // Record final iteration result before exiting
-            iterationResults: ({ context }: { context: RunbookContext }) => {
-              const results = context.iterationResults ?? [];
-              return [...results, iterationResult];
-            },
-            lastAction: { type: 'NEXT' as const },
-            retryCount: 0,
-            substep: extractSubstepFromStateId(exitTarget)
-          })
-        }
+        buildLoopBackTransition('NEXT', firstSubstepStateId, iterationResult, currentStep.substeps?.[0]?.id),
+        { target: exitTarget, actions: buildLoopExitAssign('NEXT', exitTarget, iterationResult) }
       ];
     }
 
@@ -582,17 +562,7 @@ function buildActionTransition(
 
       return {
         target: exitTarget,
-        actions: assign({
-          forStack: [] as ForContext[],
-          // Record final iteration result before exiting
-          iterationResults: ({ context }: { context: RunbookContext }) => {
-            const results = context.iterationResults ?? [];
-            return [...results, iterationResult];
-          },
-          lastAction: { type: 'BREAK' as const },
-          retryCount: 0,
-          substep: extractSubstepFromStateId(exitTarget)
-        })
+        actions: buildLoopExitAssign('BREAK', exitTarget, iterationResult)
       };
     }
 

@@ -111,15 +111,12 @@ export const CommandSchema = z.object({
 export type ValidatedSessionState = z.infer<typeof SessionStateSchema>;
 
 // Re-export parser schemas needed by consumers
-export {
+import {
   StepIdSchema,
   ActionSchema,
   TransitionsSchema,
 } from '@rundown-org/parser';
-
-import {
-  StepIdSchema
-} from '@rundown-org/parser';
+export { StepIdSchema, ActionSchema, TransitionsSchema };
 
 /**
  * For RunbookState.step - always a string: "1" or "ErrorHandler"

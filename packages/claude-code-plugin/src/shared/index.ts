@@ -20,3 +20,5 @@ export * from './config.js';
 export * from './utils.js';
 export * from './logger.js';
 export * from './frontmatter.js';
+export * from './validate-runbook-path.js';
+export * from './find-runbook.js';

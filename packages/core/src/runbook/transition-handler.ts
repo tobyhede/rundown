@@ -94,6 +94,36 @@ export function evaluatePassCondition(
 }
 
 /**
+ * Evaluate ALL/ANY aggregation logic given pre-computed pass/fail indicators.
+ *
+ * @param hasFailed - Whether any result was a failure
+ * @param passCount - Number of passing results
+ * @param transitions - The transitions defining aggregation behavior (all/any)
+ * @param currentRetryCount - Current retry count
+ * @returns A ConditionResult indicating the action to take
+ */
+function evaluateAggregation(
+  hasFailed: boolean,
+  passCount: number,
+  transitions: Transitions,
+  currentRetryCount: number
+): ConditionResult {
+  if (transitions.all) {
+    // ALL mode: Pass if all passed, fail if any failed
+    if (hasFailed) {
+      return evaluateTransition(transitions.fail, currentRetryCount);
+    }
+    return evaluateTransition(transitions.pass, currentRetryCount);
+  } else {
+    // ANY mode: Pass if any passed, fail only if all failed
+    if (passCount > 0) {
+      return evaluateTransition(transitions.pass, currentRetryCount);
+    }
+    return evaluateTransition(transitions.fail, currentRetryCount);
+  }
+}
+
+/**
  * Evaluate aggregation conditions across substep results.
  *
  * When all substeps are complete, determines the parent step's outcome
@@ -115,21 +145,8 @@ export function evaluateSubstepAggregation(
   if (!allDone) return null;
 
   const passCount = substepStates.filter(s => s.result === 'pass').length;
-
-  if (transitions.all) {
-    // ALL mode: Pass if all passed, fail if any failed
-    const anyFailed = substepStates.some(s => s.result === 'fail');
-    if (anyFailed) {
-      return evaluateTransition(transitions.fail, currentRetryCount);
-    }
-    return evaluateTransition(transitions.pass, currentRetryCount);
-  } else {
-    // ANY mode: Pass if any passed, fail only if all failed
-    if (passCount > 0) {
-      return evaluateTransition(transitions.pass, currentRetryCount);
-    }
-    return evaluateTransition(transitions.fail, currentRetryCount);
-  }
+  const hasFailed = substepStates.some(s => s.result === 'fail');
+  return evaluateAggregation(hasFailed, passCount, transitions, currentRetryCount);
 }
 
 /**
@@ -153,21 +170,8 @@ export function evaluateIterationAggregation(
   if (iterationResults.length === 0) return null;
 
   const passCount = iterationResults.filter(r => r === 'pass').length;
-
-  if (transitions.all) {
-    // ALL mode: Pass if all passed, fail if any failed
-    const anyFailed = iterationResults.some(r => r === 'fail');
-    if (anyFailed) {
-      return evaluateTransition(transitions.fail, currentRetryCount);
-    }
-    return evaluateTransition(transitions.pass, currentRetryCount);
-  } else {
-    // ANY mode: Pass if any passed, fail only if all failed
-    if (passCount > 0) {
-      return evaluateTransition(transitions.pass, currentRetryCount);
-    }
-    return evaluateTransition(transitions.fail, currentRetryCount);
-  }
+  const hasFailed = iterationResults.some(r => r === 'fail');
+  return evaluateAggregation(hasFailed, passCount, transitions, currentRetryCount);
 }
 
 /**
