@@ -38,15 +38,6 @@ describe('renderTemplate', () => {
     expect(result).toBe('## 1. Test & Verify <code>');
   });
 
-  it('should not affect dynamic step syntax {N}', () => {
-    const markdown = '## {N}. Dynamic Step\n\n{{command}}';
-    const variables = { command: 'echo hello' };
-
-    const result = renderTemplate(markdown, variables);
-
-    expect(result).toBe('## {N}. Dynamic Step\n\necho hello');
-  });
-
   it('should handle empty variables object', () => {
     const markdown = '## 1. Static Step';
     const variables = {};

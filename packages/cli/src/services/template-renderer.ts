@@ -21,8 +21,8 @@ const TEMPLATE_VAR_REGEX = /{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}/g;
  * Uses `noEscape: true` to preserve markdown characters (no HTML escaping).
  * Missing variables are preserved as literal {{variable}} in output.
  *
- * Note: This does NOT affect Rundown's dynamic step syntax `{N}` and `{n}`,
- * which use single braces and are handled separately by the parser.
+ * Note: Single-brace syntax like {varName} is not affected by template rendering.
+ * Only double-brace Handlebars syntax {{varName}} is expanded.
  *
  * @param markdown - Raw markdown content with {{variable}} placeholders
  * @param variables - Key-value pairs for variable substitution

@@ -88,9 +88,7 @@ export function registerStatusCommand(program: Command): void {
           const stashed = await manager.load(stashedId);
           if (stashed) {
             const steps = getRunbookFromState(stashed, cwd);
-            const totalSteps = steps.length > 0 && steps[0].isDynamic
-              ? '{N}'
-              : countNumberedSteps(steps);
+            const totalSteps = countNumberedSteps(steps);
             const metadata = buildMetadata(stashed);
 
             const statusData: StatusOutputData = {
@@ -119,16 +117,10 @@ export function registerStatusCommand(program: Command): void {
 
         // Case 3: Active runbook
         const steps = getRunbookFromState(state, cwd);
-        const isDynamic = steps.length > 0 && steps[0].isDynamic;
-        // For dynamic runbooks, find step by checking if it's the dynamic template
-        const currentStepIndex = isDynamic ? 0 : steps.findIndex(s => s.name === state.step);
+        const currentStepIndex = steps.findIndex(s => s.name === state.step);
         const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
-        // '{N}' indicates dynamic runbook with unbounded iterations
-        const totalSteps: number | string = isDynamic ? '{N}' : countNumberedSteps(steps);
-        // Use state.instance for dynamic runbooks, state.step for static
-        const displayStep = isDynamic && state.instance !== undefined
-          ? String(state.instance)
-          : state.step;
+        const totalSteps = countNumberedSteps(steps);
+        const displayStep = state.step;
 
         const metadata = buildMetadata(state);
 
@@ -147,9 +139,6 @@ export function registerStatusCommand(program: Command): void {
                 : gotoBase;
               break;
             }
-            case 'GOTO_NEXT':
-              actionStr = 'GOTO NEXT';
-              break;
             case 'RETRY':
               actionStr = `RETRY (${String(state.retryCount)}/${String(retryMaxForAction)})`;
               break;

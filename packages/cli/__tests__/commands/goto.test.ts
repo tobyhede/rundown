@@ -68,12 +68,5 @@ describe('goto command', () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('missing required argument');
     });
-
-    it('rejects NEXT target via CLI', async () => {
-      const result = runCli(['goto', 'NEXT'], workspace);
-
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('GOTO NEXT is only valid as a runbook transition');
-    });
   });
 });
