@@ -27,9 +27,7 @@ describe('integration: GOTO patterns', () => {
 
     const patterns = [
       'navigation/goto-static.runbook.md',
-      'navigation/goto-dynamic-substep.runbook.md',
       'navigation/goto-named.runbook.md',
-      'dynamic/dynamic-step-next.runbook.md',
     ];
 
     for (const pattern of patterns) {
@@ -129,70 +127,7 @@ describe('integration: GOTO patterns', () => {
 
   
 
-    describe('GOTO {N}.M (dynamic substep)', () => {
 
-      it('jumps within dynamic instance from {N}.1 to {N}.3', async () => {
-
-        const start = runCli('run --prompted goto-dynamic-substep.runbook.md', workspace);
-
-        expect(start.exitCode).toBe(0);
-
-  
-
-        // First instance: {N}.1 → GOTO {N}.3 (now resolved as GOTO 1.3)
-
-        const result1 = runCli('pass', workspace);
-
-        expect(result1.stdout).toContain('GOTO 1.3');
-
-        expect(result1.stdout).toContain('At:');
-        expect(result1.stdout).toContain('1.3');
-
-
-
-        // {N}.3 passes → GOTO NEXT advances the dynamic instance
-
-        const result2 = runCli('pass', workspace);
-
-        // Dynamic step advancement shows asterisk for unbounded total
-
-        expect(result2.stdout).toMatch(/\/\d+\*/);
-
-      });
-
-    });
-
-  
-
-    describe('GOTO NEXT (dynamic instance advance)', () => {
-
-      it('advances through dynamic instances via GOTO NEXT', async () => {
-
-        const start = runCli('run --prompted dynamic-step-next.runbook.md', workspace);
-
-        expect(start.exitCode).toBe(0);
-
-  
-
-        // Instance passes → GOTO NEXT (rendered as step advancement)
-
-        const result = runCli('pass', workspace);
-
-        // Dynamic steps show asterisk for unbounded total
-
-        expect(result.stdout).toMatch(/\/\d+\*/);
-
-
-
-        // Check for iteration (next instance)
-
-        expect(result.stdout).toMatch(/\/\d+\*/);
-
-      });
-
-    });
-
-    
 
     describe('GOTO named (named step jump)', () => {
 

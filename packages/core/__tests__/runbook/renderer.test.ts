@@ -70,11 +70,6 @@ describe('renderSubstep', () => {
     expect(renderSubstep(substep, '1')).toBe('### 1.2 Second reviewer (code-agent)');
   });
 
-  it('renders dynamic substep template', () => {
-    const substep: Substep = { id: '{n}', description: 'Execute step' };
-    expect(renderSubstep(substep, '2')).toBe('### 2.{n} Execute step');
-  });
-
   it('renders substep with child runbooks', () => {
     const substep: Substep = { id: '1', description: 'With child runbook', workflows: ['task.runbook.md'] };
     expect(renderSubstep(substep, '1')).toBe('### 1.1 With child runbook [@task.runbook.md]');
@@ -119,16 +114,6 @@ describe('renderStep', () => {
 });
 
 describe('renderStep with dynamic steps', () => {
-  it('renders dynamic step header with {N}.', () => {
-    const step: Step = {
-      name: '{N}',
-      description: 'Process batch item'
-    };
-
-    const rendered = renderStep(step);
-    expect(rendered).toContain('## {N}. Process batch item');
-  });
-
   it('renders dynamic step with substeps', () => {
     const step: Step = {
       name: '{N}',
@@ -157,16 +142,6 @@ describe('renderStep with dynamic steps', () => {
 });
 
 describe('renderSubstep with dynamic parent', () => {
-  it('uses {N} prefix for dynamic parent', () => {
-    const substep: Substep = {
-      id: '1',
-      description: 'First task'
-    };
-
-    const rendered = renderSubstep(substep, '{N}');
-    expect(rendered).toBe('### {N}.1 First task');
-  });
-
   it('uses numeric prefix for static parent', () => {
     const substep: Substep = {
       id: '1',

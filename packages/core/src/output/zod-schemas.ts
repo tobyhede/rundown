@@ -79,7 +79,7 @@ export type CLIErrorCode = (typeof CLIErrorCodes)[keyof typeof CLIErrorCodes];
 export const PositionSchema = z.object({
   /** Current step identifier (e.g., "1", "2", "ErrorHandler") */
   current: z.string().describe('Current step number or identifier'),
-  /** Total number of steps (number or "{N}" for dynamic runbooks) */
+  /** Total number of steps */
   total: z.number().describe('Total number of steps'),
   /** Current substep identifier if applicable */
   substep: z.string().optional().describe('Optional substep identifier'),

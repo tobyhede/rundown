@@ -135,7 +135,6 @@ export function printActionBlock(
  *
  * Outputs the rendered content for the current item (heading, prompt).
  * Step position is now shown via the step separator and "At:" in the action block.
- * For dynamic items, substitutes {N} and {n} with the actual instance/substep numbers.
  *
  * @param pos - The current step position
  * @param item - The Step or Substep to render and display

@@ -5,7 +5,6 @@ describe('validator strict rules', () => {
   const mockStep = (overrides: Partial<Step>): Step => ({
     name: '1',
     description: 'Test',
-    isDynamic: false,
     ...overrides
   });
 
@@ -24,7 +23,7 @@ describe('validator strict rules', () => {
       const steps = [mockStep({
         name: '1',
         substeps: [{
-          id: '1', description: 'S1', isDynamic: false,
+          id: '1', description: 'S1',
           transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1', substep: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         }]
       })];
@@ -37,7 +36,6 @@ describe('validator strict rules', () => {
       const steps = [
         {
           name: '1',
-          isDynamic: false,
           description: 'First',
           transitions: {
             all: true,
@@ -47,10 +45,9 @@ describe('validator strict rules', () => {
         },
         {
           name: 'ErrorHandler',
-          isDynamic: false,
           description: 'Handler',
           substeps: [
-            { id: '1', isDynamic: false, description: 'Sub1' }
+            { id: '1', description: 'Sub1' }
           ]
         },
       ];
@@ -77,7 +74,7 @@ describe('validator strict rules', () => {
       const steps = [mockStep({
         number: '1',
         prompt: 'P',
-        substeps: [{ id: '1', description: 'S', isDynamic: false }]
+        substeps: [{ id: '1', description: 'S' }]
       })];
       const errors = validateRunbook(steps);
       expect(errors.filter(e => e.message.includes('Violates Exclusivity Rule'))).toHaveLength(0);
@@ -87,7 +84,7 @@ describe('validator strict rules', () => {
       const steps = [mockStep({
         number: '1',
         command: { code: 'echo', language: 'bash' },
-        substeps: [{ id: '1', description: 'S', isDynamic: false }]
+        substeps: [{ id: '1', description: 'S' }]
       })];
       const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
@@ -98,7 +95,7 @@ describe('validator strict rules', () => {
       const steps = [mockStep({
         number: '1',
         substeps: [{
-          id: '1', description: 'S', isDynamic: false,
+          id: '1', description: 'S',
           command: { code: 'echo', language: 'bash' },
           workflows: ['w.runbook.md']
         }]
@@ -116,7 +113,7 @@ describe('validator strict rules', () => {
           name: '1',
           prompt: 'P',
           command: { code: 'echo', language: 'bash' },
-          substeps: [{ id: '1', description: 'S', isDynamic: false }],
+          substeps: [{ id: '1', description: 'S' }],
           transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
         })
       ];
@@ -130,7 +127,7 @@ describe('validator strict rules', () => {
         number: '1',
         prompt: 'P',
         command: { code: 'echo', language: 'bash' },
-        substeps: [{ id: '1', description: 'S', isDynamic: false }]
+        substeps: [{ id: '1', description: 'S' }]
       })];
       const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
@@ -142,9 +139,9 @@ describe('validator strict rules', () => {
   describe('validateRunbook with named steps', () => {
     it('allows named steps after static steps', () => {
       const steps = [
-        { name: '1', isDynamic: false, description: 'First' },
-        { name: '2', isDynamic: false, description: 'Second' },
-        { name: 'Cleanup', isDynamic: false, description: 'Cleanup' },
+        { name: '1', description: 'First' },
+        { name: '2', description: 'Second' },
+        { name: 'Cleanup', description: 'Cleanup' },
       ];
       const errors = validateRunbook(steps as any[]);
       expect(errors).toHaveLength(0);
@@ -154,7 +151,6 @@ describe('validator strict rules', () => {
       const steps = [
         {
           name: '1',
-          isDynamic: false,
           description: 'First',
           transitions: {
             all: true,
@@ -162,7 +158,7 @@ describe('validator strict rules', () => {
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
         },
-        { name: 'Cleanup', isDynamic: false, description: 'Cleanup' },
+        { name: 'Cleanup', description: 'Cleanup' },
       ];
       const errors = validateRunbook(steps as any[]);
       expect(errors).toHaveLength(0);
@@ -172,7 +168,6 @@ describe('validator strict rules', () => {
       const steps = [
         {
           name: '1',
-          isDynamic: false,
           description: 'First',
           transitions: {
             all: true,
@@ -190,11 +185,10 @@ describe('validator strict rules', () => {
       const steps = [
         {
           name: '1',
-          isDynamic: false,
           description: 'First',
           substeps: [
-            { id: '1', isDynamic: false, description: 'Sub1' },
-            { id: 'Cleanup', isDynamic: false, description: 'SubCleanup' },
+            { id: '1', description: 'Sub1' },
+            { id: 'Cleanup', description: 'SubCleanup' },
           ],
           transitions: {
             all: true,
@@ -220,8 +214,8 @@ describe('validator strict rules', () => {
   describe('numeric step sequencing', () => {
     it('rejects non-sequential numeric steps', () => {
       const steps = [
-        mockStep({ name: '1', isDynamic: false, description: 'First' }),
-        mockStep({ name: '3', isDynamic: false, description: 'Third (skipping 2)' }),
+        mockStep({ name: '1', description: 'First' }),
+        mockStep({ name: '3', description: 'Third (skipping 2)' }),
       ];
       const errors = validateRunbook(steps);
       expect(errors.some(e => e.message.includes('must be sequential'))).toBe(true);
@@ -232,7 +226,6 @@ describe('validator strict rules', () => {
     it('rejects GOTO to non-existent numeric step', () => {
       const steps = [mockStep({
         name: '1',
-        isDynamic: false,
         transitions: {
           all: true,
           pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '99' } } },
@@ -249,14 +242,13 @@ describe('validator strict rules', () => {
       const steps = [
         mockStep({
           name: '1',
-          isDynamic: false,
           transitions: {
             all: true,
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } }
           }
         }),
-        mockStep({ name: '2', isDynamic: false, description: 'No substeps' })
+        mockStep({ name: '2', description: 'No substeps' })
       ];
       const errors = validateRunbook(steps);
       expect(errors.some(e => e.message.includes('has no substeps'))).toBe(true);
@@ -266,14 +258,13 @@ describe('validator strict rules', () => {
       const steps = [
         mockStep({
           name: '1',
-          isDynamic: false,
           transitions: {
             all: true,
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: '1' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } }
           }
         }),
-        mockStep({ name: 'ErrorHandler', isDynamic: false, description: 'No substeps' })
+        mockStep({ name: 'ErrorHandler', description: 'No substeps' })
       ];
       const errors = validateRunbook(steps);
       expect(errors.some(e => e.message.includes('has no substeps'))).toBe(true);
@@ -284,7 +275,6 @@ describe('validator strict rules', () => {
     it('rejects FOR step without substeps', () => {
       const steps: Step[] = [{
         name: '1',
-        isDynamic: false,
         description: 'Step with FOR but no substeps',
         forClause: { start: 1, end: 10 },
       }];
@@ -295,13 +285,11 @@ describe('validator strict rules', () => {
     it('accepts FOR step with substeps', () => {
       const steps: Step[] = [{
         name: '1',
-        isDynamic: false,
         description: 'Step with FOR and substeps',
         forClause: { start: 1, end: 10 },
         substeps: [{
           id: '1',
           description: 'Substep',
-          isDynamic: false,
         }],
       }];
       const errors = validateRunbook(steps);
@@ -311,12 +299,10 @@ describe('validator strict rules', () => {
     it('rejects NEXT outside FOR substep context', () => {
       const steps: Step[] = [{
         name: '1',
-        isDynamic: false,
         description: 'Non-FOR step',
         substeps: [{
           id: '1',
           description: 'Substep with NEXT',
-          isDynamic: false,
           transitions: {
             all: true,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
@@ -331,12 +317,10 @@ describe('validator strict rules', () => {
     it('rejects BREAK outside FOR substep context', () => {
       const steps: Step[] = [{
         name: '1',
-        isDynamic: false,
         description: 'Non-FOR step',
         substeps: [{
           id: '1',
           description: 'Substep with BREAK',
-          isDynamic: false,
           transitions: {
             all: true,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'BREAK' as const } },
@@ -351,13 +335,11 @@ describe('validator strict rules', () => {
     it('accepts NEXT in substep of FOR step', () => {
       const steps: Step[] = [{
         name: '1',
-        isDynamic: false,
         description: 'FOR step',
         forClause: { start: 1, end: 10 },
         substeps: [{
           id: '1',
           description: 'Substep',
-          isDynamic: false,
           transitions: {
             all: true,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
@@ -372,7 +354,6 @@ describe('validator strict rules', () => {
     it('rejects NEXT on parent FOR step itself', () => {
       const steps: Step[] = [{
         name: '1',
-        isDynamic: false,
         description: 'FOR step with NEXT on itself',
         forClause: { start: 1, end: 10 },
         transitions: {
@@ -383,7 +364,6 @@ describe('validator strict rules', () => {
         substeps: [{
           id: '1',
           description: 'Substep',
-          isDynamic: false,
         }],
       }];
       const errors = validateRunbook(steps);
@@ -394,7 +374,6 @@ describe('validator strict rules', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Source step',
           transitions: {
             all: true,
@@ -404,7 +383,6 @@ describe('validator strict rules', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'Target step without FOR',
         },
       ];
@@ -416,7 +394,6 @@ describe('validator strict rules', () => {
       const steps: Step[] = [
         {
           name: '1',
-          isDynamic: false,
           description: 'Source step',
           transitions: {
             all: true,
@@ -426,13 +403,11 @@ describe('validator strict rules', () => {
         },
         {
           name: '2',
-          isDynamic: false,
           description: 'FOR target step',
           forClause: { start: 1, end: 10 },
           substeps: [{
             id: '1',
             description: 'Substep',
-            isDynamic: false,
           }],
         },
       ];

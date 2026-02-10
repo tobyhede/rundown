@@ -5,7 +5,7 @@
 /**
  * A step within a runbook (H2 header section).
  *
- * Steps can be numeric ("1", "2"), named ("ErrorHandler"), or dynamic ("{N}").
+ * Steps can be numeric ("1", "2") or named ("ErrorHandler").
  * @see {@link @rundown-org/parser!Step}
  */
 export type { Step } from '@rundown-org/parser';
@@ -61,9 +61,6 @@ import { type StepId } from '@rundown-org/parser';
  *
  * Replaces the previous string-based representation to preserve full transition
  * information (e.g., GOTO target) through persistence without lossy conversion.
- *
- * `GOTO_NEXT` is a separate variant (not `{ type: 'GOTO', target: 'NEXT' }`) because
- * it has different semantics — it advances the dynamic instance counter with no specific target.
  */
 export type LastAction =
   | { readonly type: 'START' }
@@ -152,7 +149,7 @@ export interface RunbookState {
   readonly runbookPath: string; // repo-relative resolved file path
   readonly title?: string;
   readonly description?: string;
-  readonly step: string;           // UNIFIED: "1", "ErrorHandler", "{N}"
+  readonly step: string;           // "1" or "ErrorHandler"
   readonly substep?: string;
   readonly stepName: string;       // Human-readable description
   readonly retryCount: number;

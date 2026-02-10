@@ -122,7 +122,7 @@ import {
 } from '@rundown-org/parser';
 
 /**
- * For RunbookState.step - always a string: "1", "ErrorHandler", "{N}"
+ * For RunbookState.step - always a string: "1" or "ErrorHandler"
  */
 const RunbookStepSchema = z.string().min(1);
 
@@ -154,7 +154,7 @@ export const RunbookStateSchema = z.object({
   runbookPath: z.string(),
   title: z.string().optional(),
   description: z.string().optional(),
-  step: RunbookStepSchema, // UNIFIED: "1", "ErrorHandler", "{N}"
+  step: RunbookStepSchema, // "1" or "ErrorHandler"
   substep: z.string().optional(),
   stepName: z.string(),
   retryCount: z.number().nonnegative().int(),
