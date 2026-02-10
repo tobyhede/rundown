@@ -481,13 +481,12 @@ export function formatActionForDisplay(
     case 'RETRY':
       return `RETRY (${String(retryCount)}/${String(retryMax)})`;
     case 'GOTO': {
-      let result = `GOTO ${lastAction.target}`;
-      if (lastAction.substep) {
-        result = `GOTO ${lastAction.target}.${lastAction.substep}`;
-      }
-      if (lastAction.at !== undefined) {
-        result = `${result} AT ${String(lastAction.at)}`;
-      }
+      const gotoTarget = lastAction.substep
+        ? `GOTO ${lastAction.target}.${lastAction.substep}`
+        : `GOTO ${lastAction.target}`;
+      const result = lastAction.at !== undefined
+        ? `${gotoTarget} AT ${String(lastAction.at)}`
+        : gotoTarget;
       return result;
     }
     default:
@@ -537,69 +536,6 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
     state: `.claude/rundown/runs/${state.id}.json`,
     prompted: state.prompted ?? undefined,
   };
-}
-
-/**
- * Derive action string from state transition.
- * @param prevStep - Previous step name
- * @param newStep - New step name after transition
- * @param prevSubstep - Previous substep ID
- * @param newSubstep - New substep ID after transition
- * @param prevRetryCount - Previous retry count
- * @param newRetryCount - New retry count after transition
- * @param retryMax - Maximum retries allowed for the step
- * @param isComplete - Whether the runbook is complete
- * @param isStopped - Whether the runbook is stopped
- * @returns Action string describing the transition (e.g., 'CONTINUE', 'GOTO 3', 'RETRY (1/3)')
- */
-export function deriveAction(
-  prevStep: string,
-  newStep: string,
-  prevSubstep: string | undefined,
-  newSubstep: string | undefined,
-  prevRetryCount: number,
-  newRetryCount: number,
-  retryMax: number,
-  isComplete: boolean,
-  isStopped: boolean
-): string {
-  if (isComplete) return 'COMPLETE';
-  if (isStopped) return 'STOP';
-  if (newStep === prevStep && newRetryCount > prevRetryCount) {
-    return `RETRY (${String(newRetryCount)}/${String(retryMax)})`;
-  }
-
-  // Helper to check if substep transition is sequential
-  const isSequentialSubstep = (prev: string | undefined, next: string | undefined): boolean => {
-    if (!prev || !next) return false;
-    const prevNum = parseInt(prev, 10);
-    const nextNum = parseInt(next, 10);
-    return !isNaN(prevNum) && !isNaN(nextNum) && nextNum === prevNum + 1;
-  };
-
-  // Handle substep transitions
-  if (newSubstep) {
-    // Same step, sequential substeps (1.1 → 1.2) = CONTINUE
-    if (newStep === prevStep && isSequentialSubstep(prevSubstep, newSubstep)) {
-      return 'CONTINUE';
-    }
-    // Non-sequential substep or different step = GOTO
-    return `GOTO ${newStep}.${newSubstep}`;
-  }
-
-  // Check if step change is sequential (e.g., "1" → "2")
-  // Sequential means: both are numeric strings and newStep = prevStep + 1
-  if (newStep !== prevStep) {
-    const prevNum = parseInt(prevStep, 10);
-    const newNum = parseInt(newStep, 10);
-    const isSequential = !isNaN(prevNum) && !isNaN(newNum) && newNum === prevNum + 1;
-    if (!isSequential) {
-      return `GOTO ${newStep}`;
-    }
-  }
-
-  // Sequential step change or same step = CONTINUE
-  return 'CONTINUE';
 }
 
 /**
