@@ -18,6 +18,7 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
   - [Execution Model](#execution-model)
   - [State Machine](#state-machine)
   - [Command Execution](#command-execution)
+  - [FOR Loops](#for-loops)
 - [State Persistence](#state-persistence)
   - [File Locations](#file-locations)
   - [Session Structure](#session-structure)
@@ -143,9 +144,9 @@ Runbooks compile to XState machines at runtime. Steps become states:
 
 | Runbook Element | XState State ID |
 |-----------------|-----------------|
-| `## 1. Title` | `step_1` |
-| `## 2. Title` | `step_2` |
-| `### 2.1 Substep` | `step_2_1` |
+| `## 1. Title` | `step::1` |
+| `## 2. Title` | `step::2` |
+| `### 2.1 Substep` | `step::2::1` |
 
 Terminal states: `COMPLETE`, `STOPPED`
 
@@ -210,6 +211,69 @@ Review the implementation for issues.
 `rundown pass` if acceptable, `rundown fail` if blocked.
 ````
 
+### FOR Loops
+
+Steps can iterate their substeps over a numeric range using a FOR annotation. FOR loops are defined in the runbook syntax and the CLI manages loop state automatically.
+
+**Syntax (brief):**
+
+````markdown
+## 3. Process batches
+- FOR batch IN 1 TO 5
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+### 1. Process item
+- PASS: CONTINUE
+- FAIL: BREAK
+````
+
+See [SPEC.md FOR Steps](./SPEC.md#for-steps) for the full grammar and all clause variants.
+
+**FOR clause variants:**
+
+| Syntax | Description |
+|--------|-------------|
+| `FOR var IN 1 TO N` | Explicit range, named variable |
+| `FOR 1 TO N` | Explicit range, no variable |
+| `FOR var IN N` | Implicit start (1), named variable |
+| `FOR N` | Implicit start (1), no variable |
+
+**Loop variable expansion:**
+
+The named loop variable and `{{Index}}` are expanded per-iteration:
+- `{{Index}}` - Current iteration number (1-based), available inside all FOR substeps
+- `{{var}}` - Named loop variable (equals the iteration index)
+
+These are expanded per-iteration, unlike template variables which are expanded once at `rd run` time.
+
+**Iteration semantics:**
+
+Substep transitions control within-iteration flow:
+
+| Action | Effect |
+|--------|--------|
+| `CONTINUE` | Proceed to next substep (or next iteration if last substep) |
+| `NEXT` | Skip remaining substeps, advance to next iteration |
+| `BREAK` | Exit the FOR loop; parent step transitions evaluate |
+| `STOP` | Halt runbook execution immediately |
+
+Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results across all iterations after the loop completes.
+
+**GOTO AT interaction:**
+
+The `AT` qualifier on GOTO targets specific iterations of a FOR step:
+
+```bash
+rundown goto 3        # Jump to FOR step 3 at iteration 1 (restart)
+```
+
+In runbook transitions, `GOTO N AT I` enters step N at iteration I. See [GOTO formats](#rundown-goto-step---jump-to-step) for the full table.
+
+**Status display during loops:**
+
+When a FOR loop is active, `rundown status` reflects the current iteration via the `forStack` field in the state file. The step display shows the active step and substep within the loop.
+
 ---
 
 ## State Persistence
@@ -248,23 +312,34 @@ Each runbook state file contains:
 {
   "id": "wf-2024-01-07-abc123",
   "runbook": "my-runbook.runbook.md",
-  "name": "My Runbook",
+  "runbookPath": ".claude/rundown/runbooks/my-runbook.runbook.md",
+  "title": "My Runbook",
   "description": "Runbook description",
   "step": "2",
-  "instance": 1,
   "substep": "1",
   "stepName": "Execute batch",
   "retryCount": 0,
-  "variables": {},
+  "variables": { "environment": "staging" },
   "steps": [],
   "pendingSteps": [],
   "agentBindings": {},
   "substepStates": [],
+  "forStack": [
+    {
+      "stepId": "2",
+      "iteration": 3,
+      "start": 1,
+      "end": 5,
+      "variable": "batch"
+    }
+  ],
+  "iterationResults": ["pass", "pass"],
   "startedAt": "2024-01-07T10:00:00.000Z",
   "updatedAt": "2024-01-07T10:05:00.000Z",
   "prompted": false,
   "lastResult": "pass",
-  "lastAction": "CONTINUE",
+  "lastAction": { "type": "CONTINUE" },
+  "runbookSrc": "---\nname: my-runbook\n---\n# My Runbook\n...",
   "snapshot": {}
 }
 ```
@@ -274,8 +349,12 @@ Key fields:
 - `substep`: Current substep ID (e.g., "1", "2")
 - `retryCount`: Current retry attempt
 - `steps`: Array of step states for all runbook steps
-- `lastAction`: Most recent transition (`START`, `CONTINUE`, `GOTO`, `RETRY`, `COMPLETE`, `STOP`)
+- `lastAction`: Most recent transition as a structured object (e.g., `{"type": "CONTINUE"}`, `{"type": "GOTO", "target": "3", "at": 2}`)
 - `lastResult`: Last PASS/FAIL signal (`pass` or `fail`)
+- `runbookPath`: Repo-relative resolved file path to the runbook source
+- `runbookSrc`: Runbook source content with template variables expanded (frozen at run time)
+- `forStack`: Active FOR loop stack (present during loop execution; see [FOR Loops](#for-loops))
+- `iterationResults`: Array of per-iteration outcomes (`"pass"` or `"fail"`) for the current loop
 - `snapshot`: XState persisted snapshot for state restoration
 
 ---
@@ -520,8 +599,15 @@ rundown goto 3.1     # Jump to substep 3.1
 
 | Target | Valid From | Description |
 |--------|------------|-------------|
-| `GOTO N` | Any step | Jump to step N (must exist, N ≤ total steps) |
+| `GOTO N` | Any step | Jump to step N (if FOR step, implies AT 1) |
 | `GOTO N.M` | Any step | Jump to substep M of step N |
+| `GOTO Name` | Any step | Jump to named step |
+| `GOTO Name.M` | Any step | Jump to substep M of named step |
+| `GOTO N AT I` | Any step | Enter FOR step N at iteration I (only if N is a FOR step) |
+| `GOTO N.M AT I` | Any step | Jump to substep M of FOR step N at iteration I |
+| `GOTO Name AT I` | Any step | Enter named FOR step at iteration I |
+
+The `AT` qualifier is only valid when the target is a step with a FOR annotation. If `AT` is omitted for a FOR step, it defaults to iteration 1 (restart from beginning). See [SPEC.md GOTO](./SPEC.md#goto) for full details.
 
 ### Status Commands
 
@@ -779,7 +865,7 @@ Agent reads step, evaluates condition, runs appropriate CLI command.
 
 ## Output Format
 
-Output formatting is implemented in `packages/cli/src/services/output-manager.ts` and `packages/cli/src/helpers/table-formatter.ts`.
+Output formatting is implemented in `packages/cli/src/services/output-emitter.ts` and `packages/cli/src/helpers/table-formatter.ts`.
 
 ### Standard Output Structure
 

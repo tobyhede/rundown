@@ -1,6 +1,6 @@
 # Rundown Patterns
 
-Common patterns for Rundown runbooks. See [SPEC.md](../../docs/SPEC.md) for syntax reference.
+Common patterns for Rundown runbooks. See [SPEC.md](./SPEC.md) for syntax reference.
 
 ## Scenario Naming Taxonomy
 
@@ -2085,5 +2085,5 @@ Process.
 
 ## See Also
 
-- [SPEC.md](../../docs/SPEC.md) - Full specification
-- [FORMAT.md](../../docs/FORMAT.md) - BNF grammar
+- [SPEC.md](./SPEC.md) - Full specification
+- [FORMAT.md](./FORMAT.md) - BNF grammar

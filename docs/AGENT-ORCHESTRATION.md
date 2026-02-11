@@ -38,25 +38,31 @@ No subagents are involved — the main agent works through steps sequentially.
 **When to use:** Linear workflows, checklists, CI-style pipelines, anything where one agent handles all steps in order.
 
 **Example:**
-```markdown
+````markdown
 ## 1. Run tests
 - PASS: CONTINUE
 - FAIL: STOP "Tests failed"
 
-$ npm test
+```bash
+npm test
+```
 
 ## 2. Check coverage
 - PASS: CONTINUE
 - FAIL: GOTO 1
 
-$ npm run coverage -- --threshold 80
+```bash
+npm run coverage -- --threshold 80
+```
 
 ## 3. Deploy
 - PASS: COMPLETE "Deployed"
 - FAIL: STOP "Deploy failed"
 
-$ npm run deploy
+```bash
+npm run deploy
 ```
+````
 
 **Transition rules:** CONTINUE, STOP, GOTO, RETRY, COMPLETE. See [SPEC.md](./SPEC.md) for full syntax.
 
@@ -96,7 +102,7 @@ Combines a runbook (for flow control) with a skill (for domain knowledge). The r
 
 Verify the Writing Plans skill has been invoked.
 
-## InvokeSkill. Load skill
+## InvokeSkill Load skill
 - PASS: GOTO 2
 - FAIL: STOP
 
