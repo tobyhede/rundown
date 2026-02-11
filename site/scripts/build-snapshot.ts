@@ -44,6 +44,10 @@ function resolveAllBinSymlinks(nodeModulesDir: string) {
           if (stat.isSymbolicLink()) {
             const target = readlinkSync(filePath);
             const resolvedTarget = resolve(fullPath, target);
+            if (!existsSync(resolvedTarget)) {
+              console.warn(`Skipping broken symlink: ${filePath} → ${resolvedTarget}`);
+              continue;
+            }
             unlinkSync(filePath);
             copyFileSync(resolvedTarget, filePath);
           }
