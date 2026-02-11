@@ -422,7 +422,7 @@ export function createRunbook(options: CreateRunbookOptions): string {
     }
 
     // Step-level transitions (use ALL/ANY qualifiers when step has substeps or FOR)
-    const hasAggregation = !!(step.for || step.substeps);
+    const hasAggregation = step.for != null || step.substeps != null;
     if (step.pass) lines.push(`- PASS${hasAggregation ? ' ALL' : ''}: ${step.pass}`);
     if (step.fail) lines.push(`- FAIL${hasAggregation ? ' ANY' : ''}: ${step.fail}`);
     lines.push('');
