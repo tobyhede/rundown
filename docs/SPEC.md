@@ -279,11 +279,15 @@ A step with a `FOR` annotation iterates its substeps.
 
 | Syntax | Description |
 |--------|-------------|
-| `FOR var IN 1 TO 10` | Explicit range, named variable |
-| `FOR 1 TO 10` | Explicit range, no variable |
+| `FOR var IN 1 TO 10` | Ascending range, named variable |
+| `FOR 1 TO 10` | Ascending range, no variable |
+| `FOR var IN 10 TO 1` | Descending range, named variable |
+| `FOR 10 TO 1` | Descending range, no variable |
 | `FOR var IN 10` | Implicit start (1), named variable |
 | `FOR 10` | Implicit start (1), no variable |
 | `FOR var IN 1 TO {{Max}}` | Variable range |
+
+**Direction inference:** When `start > end`, the loop iterates downward by 1 (e.g., `FOR 10 TO 1` iterates 10, 9, 8, ..., 1). When `start <= end`, it iterates upward by 1. Single-number shorthand (`FOR 5`) always starts at 1 and is ascending.
 
 **Loop variable:** The named variable joins the template variable context per-iteration. Accessible as `{{var}}` in step content and code blocks. Its value equals the iteration index.
 

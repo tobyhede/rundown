@@ -1264,13 +1264,25 @@ describe('parseForClause', () => {
     });
   });
 
-  describe('reversed range rejection', () => {
-    it('rejects reversed range (start > end)', () => {
-      expect(parseForClause('FOR 10 TO 1')).toBeNull();
+  describe('reversed ranges (descending)', () => {
+    it('accepts reversed range (start > end)', () => {
+      expect(parseForClause('FOR 10 TO 1')).toEqual({ start: 10, end: 1 });
     });
 
-    it('rejects reversed range with named variable', () => {
-      expect(parseForClause('FOR batch IN 5 TO 2')).toBeNull();
+    it('accepts reversed range with named variable', () => {
+      expect(parseForClause('FOR batch IN 5 TO 2')).toEqual({ variable: 'batch', start: 5, end: 2 });
+    });
+
+    it('accepts named variable with descending range', () => {
+      expect(parseForClause('FOR i IN 5 TO 1')).toEqual({ variable: 'i', start: 5, end: 1 });
+    });
+
+    it('accepts large descending range', () => {
+      expect(parseForClause('FOR 100 TO 50')).toEqual({ start: 100, end: 50 });
+    });
+
+    it('accepts minimal descending range', () => {
+      expect(parseForClause('FOR 2 TO 1')).toEqual({ start: 2, end: 1 });
     });
   });
 });

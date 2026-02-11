@@ -279,7 +279,6 @@ export function parseForClause(text: string): ForClause | null {
       const start = parseBound(toMatch[1]);
       const end = parseBound(toMatch[2]);
       if (start !== null && end !== null) {
-        if (start > end) return null;
         return { variable, start, end };
       }
       return null;
@@ -299,7 +298,6 @@ export function parseForClause(text: string): ForClause | null {
     const start = parseBound(rangeMatch[1]);
     const end = parseBound(rangeMatch[2]);
     if (start !== null && end !== null) {
-      if (start > end) return null;
       return { start, end };
     }
     return null;

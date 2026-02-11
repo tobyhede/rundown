@@ -295,8 +295,8 @@ describe('ForClauseSchema', () => {
     expect(ForClauseSchema.safeParse({ start: 1, end: 'notavar' }).success).toBe(false);
   });
 
-  it('rejects start greater than end (numeric)', () => {
-    expect(ForClauseSchema.safeParse({ start: 10, end: 5 }).success).toBe(false);
+  it('accepts reversed range (start > end)', () => {
+    expect(ForClauseSchema.safeParse({ start: 10, end: 5 }).success).toBe(true);
   });
 
   it('allows start equal to end (single iteration)', () => {

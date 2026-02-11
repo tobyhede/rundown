@@ -2284,7 +2284,7 @@ describe('runbook compiler', () => {
       expect(snapshot.context.iterationResults).toEqual(['pass', 'fail', 'pass']);
     });
 
-    it('FAIL ANY triggers when any iteration fails', () => {
+    it('PASS ALL fails when first iteration failed', () => {
       const steps: Step[] = [
         {
           name: '1',
@@ -2551,6 +2551,335 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
+    });
+
+    it('FAIL ALL triggers when all iterations fail under PASS ANY mode', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          description: 'Loop with PASS ANY',
+          transitions: {
+            all: false,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'After loop',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // All iterations fail
+      actor.send({ type: 'FAIL' }); // iter 1
+      actor.send({ type: 'FAIL' }); // iter 2
+      actor.send({ type: 'FAIL' }); // iter 3
+
+      // PASS ANY with zero passes → aggregation fails → STOP
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'fail', 'fail']);
+    });
+  });
+
+  describe('descending FOR loop ranges', () => {
+    it('iterates descending range (3, 2, 1) via CONTINUE', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 3, end: 1 },
+          description: 'Descending loop',
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              transitions: DEFAULT_TRANSITIONS
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration starts at 3
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      const top1 = actor.getSnapshot().context.forStack[0];
+      expect(top1.iteration).toBe(3);
+      expect(top1.start).toBe(3);
+      expect(top1.end).toBe(1);
+
+      // Iteration 3 → 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
+
+      // Iteration 2 → 1
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(1);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+
+      // Iteration 1 (last) → exit loop
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass', 'pass']);
+    });
+
+    it('BREAK exits descending loop immediately', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 5, end: 1 },
+          description: 'Descending with break',
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(5);
+
+      // FAIL → BREAK immediately
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'BREAK' });
+    });
+
+    it('NEXT skips to next descending iteration', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 3, end: 1 },
+          description: 'Descending with NEXT',
+          substeps: [
+            {
+              id: '1',
+              description: 'First',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            },
+            {
+              id: '2',
+              description: 'Skipped by NEXT',
+              transitions: DEFAULT_TRANSITIONS
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(3);
+
+      // NEXT at 3 → skip to 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+
+      // NEXT at 2 → skip to 1
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(1);
+
+      // NEXT at 1 (last) → exit loop
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
+    });
+
+    it('GOTO AT into descending range', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Start',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2', at: 4 } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          }
+        },
+        {
+          name: '2',
+          forClause: { start: 5, end: 1 },
+          description: 'Descending FOR',
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              transitions: DEFAULT_TRANSITIONS
+            }
+          ]
+        },
+        {
+          name: '3',
+          description: 'Done',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // GOTO 2 AT 4 → enters at iteration 4 in a 5..1 loop
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::2::1');
+      const top = actor.getSnapshot().context.forStack[0];
+      expect(top.iteration).toBe(4);
+      expect(top.start).toBe(5);
+      expect(top.end).toBe(1);
+
+      // 4 → 3
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(3);
+
+      // 3 → 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+
+      // 2 → 1
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(1);
+
+      // 1 (last) → exit
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::3');
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
+    });
+
+    it('single iteration when start equals end in descending context', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 5, end: 5 },
+          description: 'Single iteration',
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              transitions: DEFAULT_TRANSITIONS
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(5);
+
+      // Single pass exits immediately
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
+    });
+
+    it('records iteration results correctly for descending loop', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 3, end: 1 },
+          description: 'Descending with mixed results',
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 3: PASS
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
+
+      // Iteration 2: FAIL
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(1);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
+
+      // Iteration 1 (last): PASS → exit
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail', 'pass']);
     });
   });
 });

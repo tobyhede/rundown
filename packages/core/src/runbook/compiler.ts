@@ -2,6 +2,7 @@ import { setup, assign } from 'xstate';
 import type { Step, Action, Transitions, LastAction, ForContext } from './types.js';
 import type { StepId } from './step-id.js';
 import type { ForClause } from '@rundown-org/parser';
+import { shouldAggregationPass } from './transition-handler.js';
 
 /**
  * Context passed through the XState runbook state machine.
@@ -160,6 +161,21 @@ function getFirstSubstepOfStep(step: Step): string | null {
 /** Peek at the top of the FOR context stack. */
 function peekForStack(stack: ForContext[]): ForContext | undefined {
   return stack.length > 0 ? stack[stack.length - 1] : undefined;
+}
+
+/** Check if a FOR context iterates in descending order. */
+function isDescending(fc: ForContext): boolean {
+  return fc.start > fc.end;
+}
+
+/** Advance iteration by one step in the appropriate direction. */
+function nextIteration(fc: ForContext): number {
+  return isDescending(fc) ? fc.iteration - 1 : fc.iteration + 1;
+}
+
+/** Check whether the loop has more iterations remaining. */
+function hasMoreIterations(fc: ForContext): boolean {
+  return isDescending(fc) ? fc.iteration > fc.end : fc.iteration < fc.end;
 }
 
 /**
@@ -415,6 +431,9 @@ function resolveActionTarget(action: Action, stepName: string, steps: Step[]): s
     }
     case 'NEXT':
     case 'BREAK':
+      // Defensive: NEXT/BREAK are substep-level loop control actions and should
+      // never appear as parent-step aggregation actions. The parser/validator
+      // prevents this, so this branch is unreachable in well-formed runbooks.
       return 'STOPPED';
   }
 }
@@ -451,13 +470,15 @@ function buildAggregationExitTransitions(
   const passTarget = resolveActionTarget(parentTransitions.pass.action, parentStep.name, steps);
   const failTarget = resolveActionTarget(parentTransitions.fail.action, parentStep.name, steps);
 
+  // Guards are mutually exclusive and exhaustive: the loop always accumulates
+  // at least one iteration result before exit, so exactly one guard fires.
   return [
     {
       guard: ({ context }: { context: RunbookContext }) => {
         const results = [...(context.iterationResults ?? []), iterationResult];
-        return parentTransitions.all
-          ? !results.some(r => r === 'fail')
-          : results.some(r => r === 'pass');
+        const hasFailed = results.some(r => r === 'fail');
+        const passCount = results.filter(r => r === 'pass').length;
+        return shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
       },
       target: passTarget,
       actions: buildLoopExitAssign(actionType, passTarget, iterationResult)
@@ -465,9 +486,9 @@ function buildAggregationExitTransitions(
     {
       guard: ({ context }: { context: RunbookContext }) => {
         const results = [...(context.iterationResults ?? []), iterationResult];
-        return parentTransitions.all
-          ? results.some(r => r === 'fail')
-          : !results.some(r => r === 'pass');
+        const hasFailed = results.some(r => r === 'fail');
+        const passCount = results.filter(r => r === 'pass').length;
+        return !shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
       },
       target: failTarget,
       actions: buildLoopExitAssign(actionType, failTarget, iterationResult)
@@ -485,14 +506,14 @@ function buildLoopBackTransition(
   return {
     guard: ({ context }: { context: RunbookContext }) => {
       const top = peekForStack(context.forStack);
-      return top !== undefined && top.iteration < top.end;
+      return top !== undefined && hasMoreIterations(top);
     },
     target: firstSubstepStateId,
     actions: assign({
       forStack: ({ context }: { context: RunbookContext }) => {
         const top = peekForStack(context.forStack);
         if (!top) return context.forStack;
-        return [{ ...top, iteration: top.iteration + 1 }];
+        return [{ ...top, iteration: nextIteration(top) }];
       },
       iterationResults: ({ context }: { context: RunbookContext }) => {
         const results = context.iterationResults ?? [];

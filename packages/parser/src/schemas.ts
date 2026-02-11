@@ -43,10 +43,7 @@ export const ForClauseSchema = z.object({
   variable: z.string().regex(NAMED_IDENTIFIER_PATTERN).optional(),
   start: z.number().int().positive().max(MAX_FOR_BOUND),
   end: z.number().int().positive().max(MAX_FOR_BOUND),
-}).refine(
-  (data) => data.start <= data.end,
-  { message: 'FOR range start must not exceed end' }
-);
+});
 
 /**
  * Schema for step names in Step.name field.

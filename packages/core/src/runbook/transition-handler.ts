@@ -94,6 +94,28 @@ export function evaluatePassCondition(
 }
 
 /**
+ * Determine whether aggregated iteration/substep results should be treated as passing.
+ *
+ * Pure predicate shared between the transition handler (runtime evaluation) and
+ * the compiler (XState guard closures) to keep ALL/ANY logic in one place.
+ *
+ * - ALL mode (`aggregationAll = true`): passes only when no failures exist
+ * - ANY mode (`aggregationAll = false`): passes when at least one result passed
+ *
+ * @param hasFailed - Whether any result was a failure
+ * @param passCount - Number of passing results
+ * @param aggregationAll - True for ALL mode, false for ANY mode
+ * @returns True if the aggregated outcome should be treated as PASS
+ */
+export function shouldAggregationPass(
+  hasFailed: boolean,
+  passCount: number,
+  aggregationAll: boolean
+): boolean {
+  return aggregationAll ? !hasFailed : passCount > 0;
+}
+
+/**
  * Evaluate ALL/ANY aggregation logic given pre-computed pass/fail indicators.
  *
  * @param hasFailed - Whether any result was a failure
@@ -108,19 +130,12 @@ function evaluateAggregation(
   transitions: Transitions,
   currentRetryCount: number
 ): ConditionResult {
-  if (transitions.all) {
-    // ALL mode: Pass if all passed, fail if any failed
-    if (hasFailed) {
-      return evaluateTransition(transitions.fail, currentRetryCount);
-    }
-    return evaluateTransition(transitions.pass, currentRetryCount);
-  } else {
-    // ANY mode: Pass if any passed, fail only if all failed
-    if (passCount > 0) {
-      return evaluateTransition(transitions.pass, currentRetryCount);
-    }
-    return evaluateTransition(transitions.fail, currentRetryCount);
-  }
+  return evaluateTransition(
+    shouldAggregationPass(hasFailed, passCount, transitions.all)
+      ? transitions.pass
+      : transitions.fail,
+    currentRetryCount
+  );
 }
 
 /**

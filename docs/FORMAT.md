@@ -157,11 +157,15 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 
 | Form | Example | Description |
 |------|---------|-------------|
-| Named variable, explicit range | `- FOR batch IN 1 TO 10` | Iterates 1..10, `{{batch}}` available |
-| No variable, explicit range | `- FOR 1 TO 10` | Iterates 1..10, no named variable |
+| Named variable, ascending range | `- FOR batch IN 1 TO 10` | Iterates 1..10, `{{batch}}` available |
+| No variable, ascending range | `- FOR 1 TO 10` | Iterates 1..10, no named variable |
+| Named variable, descending range | `- FOR batch IN 10 TO 1` | Iterates 10..1, `{{batch}}` available |
+| No variable, descending range | `- FOR 10 TO 1` | Iterates 10..1, no named variable |
 | Named variable, implicit start | `- FOR batch IN 10` | Iterates 1..10, `{{batch}}` available |
 | No variable, implicit start | `- FOR 10` | Iterates 1..10, no named variable |
 | Variable bounds | `- FOR batch IN 1 TO {{Max}}` | End bound from template variable |
+
+**Direction inference:** When `start > end`, the loop iterates downward (step size −1). When `start <= end`, it iterates upward (step size +1). Single-number shorthand (`FOR N`) always ascends from 1.
 
 **Rules:**
 - FOR must appear before transitions in the step's bullet list
