@@ -34,6 +34,18 @@ import {
 import { expandLoopVariables, expandLoopVariablesForCommand } from './template-renderer.js';
 
 /**
+ * Per-step dynamic variables (e.g., `Step`, `Index`, named loop variable).
+ * Produced by {@link buildStepVariables} and consumed by loop variable expansion.
+ */
+export type StepVariables = Record<string, string>;
+
+/**
+ * Template variables for AST-level substitution (e.g., `environment`, `port`).
+ * Sourced from frontmatter, CLI flags, or config files.
+ */
+export type TemplateVariables = Record<string, string>;
+
+/**
  * Check if runbook snapshot indicates completion.
  * @param snapshot - XState snapshot with status and value
  * @returns True if the runbook has completed successfully
@@ -72,9 +84,9 @@ export function buildStepVariables(
   substepId: string | undefined,
   forStack?: readonly ForContext[],
   forClause?: Step['forClause'],
-): Record<string, string> {
+): StepVariables {
   const step = substepId ? `${stepId}.${substepId}` : stepId;
-  const vars: Record<string, string> = { Step: step };
+  const vars: StepVariables = { Step: step };
 
   // Primary: use forStack (available after first transition)
   if (forStack?.length) {

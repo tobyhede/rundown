@@ -1,200 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
 import { parseRunbookDocument } from '@rundown-org/core';
 import {
-  renderTemplate,
   expandLoopVariables,
   shellEscapeValue,
   substituteText,
   substituteRunbookVariables,
   expandLoopVariablesForCommand,
+  expandForClauseVariables,
 } from '../../src/services/template-renderer.js';
-
-/* eslint-disable @typescript-eslint/no-deprecated -- testing legacy renderTemplate function */
-describe('renderTemplate', () => {
-  it('should expand variables in markdown', () => {
-    const markdown = '## 1. Run Tests\n\n```bash\n{{test_command}}\n```';
-    const variables = { test_command: 'npm test' };
-
-    const result = renderTemplate(markdown, variables);
-
-    expect(result).toBe('## 1. Run Tests\n\n```bash\nnpm test\n```');
-  });
-
-  it('should preserve missing variables unchanged', () => {
-    const markdown = '## 1. Run {{undefined_var}}';
-    const variables = {};
-
-    const result = renderTemplate(markdown, variables);
-
-    expect(result).toBe('## 1. Run {{undefined_var}}');
-  });
-
-  it('should preserve missing variables with original spacing', () => {
-    const markdown = '## 1. Run {{ undefined_var }}';
-    const variables = {};
-
-    const result = renderTemplate(markdown, variables);
-
-    expect(result).toBe('## 1. Run {{ undefined_var }}');
-  });
-
-  it('should not escape markdown characters', () => {
-    const markdown = '## 1. {{step_name}}';
-    const variables = { step_name: 'Test & Verify <code>' };
-
-    const result = renderTemplate(markdown, variables);
-
-    expect(result).toBe('## 1. Test & Verify <code>');
-  });
-
-  it('should handle empty variables object', () => {
-    const markdown = '## 1. Static Step';
-    const variables = {};
-
-    const result = renderTemplate(markdown, variables);
-
-    expect(result).toBe('## 1. Static Step');
-  });
-
-  it('should preserve nested undefined variables', () => {
-    const markdown = '{{outer}} and {{inner}}';
-    const variables = { outer: 'defined' };
-
-    const result = renderTemplate(markdown, variables);
-
-    expect(result).toBe('defined and {{inner}}');
-  });
-
-  it('should preserve undefined variables in HTML-like content', () => {
-    const markdown = '<div class="info">{{undefined_var}}</div>';
-    const result = renderTemplate(markdown, {});
-    expect(result).toBe('<div class="info">{{undefined_var}}</div>');
-  });
-
-  describe('special characters in variable values', () => {
-    it('should handle backticks in values', () => {
-      const markdown = '## 1. Run {{command}}';
-      const variables = { command: 'echo `code`' };
-
-      const result = renderTemplate(markdown, variables);
-
-      expect(result).toBe('## 1. Run echo `code`');
-    });
-
-    it('should handle single quotes in values', () => {
-      const markdown = '## 1. Run {{command}}';
-      const variables = { command: "echo 'quoted'" };
-
-      const result = renderTemplate(markdown, variables);
-
-      expect(result).toBe("## 1. Run echo 'quoted'");
-    });
-
-    it('should handle double quotes in values', () => {
-      const markdown = '## 1. Run {{command}}';
-      const variables = { command: 'echo "quoted"' };
-
-      const result = renderTemplate(markdown, variables);
-
-      expect(result).toBe('## 1. Run echo "quoted"');
-    });
-
-    it('should handle dollar signs in values', () => {
-      const markdown = '## 1. Run {{command}}';
-      const variables = { command: 'echo $VAR and ${HOME}' };
-
-      const result = renderTemplate(markdown, variables);
-
-      expect(result).toBe('## 1. Run echo $VAR and ${HOME}');
-    });
-
-    it('should handle newlines in values', () => {
-      const markdown = '## 1. Run {{command}}';
-      const variables = { command: 'line1\nline2' };
-
-      const result = renderTemplate(markdown, variables);
-
-      expect(result).toBe('## 1. Run line1\nline2');
-    });
-
-    it('should handle backslashes in values', () => {
-      const markdown = '## 1. Run {{command}}';
-      const variables = { command: 'path\\to\\file' };
-
-      const result = renderTemplate(markdown, variables);
-
-      expect(result).toBe('## 1. Run path\\to\\file');
-    });
-
-    it('should handle mixed special characters', () => {
-      const markdown = '## 1. Run {{command}}';
-      const variables = { command: 'echo "Hello $USER" | grep \'test\'' };
-
-      const result = renderTemplate(markdown, variables);
-
-      expect(result).toBe('## 1. Run echo "Hello $USER" | grep \'test\'');
-    });
-  });
-
-  describe('Handlebars syntax errors', () => {
-    it('should throw on unclosed braces', () => {
-      const markdown = '## 1. Run {{variable';
-      const variables = {};
-
-      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
-    });
-
-    it('should throw on unclosed helper block', () => {
-      const markdown = '{{#if condition}}content';
-      const variables = { condition: true };
-
-      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
-    });
-
-    it('should throw on deeply nested braces', () => {
-      const markdown = '{{{{var}}}}';
-      const variables = { var: 'test' };
-
-      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
-    });
-
-    it('should throw on mismatched helper closing tags', () => {
-      const markdown = '{{#if condition}}content{{/unless}}';
-      const variables = { condition: true };
-
-      expect(() => renderTemplate(markdown, variables)).toThrow(/if doesn't match unless/);
-    });
-
-    it('should throw on unclosed triple braces', () => {
-      const markdown = '{{{variable';
-      const variables = { variable: 'test' };
-
-      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
-    });
-
-    it('should throw on mismatched brace count', () => {
-      const markdown = '{{variable}';
-      const variables = { variable: 'test' };
-
-      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
-    });
-
-    it('should throw on unclosed nested helpers', () => {
-      const markdown = '{{#if a}}{{#each b}}{{name}}{{/if}}';
-      const variables = { a: true, b: [{ name: 'test' }] };
-
-      expect(() => renderTemplate(markdown, variables)).toThrow(/each doesn't match if/);
-    });
-
-    it('should throw on only opening braces', () => {
-      const markdown = 'Some text {{';
-      const variables = {};
-
-      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
-    });
-  });
-});
-/* eslint-enable @typescript-eslint/no-deprecated */
 
 describe('expandLoopVariables', () => {
   it('should expand named loop variable', () => {
@@ -449,5 +262,36 @@ describe('expandLoopVariablesForCommand', () => {
     expect(expandLoopVariablesForCommand('deploy {{target}}', { target: 'prod; drop db' })).toBe(
       "deploy 'prod; drop db'",
     );
+  });
+});
+
+describe('expandForClauseVariables', () => {
+  it('pre-expands FOR clause then substitutes command variables', () => {
+    const rawMarkdown = [
+      '---',
+      'name: test',
+      '---',
+      '# Test Runbook',
+      '',
+      '## 1. Deploy',
+      '- FOR env IN 1 TO {{Max}}',
+      '',
+      '### 1.1 Run deploy',
+      '',
+      '```bash',
+      'deploy {{ENV}}',
+      '```',
+      '',
+      '## 2. Done',
+      '- PASS: COMPLETE',
+    ].join('\n');
+
+    const expanded = expandForClauseVariables(rawMarkdown, { Max: '3' });
+    const runbook = parseRunbookDocument(expanded);
+    const result = substituteRunbookVariables(runbook, { ENV: 'staging' });
+
+    expect(result.steps[0].forClause).toEqual({ variable: 'env', start: 1, end: 3 });
+    expect(result.steps[0].substeps).toHaveLength(1);
+    expect(result.steps[0].substeps![0].command!.code).toBe('deploy staging');
   });
 });

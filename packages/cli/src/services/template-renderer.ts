@@ -1,70 +1,16 @@
 /**
  * Template rendering service for runbook variable interpolation.
  *
- * Provides two approaches:
- * 1. (Legacy) Handlebars-based `renderTemplate` — substitutes into raw markdown before parsing.
- * 2. (Secure) AST-level substitution — `substituteRunbookVariables` walks a parsed `Runbook`
- *    and substitutes variables with context-aware escaping (shell-escaping for command code,
- *    plain substitution for descriptions/prompts).
+ * Provides AST-level substitution via `substituteRunbookVariables`, which walks a
+ * parsed `Runbook` and substitutes variables with context-aware escaping
+ * (shell-escaping for command code, plain substitution for descriptions/prompts).
  *
  * @module
  */
 
-import Handlebars from 'handlebars';
 import type { Runbook, Step, Substep, Command } from '@rundown-org/parser';
 
-// Create isolated instance to avoid polluting global Handlebars
-const handlebars = Handlebars.create();
-
 const TEMPLATE_VAR_REGEX = /{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}/g;
-
-/**
- * Render Handlebars variables in markdown content.
- *
- * Uses `noEscape: true` to preserve markdown characters (no HTML escaping).
- * Missing variables are preserved as literal {{variable}} in output.
- *
- * Note: Single-brace syntax like {varName} is not affected by template rendering.
- * Only double-brace Handlebars syntax {{varName}} is expanded.
- *
- * @deprecated Use `substituteRunbookVariables` instead for context-aware escaping.
- * This function substitutes into raw markdown before parsing, which allows command
- * injection via malicious variable values. The replacement flow is:
- * `parseRunbookDocument(raw)` then `substituteRunbookVariables(runbook, vars)`.
- *
- * @param markdown - Raw markdown content with {{variable}} placeholders
- * @param variables - Key-value pairs for variable substitution
- * @returns Rendered markdown with variables replaced
- * @throws Error if markdown contains invalid Handlebars syntax (e.g., unclosed
- *         braces or malformed expressions) - thrown by Handlebars.compile()
- */
-export function renderTemplate(markdown: string, variables: Record<string, string>): string {
-  const placeholderEntries: { name: string; raw: string }[] = [];
-  const withPlaceholders = markdown.replace(TEMPLATE_VAR_REGEX, (raw, name: string) => {
-    const index = placeholderEntries.length;
-    placeholderEntries.push({ name, raw });
-    return `{{__rd_resolve__ ${index.toString()}}}`;
-  });
-
-  // Resolve placeholders while preserving original spacing for undefined vars.
-  // Re-register helper on each call - intentional, as it needs closure access to
-  // placeholderEntries and variables which differ per invocation.
-  handlebars.registerHelper('__rd_resolve__', (index: number) => {
-    const entry = placeholderEntries.at(index);
-    if (!entry) return '';
-    const value = Object.prototype.hasOwnProperty.call(variables, entry.name)
-      ? variables[entry.name]
-      : undefined;
-    if (value === undefined) {
-      return new handlebars.SafeString(entry.raw);
-    }
-    return value;
-  });
-
-  // Compile with noEscape to preserve markdown characters
-  const template = handlebars.compile(withPlaceholders, { noEscape: true });
-  return template(variables);
-}
 
 /**
  * Expand loop variables in text using simple regex substitution.
@@ -78,14 +24,14 @@ export function renderTemplate(markdown: string, variables: Record<string, strin
  */
 export function expandLoopVariables(text: string, variables: Record<string, string>): string {
   return text.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
-    return Object.prototype.hasOwnProperty.call(variables, name) ? variables[name] : match;
+    return Object.hasOwn(variables, name) ? variables[name] : match;
   });
 }
 
 // ─── FOR clause pre-expansion ────────────────────────────────────────────────
 
 /** Matches bullet list items that start with `- FOR ` (FOR clause lines) */
-const FOR_CLAUSE_LINE = /^(\s*-\s+FOR\s.+)$/gm;
+const FOR_CLAUSE_LINE = /^\s*-\s+FOR\s.+$/gm;
 
 /**
  * Expand template variables in FOR clause bullet lines only.
@@ -105,7 +51,7 @@ export function expandForClauseVariables(
 ): string {
   return markdown.replace(FOR_CLAUSE_LINE, (line) => {
     return line.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
-      return Object.prototype.hasOwnProperty.call(variables, name) ? variables[name] : match;
+      return Object.hasOwn(variables, name) ? variables[name] : match;
     });
   });
 }
@@ -148,7 +94,7 @@ export function substituteText(
   escapeFn?: (value: string) => string,
 ): string {
   return text.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
-    if (!Object.prototype.hasOwnProperty.call(variables, name)) return match;
+    if (!Object.hasOwn(variables, name)) return match;
     const value = variables[name];
     return escapeFn ? escapeFn(value) : value;
   });
