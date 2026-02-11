@@ -237,4 +237,14 @@ describe('expandLoopVariables', () => {
     expect(expandLoopVariables('{{i}} then {{i}}', { i: '3' }))
       .toBe('3 then 3');
   });
+
+  it('should expand Step variable', () => {
+    expect(expandLoopVariables('At step {{Step}}', { Step: '3.1' }))
+      .toBe('At step 3.1');
+  });
+
+  it('should expand Step for named step', () => {
+    expect(expandLoopVariables('At {{Step}}', { Step: 'ErrorHandler' }))
+      .toBe('At ErrorHandler');
+  });
 });

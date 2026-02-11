@@ -1263,4 +1263,14 @@ describe('parseForClause', () => {
       expect(parseForClause('FOR something weird here')).toBeNull();
     });
   });
+
+  describe('reversed range rejection', () => {
+    it('rejects reversed range (start > end)', () => {
+      expect(parseForClause('FOR 10 TO 1')).toBeNull();
+    });
+
+    it('rejects reversed range with named variable', () => {
+      expect(parseForClause('FOR batch IN 5 TO 2')).toBeNull();
+    });
+  });
 });

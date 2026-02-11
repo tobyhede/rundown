@@ -70,7 +70,7 @@ export function isRunbookStopped(snapshot: { status: string; value: unknown }): 
  * @param forClause - FOR clause from the step definition (bootstrap fallback)
  * @returns Variable map with `Step` and optional `Index` / named variable
  */
-function buildStepVariables(
+export function buildStepVariables(
   stepId: string,
   substepId: string | undefined,
   forStack?: readonly ForContext[],

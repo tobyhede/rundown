@@ -721,3 +721,24 @@ npm test
     });
   });
 });
+
+describe('parseRunbook with FOR clause', () => {
+  it('parses FOR clause from full markdown', () => {
+    const md = `## 1. Process batches
+- FOR batch IN 1 TO 3
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+### 1.1 Handle batch
+\`\`\`bash
+echo batch
+\`\`\`
+
+## 2. Done
+- PASS: COMPLETE
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
+    expect(steps[0].substeps).toHaveLength(1);
+  });
+});

@@ -270,4 +270,249 @@ rd echo iteration={{i}}
     expect(stepEnteredEvents[0].description).toContain('Process iteration 1');
     expect(stepEnteredEvents[0].description).not.toContain('{{i}}');
   });
+
+  it('{{Index}} preserved as literal outside FOR loop (I1)', async () => {
+    await writeFile(
+      join(workspace.cwd, 'index-outside-for.runbook.md'),
+      `---
+name: Index Outside FOR
+---
+# Index Outside
+
+## 1. Step with Index reference {{Index}}
+\`\`\`bash
+rd echo value={{Index}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json index-outside-for.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+
+    expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(1);
+    // {{Index}} should be preserved as literal since there's no FOR loop
+    expect(stepEnteredEvents[0].description).toContain('{{Index}}');
+  });
+
+  it('{{Step}} expands to named identifier for named step (I2)', async () => {
+    await writeFile(
+      join(workspace.cwd, 'step-named.runbook.md'),
+      `---
+name: Step Named
+---
+# Named Step Test
+
+## 1. Setup
+- PASS: GOTO ErrorHandler
+- FAIL: STOP
+
+\`\`\`bash
+rd echo setup
+\`\`\`
+
+## ErrorHandler. Handle errors at {{Step}}
+\`\`\`bash
+rd echo step={{Step}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json step-named.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+    const commandStartedEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'command_started'
+    );
+
+    // Find the ErrorHandler step event (second step_entered)
+    expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(2);
+    expect(stepEnteredEvents[1].description).toContain('Handle errors at ErrorHandler');
+    expect(commandStartedEvents[1].command).toContain('step=ErrorHandler');
+  });
+
+  it('expands loop variables in prompt text (I3)', async () => {
+    await writeFile(
+      join(workspace.cwd, 'for-prompt.runbook.md'),
+      `---
+name: FOR Prompt Test
+---
+# FOR Prompt
+
+## 1. Process items
+- FOR item IN 1 TO 2
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item {{item}}
+- PASS: CONTINUE
+- FAIL: STOP
+
+Process item number {{item}} carefully.
+
+\`\`\`bash
+rd echo item={{item}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json for-prompt.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+
+    expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(1);
+    // The prompt field in step_entered should have {{item}} expanded
+    expect(stepEnteredEvents[0].prompt).toContain('Process item number 1 carefully.');
+  });
+
+  it('FOR with variable bounds resolves through Phase 1 expansion (I4)', async () => {
+    await writeFile(
+      join(workspace.cwd, 'for-var-bounds.runbook.md'),
+      `---
+name: FOR Var Bounds
+vars:
+  Max: 3
+---
+# FOR Var Bounds
+
+## 1. Process
+- FOR item IN 1 TO {{Max}}
+- PASS ALL: CONTINUE
+
+### 1.1 Iteration {{Index}}
+\`\`\`bash
+rd echo iter={{Index}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json for-var-bounds.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+
+    // Phase 1 should expand {{Max}} to 3 before FOR clause parsing
+    // So we should get 3 iterations
+    expect(stepEnteredEvents).toHaveLength(3);
+    expect(stepEnteredEvents[0].description).toContain('Iteration 1');
+    expect(stepEnteredEvents[2].description).toContain('Iteration 3');
+  });
+
+  it('FOR with multiple substeps expands variables in each (I5)', async () => {
+    await writeFile(
+      join(workspace.cwd, 'for-multi-sub.runbook.md'),
+      `---
+name: FOR Multi Substep
+---
+# FOR Multi Substep
+
+## 1. Process
+- FOR item IN 1 TO 2
+- PASS ALL: CONTINUE
+
+### 1.1 Fetch item {{item}}
+\`\`\`bash
+rd echo fetch={{item}}
+\`\`\`
+
+### 1.2 Store item {{item}}
+\`\`\`bash
+rd echo store={{item}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json for-multi-sub.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+
+    // 2 iterations × 2 substeps = 4 step_entered events
+    expect(stepEnteredEvents).toHaveLength(4);
+
+    // Iteration 1: substep 1 and 2
+    expect(stepEnteredEvents[0].description).toContain('Fetch item 1');
+    expect(stepEnteredEvents[1].description).toContain('Store item 1');
+
+    // Iteration 2: substep 1 and 2
+    expect(stepEnteredEvents[2].description).toContain('Fetch item 2');
+    expect(stepEnteredEvents[3].description).toContain('Store item 2');
+  });
+
+  it('FOR with single iteration (1 TO 1) works correctly (I6)', async () => {
+    await writeFile(
+      join(workspace.cwd, 'for-single-iter.runbook.md'),
+      `---
+name: FOR Single Iter
+---
+# FOR Single Iteration
+
+## 1. Single
+- FOR item IN 1 TO 1
+- PASS ALL: CONTINUE
+
+### 1.1 Only iteration {{item}}
+\`\`\`bash
+rd echo item={{item}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json for-single-iter.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+
+    // Exactly 1 iteration
+    expect(stepEnteredEvents).toHaveLength(1);
+    expect(stepEnteredEvents[0].description).toContain('Only iteration 1');
+
+    // No raw {{item}} in output
+    const allText = JSON.stringify(stepEnteredEvents);
+    expect(allText).not.toContain('{{item}}');
+  });
 });

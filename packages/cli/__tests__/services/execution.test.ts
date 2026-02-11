@@ -4,6 +4,7 @@ import {
   isRunbookStopped,
   isValidResult,
   getStepRetryMax,
+  buildStepVariables,
 } from '../../src/services/execution.js';
 import type { Step } from '@rundown-org/core';
 
@@ -83,6 +84,43 @@ describe('execution service', () => {
     it('returns 0 if transitions missing', () => {
       const step = {} as unknown as Step;
       expect(getStepRetryMax(step)).toBe(0);
+    });
+  });
+
+  describe('buildStepVariables', () => {
+    it('returns Step for simple step', () => {
+      const vars = buildStepVariables('3', undefined);
+      expect(vars).toEqual({ Step: '3' });
+    });
+
+    it('returns Step for substep', () => {
+      const vars = buildStepVariables('3', '1');
+      expect(vars).toEqual({ Step: '3.1' });
+    });
+
+    it('returns Step for named step', () => {
+      const vars = buildStepVariables('ErrorHandler', undefined);
+      expect(vars).toEqual({ Step: 'ErrorHandler' });
+    });
+
+    it('returns Index and named variable from forStack', () => {
+      const vars = buildStepVariables('1', '1', [
+        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'batch' }
+      ]);
+      expect(vars).toMatchObject({ Step: '1.1', Index: '2', batch: '2' });
+    });
+
+    it('omits Index for implicit ForContext', () => {
+      const vars = buildStepVariables('1', '1', [
+        { stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }
+      ]);
+      expect(vars).toEqual({ Step: '1.1' });
+      expect(vars).not.toHaveProperty('Index');
+    });
+
+    it('falls back to forClause when forStack empty', () => {
+      const vars = buildStepVariables('1', '1', [], { start: 1, end: 3 });
+      expect(vars).toMatchObject({ Step: '1.1', Index: '1' });
     });
   });
 });
