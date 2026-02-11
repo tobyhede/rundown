@@ -355,6 +355,8 @@ export interface StepConfig {
   content?: string;
   /** FOR clause for loop steps */
   for?: ForClauseConfig;
+  /** Whether aggregation uses ALL (true/undefined) or ANY (false) for PASS; FAIL inverts */
+  all?: boolean;
   /** Substeps (H3 headers with qualified numbering) */
   substeps?: SubstepConfig[];
 }
@@ -423,8 +425,10 @@ export function createRunbook(options: CreateRunbookOptions): string {
 
     // Step-level transitions (use ALL/ANY qualifiers when step has substeps or FOR)
     const hasAggregation = step.for != null || step.substeps != null;
-    if (step.pass) lines.push(`- PASS${hasAggregation ? ' ALL' : ''}: ${step.pass}`);
-    if (step.fail) lines.push(`- FAIL${hasAggregation ? ' ANY' : ''}: ${step.fail}`);
+    const allQualifier = step.all !== false ? ' ALL' : ' ANY';
+    const anyQualifier = step.all !== false ? ' ANY' : ' ALL';
+    if (step.pass) lines.push(`- PASS${hasAggregation ? allQualifier : ''}: ${step.pass}`);
+    if (step.fail) lines.push(`- FAIL${hasAggregation ? anyQualifier : ''}: ${step.fail}`);
     lines.push('');
 
     if (step.substeps) {
