@@ -26,6 +26,36 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, '..', '..');
 
+/**
+ * Recursively walk a node_modules tree resolving symlinks in all `.bin` directories.
+ * The WebContainer snapshot tool cannot serialize symlinks, so each symlink is
+ * replaced with a copy of its target file.
+ */
+function resolveAllBinSymlinks(nodeModulesDir: string) {
+  function walkAndResolve(dir: string) {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.name === '.bin' && entry.isDirectory()) {
+        const binFiles = readdirSync(fullPath);
+        for (const file of binFiles) {
+          const filePath = join(fullPath, file);
+          const stat = lstatSync(filePath);
+          if (stat.isSymbolicLink()) {
+            const target = readlinkSync(filePath);
+            const resolvedTarget = resolve(fullPath, target);
+            unlinkSync(filePath);
+            copyFileSync(resolvedTarget, filePath);
+          }
+        }
+      } else if (entry.name === 'node_modules' && entry.isDirectory()) {
+        walkAndResolve(fullPath);
+      }
+    }
+  }
+  walkAndResolve(nodeModulesDir);
+}
+
 async function buildSnapshot() {
   console.log('Creating WebContainer snapshot with @rundown-org/cli...');
 
@@ -112,21 +142,11 @@ async function buildSnapshot() {
       execSync('npm install', { cwd: tempDir, stdio: 'inherit' });
     }
 
-    // 4. Resolve symlinks in .bin directory (snapshot tool can't handle symlinks)
-    const binDir = join(tempDir, 'node_modules', '.bin');
-    if (existsSync(binDir)) {
-      console.log('Resolving symlinks in node_modules/.bin...');
-      const files = readdirSync(binDir);
-      for (const file of files) {
-        const filePath = join(binDir, file);
-        const stat = lstatSync(filePath);
-        if (stat.isSymbolicLink()) {
-          const target = readlinkSync(filePath);
-          const resolvedTarget = resolve(binDir, target);
-          unlinkSync(filePath);
-          copyFileSync(resolvedTarget, filePath);
-        }
-      }
+    // 4. Resolve symlinks in all .bin directories (snapshot tool can't handle symlinks)
+    const nodeModulesDir = join(tempDir, 'node_modules');
+    if (existsSync(nodeModulesDir)) {
+      console.log('Resolving symlinks in node_modules/.bin directories...');
+      resolveAllBinSymlinks(nodeModulesDir);
     }
 
     // 5. Create binary snapshot (includes node_modules!)
