@@ -14,7 +14,11 @@ describe('ExecutionEventEmitter', () => {
     const received: RunbookEventV1[] = [];
     emitter.subscribe((event) => received.push(event));
 
-    emitter.emit('RUNBOOK_STARTED', { title: 'Test', prompted: false, statePath: '.claude/rundown/runs/wf-test-123.json' });
+    emitter.emit('RUNBOOK_STARTED', {
+      title: 'Test',
+      prompted: false,
+      statePath: '.claude/rundown/runs/wf-test-123.json',
+    });
 
     expect(received).toHaveLength(1);
     expect(received[0].type).toBe('RUNBOOK_STARTED');
@@ -25,7 +29,11 @@ describe('ExecutionEventEmitter', () => {
     const received: RunbookEventV1[] = [];
     emitter.subscribe((event) => received.push(event));
 
-    emitter.emit('RUNBOOK_STARTED', { title: 'Test', prompted: false, statePath: '.claude/rundown/runs/wf-test-123.json' });
+    emitter.emit('RUNBOOK_STARTED', {
+      title: 'Test',
+      prompted: false,
+      statePath: '.claude/rundown/runs/wf-test-123.json',
+    });
     emitter.emit('STEP_ENTERED', {
       position: { current: '1', total: 5 },
       stepName: '1',
@@ -43,7 +51,11 @@ describe('ExecutionEventEmitter', () => {
     const received: RunbookEventV1[] = [];
     emitter.subscribe((event) => received.push(event));
 
-    emitter.emit('RUNBOOK_STARTED', { title: 'Test', prompted: false, statePath: '.claude/rundown/runs/wf-test-123.json' });
+    emitter.emit('RUNBOOK_STARTED', {
+      title: 'Test',
+      prompted: false,
+      statePath: '.claude/rundown/runs/wf-test-123.json',
+    });
 
     expect(received[0].ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
   });
@@ -52,7 +64,11 @@ describe('ExecutionEventEmitter', () => {
     const received: RunbookEventV1[] = [];
     const unsub = emitter.subscribe((event) => received.push(event));
 
-    emitter.emit('RUNBOOK_STARTED', { title: 'Test', prompted: false, statePath: '.claude/rundown/runs/wf-test-123.json' });
+    emitter.emit('RUNBOOK_STARTED', {
+      title: 'Test',
+      prompted: false,
+      statePath: '.claude/rundown/runs/wf-test-123.json',
+    });
     unsub();
     emitter.emit('RUNBOOK_COMPLETED', {
       finalPosition: { current: '1', total: 1 },
@@ -66,7 +82,11 @@ describe('ExecutionEventEmitter', () => {
     emitter.subscribe((event) => received.push(event));
 
     emitter.clear();
-    emitter.emit('RUNBOOK_STARTED', { title: 'Test', prompted: false, statePath: '.claude/rundown/runs/wf-test-123.json' });
+    emitter.emit('RUNBOOK_STARTED', {
+      title: 'Test',
+      prompted: false,
+      statePath: '.claude/rundown/runs/wf-test-123.json',
+    });
 
     expect(received).toHaveLength(0);
   });

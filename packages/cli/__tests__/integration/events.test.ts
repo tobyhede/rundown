@@ -49,7 +49,7 @@ describe('event output integration', () => {
     expect(summary.commandsRun).toBe(1);
     expect(summary.commandsFailed).toBe(0);
     expect(summary.events).toHaveLength(6);
-    expect(summary.events.map(e => e.type)).toEqual([
+    expect(summary.events.map((e) => e.type)).toEqual([
       'RUNBOOK_STARTED',
       'STEP_ENTERED',
       'COMMAND_STARTED',

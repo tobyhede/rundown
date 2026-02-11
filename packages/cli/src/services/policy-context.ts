@@ -82,7 +82,7 @@ let policyContext: PolicyContext | null = null;
  */
 export async function initializePolicyContext(
   options: PolicyCliOptions = {},
-  cwd: string = process.cwd()
+  cwd: string = process.cwd(),
 ): Promise<PolicyContext> {
   // Load policy from file or defaults
   const { policy, filepath, isDefault, warnings } = await loadPolicy({
@@ -255,7 +255,10 @@ function parseStringArray(value: unknown): string[] | undefined {
   if (!value) return undefined;
   if (typeof value === 'string') {
     // Handle comma-separated values
-    return value.split(',').map(s => s.trim()).filter(Boolean);
+    return value
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
   if (Array.isArray(value)) {
     return value.filter((v): v is string => typeof v === 'string');

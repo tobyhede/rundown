@@ -1,8 +1,4 @@
-import {
-  ErrorCodes,
-  type ErrorCodeDefinition,
-  type ErrorCodeKey,
-} from './codes.js';
+import { ErrorCodes, type ErrorCodeDefinition, type ErrorCodeKey } from './codes.js';
 
 /**
  * Context data for error formatting.
@@ -86,10 +82,7 @@ export class RundownError extends Error {
    *
    * Renders context fields in priority order, filtering out undefined values.
    */
-  private static formatMessage(
-    errorCode: ErrorCodeDefinition,
-    context: ErrorContext
-  ): string {
+  private static formatMessage(errorCode: ErrorCodeDefinition, context: ErrorContext): string {
     const {
       file,
       step,
@@ -107,11 +100,7 @@ export class RundownError extends Error {
 
     // Primary identifier: first specific identifier wins, else file
     const specificId =
-      (value !== undefined ? `"${value}"` : undefined) ??
-      scenario ??
-      argName ??
-      childId ??
-      agentId;
+      (value !== undefined ? `"${value}"` : undefined) ?? scenario ?? argName ?? childId ?? agentId;
 
     const primaryId = specificId ?? file;
     const stepLocation = step && (substep ? `${step}.${substep}` : step);
@@ -121,7 +110,8 @@ export class RundownError extends Error {
       primaryId && `: ${primaryId}`,
       specificId && file && ` in ${file}`,
       stepLocation && ` at step ${stepLocation}`,
-      expected !== undefined && found !== undefined &&
+      expected !== undefined &&
+        found !== undefined &&
         ` (expected ${String(expected)}, found ${String(found)})`,
       message && ` - ${message}`,
       line && ` (line ${String(line)})`,

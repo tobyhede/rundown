@@ -24,7 +24,7 @@ describe('CLI type guards', () => {
         'active_skill',
         'edited_files',
         'file_extensions',
-        'metadata'
+        'metadata',
       ];
 
       for (const key of validKeys) {
@@ -40,7 +40,7 @@ describe('CLI type guards', () => {
         'SESSION_ID',
         '',
         'files',
-        'commands'
+        'commands',
       ];
 
       for (const key of invalidKeys) {
@@ -66,7 +66,7 @@ describe('CLI type guards', () => {
         'started_at',
         'active_command',
         'active_skill',
-        'metadata'
+        'metadata',
       ];
 
       for (const key of nonArrayKeys) {
@@ -157,7 +157,7 @@ describe('Metadata JSON handling', () => {
       '{}',
       '{"key":"value"}',
       '{"nested":{"foo":"bar"}}',
-      '{"number":42,"bool":true}'
+      '{"number":42,"bool":true}',
     ];
 
     for (const json of validJsonStrings) {
@@ -179,8 +179,7 @@ describe('Metadata JSON handling', () => {
 
     for (const json of nonObjects) {
       const parsed = JSON.parse(json);
-      const isValidObject =
-        typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+      const isValidObject = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
       expect(isValidObject).toBe(false);
     }
   });

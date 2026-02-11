@@ -140,7 +140,7 @@ describe('logger', () => {
       await logger.info('message with data', {
         key: 'value',
         number: 42,
-        nested: { foo: 'bar' }
+        nested: { foo: 'bar' },
       });
     });
 
@@ -181,7 +181,7 @@ describe('logger', () => {
     it('handles concurrent writes gracefully', async () => {
       // Trigger multiple writes simultaneously
       const writes = Array.from({ length: 10 }, (_, i) =>
-        logger.info(`concurrent message ${String(i)}`, { index: i })
+        logger.info(`concurrent message ${String(i)}`, { index: i }),
       );
 
       await expect(Promise.all(writes)).resolves.toBeDefined();

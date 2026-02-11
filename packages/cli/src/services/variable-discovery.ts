@@ -33,7 +33,7 @@ const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
  */
 function normalizeVariables(
   vars: Record<string, unknown>,
-  source = 'variable'
+  source = 'variable',
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(vars)) {
@@ -113,7 +113,7 @@ export function mergeVariables(
   frontmatter: Record<string, string>,
   discovered: Record<string, string>,
   fromFile: Record<string, string>,
-  fromFlags: Record<string, string>
+  fromFlags: Record<string, string>,
 ): Record<string, string> {
   return {
     ...builtins,
@@ -130,9 +130,7 @@ export function mergeVariables(
  * @param filePath - Path to the YAML file
  * @returns Variables object, or empty object if file doesn't exist or is invalid
  */
-export async function loadVariablesFromFile(
-  filePath: string
-): Promise<Record<string, string>> {
+export async function loadVariablesFromFile(filePath: string): Promise<Record<string, string>> {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
     const parsed = yaml.load(content);
@@ -146,7 +144,6 @@ export async function loadVariablesFromFile(
     return {};
   }
 }
-
 
 /**
  * Extract template variables from markdown frontmatter.
@@ -162,9 +159,7 @@ export async function loadVariablesFromFile(
  * @param markdown - Raw markdown content with optional frontmatter
  * @returns Variables from frontmatter vars field, or empty object if none
  */
-export function extractVarsFromMarkdown(
-  markdown: string
-): Record<string, string> {
+export function extractVarsFromMarkdown(markdown: string): Record<string, string> {
   const { frontmatter } = extractRawFrontmatter(markdown);
 
   if (!frontmatter || typeof frontmatter.vars !== 'object' || frontmatter.vars === null) {
@@ -183,9 +178,7 @@ export function extractVarsFromMarkdown(
  * @param cwd - Starting directory for search
  * @returns Discovered variables, or empty object if not found
  */
-export async function discoverVariables(
-  cwd: string
-): Promise<Record<string, string>> {
+export async function discoverVariables(cwd: string): Promise<Record<string, string>> {
   let dir = cwd;
   let parent = path.dirname(dir);
 
@@ -240,7 +233,7 @@ export async function discoverVariables(
  */
 export async function collectVariables(
   options: { varFile?: string; var?: string[]; frontmatterVars?: Record<string, string> },
-  cwd: string
+  cwd: string,
 ): Promise<Record<string, string>> {
   // 1. Get built-in defaults (lowest precedence)
   const builtins = getBuiltinVariables();

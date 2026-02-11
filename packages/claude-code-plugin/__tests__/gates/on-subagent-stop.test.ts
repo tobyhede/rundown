@@ -5,7 +5,7 @@ import type { HookInput } from '../../src/shared/index.js';
 const mockHandleSubagentStop = jest.fn();
 
 jest.unstable_mockModule('../../src/workflow/hooks/subagent-stop.js', () => ({
-  handleSubagentStop: mockHandleSubagentStop
+  handleSubagentStop: mockHandleSubagentStop,
 }));
 
 const { execute } = await import('../../src/gates/on-subagent-stop.js');
@@ -21,7 +21,7 @@ describe('on-subagent-stop gate', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: '/test',
-      agent_id: 'agent-123'
+      agent_id: 'agent-123',
     };
 
     const result = execute(input);
@@ -31,38 +31,38 @@ describe('on-subagent-stop gate', () => {
 
   it('returns additionalContext when context provided', async () => {
     mockHandleSubagentStop.mockReturnValue({
-      context: 'Agent agent-123 complete.'
+      context: 'Agent agent-123 complete.',
     });
 
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: '/test',
-      agent_id: 'agent-123'
+      agent_id: 'agent-123',
     };
 
     const result = execute(input);
 
     expect(result).toEqual({
-      additionalContext: 'Agent agent-123 complete.'
+      additionalContext: 'Agent agent-123 complete.',
     });
   });
 
   it('returns block decision when violation occurs', async () => {
     mockHandleSubagentStop.mockReturnValue({
-      violation: 'SubagentStop for unknown agent: agent-xyz'
+      violation: 'SubagentStop for unknown agent: agent-xyz',
     });
 
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: '/test',
-      agent_id: 'agent-xyz'
+      agent_id: 'agent-xyz',
     };
 
     const result = execute(input);
 
     expect(result).toEqual({
       decision: 'block',
-      reason: 'SubagentStop for unknown agent: agent-xyz'
+      reason: 'SubagentStop for unknown agent: agent-xyz',
     });
   });
 });

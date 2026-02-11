@@ -118,7 +118,6 @@ describe('Errors factory - extended coverage', () => {
       expect(error.context.step).toBe('10');
       expect(error.context.substep).toBeUndefined();
     });
-
   });
 
   describe('Execution errors', () => {

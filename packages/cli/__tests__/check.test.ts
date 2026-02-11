@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import {
-  createTestWorkspace,
-  runCli,
-  type TestWorkspace,
-} from './helpers/test-utils.js';
+import { createTestWorkspace, runCli, type TestWorkspace } from './helpers/test-utils.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -20,7 +16,9 @@ describe('rd check', () => {
 
   it('outputs PASS with step count for valid runbook', () => {
     const runbookPath = path.join(workspace.cwd, 'valid.runbook.md');
-    fs.writeFileSync(runbookPath, `## 1. First step
+    fs.writeFileSync(
+      runbookPath,
+      `## 1. First step
 - PASS: CONTINUE
 
 Do something.
@@ -29,7 +27,8 @@ Do something.
 - PASS: COMPLETE
 
 Do another thing.
-`);
+`,
+    );
 
     const result = runCli(`check ${runbookPath}`, workspace);
 
@@ -40,7 +39,9 @@ Do another thing.
 
   it('outputs FAIL with all errors for invalid runbook', () => {
     const runbookPath = path.join(workspace.cwd, 'invalid.runbook.md');
-    fs.writeFileSync(runbookPath, `## 1. First step
+    fs.writeFileSync(
+      runbookPath,
+      `## 1. First step
 - PASS: CONTINUE
 
 Do something.
@@ -49,7 +50,8 @@ Do something.
 - PASS: GOTO 99
 
 Do another thing.
-`);
+`,
+    );
 
     const result = runCli(`check ${runbookPath}`, workspace);
 
@@ -63,7 +65,9 @@ Do another thing.
 
   it('includes line numbers in error output', () => {
     const runbookPath = path.join(workspace.cwd, 'invalid.runbook.md');
-    fs.writeFileSync(runbookPath, `## 1. First step
+    fs.writeFileSync(
+      runbookPath,
+      `## 1. First step
 - PASS: CONTINUE
 
 Do something.
@@ -72,7 +76,8 @@ Do something.
 - PASS: COMPLETE
 
 Missing step 2.
-`);
+`,
+    );
 
     const result = runCli(`check ${runbookPath}`, workspace);
 

@@ -1,5 +1,8 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import type { SandboxOptions, SandboxAvailability as _SandboxAvailability } from '../../src/sandbox/types.js';
+import type {
+  SandboxOptions,
+  SandboxAvailability as _SandboxAvailability,
+} from '../../src/sandbox/types.js';
 
 // Mock the dynamic imports
 jest.unstable_mockModule('../../src/sandbox/linux.js', () => ({
@@ -31,7 +34,9 @@ describe('Sandbox Index', () => {
     jest.clearAllMocks();
     // Reset module cache for sandbox/index.js to get fresh imports
     jest.resetModules();
-    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {
+      /* noop */
+    });
   });
 
   afterEach(() => {
@@ -87,7 +92,9 @@ describe('Sandbox Index', () => {
       Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
       const executor = await import('../../src/runbook/executor.js');
-      const mockFn = executor.executeCommand as unknown as jest.Mock<() => Promise<{ success: boolean; exitCode: number }>>;
+      const mockFn = executor.executeCommand as unknown as jest.Mock<
+        () => Promise<{ success: boolean; exitCode: number }>
+      >;
       mockFn.mockResolvedValue({
         success: true,
         exitCode: 0,
@@ -101,9 +108,7 @@ describe('Sandbox Index', () => {
 
       expect(result.sandboxed).toBe(false);
       expect(result.success).toBe(true);
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('without sandbox')
-      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('without sandbox'));
     });
   });
 });

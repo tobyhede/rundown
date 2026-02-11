@@ -1,7 +1,7 @@
 export { parseRunbook, parseRunbookDocument, type ParseOptions } from './parser.js';
 export {
   validateRunbook,
-  validateAction
+  validateAction,
 } from './validator.js';
 export type { ValidationError } from './validator.js';
 export { RunbookSyntaxError, MAX_STEP_NUMBER } from './types.js';
@@ -21,7 +21,7 @@ export {
   isPromptCodeBlock,
   escapeForShellSingleQuote,
   parseQuotedOrIdentifier,
-  validateNEXTUsage
+  validateNEXTUsage,
 } from './helpers.js';
 export type { ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
 export {
@@ -30,16 +30,16 @@ export {
   stepIdEquals,
   RESERVED_WORDS,
   isReservedWord,
-  NAMED_IDENTIFIER_PATTERN
+  NAMED_IDENTIFIER_PATTERN,
 } from './step-id.js';
 export type { ParseStepIdOptions } from './step-id.js';
 export {
   extractFrontmatter,
   nameFromFilename,
-  RunbookFrontmatterSchema
+  RunbookFrontmatterSchema,
 } from './frontmatter.js';
 export type {
   RunbookFrontmatter,
-  RunbookFrontmatterType
+  RunbookFrontmatterType,
 } from './frontmatter.js';
 export { hasPrompt, hasCommand, hasSubsteps, hasRunbooks, hasForClause } from './guards.js';

@@ -46,7 +46,7 @@ export const JSON_OUTPUT_COMMANDS = [
  * @returns The JSON Schema object, or null if no schema exists for the command
  */
 export function getCommandSchema(commandName: string): object | null {
-  const schema = COMMAND_SCHEMAS[commandName] as typeof COMMAND_SCHEMAS[string] | undefined;
+  const schema = COMMAND_SCHEMAS[commandName] as (typeof COMMAND_SCHEMAS)[string] | undefined;
   if (schema === undefined) return null;
 
   return zodToJsonSchema(schema, {

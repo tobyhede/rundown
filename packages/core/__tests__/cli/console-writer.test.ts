@@ -12,8 +12,12 @@ describe('ConsoleWriter', () => {
     writer = new ConsoleWriter();
     stdoutWriteSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
     stderrWriteSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => { /* noop */ });
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => { /* noop */ });
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {
+      /* noop */
+    });
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {
+      /* noop */
+    });
   });
 
   afterEach(() => {

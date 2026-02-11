@@ -29,25 +29,33 @@ export function registerCheckCommand(program: Command): void {
 
       if (!resolvedPath) {
         // File not found
-        output.detail({
-          valid: false,
-          errors: [{ message: `File not found: ${file}` }]
-        }, 'check');
+        output.detail(
+          {
+            valid: false,
+            errors: [{ message: `File not found: ${file}` }],
+          },
+          'check',
+        );
         output.flush();
         process.exit(1);
       }
 
       try {
         const content = await fs.readFile(resolvedPath, 'utf-8');
-        const runbook = parseRunbookDocument(content, path.basename(resolvedPath), { skipValidation: true });
+        const runbook = parseRunbookDocument(content, path.basename(resolvedPath), {
+          skipValidation: true,
+        });
         const errors = validateRunbook(runbook.steps);
 
         if (errors.length > 0) {
           // Emit structured data - renderer handles formatting
-          output.detail({
-            valid: false,
-            errors: errors.map(e => ({ line: e.line, message: e.message }))
-          }, 'check');
+          output.detail(
+            {
+              valid: false,
+              errors: errors.map((e) => ({ line: e.line, message: e.message })),
+            },
+            'check',
+          );
           output.flush();
           process.exit(1);
         }
@@ -56,18 +64,24 @@ export function registerCheckCommand(program: Command): void {
         const substepCount = countSubsteps(runbook.steps);
 
         // Emit structured data - renderer handles formatting
-        output.detail({
-          valid: true,
-          errors: [],
-          stats: { steps: stepCount, substeps: substepCount }
-        }, 'check');
+        output.detail(
+          {
+            valid: true,
+            errors: [],
+            stats: { steps: stepCount, substeps: substepCount },
+          },
+          'check',
+        );
         output.flush();
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        output.detail({
-          valid: false,
-          errors: [{ message }]
-        }, 'check');
+        output.detail(
+          {
+            valid: false,
+            errors: [{ message }],
+          },
+          'check',
+        );
         output.flush();
         process.exit(1);
       }

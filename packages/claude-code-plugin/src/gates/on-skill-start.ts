@@ -1,4 +1,11 @@
-import { type HookInput, type GateResult, logger, safeJoin, isValidRunbookPath, findRunbookByFrontmatter } from '../shared/index.js';
+import {
+  type HookInput,
+  type GateResult,
+  logger,
+  safeJoin,
+  isValidRunbookPath,
+  findRunbookByFrontmatter,
+} from '../shared/index.js';
 import { rundown } from '../workflow/hooks/rundown.js';
 
 /**
@@ -36,7 +43,7 @@ export function execute(input: HookInput): Promise<GateResult> {
   try {
     rundown(['run', runbook], input.cwd);
     return Promise.resolve({
-      additionalContext: `Started runbook: ${runbook}`
+      additionalContext: `Started runbook: ${runbook}`,
     });
   } catch {
     // Graceful degradation - runbook start failed

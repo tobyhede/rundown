@@ -5,7 +5,7 @@ import type { HookInput } from '../../src/shared/index.js';
 const mockTrackStepDispatch = jest.fn();
 
 jest.unstable_mockModule('../../src/workflow/hooks/step-tracker.js', () => ({
-  trackStepDispatch: mockTrackStepDispatch
+  trackStepDispatch: mockTrackStepDispatch,
 }));
 
 const { execute } = await import('../../src/gates/on-step-tracker.js');
@@ -17,13 +17,13 @@ describe('on-step-tracker gate', () => {
 
   it('returns empty result when no violation', async () => {
     mockTrackStepDispatch.mockReturnValue({
-      stepId: { step: 1 }
+      stepId: { step: 1 },
     });
 
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       tool_name: 'Step',
-      cwd: '/test'
+      cwd: '/test',
     };
 
     const result = execute(input);
@@ -34,20 +34,20 @@ describe('on-step-tracker gate', () => {
 
   it('returns block decision when violation occurs', async () => {
     mockTrackStepDispatch.mockReturnValue({
-      violation: 'Step description must start with StepId'
+      violation: 'Step description must start with StepId',
     });
 
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       tool_name: 'Step',
-      cwd: '/test'
+      cwd: '/test',
     };
 
     const result = execute(input);
 
     expect(result).toEqual({
       decision: 'block',
-      reason: 'Step description must start with StepId'
+      reason: 'Step description must start with StepId',
     });
   });
 });

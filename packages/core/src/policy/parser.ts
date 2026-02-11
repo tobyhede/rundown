@@ -201,7 +201,7 @@ export function extractPrimaryExecutable(command: string): string | null {
  */
 export function extractAllExecutables(command: string): string[] {
   const commands = extractCommands(command);
-  const executables = commands.map(c => c.executable);
+  const executables = commands.map((c) => c.executable);
 
   // Also extract commands from backticks
   const backtickExecutables = extractBacktickCommands(command);
@@ -252,5 +252,5 @@ export function extractBacktickCommands(command: string): string[] {
  */
 function extractAllExecutablesInternal(command: string): string[] {
   const commands = extractCommands(command);
-  return commands.map(c => c.executable);
+  return commands.map((c) => c.executable);
 }

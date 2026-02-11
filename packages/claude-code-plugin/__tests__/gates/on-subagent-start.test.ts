@@ -5,7 +5,7 @@ import type { HookInput } from '../../src/shared/index.js';
 const mockHandleSubagentStart = jest.fn();
 
 jest.unstable_mockModule('../../src/workflow/hooks/subagent-start.js', () => ({
-  handleSubagentStart: mockHandleSubagentStart
+  handleSubagentStart: mockHandleSubagentStart,
 }));
 
 const { execute } = await import('../../src/gates/on-subagent-start.js');
@@ -21,7 +21,7 @@ describe('on-subagent-start gate', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStart',
       cwd: '/test',
-      agent_id: 'agent-123'
+      agent_id: 'agent-123',
     };
 
     const result = execute(input);
@@ -31,38 +31,38 @@ describe('on-subagent-start gate', () => {
 
   it('returns additionalContext when context provided', async () => {
     mockHandleSubagentStart.mockReturnValue({
-      context: '## Workflow Agent Context\nAGENT_ID: agent-123'
+      context: '## Workflow Agent Context\nAGENT_ID: agent-123',
     });
 
     const input: HookInput = {
       hook_event_name: 'SubagentStart',
       cwd: '/test',
-      agent_id: 'agent-123'
+      agent_id: 'agent-123',
     };
 
     const result = execute(input);
 
     expect(result).toEqual({
-      additionalContext: '## Workflow Agent Context\nAGENT_ID: agent-123'
+      additionalContext: '## Workflow Agent Context\nAGENT_ID: agent-123',
     });
   });
 
   it('returns block decision when violation occurs', async () => {
     mockHandleSubagentStart.mockReturnValue({
-      violation: 'SubagentStart with no pending task'
+      violation: 'SubagentStart with no pending task',
     });
 
     const input: HookInput = {
       hook_event_name: 'SubagentStart',
       cwd: '/test',
-      agent_id: 'agent-123'
+      agent_id: 'agent-123',
     };
 
     const result = execute(input);
 
     expect(result).toEqual({
       decision: 'block',
-      reason: 'SubagentStart with no pending task'
+      reason: 'SubagentStart with no pending task',
     });
   });
 });

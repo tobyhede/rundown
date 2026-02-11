@@ -79,9 +79,7 @@ describe('RundownError', () => {
   describe('docsUrl', () => {
     it('returns documentation URL', () => {
       const error = new RundownError('FILE_NOT_FOUND', { file: 'test.md' });
-      expect(error.docsUrl).toBe(
-        'https://rundown.dev/docs/errors/file-not-found'
-      );
+      expect(error.docsUrl).toBe('https://rundown.dev/docs/errors/file-not-found');
     });
   });
 
@@ -158,7 +156,7 @@ describe('Errors factory', () => {
     expect(error.code).toBe('RD-204');
     // File is primary (no specific identifier), message and line are appended
     expect(error.message).toBe(
-      'Runbook syntax error: test.md - Unexpected token at position 5 (line 10)'
+      'Runbook syntax error: test.md - Unexpected token at position 5 (line 10)',
     );
   });
 

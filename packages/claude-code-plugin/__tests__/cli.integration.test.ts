@@ -23,11 +23,11 @@ describe('CLI Integration', () => {
 
   describe('Session Management Mode', () => {
     const runCLI = (
-      args: string[]
+      args: string[],
     ): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
       return new Promise((resolve, reject) => {
         const proc = spawn('node', ['dist/cli.js', ...args], {
-          cwd: path.resolve(__dirname, '..')
+          cwd: path.resolve(__dirname, '..'),
         });
 
         let stdout = '';
@@ -91,7 +91,7 @@ describe('CLI Integration', () => {
         'contains',
         'edited_files',
         'file3.ts',
-        testDir
+        testDir,
       ]);
       expect(notContains.exitCode).toBe(1);
     });
@@ -177,14 +177,14 @@ describe('CLI Integration', () => {
   describe('Hook Dispatch Mode', () => {
     test('should handle hook dispatch with valid JSON input', (done) => {
       const proc = spawn('node', ['dist/cli.js'], {
-        cwd: path.resolve(__dirname, '..')
+        cwd: path.resolve(__dirname, '..'),
       });
 
       const input = JSON.stringify({
         hook_event_name: 'PostToolUse',
         cwd: testDir,
         tool_name: 'Edit',
-        tool_input: {}
+        tool_input: {},
       });
 
       let stdout = '';
@@ -207,7 +207,7 @@ describe('CLI Integration', () => {
 
     test('should reject input missing required fields', (done) => {
       const proc = spawn('node', ['dist/cli.js'], {
-        cwd: path.resolve(__dirname, '..')
+        cwd: path.resolve(__dirname, '..'),
       });
 
       let stderr = '';
@@ -217,7 +217,7 @@ describe('CLI Integration', () => {
 
       const input = JSON.stringify({
         // Missing hook_event_name and cwd - this is a schema violation
-        tool_name: 'Edit'
+        tool_name: 'Edit',
       });
 
       proc.on('close', (code) => {
@@ -232,7 +232,7 @@ describe('CLI Integration', () => {
 
     test('should handle invalid JSON input', (done) => {
       const proc = spawn('node', ['dist/cli.js'], {
-        cwd: path.resolve(__dirname, '..')
+        cwd: path.resolve(__dirname, '..'),
       });
 
       let stderr = '';

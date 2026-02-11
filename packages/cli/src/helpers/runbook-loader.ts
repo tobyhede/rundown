@@ -14,7 +14,10 @@
 
 import { parseRunbookDocument, type Step } from '@rundown-org/core';
 import type { RunbookState } from '@rundown-org/core';
-import { substituteRunbookVariables, expandForClauseVariables } from '../services/template-renderer.js';
+import {
+  substituteRunbookVariables,
+  expandForClauseVariables,
+} from '../services/template-renderer.js';
 
 /**
  * Load and parse runbook steps from state.
@@ -32,14 +35,11 @@ import { substituteRunbookVariables, expandForClauseVariables } from '../service
  * const currentStep = steps.find(s => s.name === state.step);
  * ```
  */
-export function getRunbookFromState(
-  state: RunbookState,
-  _cwd: string
-): readonly Step[] {
+export function getRunbookFromState(state: RunbookState, _cwd: string): readonly Step[] {
   if (!state.runbookSrc) {
     throw new Error(
       `State file ${state.id} is missing runbookSrc. ` +
-      `This indicates corrupted state. Delete and re-run the runbook.`
+        `This indicates corrupted state. Delete and re-run the runbook.`,
     );
   }
   // New flow: raw runbookSrc + templateVars → pre-expand FOR clauses, parse, substitute

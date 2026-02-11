@@ -1,14 +1,6 @@
-import {
-  type StepId,
-  type Action,
-  type Transitions
-} from './schemas.js';
+import { type StepId, type Action, type Transitions } from './schemas.js';
 
-export {
-  type StepId,
-  type Action,
-  type Transitions
-};
+export { type StepId, type Action, type Transitions };
 
 /**
  * Code block command - always executable (bash/sh/shell only)

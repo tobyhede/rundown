@@ -52,9 +52,7 @@ export function parseScenarios(rawFrontmatter: Record<string, unknown>): ParseSc
 
   const result = ScenariosSchema.safeParse(rawFrontmatter.scenarios);
   if (!result.success) {
-    const errors = result.error.issues.map(issue =>
-      `${issue.path.join('.')}: ${issue.message}`
-    );
+    const errors = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
     return { scenarios: null, errors };
   }
 

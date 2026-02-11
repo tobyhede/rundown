@@ -4,7 +4,7 @@ import { handleSubagentStop, setExecSync } from '../../../src/workflow/hooks/sub
 import {
   createMockHookInput,
   createMockExecSync,
-  createMockExecSyncError
+  createMockExecSyncError,
 } from '../../helpers/test-utils.js';
 
 describe('handleSubagentStop', () => {
@@ -35,7 +35,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-123',
-        output: 'Some output\nSTATUS: OK\nMore output'
+        output: 'Some output\nSTATUS: OK\nMore output',
       });
 
       const result = handleSubagentStop(input);
@@ -43,7 +43,7 @@ describe('handleSubagentStop', () => {
       expect(mockExec).toHaveBeenCalledWith(
         'node',
         [expect.any(String), 'pass', '--agent', 'agent-123'],
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -53,7 +53,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-456',
-        output: 'STATUS: PASS'
+        output: 'STATUS: PASS',
       });
 
       const result = handleSubagentStop(input);
@@ -66,7 +66,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-789',
-        output: 'STATUS: BLOCKED\nReason: missing dependency'
+        output: 'STATUS: BLOCKED\nReason: missing dependency',
       });
 
       const result = handleSubagentStop(input);
@@ -74,7 +74,7 @@ describe('handleSubagentStop', () => {
       expect(mockExec).toHaveBeenCalledWith(
         'node',
         [expect.any(String), 'fail', '--agent', 'agent-789'],
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -84,7 +84,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-fail',
-        output: 'STATUS: FAIL'
+        output: 'STATUS: FAIL',
       });
 
       const result = handleSubagentStop(input);
@@ -97,7 +97,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-no-status',
-        output: 'Agent completed without explicit status'
+        output: 'Agent completed without explicit status',
       });
 
       const result = handleSubagentStop(input);
@@ -105,7 +105,7 @@ describe('handleSubagentStop', () => {
       expect(mockExec).toHaveBeenCalledWith(
         'node',
         [expect.any(String), 'pass', '--agent', 'agent-no-status'],
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -115,7 +115,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-undefined',
-        output: undefined
+        output: undefined,
       });
 
       const result = handleSubagentStop(input);
@@ -128,7 +128,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-case',
-        output: 'status: blocked'
+        output: 'status: blocked',
       });
 
       const result = handleSubagentStop(input);
@@ -144,7 +144,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-cli',
-        output: 'STATUS: OK'
+        output: 'STATUS: OK',
       });
 
       const result = handleSubagentStop(input);
@@ -157,7 +157,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-empty',
-        output: 'STATUS: OK'
+        output: 'STATUS: OK',
       });
 
       const result = handleSubagentStop(input);
@@ -169,13 +169,13 @@ describe('handleSubagentStop', () => {
     it('returns violation when agent is unknown', () => {
       const mockExec = createMockExecSyncError({
         message: 'Command failed',
-        stderr: 'Error: No binding for agent agent-unknown'
+        stderr: 'Error: No binding for agent agent-unknown',
       });
       setExecSync(mockExec);
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-unknown',
-        output: 'STATUS: OK'
+        output: 'STATUS: OK',
       });
 
       const result = handleSubagentStop(input);
@@ -186,13 +186,13 @@ describe('handleSubagentStop', () => {
     it('returns empty result for other errors', () => {
       const mockExec = createMockExecSyncError({
         message: 'Network timeout',
-        stderr: 'Connection timed out'
+        stderr: 'Connection timed out',
       });
       setExecSync(mockExec);
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-timeout',
-        output: 'STATUS: OK'
+        output: 'STATUS: OK',
       });
 
       const result = handleSubagentStop(input);
@@ -207,7 +207,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-generic',
-        output: 'STATUS: OK'
+        output: 'STATUS: OK',
       });
 
       const result = handleSubagentStop(input);
@@ -223,14 +223,14 @@ describe('handleSubagentStop', () => {
       const testCwd = '/custom/project/path';
       const input = createMockHookInput('SubagentStop', {
         cwd: testCwd,
-        agent_id: 'agent-cwd'
+        agent_id: 'agent-cwd',
       });
 
       handleSubagentStop(input);
       expect(mockExec).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(Array),
-        expect.objectContaining({ cwd: testCwd })
+        expect.objectContaining({ cwd: testCwd }),
       );
     });
   });

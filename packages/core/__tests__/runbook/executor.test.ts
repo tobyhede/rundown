@@ -14,11 +14,17 @@ import type { PolicyPrompter } from '../../src/policy/prompter.js';
  * Creates a mock PolicyPrompter for testing.
  * Uses Pick to select only the methods needed by executeCommandWithPolicy.
  */
-function createMockPrompter(
-  requestPermissionResult: { granted: boolean; persist: boolean }
-): Pick<PolicyPrompter, 'requestPermission' | 'requestPersistablePermission' | 'confirmDangerous' | 'reset'> {
+function createMockPrompter(requestPermissionResult: {
+  granted: boolean;
+  persist: boolean;
+}): Pick<
+  PolicyPrompter,
+  'requestPermission' | 'requestPersistablePermission' | 'confirmDangerous' | 'reset'
+> {
   return {
-    requestPermission: jest.fn<PolicyPrompter['requestPermission']>().mockResolvedValue(requestPermissionResult),
+    requestPermission: jest
+      .fn<PolicyPrompter['requestPermission']>()
+      .mockResolvedValue(requestPermissionResult),
     requestPersistablePermission: jest.fn<PolicyPrompter['requestPersistablePermission']>(),
     confirmDangerous: jest.fn<PolicyPrompter['confirmDangerous']>(),
     reset: jest.fn<PolicyPrompter['reset']>(),
@@ -54,7 +60,7 @@ describe('executeCommand', () => {
   it('includes node_modules/.bin in PATH', async () => {
     const result = await executeCommand(
       'node -e "console.log(process.env.PATH.includes(\'node_modules/.bin\'))"',
-      process.cwd()
+      process.cwd(),
     );
     expect(result.success).toBe(true);
   });
@@ -74,7 +80,9 @@ describe('executeCommandWithPolicy', () => {
   let consoleWarnSpy: jest.SpiedFunction<typeof console.warn>;
 
   beforeEach(() => {
-    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {
+      /* noop */
+    });
   });
 
   afterEach(() => {
@@ -82,10 +90,7 @@ describe('executeCommandWithPolicy', () => {
   });
 
   it('executes without policy checks when no evaluator provided', async () => {
-    const result = await executeCommandWithPolicy(
-      'node -e "process.exit(0)"',
-      process.cwd()
-    );
+    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', process.cwd());
     expect(result.success).toBe(true);
     expect(result.exitCode).toBe(0);
   });
@@ -104,11 +109,10 @@ describe('executeCommandWithPolicy', () => {
     };
     const evaluator = new PolicyEvaluator(policy);
 
-    const result = await executeCommandWithPolicy(
-      'node -e "process.exit(0)"',
-      process.cwd(),
-      { evaluator, sandbox: false }
-    );
+    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', process.cwd(), {
+      evaluator,
+      sandbox: false,
+    });
 
     expect(result.success).toBe(true);
   });
@@ -127,11 +131,10 @@ describe('executeCommandWithPolicy', () => {
     };
     const evaluator = new PolicyEvaluator(policy);
 
-    const result = await executeCommandWithPolicy(
-      'dangerous command',
-      process.cwd(),
-      { evaluator, sandbox: false }
-    );
+    const result = await executeCommandWithPolicy('dangerous command', process.cwd(), {
+      evaluator,
+      sandbox: false,
+    });
 
     expect(result.policyDenied).toBe(true);
     expect(result.exitCode).toBe(POLICY_DENIED_EXIT_CODE);
@@ -153,11 +156,11 @@ describe('executeCommandWithPolicy', () => {
     const evaluator = new PolicyEvaluator(policy);
     const mockPrompter = createMockPrompter({ granted: true, persist: false });
 
-    const _result = await executeCommandWithPolicy(
-      'some-command',
-      process.cwd(),
-      { evaluator, prompter: mockPrompter as PolicyPrompter, sandbox: false }
-    );
+    const _result = await executeCommandWithPolicy('some-command', process.cwd(), {
+      evaluator,
+      prompter: mockPrompter as PolicyPrompter,
+      sandbox: false,
+    });
 
     expect(mockPrompter.requestPermission).toHaveBeenCalled();
   });
@@ -177,11 +180,11 @@ describe('executeCommandWithPolicy', () => {
     const evaluator = new PolicyEvaluator(policy);
     const mockPrompter = createMockPrompter({ granted: false, persist: false });
 
-    const result = await executeCommandWithPolicy(
-      'some-command',
-      process.cwd(),
-      { evaluator, prompter: mockPrompter as PolicyPrompter, sandbox: false }
-    );
+    const result = await executeCommandWithPolicy('some-command', process.cwd(), {
+      evaluator,
+      prompter: mockPrompter as PolicyPrompter,
+      sandbox: false,
+    });
 
     expect(result.policyDenied).toBe(true);
     expect(result.denialReason).toBe('User denied permission');
@@ -197,11 +200,11 @@ describe('executeCommandWithPolicy', () => {
     // Mock isSandboxAvailable to return false
     // Since we can't easily mock the import, we test with sandbox disabled
     // This is more of a behavioral test on strict mode
-    const result = await executeCommandWithPolicy(
-      'node -e "process.exit(0)"',
-      process.cwd(),
-      { evaluator, sandbox: true, sandboxStrict: true }
-    );
+    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', process.cwd(), {
+      evaluator,
+      sandbox: true,
+      sandboxStrict: true,
+    });
 
     // On platforms without sandbox (like some CI), this should fail with strict mode
     // On macOS/Linux with sandbox, it should succeed
@@ -217,11 +220,11 @@ describe('executeCommandWithPolicy', () => {
       default: { ...DEFAULT_POLICY.default, mode: 'execute', run: { allow: ['*'], deny: [] } },
     });
 
-    const result = await executeCommandWithPolicy(
-      'node -e "process.exit(0)"',
-      process.cwd(),
-      { evaluator, sandbox: true, sandboxStrict: false }
-    );
+    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', process.cwd(), {
+      evaluator,
+      sandbox: true,
+      sandboxStrict: false,
+    });
 
     // With sandboxStrict: false, should not be policy denied
     // May succeed in sandbox (macOS) or fallback to unsandboxed
@@ -237,18 +240,16 @@ describe('executeCommandWithEnv', () => {
     const result = await executeCommandWithEnv(
       'node -e "process.exit(process.env.TEST_VAR === \'hello\' ? 0 : 1)"',
       process.cwd(),
-      { TEST_VAR: 'hello', PATH: process.env.PATH ?? '' }
+      { TEST_VAR: 'hello', PATH: process.env.PATH ?? '' },
     );
 
     expect(result.success).toBe(true);
   });
 
   it('handles missing PATH in env', async () => {
-    const result = await executeCommandWithEnv(
-      'node -e "process.exit(0)"',
-      process.cwd(),
-      { NO_PATH: 'value' }
-    );
+    const result = await executeCommandWithEnv('node -e "process.exit(0)"', process.cwd(), {
+      NO_PATH: 'value',
+    });
 
     // Should still work (PATH gets enhanced with node_modules/.bin)
     expect(result.exitCode).toBeDefined();

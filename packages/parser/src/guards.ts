@@ -9,9 +9,7 @@ import type { Step, Substep, Command, ForClause } from './ast.js';
  * @param unit - The Step or Substep to check
  * @returns True if the unit has a prompt string defined, enabling type narrowing
  */
-export function hasPrompt<T extends Step | Substep>(
-  unit: T
-): unit is T & { prompt: string } {
+export function hasPrompt<T extends Step | Substep>(unit: T): unit is T & { prompt: string } {
   return unit.prompt !== undefined;
 }
 
@@ -24,9 +22,7 @@ export function hasPrompt<T extends Step | Substep>(
  * @param unit - The Step or Substep to check
  * @returns True if the unit has a Command defined, enabling type narrowing
  */
-export function hasCommand<T extends Step | Substep>(
-  unit: T
-): unit is T & { command: Command } {
+export function hasCommand<T extends Step | Substep>(unit: T): unit is T & { command: Command } {
   return unit.command !== undefined;
 }
 
@@ -53,7 +49,7 @@ export function hasSubsteps(step: Step): step is Step & { substeps: readonly Sub
  * @returns True if the unit has one or more runbook references, enabling type narrowing
  */
 export function hasRunbooks<T extends Step | Substep>(
-  unit: T
+  unit: T,
 ): unit is T & { workflows: readonly string[] } {
   return unit.workflows !== undefined && unit.workflows.length > 0;
 }

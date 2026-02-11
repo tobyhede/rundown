@@ -41,6 +41,6 @@ export function isSyntheticEvent(eventName: string): eventName is SyntheticEvent
     'SlashCommandStart',
     'SlashCommandEnd',
     'SubagentStart',
-    'SubagentEnd'
+    'SubagentEnd',
   ].includes(eventName);
 }

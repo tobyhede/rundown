@@ -60,7 +60,7 @@ describe('pass command', () => {
       runCli('pass', workspace);
 
       const states = await getAllStates(workspace);
-      const state = states.find(s => s.runbook === 'runbooks/simple.runbook.md');
+      const state = states.find((s) => s.runbook === 'runbooks/simple.runbook.md');
       expect(state?.variables.completed).toBe(true);
     });
   });
@@ -125,11 +125,11 @@ describe('pass command', () => {
 
 This step stops on pass.
 `;
-      return mkdir(join(workspace.cwd, 'runbooks'), { recursive: true }).then(() =>
-        writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass.md'), stopOnPassRunbook)
-      ).then(() =>
-        runCli('run --prompted runbooks/stop-on-pass.md', workspace)
-      );
+      return mkdir(join(workspace.cwd, 'runbooks'), { recursive: true })
+        .then(() =>
+          writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass.md'), stopOnPassRunbook),
+        )
+        .then(() => runCli('run --prompted runbooks/stop-on-pass.md', workspace));
     });
 
     it('blocks runbook', async () => {
@@ -148,7 +148,7 @@ This step stops on pass.
       runCli('pass', workspace);
 
       const states = await getAllStates(workspace);
-      const state = states.find(s => s.runbook === 'runbooks/stop-on-pass.md');
+      const state = states.find((s) => s.runbook === 'runbooks/stop-on-pass.md');
       expect(state?.variables.stopped).toBe(true);
     });
   });
@@ -288,7 +288,7 @@ This step stops on pass.
       runCli('pass', workspace);
 
       const states = await getAllStates(workspace);
-      const state = states.find(s => s.runbook === 'runbooks/stop-on-pass.md');
+      const state = states.find((s) => s.runbook === 'runbooks/stop-on-pass.md');
 
       // lastResult should reflect user's choice (pass), not transition outcome
       expect(state?.lastResult).toBe('pass');
@@ -381,7 +381,7 @@ rd echo --result fail
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
-      expect((output!.action as string)).toMatch(/^GOTO/);
+      expect(output!.action as string).toMatch(/^GOTO/);
       expect(output!.result).toBe(true);
     });
 
@@ -394,7 +394,7 @@ rd echo --result fail
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
-      expect((output!.action as string)).toMatch(/^RETRY/);
+      expect(output!.action as string).toMatch(/^RETRY/);
       expect(output!.result).toBe(false);
 
       // Validate against schema

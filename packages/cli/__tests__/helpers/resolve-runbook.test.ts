@@ -76,7 +76,7 @@ describe('resolveRunbookFile', () => {
       await fs.mkdir(claudeDir, { recursive: true });
       await fs.writeFile(
         path.join(claudeDir, 'retry-success.runbook.md'),
-        '---\nname: override\n---\n# Override\n'
+        '---\nname: override\n---\n# Override\n',
       );
 
       const result = await resolveRunbookFile(testDir, 'retry-success.runbook.md');
@@ -129,7 +129,7 @@ describe('resolveRunbookFile', () => {
       await fs.mkdir(claudeDir, { recursive: true });
       await fs.writeFile(
         path.join(claudeDir, 'my-runbook.runbook.md'),
-        '---\nname: my-runbook\n---\n# Test'
+        '---\nname: my-runbook\n---\n# Test',
       );
 
       const result = await resolveRunbookFile(testDir, 'unknown:my-runbook');
@@ -141,7 +141,7 @@ describe('resolveRunbookFile', () => {
       await fs.mkdir(planningDir, { recursive: true });
       await fs.writeFile(
         path.join(planningDir, 'review-plan.runbook.md'),
-        '---\nname: review-plan\n---\n# Review'
+        '---\nname: review-plan\n---\n# Review',
       );
 
       process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
@@ -159,7 +159,7 @@ describe('resolveRunbookFile', () => {
       // Create runbook only in project
       await fs.writeFile(
         path.join(claudeDir, 'project-only.runbook.md'),
-        '---\nname: project-only\n---\n# Project Only'
+        '---\nname: project-only\n---\n# Project Only',
       );
 
       process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');

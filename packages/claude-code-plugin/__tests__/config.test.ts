@@ -60,13 +60,13 @@ describe('Config Loading', () => {
       hooks: {
         PostToolUse: {
           enabled_tools: ['Edit', 'Write'],
-          gates: ['format', 'test']
-        }
+          gates: ['format', 'test'],
+        },
       },
       gates: {
         format: { command: 'npm run format', on_pass: 'CONTINUE' },
-        test: { command: 'npm test', on_pass: 'CONTINUE' }
-      }
+        test: { command: 'npm test', on_pass: 'CONTINUE' },
+      },
     };
 
     await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
@@ -79,9 +79,9 @@ describe('Config Loading', () => {
   test('rejects unknown hook event', async () => {
     const configObj = {
       hooks: {
-        UnknownEvent: { gates: [] }
+        UnknownEvent: { gates: [] },
       },
-      gates: {}
+      gates: {},
     };
 
     await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
@@ -92,9 +92,9 @@ describe('Config Loading', () => {
   test('rejects undefined gate reference', async () => {
     const configObj = {
       hooks: {
-        PostToolUse: { gates: ['nonexistent'] }
+        PostToolUse: { gates: ['nonexistent'] },
       },
-      gates: {}
+      gates: {},
     };
 
     await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
@@ -105,17 +105,17 @@ describe('Config Loading', () => {
   test('rejects invalid action', async () => {
     const configObj = {
       hooks: {
-        PostToolUse: { gates: ['test'] }
+        PostToolUse: { gates: ['test'] },
       },
       gates: {
-        test: { command: 'echo test', on_pass: 'INVALID' }
-      }
+        test: { command: 'echo test', on_pass: 'INVALID' },
+      },
     };
 
     await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
 
     await expect(loadConfig(testDir)).rejects.toThrow(
-      'is not CONTINUE/BLOCK/STOP or valid gate name'
+      'is not CONTINUE/BLOCK/STOP or valid gate name',
     );
   });
 });
@@ -139,7 +139,7 @@ describe('Plugin Path Resolution', () => {
 
     try {
       expect(() => resolvePluginPath('cipherpowers')).toThrow(
-        'Cannot resolve plugin path: CLAUDE_PLUGIN_ROOT not set'
+        'Cannot resolve plugin path: CLAUDE_PLUGIN_ROOT not set',
       );
     } finally {
       process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
@@ -152,13 +152,13 @@ describe('Plugin Path Resolution', () => {
 
     try {
       expect(() => resolvePluginPath('../etc')).toThrow(
-        "Invalid plugin name: '../etc' (must not contain path separators)"
+        "Invalid plugin name: '../etc' (must not contain path separators)",
       );
       expect(() => resolvePluginPath('foo/bar')).toThrow(
-        "Invalid plugin name: 'foo/bar' (must not contain path separators)"
+        "Invalid plugin name: 'foo/bar' (must not contain path separators)",
       );
       expect(() => resolvePluginPath('foo\\bar')).toThrow(
-        "Invalid plugin name: 'foo\\bar' (must not contain path separators)"
+        "Invalid plugin name: 'foo\\bar' (must not contain path separators)",
       );
     } finally {
       process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
@@ -171,10 +171,10 @@ describe('Plugin Path Resolution', () => {
 
     try {
       expect(() => resolvePluginPath('..')).toThrow(
-        "Invalid plugin name: '..' (must not contain path separators)"
+        "Invalid plugin name: '..' (must not contain path separators)",
       );
       expect(() => resolvePluginPath('..foo')).toThrow(
-        "Invalid plugin name: '..foo' (must not contain path separators)"
+        "Invalid plugin name: '..foo' (must not contain path separators)",
       );
     } finally {
       process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
@@ -197,13 +197,13 @@ describe('Gate Config Validation', () => {
     const configObj = {
       hooks: { PostToolUse: { gates: ['test'] } },
       gates: {
-        test: { plugin: 'cipherpowers' } // Missing gate field
-      }
+        test: { plugin: 'cipherpowers' }, // Missing gate field
+      },
     };
 
     await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
     await expect(loadConfig(testDir)).rejects.toThrow(
-      "Gate 'test' has 'plugin' but missing 'gate' field"
+      "Gate 'test' has 'plugin' but missing 'gate' field",
     );
   });
 
@@ -211,13 +211,13 @@ describe('Gate Config Validation', () => {
     const configObj = {
       hooks: { PostToolUse: { gates: ['test'] } },
       gates: {
-        test: { gate: 'plan-compliance' } // Missing plugin field
-      }
+        test: { gate: 'plan-compliance' }, // Missing plugin field
+      },
     };
 
     await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
     await expect(loadConfig(testDir)).rejects.toThrow(
-      "Gate 'test' has 'gate' but missing 'plugin' field"
+      "Gate 'test' has 'gate' but missing 'plugin' field",
     );
   });
 
@@ -228,14 +228,14 @@ describe('Gate Config Validation', () => {
         test: {
           plugin: 'cipherpowers',
           gate: 'plan-compliance',
-          command: 'npm run lint' // Conflicting
-        }
-      }
+          command: 'npm run lint', // Conflicting
+        },
+      },
     };
 
     await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
     await expect(loadConfig(testDir)).rejects.toThrow(
-      "Gate 'test' cannot have both 'command' and 'plugin/gate'"
+      "Gate 'test' cannot have both 'command' and 'plugin/gate'",
     );
   });
 
@@ -243,8 +243,8 @@ describe('Gate Config Validation', () => {
     const configObj = {
       hooks: {},
       gates: {
-        test: { plugin: 'cipherpowers', gate: 'plan-compliance' }
-      }
+        test: { plugin: 'cipherpowers', gate: 'plan-compliance' },
+      },
     };
 
     await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));

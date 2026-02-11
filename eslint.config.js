@@ -38,26 +38,38 @@ export default tseslint.config(
     },
     rules: {
       // Explicit return types for public API clarity
-      '@typescript-eslint/explicit-function-return-type': ['error', {
-        allowExpressions: true,
-        allowTypedFunctionExpressions: true,
-      }],
+      '@typescript-eslint/explicit-function-return-type': [
+        'error',
+        {
+          allowExpressions: true,
+          allowTypedFunctionExpressions: true,
+        },
+      ],
       '@typescript-eslint/explicit-module-boundary-types': 'error',
 
       // Type-safe imports
-      '@typescript-eslint/consistent-type-imports': ['error', {
-        prefer: 'type-imports',
-        fixStyle: 'inline-type-imports',
-      }],
-      '@typescript-eslint/consistent-type-exports': ['error', {
-        fixMixedExportsWithInlineTypeSpecifier: true,
-      }],
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        {
+          prefer: 'type-imports',
+          fixStyle: 'inline-type-imports',
+        },
+      ],
+      '@typescript-eslint/consistent-type-exports': [
+        'error',
+        {
+          fixMixedExportsWithInlineTypeSpecifier: true,
+        },
+      ],
 
       // Unused vars with underscore exception
-      '@typescript-eslint/no-unused-vars': ['error', {
-        argsIgnorePattern: '^_',
-        varsIgnorePattern: '^_',
-      }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+        },
+      ],
     },
   },
 

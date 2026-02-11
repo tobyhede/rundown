@@ -53,7 +53,7 @@ export function handleSubagentStop(input: HookInput): SubagentStopResult {
     const stderr = execError.stderr?.toString() ?? '';
     if (stderr.includes('No binding for agent')) {
       return {
-        violation: `SubagentStop for unknown agent: ${agentId}`
+        violation: `SubagentStop for unknown agent: ${agentId}`,
       };
     }
     return {};
@@ -63,7 +63,7 @@ export function handleSubagentStop(input: HookInput): SubagentStopResult {
 function formatCompletionContext(
   cliOutput: string,
   agentId: string,
-  result: 'pass' | 'fail'
+  result: 'pass' | 'fail',
 ): string {
   const lines: string[] = [];
 

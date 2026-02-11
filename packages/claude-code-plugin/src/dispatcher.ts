@@ -5,7 +5,7 @@ import {
   type GateConfig,
   loadConfig,
   logger,
-  isPathInside
+  isPathInside,
 } from './shared/index.js';
 import { injectContext } from './context.js';
 import { executeGate } from './gate-loader.js';
@@ -66,7 +66,7 @@ const MAX_GATES_PER_DISPATCH = 10;
  */
 export function gateMatchesKeywords(
   gateConfig: GateConfig,
-  userMessage: string | undefined
+  userMessage: string | undefined,
 ): boolean {
   // No keywords = always run (backwards compatible)
   if (!gateConfig.keywords || gateConfig.keywords.length === 0) {
@@ -97,7 +97,7 @@ export function gateMatchesKeywords(
 export async function gateMatchesFilePattern(
   gateConfig: GateConfig,
   filePath: string | undefined,
-  cwd: string
+  cwd: string,
 ): Promise<boolean> {
   // No patterns = always run (backwards compatible)
   if (!gateConfig.file_patterns || gateConfig.file_patterns.length === 0) {
@@ -131,7 +131,7 @@ export async function gateMatchesFilePattern(
     const matches = gateConfig.file_patterns.some((pattern) => {
       const result = minimatch(relativePath, pattern, {
         matchBase: false, // Match full path, not just basename (packages/cts/** shouldn't match unrelated/cts/)
-        dot: true // Allow patterns to match dotfiles like .config/settings.json
+        dot: true, // Allow patterns to match dotfiles like .config/settings.json
       });
       if (result) {
         matchedPattern = pattern;
@@ -144,7 +144,7 @@ export async function gateMatchesFilePattern(
       await logger.debug('File pattern matched', {
         relativePath,
         pattern: matchedPattern,
-        absolutePath: filePath
+        absolutePath: filePath,
       });
     }
 
@@ -154,7 +154,7 @@ export async function gateMatchesFilePattern(
     await logger.warn('Invalid file pattern - gate skipped', {
       pattern: gateConfig.file_patterns,
       error: error instanceof Error ? error.message : String(error),
-      relativePath
+      relativePath,
     });
     return false;
   }
@@ -197,8 +197,8 @@ async function updateSessionState(input: HookInput): Promise<void> {
             ...metadata,
             toolUseIdToStepId: {
               ...mapping,
-              [input.tool_use_id]: input.step_id
-            }
+              [input.tool_use_id]: input.step_id,
+            },
           });
         }
         break;
@@ -224,7 +224,7 @@ async function updateSessionState(input: HookInput): Promise<void> {
       error_message: error instanceof Error ? error.message : String(error),
       hook_event: event,
       cwd: input.cwd,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
     console.error(`[Session Error] ${JSON.stringify(errorData)}`);
   }
@@ -239,7 +239,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
     tool: input.tool_name,
     agent: input.agent_name ?? input.subagent_name,
     file: input.file_path,
-    cwd
+    cwd,
   });
 
   // Update session state (best-effort)
@@ -298,7 +298,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
         ...(synthetic.skillName && { skill: synthetic.skillName }),
         ...(synthetic.stepId && { step_id: synthetic.stepId }),
         ...(synthetic.toolUseId && { tool_use_id: synthetic.toolUseId }),
-        ...(synthetic.subagentType && { subagent_type: synthetic.subagentType })
+        ...(synthetic.subagentType && { subagent_type: synthetic.subagentType }),
       };
 
       // Recursive dispatch for synthetic event (full pipeline)
@@ -315,7 +315,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
       if (syntheticResult.blockReason) {
         return {
           context: accumulatedContext,
-          blockReason: syntheticResult.blockReason
+          blockReason: syntheticResult.blockReason,
         };
       }
     }
@@ -343,7 +343,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
     await logger.debug('Hook filtered out by enabled list', {
       event: hookEvent,
       tool: input.tool_name,
-      agent: input.agent_name
+      agent: input.agent_name,
     });
     // Still return context injection result
     return accumulatedContext ? { context: accumulatedContext } : {};
@@ -357,7 +357,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
     // Circuit breaker: prevent infinite chains
     if (gatesExecuted >= MAX_GATES_PER_DISPATCH) {
       return {
-        blockReason: `Exceeded max gate chain depth (${String(MAX_GATES_PER_DISPATCH)}). Check for circular references.`
+        blockReason: `Exceeded max gate chain depth (${String(MAX_GATES_PER_DISPATCH)}). Check for circular references.`,
       };
     }
 
@@ -395,7 +395,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
       gate: gateName,
       passed,
       duration_ms: gateDuration,
-      tool: input.tool_name
+      tool: input.tool_name,
     });
 
     // Determine action
@@ -414,12 +414,12 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
         action,
         blocked: !!actionResult.blockReason,
         stopped: !!actionResult.stopMessage,
-        duration_ms: Date.now() - startTime
+        duration_ms: Date.now() - startTime,
       });
       return {
         context: accumulatedContext,
         blockReason: actionResult.blockReason,
-        stopMessage: actionResult.stopMessage
+        stopMessage: actionResult.stopMessage,
       };
     }
 
@@ -432,10 +432,10 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
   await logger.event('debug', hookEvent, {
     status: 'completed',
     gates_executed: gatesExecuted,
-    duration_ms: Date.now() - startTime
+    duration_ms: Date.now() - startTime,
   });
 
   return {
-    context: accumulatedContext
+    context: accumulatedContext,
   };
 }

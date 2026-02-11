@@ -43,9 +43,7 @@ export interface PolicyMapperOptions {
  * @returns Resolved path
  */
 function resolvePlaceholders(pattern: string, repoRoot: string, tmpDir: string): string {
-  return pattern
-    .replace(/\{repo\}/g, repoRoot)
-    .replace(/\{tmp\}/g, tmpDir);
+  return pattern.replace(/\{repo\}/g, repoRoot).replace(/\{tmp\}/g, tmpDir);
 }
 
 /**
@@ -124,7 +122,7 @@ function extractBasePath(pattern: string): string {
  */
 export function policyToSandboxOptions(
   evaluator: PolicyEvaluator,
-  options: PolicyMapperOptions
+  options: PolicyMapperOptions,
 ): SandboxOptions {
   const repoRoot = options.repoRoot ?? options.cwd;
   const tmpDir = options.tmpDir ?? os.tmpdir();
@@ -138,7 +136,7 @@ export function policyToSandboxOptions(
   const writeAllowPaths = resolvePathPatterns(policy.write.allow, repoRoot, tmpDir);
 
   // Read-only: paths in read.allow but not in write.allow
-  const readOnlyPaths = readAllowPaths.filter(p => !writeAllowPaths.includes(p));
+  const readOnlyPaths = readAllowPaths.filter((p) => !writeAllowPaths.includes(p));
 
   // Read-write: paths in write.allow (implies read as well)
   const readWritePaths = writeAllowPaths;
@@ -190,7 +188,7 @@ function getEffectivePolicy(evaluator: PolicyEvaluator): {
  */
 export function policyConfigToSandboxOptions(
   policy: PolicyConfig,
-  options: PolicyMapperOptions
+  options: PolicyMapperOptions,
 ): SandboxOptions {
   const repoRoot = options.repoRoot ?? options.cwd;
   const tmpDir = options.tmpDir ?? os.tmpdir();
@@ -198,7 +196,7 @@ export function policyConfigToSandboxOptions(
   const readAllowPaths = resolvePathPatterns(policy.default.read.allow, repoRoot, tmpDir);
   const writeAllowPaths = resolvePathPatterns(policy.default.write.allow, repoRoot, tmpDir);
 
-  const readOnlyPaths = readAllowPaths.filter(p => !writeAllowPaths.includes(p));
+  const readOnlyPaths = readAllowPaths.filter((p) => !writeAllowPaths.includes(p));
   const readWritePaths = writeAllowPaths;
 
   const denyPaths = [

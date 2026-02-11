@@ -1,4 +1,9 @@
-import { createTestWorkspace, runCli, getAllStates, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  runCli,
+  getAllStates,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 import { readFile, readdir } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -28,10 +33,12 @@ describe('scenario runner', () => {
    */
   async function getFiles(dir: string): Promise<string[]> {
     const dirents = await readdir(dir, { withFileTypes: true });
-    const files = await Promise.all(dirents.map((dirent) => {
-      const res = join(dir, dirent.name);
-      return dirent.isDirectory() ? getFiles(res) : Promise.resolve([res]);
-    }));
+    const files = await Promise.all(
+      dirents.map((dirent) => {
+        const res = join(dir, dirent.name);
+        return dirent.isDirectory() ? getFiles(res) : Promise.resolve([res]);
+      }),
+    );
     return Array.prototype.concat(...files);
   }
 
@@ -53,7 +60,7 @@ describe('scenario runner', () => {
       const { scenarios } = parseScenarios(frontmatter);
 
       if (scenarios && Object.keys(scenarios).length > 0) {
-        // Store relative path from patterns dir to maintain identity, 
+        // Store relative path from patterns dir to maintain identity,
         // but for now we might handle filenames.
         // let's store the filename for compatibility with existing logic
         // or store the full path?
@@ -78,9 +85,9 @@ describe('scenario runner', () => {
     const sourcePath = join(patternsDir, relativePath);
     const targetDir = join(workspace.cwd, '.claude', 'rundown', 'runbooks');
     const filename = relativePath.split('/').pop()!; // Flatten: use basename
-    
+
     mkdirSync(targetDir, { recursive: true });
-    
+
     // If we are given just a filename (from a reference), we need to find it
     // because references in runbooks (e.g. "child.runbook.md") don't have paths.
     // If the file is not found at sourcePath, search for it.
@@ -169,114 +176,97 @@ describe('scenario runner', () => {
   async function executeScenario(filename: string, scenario: Scenario): Promise<void> {
     copyPatternWithDependencies(filename, scenario);
 
-            // Execute each command in sequence, checking exit codes
+    // Execute each command in sequence, checking exit codes
 
-            for (let i = 0; i < scenario.commands.length; i++) {
+    for (let i = 0; i < scenario.commands.length; i++) {
+      const cmd = scenario.commands[i];
 
-              const cmd = scenario.commands[i];
+      const isLastCommand = i === scenario.commands.length - 1;
 
-              const isLastCommand = i === scenario.commands.length - 1;
+      // Strip 'rd ' prefix and run
 
-        
+      const args = cmd.replace(/^rd\s+/, '');
 
-              // Strip 'rd ' prefix and run
+      const result = runCli(args, workspace);
 
-              const args = cmd.replace(/^rd\s+/, '');
+      // Check exit codes:
 
-              const result = runCli(args, workspace);
+      // - Non-last commands must succeed
 
-        
+      // - Last command may fail only for STOP scenarios (e.g., rd fail causes stop)
 
-              // Check exit codes:
+      // - Agent fail commands may exit with 1 if child runbook stops (expected behavior)
 
-              // - Non-last commands must succeed
+      const isAgentFail = cmd.includes('fail') && cmd.includes('--agent');
 
-              // - Last command may fail only for STOP scenarios (e.g., rd fail causes stop)
+      const allowNonZero = (isLastCommand && scenario.result === 'STOP') || isAgentFail;
 
-              // - Agent fail commands may exit with 1 if child runbook stops (expected behavior)
+      if (!allowNonZero && result.exitCode !== 0) {
+        throw new Error(
+          `Command "${cmd}" failed with exit code ${String(result.exitCode)}: ${result.stderr}`,
+        );
+      }
+    }
 
-              const isAgentFail = cmd.includes('fail') && cmd.includes('--agent');
+    // Verify result - use getAllStates since completed runbooks have no active state
 
-              const allowNonZero = (isLastCommand && scenario.result === 'STOP') || isAgentFail;
+    const states = await getAllStates(workspace);
 
-              if (!allowNonZero && result.exitCode !== 0) {
+    const expectedName = filename.split('/').pop()!;
 
-                throw new Error(`Command "${cmd}" failed with exit code ${String(result.exitCode)}: ${result.stderr}`);
+    // Find state that matches both the runbook filename AND the expected result
+    // This handles agent binding scenarios where multiple states exist for the same runbook
+    const matchingStates = states.filter((s) => {
+      const runbookPath = s.runbook as string;
 
-              }
+      return runbookPath.endsWith(expectedName);
+    });
 
-            }
+    if (matchingStates.length === 0) {
+      const allRunbookPaths = states.map((s) => s.runbook).join(', ');
+      throw new Error(`No state found for runbook ${filename}. Found paths: [${allRunbookPaths}]`);
+    }
 
+    // Find the state with the expected result
+    const state = matchingStates.find((s) => {
+      const variables = s.variables as Record<string, unknown> | undefined;
+      if (scenario.result === 'COMPLETE') {
+        return variables?.completed === true;
+      } else {
+        return variables?.stopped === true;
+      }
+    });
 
+    if (!state) {
+      // Provide helpful error message
+      const statesSummary = matchingStates
+        .map((s) => {
+          const vars = s.variables as Record<string, unknown> | undefined;
+          const varsStr = vars ? JSON.stringify(vars) : 'undefined';
+          return `ID=${String(s.id).slice(0, 8)}, vars=${varsStr}`;
+        })
+        .join('; ');
+      throw new Error(
+        `No state with expected result ${scenario.result} found for runbook ${filename}. Found states: [${statesSummary}]`,
+      );
+    }
 
-            // Verify result - use getAllStates since completed runbooks have no active state
+    const variables = state.variables as Record<string, unknown> | undefined;
 
-            const states = await getAllStates(workspace);
-
-            const expectedName = filename.split('/').pop()!;
-
-
-            // Find state that matches both the runbook filename AND the expected result
-            // This handles agent binding scenarios where multiple states exist for the same runbook
-            const matchingStates = states.filter(s => {
-
-              const runbookPath = s.runbook as string;
-
-              return runbookPath.endsWith(expectedName);
-
-            });
-
-
-
-            if (matchingStates.length === 0) {
-              const allRunbookPaths = states.map(s => s.runbook).join(', ');
-              throw new Error(`No state found for runbook ${filename}. Found paths: [${allRunbookPaths}]`);
-            }
-
-
-            // Find the state with the expected result
-            const state = matchingStates.find(s => {
-              const variables = s.variables as Record<string, unknown> | undefined;
-              if (scenario.result === 'COMPLETE') {
-                return variables?.completed === true;
-              } else {
-                return variables?.stopped === true;
-              }
-            });
-
-            if (!state) {
-              // Provide helpful error message
-              const statesSummary = matchingStates.map(s => {
-                const vars = s.variables as Record<string, unknown> | undefined;
-                const varsStr = vars ? JSON.stringify(vars) : 'undefined';
-                return `ID=${String(s.id).slice(0, 8)}, vars=${varsStr}`;
-              }).join('; ');
-              throw new Error(`No state with expected result ${scenario.result} found for runbook ${filename}. Found states: [${statesSummary}]`);
-            }
-
-            const variables = state.variables as Record<string, unknown> | undefined;
-
-
-
-            if (scenario.result === 'COMPLETE') {
-
-              expect(variables?.completed).toBe(true);
-
-            } else {
-
-              expect(variables?.stopped).toBe(true);
-
-            }
-
-          }
-
-        
+    if (scenario.result === 'COMPLETE') {
+      expect(variables?.completed).toBe(true);
+    } else {
+      expect(variables?.stopped).toBe(true);
+    }
+  }
 
   it('runs all pattern scenarios', async () => {
     const patterns = await loadPatternsWithScenarios();
 
     if (patterns.length === 0) {
-      console.warn('No patterns with scenarios found in runbooks/patterns/ - verify pattern files have scenarios in frontmatter');
+      console.warn(
+        'No patterns with scenarios found in runbooks/patterns/ - verify pattern files have scenarios in frontmatter',
+      );
       return;
     }
 

@@ -19,7 +19,7 @@ export {
   type SessionStateArrayKey,
   type SessionStateScalarKey,
   logger,
-  type LogLevel
+  type LogLevel,
 } from './shared/index.js';
 
 // New session exports

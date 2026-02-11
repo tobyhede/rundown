@@ -23,7 +23,7 @@ export interface ListOptions<T, U = T> {
 /**
  * Manages CLI output rendering, handling switching between
  * human-readable (Text/Table) and machine-readable (JSON) formats.
- * 
+ *
  * This service allows commands to be output-agnostic. It routes data
  * to either a structured JSON stream or formatted text output based
  * on the configuration.
@@ -43,10 +43,10 @@ export class OutputManager {
 
   /**
    * Output a list of items.
-   * 
+   *
    * In JSON mode, outputs a JSON array of items (mapped if jsonMapper provided).
    * In Text mode, outputs a formatted ASCII table.
-   * 
+   *
    * @param items - The list of items to output
    * @param columns - Column definitions for table output
    * @param options - Additional options for handling empty lists or JSON mapping

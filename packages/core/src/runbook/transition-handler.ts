@@ -32,7 +32,7 @@ export interface ConditionResult {
  */
 function evaluateTransition(
   transition: { retry: number; action: Action },
-  currentRetryCount: number
+  currentRetryCount: number,
 ): ConditionResult {
   const { retry, action } = transition;
 
@@ -40,7 +40,7 @@ function evaluateTransition(
   if (retry > 0 && currentRetryCount < retry) {
     return {
       action: 'retry',
-      newRetryCount: currentRetryCount + 1
+      newRetryCount: currentRetryCount + 1,
     };
   }
 
@@ -58,14 +58,11 @@ function evaluateTransition(
  * @param currentRetryCount - The current retry count for this step
  * @returns A ConditionResult indicating the action to take
  */
-export function evaluateFailCondition(
-  step: Step,
-  currentRetryCount: number
-): ConditionResult {
+export function evaluateFailCondition(step: Step, currentRetryCount: number): ConditionResult {
   if (!step.transitions) {
     return {
       action: 'stopped',
-      message: 'No FAIL condition defined for step'
+      message: 'No FAIL condition defined for step',
     };
   }
 
@@ -82,10 +79,7 @@ export function evaluateFailCondition(
  * @param currentRetryCount - Current retry count (defaults to 0)
  * @returns A ConditionResult indicating the action to take
  */
-export function evaluatePassCondition(
-  step: Step,
-  currentRetryCount = 0
-): ConditionResult {
+export function evaluatePassCondition(step: Step, currentRetryCount = 0): ConditionResult {
   if (!step.transitions) {
     return { action: 'continue' };
   }
@@ -111,7 +105,7 @@ export function evaluatePassCondition(
 export function shouldAggregationPass(
   hasFailed: boolean,
   passCount: number,
-  aggregationAll: boolean
+  aggregationAll: boolean,
 ): boolean {
   return aggregationAll ? !hasFailed : passCount > 0;
 }
@@ -129,13 +123,13 @@ function evaluateAggregation(
   hasFailed: boolean,
   passCount: number,
   transitions: Transitions,
-  currentRetryCount: number
+  currentRetryCount: number,
 ): ConditionResult {
   return evaluateTransition(
     shouldAggregationPass(hasFailed, passCount, transitions.all)
       ? transitions.pass
       : transitions.fail,
-    currentRetryCount
+    currentRetryCount,
   );
 }
 
@@ -155,13 +149,13 @@ function evaluateAggregation(
 export function evaluateSubstepAggregation(
   substepStates: readonly SubstepState[],
   transitions: Transitions,
-  currentRetryCount = 0
+  currentRetryCount = 0,
 ): ConditionResult | null {
-  const allDone = substepStates.every(s => s.status === 'done');
+  const allDone = substepStates.every((s) => s.status === 'done');
   if (!allDone) return null;
 
-  const passCount = substepStates.filter(s => s.result === 'pass').length;
-  const hasFailed = substepStates.some(s => s.result === 'fail');
+  const passCount = substepStates.filter((s) => s.result === 'pass').length;
+  const hasFailed = substepStates.some((s) => s.result === 'fail');
   return evaluateAggregation(hasFailed, passCount, transitions, currentRetryCount);
 }
 
@@ -181,12 +175,12 @@ export function evaluateSubstepAggregation(
 export function evaluateIterationAggregation(
   iterationResults: readonly ('pass' | 'fail')[],
   transitions: Transitions,
-  currentRetryCount = 0
+  currentRetryCount = 0,
 ): ConditionResult | null {
   if (iterationResults.length === 0) return null;
 
-  const passCount = iterationResults.filter(r => r === 'pass').length;
-  const hasFailed = iterationResults.some(r => r === 'fail');
+  const passCount = iterationResults.filter((r) => r === 'pass').length;
+  const hasFailed = iterationResults.some((r) => r === 'fail');
   return evaluateAggregation(hasFailed, passCount, transitions, currentRetryCount);
 }
 

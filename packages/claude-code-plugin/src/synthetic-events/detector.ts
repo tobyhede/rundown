@@ -21,7 +21,7 @@ export function detectSyntheticEvents(input: HookInput): SyntheticEvent[] {
       events.push({
         originalEvent: 'UserPromptSubmit',
         syntheticEvent: 'SlashCommandStart',
-        commandName: cmdMatch[1]
+        commandName: cmdMatch[1],
       });
     }
   }
@@ -33,7 +33,7 @@ export function detectSyntheticEvents(input: HookInput): SyntheticEvent[] {
   if (hookEvent === 'Stop') {
     events.push({
       originalEvent: 'Stop',
-      syntheticEvent: 'SlashCommandEnd'
+      syntheticEvent: 'SlashCommandEnd',
     });
   }
 
@@ -43,7 +43,7 @@ export function detectSyntheticEvents(input: HookInput): SyntheticEvent[] {
     events.push({
       originalEvent: 'PreToolUse',
       syntheticEvent: 'SkillStart',
-      skillName
+      skillName,
     });
   }
 
@@ -53,7 +53,7 @@ export function detectSyntheticEvents(input: HookInput): SyntheticEvent[] {
     events.push({
       originalEvent: 'PostToolUse',
       syntheticEvent: 'SkillEnd',
-      skillName
+      skillName,
     });
   }
 
@@ -71,7 +71,7 @@ export function detectSyntheticEvents(input: HookInput): SyntheticEvent[] {
       syntheticEvent: 'SubagentStart',
       stepId: stepIdMatch?.[1] ?? input.step_id ?? input.task_id,
       toolUseId,
-      subagentType
+      subagentType,
     });
   }
 

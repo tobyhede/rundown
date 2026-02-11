@@ -38,19 +38,13 @@ const TEMPLATE_VAR_REGEX = /{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}/g;
  * @throws Error if markdown contains invalid Handlebars syntax (e.g., unclosed
  *         braces or malformed expressions) - thrown by Handlebars.compile()
  */
-export function renderTemplate(
-  markdown: string,
-  variables: Record<string, string>
-): string {
+export function renderTemplate(markdown: string, variables: Record<string, string>): string {
   const placeholderEntries: { name: string; raw: string }[] = [];
-  const withPlaceholders = markdown.replace(
-    TEMPLATE_VAR_REGEX,
-    (raw, name: string) => {
-      const index = placeholderEntries.length;
-      placeholderEntries.push({ name, raw });
-      return `{{__rd_resolve__ ${index.toString()}}}`;
-    }
-  );
+  const withPlaceholders = markdown.replace(TEMPLATE_VAR_REGEX, (raw, name: string) => {
+    const index = placeholderEntries.length;
+    placeholderEntries.push({ name, raw });
+    return `{{__rd_resolve__ ${index.toString()}}}`;
+  });
 
   // Resolve placeholders while preserving original spacing for undefined vars.
   // Re-register helper on each call - intentional, as it needs closure access to
@@ -82,14 +76,9 @@ export function renderTemplate(
  * @param variables - Key-value pairs for substitution (e.g., `{ batch: "2", Index: "2" }`)
  * @returns Text with matched variables replaced
  */
-export function expandLoopVariables(
-  text: string,
-  variables: Record<string, string>
-): string {
+export function expandLoopVariables(text: string, variables: Record<string, string>): string {
   return text.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
-    return Object.prototype.hasOwnProperty.call(variables, name)
-      ? variables[name]
-      : match;
+    return Object.prototype.hasOwnProperty.call(variables, name) ? variables[name] : match;
   });
 }
 
@@ -112,13 +101,11 @@ const FOR_CLAUSE_LINE = /^(\s*-\s+FOR\s.+)$/gm;
  */
 export function expandForClauseVariables(
   markdown: string,
-  variables: Record<string, string>
+  variables: Record<string, string>,
 ): string {
   return markdown.replace(FOR_CLAUSE_LINE, (line) => {
     return line.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
-      return Object.prototype.hasOwnProperty.call(variables, name)
-        ? variables[name]
-        : match;
+      return Object.prototype.hasOwnProperty.call(variables, name) ? variables[name] : match;
     });
   });
 }
@@ -158,7 +145,7 @@ export function shellEscapeValue(value: string): string {
 export function substituteText(
   text: string,
   variables: Record<string, string>,
-  escapeFn?: (value: string) => string
+  escapeFn?: (value: string) => string,
 ): string {
   return text.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
     if (!Object.prototype.hasOwnProperty.call(variables, name)) return match;
@@ -176,7 +163,7 @@ export function substituteText(
  */
 function substituteCommand(
   command: Command | undefined,
-  variables: Record<string, string>
+  variables: Record<string, string>,
 ): Command | undefined {
   if (!command) return undefined;
   return {
@@ -192,10 +179,7 @@ function substituteCommand(
  * @param variables - Template variables to substitute
  * @returns New substep with substituted fields
  */
-function substituteSubstep(
-  substep: Substep,
-  variables: Record<string, string>
-): Substep {
+function substituteSubstep(substep: Substep, variables: Record<string, string>): Substep {
   return {
     ...substep,
     description: substituteText(substep.description, variables),
@@ -211,17 +195,14 @@ function substituteSubstep(
  * @param variables - Template variables to substitute
  * @returns New step with substituted fields
  */
-function substituteStep(
-  step: Step,
-  variables: Record<string, string>
-): Step {
+function substituteStep(step: Step, variables: Record<string, string>): Step {
   return {
     ...step,
     description: substituteText(step.description, variables),
     prompt: step.prompt ? substituteText(step.prompt, variables) : step.prompt,
     command: substituteCommand(step.command, variables),
     substeps: step.substeps
-      ? step.substeps.map(ss => substituteSubstep(ss, variables))
+      ? step.substeps.map((ss) => substituteSubstep(ss, variables))
       : step.substeps,
   };
 }
@@ -242,13 +223,15 @@ function substituteStep(
  */
 export function substituteRunbookVariables(
   runbook: Runbook,
-  variables: Record<string, string>
+  variables: Record<string, string>,
 ): Runbook {
   return {
     ...runbook,
     title: runbook.title ? substituteText(runbook.title, variables) : runbook.title,
-    description: runbook.description ? substituteText(runbook.description, variables) : runbook.description,
-    steps: runbook.steps.map(step => substituteStep(step, variables)),
+    description: runbook.description
+      ? substituteText(runbook.description, variables)
+      : runbook.description,
+    steps: runbook.steps.map((step) => substituteStep(step, variables)),
   };
 }
 
@@ -264,7 +247,7 @@ export function substituteRunbookVariables(
  */
 export function expandLoopVariablesForCommand(
   text: string,
-  variables: Record<string, string>
+  variables: Record<string, string>,
 ): string {
   return substituteText(text, variables, shellEscapeValue);
 }

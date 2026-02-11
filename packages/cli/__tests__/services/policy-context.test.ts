@@ -91,11 +91,11 @@ describe('policy context service', () => {
         policy: { allow: [], deny: [] },
         filepath: '/path/to/policy.yml',
         isDefault: false,
-        warnings: []
+        warnings: [],
       });
 
       const context = await initializePolicyContext({ allowAll: true });
-      
+
       expect(core.loadPolicy).toHaveBeenCalled();
       expect(context.isDefault).toBe(false);
       expect(context.cliOptions.allowAll).toBe(true);
@@ -107,7 +107,7 @@ describe('policy context service', () => {
       (core.loadPolicy as jest.Mock).mockResolvedValue({
         policy: { allow: [], deny: [] },
         isDefault: true,
-        warnings: ['Warning 1']
+        warnings: ['Warning 1'],
       });
 
       await initializePolicyContext({});
@@ -123,7 +123,7 @@ describe('policy context service', () => {
     });
 
     it('returns false if allowAll is set', async () => {
-       (core.loadPolicy as jest.Mock).mockResolvedValue({
+      (core.loadPolicy as jest.Mock).mockResolvedValue({
         policy: { allow: [], deny: [] },
         warnings: [],
       });
@@ -141,28 +141,28 @@ describe('policy context service', () => {
     });
 
     it('returns true for sandbox when initialized with empty options', async () => {
-       (core.loadPolicy as jest.Mock).mockResolvedValue({ policy: {} });
+      (core.loadPolicy as jest.Mock).mockResolvedValue({ policy: {} });
       await initializePolicyContext({}); // No flags
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(true);
     });
 
     it('returns false for sandbox if noSandbox is true', async () => {
-       (core.loadPolicy as jest.Mock).mockResolvedValue({ policy: {} });
+      (core.loadPolicy as jest.Mock).mockResolvedValue({ policy: {} });
       await initializePolicyContext({ noSandbox: true });
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(false);
     });
 
     it('returns false for sandbox if allowAll is true', async () => {
-       (core.loadPolicy as jest.Mock).mockResolvedValue({ policy: {} });
+      (core.loadPolicy as jest.Mock).mockResolvedValue({ policy: {} });
       await initializePolicyContext({ allowAll: true });
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(false);
     });
 
     it('respects sandboxStrict', async () => {
-       (core.loadPolicy as jest.Mock).mockResolvedValue({ policy: {} });
+      (core.loadPolicy as jest.Mock).mockResolvedValue({ policy: {} });
       await initializePolicyContext({ sandboxStrict: true });
       const opts = getSandboxOptions();
       expect(opts.sandboxStrict).toBe(true);

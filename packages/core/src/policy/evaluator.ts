@@ -10,7 +10,12 @@
 import picomatch from 'picomatch';
 import * as path from 'path';
 import * as os from 'os';
-import { type PolicyConfig, type PolicyGrant, type PermissionRules, DEFAULT_POLICY } from './schema.js';
+import {
+  type PolicyConfig,
+  type PolicyGrant,
+  type PermissionRules,
+  DEFAULT_POLICY,
+} from './schema.js';
 import { extractAllExecutables } from './parser.js';
 
 /**
@@ -183,7 +188,7 @@ export class PolicyEvaluator {
     // Check each executable
     for (const executable of executables) {
       // Check CLI grants first
-      if (this.options.cliGrants?.run?.some(pattern => this.matchPattern(executable, pattern))) {
+      if (this.options.cliGrants?.run?.some((pattern) => this.matchPattern(executable, pattern))) {
         continue; // CLI grant allows this
       }
 
@@ -271,7 +276,11 @@ export class PolicyEvaluator {
     const rules = this.getEffectiveRules(mode);
 
     // Check CLI grants
-    if (this.options.cliGrants?.[mode]?.some(pattern => this.matchPathPattern(absolutePath, pattern))) {
+    if (
+      this.options.cliGrants?.[mode]?.some((pattern) =>
+        this.matchPathPattern(absolutePath, pattern),
+      )
+    ) {
       return {
         allowed: true,
         reason: `Path allowed by CLI grant`,
@@ -363,7 +372,7 @@ export class PolicyEvaluator {
     const rules = this.getEffectiveRules('env');
 
     // Check CLI grants
-    if (this.options.cliGrants?.env?.some(pattern => this.matchPattern(key, pattern))) {
+    if (this.options.cliGrants?.env?.some((pattern) => this.matchPattern(key, pattern))) {
       return {
         allowed: true,
         reason: 'Environment variable allowed by CLI grant',
@@ -473,7 +482,7 @@ export class PolicyEvaluator {
    * @returns True if a matching session grant exists
    */
   private hasSessionGrant(type: 'run' | 'read' | 'write' | 'env', subject: string): boolean {
-    return this.sessionGrants.some(grant => {
+    return this.sessionGrants.some((grant) => {
       if (grant.type !== type) return false;
       if (type === 'read' || type === 'write') {
         return this.matchPathPattern(subject, grant.pattern);
@@ -508,10 +517,10 @@ export class PolicyEvaluator {
     }
 
     // Apply grants from config
-    const grants = this.policy.grants.filter(g => g.type === type);
+    const grants = this.policy.grants.filter((g) => g.type === type);
     if (grants.length > 0) {
       return {
-        allow: [...defaultRules.allow, ...grants.map(g => g.pattern)],
+        allow: [...defaultRules.allow, ...grants.map((g) => g.pattern)],
         deny: defaultRules.deny,
       };
     }

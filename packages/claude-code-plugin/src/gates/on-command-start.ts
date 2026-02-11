@@ -1,4 +1,11 @@
-import { type HookInput, type GateResult, logger, safeJoin, isValidRunbookPath, findRunbookByFrontmatter } from '../shared/index.js';
+import {
+  type HookInput,
+  type GateResult,
+  logger,
+  safeJoin,
+  isValidRunbookPath,
+  findRunbookByFrontmatter,
+} from '../shared/index.js';
 import { rundown } from '../workflow/hooks/rundown.js';
 
 /**
@@ -36,13 +43,14 @@ export function execute(input: HookInput): Promise<GateResult> {
   try {
     const output = rundown(['run', runbook], input.cwd);
     return Promise.resolve({
-      additionalContext: formatRunbookOutput(runbook, output)
+      additionalContext: formatRunbookOutput(runbook, output),
     });
   } catch (error) {
     const execError = error as { message?: string; stdout?: string; stderr?: string };
-    const errorOutput = execError.stdout ?? execError.stderr ?? execError.message ?? 'Unknown error';
+    const errorOutput =
+      execError.stdout ?? execError.stderr ?? execError.message ?? 'Unknown error';
     return Promise.resolve({
-      additionalContext: formatRunbookError(runbook, errorOutput)
+      additionalContext: formatRunbookError(runbook, errorOutput),
     });
   }
 }

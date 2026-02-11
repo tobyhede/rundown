@@ -23,8 +23,6 @@ export function isNumberedStepName(stepName: string): boolean {
  * @param steps - Array of steps with name property
  * @returns Count of numbered steps
  */
-export function countNumberedSteps(
-  steps: readonly { name: string }[]
-): number {
+export function countNumberedSteps(steps: readonly { name: string }[]): number {
   return steps.filter((step) => /^\d+$/.test(step.name)).length;
 }

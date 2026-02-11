@@ -186,7 +186,7 @@ describe('Session', () => {
       const results = await Promise.allSettled([
         session.append('edited_files', 'file1.ts'),
         session.append('edited_files', 'file2.ts'),
-        session.append('edited_files', 'file3.ts')
+        session.append('edited_files', 'file3.ts'),
       ]);
 
       // All operations should succeed
@@ -225,9 +225,9 @@ describe('Session', () => {
         stateFile,
         JSON.stringify({
           session_id: 'existing-123',
-          active_command: '/execute'
+          active_command: '/execute',
         }),
-        'utf-8'
+        'utf-8',
       );
 
       const command = await session.get('active_command');

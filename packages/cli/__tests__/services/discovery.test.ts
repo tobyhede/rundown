@@ -86,7 +86,7 @@ describe('discovery service', () => {
     it('includes bundled path in search paths', () => {
       const paths = getSearchPaths(tempDir);
 
-      const bundledPath = paths.find(p => p.source === 'bundled');
+      const bundledPath = paths.find((p) => p.source === 'bundled');
       expect(bundledPath).toBeDefined();
       expect(bundledPath?.path).toMatch(/runbooks$/);
     });
@@ -105,10 +105,7 @@ description: Test runbook
 - Item 2
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'my-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'my-runbook.runbook.md'), runbookContent);
 
       const runbooks = await scanDirectory(projectRunbooksDir, 'project');
 
@@ -140,10 +137,7 @@ version: 1.0.0
 Content here
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'test-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'test-runbook.runbook.md'), runbookContent);
 
       const runbooks = await scanDirectory(projectRunbooksDir, 'project');
 
@@ -158,10 +152,7 @@ Content here
 Content without frontmatter
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'no-frontmatter.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'no-frontmatter.runbook.md'), runbookContent);
 
       const runbooks = await scanDirectory(projectRunbooksDir, 'project');
 
@@ -170,10 +161,7 @@ Content without frontmatter
     });
 
     it('skips non-.runbook.md files', async () => {
-      await writeFile(
-        join(projectRunbooksDir, 'not-a-runbook.md'),
-        '# Just a markdown file'
-      );
+      await writeFile(join(projectRunbooksDir, 'not-a-runbook.md'), '# Just a markdown file');
       await writeFile(join(projectRunbooksDir, 'readme.txt'), 'Not markdown');
 
       const runbooks = await scanDirectory(projectRunbooksDir, 'project');
@@ -189,10 +177,7 @@ invalid: yaml: syntax:
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'invalid.runbook.md'),
-        invalidFrontmatter
-      );
+      await writeFile(join(projectRunbooksDir, 'invalid.runbook.md'), invalidFrontmatter);
 
       // Should not throw, falls back to filename
       const runbooks = await scanDirectory(projectRunbooksDir, 'project');
@@ -210,10 +195,7 @@ description: Missing name field
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'missing-name.runbook.md'),
-        missingName
-      );
+      await writeFile(join(projectRunbooksDir, 'missing-name.runbook.md'), missingName);
 
       const runbooks = await scanDirectory(projectRunbooksDir, 'project');
 
@@ -230,16 +212,11 @@ name: test-runbook
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'test-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'test-runbook.runbook.md'), runbookContent);
 
       const runbooks = await scanDirectory(projectRunbooksDir, 'project');
 
-      expect(runbooks[0].path).toBe(
-        join(projectRunbooksDir, 'test-runbook.runbook.md')
-      );
+      expect(runbooks[0].path).toBe(join(projectRunbooksDir, 'test-runbook.runbook.md'));
     });
 
     it('marks source as project or plugin', async () => {
@@ -250,10 +227,7 @@ name: test-runbook
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'test-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'test-runbook.runbook.md'), runbookContent);
 
       const projectRunbooks = await scanDirectory(projectRunbooksDir, 'project');
       expect(projectRunbooks[0].source).toBe('project');
@@ -272,10 +246,7 @@ name: project-runbook
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'project-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'project-runbook.runbook.md'), runbookContent);
 
       const runbooks = await discoverRunbooks(tempDir);
 
@@ -306,20 +277,14 @@ description: Second runbook
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'runbook-one.runbook.md'),
-        runbook1
-      );
-      await writeFile(
-        join(projectRunbooksDir, 'runbook-two.runbook.md'),
-        runbook2
-      );
+      await writeFile(join(projectRunbooksDir, 'runbook-one.runbook.md'), runbook1);
+      await writeFile(join(projectRunbooksDir, 'runbook-two.runbook.md'), runbook2);
 
       const runbooks = await discoverRunbooks(tempDir);
 
       expect(runbooks).toHaveLength(2);
       expect(runbooks.map((w) => w.name)).toEqual(
-        expect.arrayContaining(['runbook-one', 'runbook-two'])
+        expect.arrayContaining(['runbook-one', 'runbook-two']),
       );
     });
 
@@ -349,14 +314,8 @@ description: Plugin version
 ## 1. Step
 `;
 
-        await writeFile(
-          join(projectRunbooksDir, 'shared-runbook.runbook.md'),
-          projectRunbook
-        );
-        await writeFile(
-          join(pluginRunbookDir, 'shared-runbook.runbook.md'),
-          pluginRunbook
-        );
+        await writeFile(join(projectRunbooksDir, 'shared-runbook.runbook.md'), projectRunbook);
+        await writeFile(join(pluginRunbookDir, 'shared-runbook.runbook.md'), pluginRunbook);
 
         const runbooks = await discoverRunbooks(tempDir);
 
@@ -392,14 +351,8 @@ name: plugin-runbook
 ## 1. Step
 `;
 
-        await writeFile(
-          join(projectRunbooksDir, 'project-runbook.runbook.md'),
-          projectRunbook
-        );
-        await writeFile(
-          join(pluginRunbookDir, 'plugin-runbook.runbook.md'),
-          pluginRunbook
-        );
+        await writeFile(join(projectRunbooksDir, 'project-runbook.runbook.md'), projectRunbook);
+        await writeFile(join(pluginRunbookDir, 'plugin-runbook.runbook.md'), pluginRunbook);
 
         const runbooks = await discoverRunbooks(tempDir);
 
@@ -425,10 +378,7 @@ tags:
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'test-runbook.runbook.md'),
-        runbook
-      );
+      await writeFile(join(projectRunbooksDir, 'test-runbook.runbook.md'), runbook);
 
       const runbooks = await discoverRunbooks(tempDir);
 
@@ -450,10 +400,7 @@ description: Test runbook
 Content here
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'my-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'my-runbook.runbook.md'), runbookContent);
 
       const runbook = await findRunbookByName(tempDir, 'my-runbook');
 
@@ -467,10 +414,7 @@ Content here
 Content without frontmatter
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'no-frontmatter.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'no-frontmatter.runbook.md'), runbookContent);
 
       const runbook = await findRunbookByName(tempDir, 'no-frontmatter');
 
@@ -492,10 +436,7 @@ name: my-runbook
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'my-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'my-runbook.runbook.md'), runbookContent);
 
       const runbook = await findRunbookByName(tempDir, 'My-Runbook');
 
@@ -527,14 +468,8 @@ description: Plugin version
 ## 1. Step
 `;
 
-        await writeFile(
-          join(projectRunbooksDir, 'shared-runbook.runbook.md'),
-          projectRunbook
-        );
-        await writeFile(
-          join(pluginRunbookDir, 'shared-runbook.runbook.md'),
-          pluginRunbook
-        );
+        await writeFile(join(projectRunbooksDir, 'shared-runbook.runbook.md'), projectRunbook);
+        await writeFile(join(pluginRunbookDir, 'shared-runbook.runbook.md'), pluginRunbook);
 
         const runbook = await findRunbookByName(tempDir, 'shared-runbook');
 
@@ -563,10 +498,7 @@ description: Only in plugin
 ## 1. Step
 `;
 
-        await writeFile(
-          join(pluginRunbookDir, 'plugin-only-runbook.runbook.md'),
-          pluginRunbook
-        );
+        await writeFile(join(pluginRunbookDir, 'plugin-only-runbook.runbook.md'), pluginRunbook);
 
         const runbook = await findRunbookByName(tempDir, 'plugin-only-runbook');
 
@@ -591,10 +523,7 @@ version: 1.0.0
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'complete-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'complete-runbook.runbook.md'), runbookContent);
 
       const runbook = await findRunbookByName(tempDir, 'complete-runbook');
 
@@ -602,9 +531,7 @@ version: 1.0.0
       expect(runbook?.name).toBe('complete-runbook');
       expect(runbook?.description).toBe('Complete runbook description');
       expect(runbook?.tags).toEqual(['important', 'automation']);
-      expect(runbook?.path).toBe(
-        join(projectRunbooksDir, 'complete-runbook.runbook.md')
-      );
+      expect(runbook?.path).toBe(join(projectRunbooksDir, 'complete-runbook.runbook.md'));
       expect(runbook?.source).toBe('project');
     });
   });
@@ -621,10 +548,7 @@ tags:
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'test-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'test-runbook.runbook.md'), runbookContent);
 
       const runbooks = await discoverRunbooks(tempDir);
 
@@ -641,10 +565,7 @@ tags: []
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'no-tags.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'no-tags.runbook.md'), runbookContent);
 
       const runbook = await findRunbookByName(tempDir, 'no-tags');
 
@@ -659,10 +580,7 @@ name: minimal-runbook
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'minimal-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'minimal-runbook.runbook.md'), runbookContent);
 
       const runbook = await findRunbookByName(tempDir, 'minimal-runbook');
 
@@ -685,10 +603,7 @@ description: Write detailed plans
 ## 1. Step
 `;
 
-      await writeFile(
-        join(planningDir, 'write-plan.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(planningDir, 'write-plan.runbook.md'), runbookContent);
 
       const runbooks = await scanDirectory(projectRunbooksDir, 'project');
 
@@ -708,10 +623,7 @@ name: deep-runbook
 ## 1. Step
 `;
 
-      await writeFile(
-        join(deepDir, 'deep-runbook.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(deepDir, 'deep-runbook.runbook.md'), runbookContent);
 
       const runbooks = await scanDirectory(projectRunbooksDir, 'project');
 
@@ -737,14 +649,8 @@ name: nested-runbook
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'root-runbook.runbook.md'),
-        rootRunbook
-      );
-      await writeFile(
-        join(planningDir, 'nested-runbook.runbook.md'),
-        nestedRunbook
-      );
+      await writeFile(join(projectRunbooksDir, 'root-runbook.runbook.md'), rootRunbook);
+      await writeFile(join(planningDir, 'nested-runbook.runbook.md'), nestedRunbook);
 
       const runbooks = await scanDirectory(projectRunbooksDir, 'project');
 
@@ -766,10 +672,7 @@ description: Write detailed plans
 ## 1. Step
 `;
 
-      await writeFile(
-        join(planningDir, 'write-plan.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(planningDir, 'write-plan.runbook.md'), runbookContent);
 
       const runbooks = await discoverRunbooks(tempDir);
 
@@ -789,10 +692,7 @@ description: Write detailed plans
 ## 1. Step
 `;
 
-      await writeFile(
-        join(planningDir, 'write-plan.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(planningDir, 'write-plan.runbook.md'), runbookContent);
 
       const runbook = await findRunbookByName(tempDir, 'write-plan');
 
@@ -828,14 +728,8 @@ description: Plugin version
 ## 1. Step
 `;
 
-        await writeFile(
-          join(projectRunbooksDir, 'shared-runbook.runbook.md'),
-          projectRunbook
-        );
-        await writeFile(
-          join(pluginRunbookDir, 'shared-runbook.runbook.md'),
-          pluginRunbook
-        );
+        await writeFile(join(projectRunbooksDir, 'shared-runbook.runbook.md'), projectRunbook);
+        await writeFile(join(pluginRunbookDir, 'shared-runbook.runbook.md'), pluginRunbook);
 
         // Explicitly request plugin source
         const pluginResult = await findRunbookByNameInSource(tempDir, 'shared-runbook', 'plugin');
@@ -861,10 +755,7 @@ name: project-only
 ## 1. Step
 `;
 
-      await writeFile(
-        join(projectRunbooksDir, 'project-only.runbook.md'),
-        runbookContent
-      );
+      await writeFile(join(projectRunbooksDir, 'project-only.runbook.md'), runbookContent);
 
       // Should not find project runbook when looking in plugin source
       const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
@@ -899,10 +790,7 @@ description: From plugin planning subdirectory
 ## 1. Step
 `;
 
-        await writeFile(
-          join(planningDir, 'write-plan.runbook.md'),
-          runbookContent
-        );
+        await writeFile(join(planningDir, 'write-plan.runbook.md'), runbookContent);
 
         const result = await findRunbookByNameInSource(tempDir, 'write-plan', 'plugin');
 

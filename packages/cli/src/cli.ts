@@ -18,10 +18,7 @@ import { registerPruneCommand } from './commands/prune.js';
 import { registerPromptCommand } from './commands/prompt.js';
 import { registerScenariosCommand } from './commands/scenarios.js';
 import { setColorEnabled } from '@rundown-org/core';
-import {
-  initializePolicyContext,
-  parsePolicyCliOptions,
-} from './services/policy-context.js';
+import { initializePolicyContext, parsePolicyCliOptions } from './services/policy-context.js';
 import { outputCommandSchema } from './services/schema-service.js';
 
 // Handle --schema flag early, before Commander parses arguments

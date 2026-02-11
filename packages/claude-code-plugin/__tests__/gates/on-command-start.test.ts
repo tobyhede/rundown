@@ -6,11 +6,11 @@ const mockRundown = jest.fn();
 const mockReadFileSync = jest.fn();
 
 jest.unstable_mockModule('../../src/workflow/hooks/rundown.js', () => ({
-  rundown: mockRundown
+  rundown: mockRundown,
 }));
 
 jest.unstable_mockModule('fs', () => ({
-  readFileSync: mockReadFileSync
+  readFileSync: mockReadFileSync,
 }));
 
 const { execute } = await import('../../src/gates/on-command-start.js');
@@ -26,7 +26,9 @@ function mockReadForCommand(commandName: string, content: string): void {
     if (filePath.includes(`/${commandName}.md`)) {
       return content;
     }
-    const err = new Error(`ENOENT: no such file or directory, open '${filePath}'`) as NodeJS.ErrnoException;
+    const err = new Error(
+      `ENOENT: no such file or directory, open '${filePath}'`,
+    ) as NodeJS.ErrnoException;
     err.code = 'ENOENT';
     throw err;
   });
@@ -98,7 +100,7 @@ description: No runbook
     it('returns empty for non-SlashCommandStart events', async () => {
       const input: HookInput = {
         hook_event_name: 'PostToolUse',
-        cwd: '/test'
+        cwd: '/test',
       };
 
       const result = await execute(input);
@@ -110,7 +112,7 @@ description: No runbook
     it('returns empty when no command name', async () => {
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
-        cwd: '/test'
+        cwd: '/test',
       };
 
       const result = await execute(input);
@@ -131,7 +133,7 @@ runbook: write-plan
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
-        command: 'rundown:write-plan'
+        command: 'rundown:write-plan',
       };
 
       const result = await execute(input);
@@ -143,10 +145,7 @@ runbook: write-plan
       expect(result.additionalContext).toContain('rd goto');
       expect(result.additionalContext).toContain('IMPORTANT');
       expect(result.additionalContext).toContain('Current State');
-      expect(mockReadFileSync).toHaveBeenCalledWith(
-        expect.stringContaining('write-plan'),
-        'utf8'
-      );
+      expect(mockReadFileSync).toHaveBeenCalledWith(expect.stringContaining('write-plan'), 'utf8');
       expect(mockRundown).toHaveBeenCalledWith(['run', 'write-plan'], '/test');
     });
 
@@ -162,7 +161,7 @@ runbook: my-runbook
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
-        command: 'my-command'
+        command: 'my-command',
       };
 
       const result = await execute(input);
@@ -186,7 +185,7 @@ runbook: broken-runbook
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
-        command: 'test-cmd'
+        command: 'test-cmd',
       };
 
       const result = await execute(input);
@@ -213,7 +212,7 @@ runbook: test-runbook
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
-        command: 'test-cmd'
+        command: 'test-cmd',
       };
 
       const result = await execute(input);
@@ -238,7 +237,7 @@ runbook: test-runbook
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
-        command: 'test-cmd'
+        command: 'test-cmd',
       };
 
       const result = await execute(input);
@@ -260,7 +259,7 @@ runbook: test-runbook
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
-        command: 'test-cmd'
+        command: 'test-cmd',
       };
 
       const result = await execute(input);
@@ -276,7 +275,7 @@ runbook: test-runbook
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
-        command: 'nonexistent'
+        command: 'nonexistent',
       };
 
       const result = await execute(input);
@@ -295,7 +294,7 @@ runbook: ../../../etc/passwd
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
-        command: 'malicious'
+        command: 'malicious',
       };
 
       const result = await execute(input);
@@ -315,7 +314,7 @@ runbook: test; rm -rf /
       const input: HookInput = {
         hook_event_name: 'SlashCommandStart',
         cwd: '/test',
-        command: 'injection'
+        command: 'injection',
       };
 
       const result = await execute(input);

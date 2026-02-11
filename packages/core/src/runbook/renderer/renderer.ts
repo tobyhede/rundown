@@ -1,4 +1,11 @@
-import { type Step, type Action, type Transitions, type TransitionObject, type Substep, type Runbook } from '../types.js';
+import {
+  type Step,
+  type Action,
+  type Transitions,
+  type TransitionObject,
+  type Substep,
+  type Runbook,
+} from '../types.js';
 import { stepIdToString } from '../step-id.js';
 
 /**

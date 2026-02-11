@@ -3,7 +3,13 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { type HookInput, fileExists, logger, safeJoin, sanitizePathSegment } from './shared/index.js';
+import {
+  type HookInput,
+  fileExists,
+  logger,
+  safeJoin,
+  sanitizePathSegment,
+} from './shared/index.js';
 import { Session } from './session.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -41,7 +47,7 @@ function buildContextPaths(
   baseDir: string,
   contextDir: string,
   name: string,
-  stage: string
+  stage: string,
 ): string[] {
   // SECURITY: Sanitize inputs to prevent escaping contextDir
   const safeName = sanitizePathSegment(name);
@@ -52,7 +58,7 @@ function buildContextPaths(
     safeJoin(baseDir, contextDir, 'slash-command', `${safeName}-${safeStage}.md`),
     safeJoin(baseDir, contextDir, 'slash-command', safeName, `${safeStage}.md`),
     safeJoin(baseDir, contextDir, 'skill', `${safeName}-${safeStage}.md`),
-    safeJoin(baseDir, contextDir, 'skill', safeName, `${safeStage}.md`)
+    safeJoin(baseDir, contextDir, 'skill', safeName, `${safeStage}.md`),
   ];
 }
 
@@ -66,7 +72,7 @@ function buildContextPaths(
 export async function discoverContextFile(
   cwd: string,
   name: string,
-  stage: string
+  stage: string,
 ): Promise<string | null> {
   // Project-level context (highest priority)
   try {
@@ -79,7 +85,11 @@ export async function discoverContextFile(
       }
     }
   } catch (error) {
-    await logger.warn('Error discovering project context file', { error: String(error), name, stage });
+    await logger.warn('Error discovering project context file', {
+      error: String(error),
+      name,
+      stage,
+    });
   }
 
   // Plugin-level context (fallback)
@@ -95,7 +105,11 @@ export async function discoverContextFile(
         }
       }
     } catch (error) {
-      await logger.warn('Error discovering plugin context file', { error: String(error), name, stage });
+      await logger.warn('Error discovering plugin context file', {
+        error: String(error),
+        name,
+        stage,
+      });
     }
   }
 
@@ -117,12 +131,14 @@ async function discoverAgentCommandContext(
   cwd: string,
   agent: string,
   commandOrSkill: string | null,
-  stage: string
+  stage: string,
 ): Promise<string | null> {
   // Strip namespace prefix from agent name (namespace:agent-name → agent-name)
   // SECURITY: Sanitize components
   const agentName = sanitizePathSegment(agent.replace(/^[^:]+:/, ''));
-  const contextName = commandOrSkill ? sanitizePathSegment(commandOrSkill.replace(/^\//, '').replace(/^[^:]+:/, '')) : null;
+  const contextName = commandOrSkill
+    ? sanitizePathSegment(commandOrSkill.replace(/^\//, '').replace(/^[^:]+:/, ''))
+    : null;
   const safeStage = sanitizePathSegment(stage);
 
   // Project-level paths (highest priority)
@@ -130,7 +146,7 @@ async function discoverAgentCommandContext(
   try {
     if (contextName) {
       projectPaths.push(
-        safeJoin(cwd, '.claude', 'context', `${agentName}-${contextName}-${safeStage}.md`)
+        safeJoin(cwd, '.claude', 'context', `${agentName}-${contextName}-${safeStage}.md`),
       );
     }
     projectPaths.push(safeJoin(cwd, '.claude', 'context', `${agentName}-${safeStage}.md`));
@@ -140,13 +156,17 @@ async function discoverAgentCommandContext(
         await logger.debug('Found project agent context file', {
           path: filePath,
           agent: agentName,
-          stage
+          stage,
         });
         return filePath;
       }
     }
   } catch (error) {
-    await logger.warn('Error discovering project agent context', { error: String(error), agent, stage });
+    await logger.warn('Error discovering project agent context', {
+      error: String(error),
+      agent,
+      stage,
+    });
   }
 
   // Plugin-level paths (fallback)
@@ -155,7 +175,9 @@ async function discoverAgentCommandContext(
     const pluginPaths: string[] = [];
     try {
       if (contextName) {
-        pluginPaths.push(safeJoin(pluginRoot, 'context', `${agentName}-${contextName}-${safeStage}.md`));
+        pluginPaths.push(
+          safeJoin(pluginRoot, 'context', `${agentName}-${contextName}-${safeStage}.md`),
+        );
       }
       pluginPaths.push(safeJoin(pluginRoot, 'context', `${agentName}-${safeStage}.md`));
 
@@ -164,13 +186,17 @@ async function discoverAgentCommandContext(
           await logger.debug('Found plugin agent context file', {
             path: filePath,
             agent: agentName,
-            stage
+            stage,
           });
           return filePath;
         }
       }
     } catch (error) {
-      await logger.warn('Error discovering plugin agent context', { error: String(error), agent, stage });
+      await logger.warn('Error discovering plugin agent context', {
+        error: String(error),
+        agent,
+        stage,
+      });
     }
   }
 
@@ -185,7 +211,6 @@ async function discoverAgentCommandContext(
 
   return null;
 }
-
 
 /**
  * Extract name and stage from hook event.
@@ -209,7 +234,7 @@ async function discoverAgentCommandContext(
  */
 function extractNameAndStage(
   hookEvent: string,
-  input: HookInput
+  input: HookInput,
 ): { name: string; stage: string } | null {
   switch (hookEvent) {
     case 'SlashCommandStart':
@@ -292,7 +317,7 @@ export async function injectContext(hookEvent: string, input: HookInput): Promis
       input.cwd,
       input.agent_name,
       commandOrSkill,
-      'end'
+      'end',
     );
 
     if (contextFile) {
@@ -300,7 +325,7 @@ export async function injectContext(hookEvent: string, input: HookInput): Promis
       await logger.info('Injecting agent context', {
         event: hookEvent,
         agent: input.agent_name,
-        file: contextFile
+        file: contextFile,
       });
       return content;
     }
@@ -324,7 +349,7 @@ export async function injectContext(hookEvent: string, input: HookInput): Promis
       event: hookEvent,
       name,
       stage,
-      file: contextFile
+      file: contextFile,
     });
     return content;
   }

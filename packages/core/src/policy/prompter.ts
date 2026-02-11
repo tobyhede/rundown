@@ -86,7 +86,7 @@ export class PolicyPrompter {
   async requestPermission(
     type: PermissionType,
     subject: string,
-    reason?: string
+    reason?: string,
   ): Promise<PromptResult> {
     // Handle non-interactive mode
     if (this.options.nonInteractive) {
@@ -184,7 +184,7 @@ export class PolicyPrompter {
   async requestPersistablePermission(
     type: PermissionType,
     subject: string,
-    reason?: string
+    reason?: string,
   ): Promise<PromptResult> {
     // Get initial permission
     const result = await this.requestPermission(type, subject, reason);
@@ -291,7 +291,6 @@ export class PolicyPrompter {
         return `Variable: \x1b[36m${subject}\x1b[0m`;
     }
   }
-
 }
 
 /**

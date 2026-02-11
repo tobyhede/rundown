@@ -7,7 +7,7 @@ export {
   type ParseResult,
   parseHookInput,
   SessionStateSchema,
-  type ValidatedSessionState
+  type ValidatedSessionState,
 } from './schemas.js';
 
 // Errors

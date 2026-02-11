@@ -53,10 +53,7 @@ export function withWriter<T>(writer: OutputWriter, fn: () => T): T {
  * @param fn - Async function to execute
  * @returns Promise resolving to the function result
  */
-export async function withWriterAsync<T>(
-  writer: OutputWriter,
-  fn: () => Promise<T>
-): Promise<T> {
+export async function withWriterAsync<T>(writer: OutputWriter, fn: () => Promise<T>): Promise<T> {
   const previous = setWriter(writer);
   try {
     return await fn();

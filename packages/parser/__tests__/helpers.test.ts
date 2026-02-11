@@ -1,5 +1,20 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseAction, extractRunbookList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, validateNEXTUsage, parseForClause, type ParsedConditional } from '../src/index.js';
+import {
+  parseAction,
+  extractRunbookList,
+  isPromptCodeBlock,
+  parseQuotedOrIdentifier,
+  RESERVED_WORDS,
+  isReservedWord,
+  parseStepIdFromString,
+  extractStepHeader,
+  extractSubstepHeader,
+  parseConditional,
+  convertToTransitions,
+  validateNEXTUsage,
+  parseForClause,
+  type ParsedConditional,
+} from '../src/index.js';
 import { formatAction, isExecutableCodeBlock } from '../src/helpers.js';
 
 describe('parseAction NEXT and BREAK', () => {
@@ -19,7 +34,7 @@ describe('parseAction GOTO with substep', () => {
     const result = parseAction('GOTO 3');
     expect(result).toEqual({
       type: 'GOTO',
-      target: { step: '3', substep: undefined }
+      target: { step: '3', substep: undefined },
     });
   });
 
@@ -27,7 +42,7 @@ describe('parseAction GOTO with substep', () => {
     const result = parseAction('GOTO 2.1');
     expect(result).toEqual({
       type: 'GOTO',
-      target: { step: '2', substep: '1' }
+      target: { step: '2', substep: '1' },
     });
   });
 
@@ -41,7 +56,7 @@ describe('parseAction GOTO with named targets', () => {
     const result = parseAction('GOTO Cleanup');
     expect(result).toEqual({
       type: 'GOTO',
-      target: { step: 'Cleanup' }
+      target: { step: 'Cleanup' },
     });
   });
 
@@ -49,7 +64,7 @@ describe('parseAction GOTO with named targets', () => {
     const result = parseAction('GOTO ErrorHandler.1');
     expect(result).toEqual({
       type: 'GOTO',
-      target: { step: 'ErrorHandler', substep: '1' }
+      target: { step: 'ErrorHandler', substep: '1' },
     });
   });
 
@@ -57,7 +72,7 @@ describe('parseAction GOTO with named targets', () => {
     const result = parseAction('GOTO ErrorHandler.Recover');
     expect(result).toEqual({
       type: 'GOTO',
-      target: { step: 'ErrorHandler', substep: 'Recover' }
+      target: { step: 'ErrorHandler', substep: 'Recover' },
     });
   });
 
@@ -65,10 +80,9 @@ describe('parseAction GOTO with named targets', () => {
     const result = parseAction('GOTO 1.Cleanup');
     expect(result).toEqual({
       type: 'GOTO',
-      target: { step: '1', substep: 'Cleanup' }
+      target: { step: '1', substep: 'Cleanup' },
     });
   });
-
 
   it('returns null for quoted GOTO target (names must be identifiers)', () => {
     const result = parseAction('GOTO "Error Handler"');
@@ -500,13 +514,18 @@ describe('parseStepIdFromString with named steps', () => {
     });
 
     it('parses named step with numeric substep', () => {
-      expect(parseStepIdFromString('ErrorHandler.1')).toEqual({ step: 'ErrorHandler', substep: '1' });
+      expect(parseStepIdFromString('ErrorHandler.1')).toEqual({
+        step: 'ErrorHandler',
+        substep: '1',
+      });
     });
 
     it('parses named step with named substep', () => {
-      expect(parseStepIdFromString('ErrorHandler.Recover')).toEqual({ step: 'ErrorHandler', substep: 'Recover' });
+      expect(parseStepIdFromString('ErrorHandler.Recover')).toEqual({
+        step: 'ErrorHandler',
+        substep: 'Recover',
+      });
     });
-
   });
 
   describe('invalid named steps', () => {
@@ -517,7 +536,6 @@ describe('parseStepIdFromString with named steps', () => {
     it('returns null for quoted substep (names must be identifiers)', () => {
       expect(parseStepIdFromString('1."Clean Up"')).toBeNull();
     });
-
 
     it('returns null for identifier starting with digit', () => {
       expect(parseStepIdFromString('123abc')).toBeNull();
@@ -567,8 +585,6 @@ describe('parseStepIdFromString with named steps', () => {
   });
 });
 
-
-
 describe('extractSubstepHeader with named substeps', () => {
   describe('static substeps', () => {
     it('extracts numeric substep', () => {
@@ -603,7 +619,6 @@ describe('extractSubstepHeader with named substeps', () => {
       });
     });
 
-
     it('extracts substep with minimal single-word description', () => {
       const result = extractSubstepHeader('1.A Do');
       expect(result).toEqual({
@@ -637,7 +652,9 @@ describe('stepIdToString', () => {
   });
 
   it('formats named step with substep', () => {
-    expect(stepIdToString({ step: 'ErrorHandler', substep: 'Recover' })).toBe('ErrorHandler.Recover');
+    expect(stepIdToString({ step: 'ErrorHandler', substep: 'Recover' })).toBe(
+      'ErrorHandler.Recover',
+    );
   });
 
   it('formats NEXT target', () => {
@@ -721,13 +738,11 @@ describe('parseStepIdFromString edge cases', () => {
       expect(result).toEqual({ step: '3', substep: 'Cleanup' });
     });
 
-
     it('parses 2.Name with separator when followed by space', () => {
       const result = parseStepIdFromString('2.Name Description', { requireSeparator: true });
       expect(result).toEqual({ step: '2', substep: 'Name' });
     });
   });
-
 
   describe('zero step/substep validation', () => {
     it('returns null for step 0', () => {
@@ -788,7 +803,9 @@ describe('formatAction', () => {
   });
 
   it('formats GOTO with named target', () => {
-    expect(formatAction({ type: 'GOTO', target: { step: 'ErrorHandler' } })).toBe('GOTO ErrorHandler');
+    expect(formatAction({ type: 'GOTO', target: { step: 'ErrorHandler' } })).toBe(
+      'GOTO ErrorHandler',
+    );
   });
 });
 
@@ -940,8 +957,16 @@ describe('validateNEXTUsage with RETRY containing NEXT', () => {
   it('rejects RETRY with NEXT fallback in non-FOR context', () => {
     expect(() => {
       validateNEXTUsage(
-        [{ type: 'fail', retry: 2, action: { type: 'GOTO', target: { step: 'NEXT' } }, modifier: null, raw: 'RETRY 2 NEXT' }],
-        false
+        [
+          {
+            type: 'fail',
+            retry: 2,
+            action: { type: 'GOTO', target: { step: 'NEXT' } },
+            modifier: null,
+            raw: 'RETRY 2 NEXT',
+          },
+        ],
+        false,
       );
     }).not.toThrow();
   });
@@ -952,32 +977,36 @@ describe('validateNEXTUsage with first-class NEXT/BREAK', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', action: { type: 'NEXT' }, retry: 0, modifier: null, raw: 'NEXT' },
     ];
-    expect(() => { validateNEXTUsage(conditionals, false); }).toThrow(
-      'NEXT is only valid within substeps of a FOR step'
-    );
+    expect(() => {
+      validateNEXTUsage(conditionals, false);
+    }).toThrow('NEXT is only valid within substeps of a FOR step');
   });
 
   it('accepts first-class NEXT in FOR context', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', action: { type: 'NEXT' }, retry: 0, modifier: null, raw: 'NEXT' },
     ];
-    expect(() => { validateNEXTUsage(conditionals, true); }).not.toThrow();
+    expect(() => {
+      validateNEXTUsage(conditionals, true);
+    }).not.toThrow();
   });
 
   it('rejects first-class BREAK outside FOR context', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', action: { type: 'BREAK' }, retry: 0, modifier: null, raw: 'BREAK' },
     ];
-    expect(() => { validateNEXTUsage(conditionals, false); }).toThrow(
-      'BREAK is only valid within substeps of a FOR step'
-    );
+    expect(() => {
+      validateNEXTUsage(conditionals, false);
+    }).toThrow('BREAK is only valid within substeps of a FOR step');
   });
 
   it('accepts first-class BREAK in FOR context', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', action: { type: 'BREAK' }, retry: 0, modifier: null, raw: 'BREAK' },
     ];
-    expect(() => { validateNEXTUsage(conditionals, true); }).not.toThrow();
+    expect(() => {
+      validateNEXTUsage(conditionals, true);
+    }).not.toThrow();
   });
 });
 
@@ -1091,7 +1120,7 @@ describe('ParsedConditional with retry property', () => {
       retry: 2,
       action: { type: 'GOTO', target: { step: '3', substep: undefined } },
       modifier: null,
-      raw: 'RETRY 2 GOTO 3'
+      raw: 'RETRY 2 GOTO 3',
     });
   });
 
@@ -1102,7 +1131,7 @@ describe('ParsedConditional with retry property', () => {
       retry: 0,
       action: { type: 'NEXT' },
       modifier: null,
-      raw: 'NEXT'
+      raw: 'NEXT',
     });
   });
 
@@ -1113,7 +1142,7 @@ describe('ParsedConditional with retry property', () => {
       retry: 2,
       action: { type: 'NEXT' },
       modifier: null,
-      raw: 'RETRY 2 NEXT'
+      raw: 'RETRY 2 NEXT',
     });
   });
 });
@@ -1156,7 +1185,11 @@ describe('parseStepIdFromString with AT syntax', () => {
 describe('parseForClause', () => {
   describe('full form: FOR variable IN start TO end', () => {
     it('parses named variable with numeric range', () => {
-      expect(parseForClause('FOR batch IN 1 TO 10')).toEqual({ variable: 'batch', start: 1, end: 10 });
+      expect(parseForClause('FOR batch IN 1 TO 10')).toEqual({
+        variable: 'batch',
+        start: 1,
+        end: 10,
+      });
     });
 
     it('parses underscore variable name', () => {
@@ -1168,21 +1201,18 @@ describe('parseForClause', () => {
     it('parses numeric range', () => {
       expect(parseForClause('FOR 1 TO 10')).toEqual({ start: 1, end: 10 });
     });
-
   });
 
   describe('named count: FOR variable IN count', () => {
     it('parses numeric count (start defaults to 1)', () => {
       expect(parseForClause('FOR batch IN 10')).toEqual({ variable: 'batch', start: 1, end: 10 });
     });
-
   });
 
   describe('unnamed count: FOR count', () => {
     it('parses numeric count (start defaults to 1)', () => {
       expect(parseForClause('FOR 10')).toEqual({ start: 1, end: 10 });
     });
-
   });
 
   describe('rejects unresolved template variables', () => {
@@ -1270,7 +1300,11 @@ describe('parseForClause', () => {
     });
 
     it('accepts reversed range with named variable', () => {
-      expect(parseForClause('FOR batch IN 5 TO 2')).toEqual({ variable: 'batch', start: 5, end: 2 });
+      expect(parseForClause('FOR batch IN 5 TO 2')).toEqual({
+        variable: 'batch',
+        start: 5,
+        end: 2,
+      });
     });
 
     it('accepts named variable with descending range', () => {

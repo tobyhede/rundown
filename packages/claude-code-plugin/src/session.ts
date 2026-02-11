@@ -7,7 +7,7 @@ import {
   type SessionLoadResult,
   isNodeError,
   isFileNotFoundError,
-  logger
+  logger,
 } from './shared/index.js';
 
 /**
@@ -89,8 +89,8 @@ export class Session {
           error: {
             type: 'parse_error',
             path: this.stateFile,
-            message: e instanceof Error ? e.message : String(e)
-          }
+            message: e instanceof Error ? e.message : String(e),
+          },
         };
       }
 
@@ -101,8 +101,8 @@ export class Session {
           error: {
             type: 'validation_error',
             path: this.stateFile,
-            message: result.error.issues.map((i) => i.message).join(', ')
-          }
+            message: result.error.issues.map((i) => i.message).join(', '),
+          },
         };
       }
 
@@ -111,7 +111,7 @@ export class Session {
       if (isNodeError(error) && error.code === 'ENOENT') {
         return {
           success: false,
-          error: { type: 'file_not_found', path: this.stateFile }
+          error: { type: 'file_not_found', path: this.stateFile },
         };
       }
       return {
@@ -119,8 +119,8 @@ export class Session {
         error: {
           type: 'parse_error',
           path: this.stateFile,
-          message: error instanceof Error ? error.message : String(error)
-        }
+          message: error instanceof Error ? error.message : String(error),
+        },
       };
     }
   }
@@ -147,7 +147,7 @@ export class Session {
     await logger.warn('Session state corrupted, reinitializing', {
       path: error.path,
       error_type: error.type,
-      message
+      message,
     });
 
     return this.initState();

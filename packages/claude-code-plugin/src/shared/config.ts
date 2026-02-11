@@ -21,7 +21,7 @@ const KNOWN_HOOK_EVENTS = [
   'Stop',
   'Notification',
   'PreCompact',
-  'PermissionRequest'
+  'PermissionRequest',
 ];
 
 const KNOWN_ACTIONS = ['CONTINUE', 'BLOCK', 'STOP'];
@@ -91,7 +91,7 @@ export function validateConfig(config: RundownPluginConfig): void {
   for (const hookName of Object.keys(config.hooks)) {
     if (!KNOWN_HOOK_EVENTS.includes(hookName)) {
       throw new Error(
-        `Unknown hook event: ${hookName}. Must be one of: ${KNOWN_HOOK_EVENTS.join(', ')}`
+        `Unknown hook event: ${hookName}. Must be one of: ${KNOWN_HOOK_EVENTS.join(', ')}`,
       );
     }
   }
@@ -117,18 +117,17 @@ export function validateConfig(config: RundownPluginConfig): void {
       validateFilePatterns(gateConfig);
     } catch (error) {
       throw new Error(
-        `Gate "${gateName}" has invalid configuration: ${error instanceof Error ? error.message : String(error)}`
+        `Gate "${gateName}" has invalid configuration: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
 
     for (const action of [gateConfig.on_pass, gateConfig.on_fail]) {
       if (action && !KNOWN_ACTIONS.includes(action) && !(action in config.gates)) {
         throw new Error(
-          `Gate '${gateName}' action '${action}' is not CONTINUE/BLOCK/STOP or valid gate name`
+          `Gate '${gateName}' action '${action}' is not CONTINUE/BLOCK/STOP or valid gate name`,
         );
       }
     }
-
   }
 }
 
@@ -158,7 +157,13 @@ export function resolvePluginPath(pluginName: string): string {
 
   // Security: Reject plugin names with path separators or parent references
   // Prevents path traversal attacks like "../../../etc", "foo/bar", ".", or ".."
-  if (pluginName.includes('/') || pluginName.includes('\\') || pluginName === '.' || pluginName === '..' || pluginName.includes('..')) {
+  if (
+    pluginName.includes('/') ||
+    pluginName.includes('\\') ||
+    pluginName === '.' ||
+    pluginName === '..' ||
+    pluginName.includes('..')
+  ) {
     throw new Error(`Invalid plugin name: '${pluginName}' (must not contain path separators)`);
   }
 
@@ -195,16 +200,19 @@ export async function loadConfigFile(configPath: string): Promise<RundownPluginC
  * - hooks: project hooks override plugin hooks for same event
  * - gates: project gates override plugin gates for same name
  */
-function mergeConfigs(pluginConfig: RundownPluginConfig, projectConfig: RundownPluginConfig): RundownPluginConfig {
+function mergeConfigs(
+  pluginConfig: RundownPluginConfig,
+  projectConfig: RundownPluginConfig,
+): RundownPluginConfig {
   return {
     hooks: {
       ...pluginConfig.hooks,
-      ...projectConfig.hooks
+      ...projectConfig.hooks,
     },
     gates: {
       ...pluginConfig.gates,
-      ...projectConfig.gates
-    }
+      ...projectConfig.gates,
+    },
   };
 }
 
@@ -238,7 +246,10 @@ export async function loadConfig(cwd: string): Promise<RundownPluginConfig | nul
   }
 
   // Load project config (overrides)
-  const projectPaths = [path.join(cwd, '.claude', 'rundown-plugin.json'), path.join(cwd, 'rundown-plugin.json')];
+  const projectPaths = [
+    path.join(cwd, '.claude', 'rundown-plugin.json'),
+    path.join(cwd, 'rundown-plugin.json'),
+  ];
 
   for (const configPath of projectPaths) {
     const projectConfig = await loadConfigFile(configPath);

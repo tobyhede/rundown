@@ -42,8 +42,8 @@ function copyRunbooks(dir) {
       if (seen.has(entry.name)) {
         throw new Error(
           `Duplicate runbook filename "${entry.name}":\n` +
-          `  - ${seen.get(entry.name)}\n` +
-          `  - ${srcPath}`
+            `  - ${seen.get(entry.name)}\n` +
+            `  - ${srcPath}`,
         );
       }
       seen.set(entry.name, srcPath);

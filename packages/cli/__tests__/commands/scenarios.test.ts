@@ -75,7 +75,7 @@ name: no-scenarios
 `;
       await writeFile(
         join(workspace.cwd, '.claude', 'rundown', 'runbooks', 'no-scenarios.runbook.md'),
-        noScenarios
+        noScenarios,
       );
 
       const result = runCli('scenario ls no-scenarios.runbook.md', workspace);

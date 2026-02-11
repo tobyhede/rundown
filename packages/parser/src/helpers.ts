@@ -1,12 +1,5 @@
-import {
-  RunbookSyntaxError,
-  type ParsedConditional,
-  type AggregationModifier,
-} from './types.js';
-import {
-  type Action,
-  type Transitions,
-} from './schemas.js';
+import { RunbookSyntaxError, type ParsedConditional, type AggregationModifier } from './types.js';
+import { type Action, type Transitions } from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
 import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 import type { ForClause } from './ast.js';
@@ -48,7 +41,7 @@ export function parseQuotedOrIdentifier(text: string): string {
   }
 
   throw new Error(
-    `Invalid format: "${trimmed}". Use a single-word identifier (letters, numbers, underscore) or a quoted string.`
+    `Invalid format: "${trimmed}". Use a single-word identifier (letters, numbers, underscore) or a quoted string.`,
   );
 }
 
@@ -413,7 +406,10 @@ function parseRetryWithArgs(rest: string): { retry: number; action: Action } | n
   return { retry, action };
 }
 
-function parseConditionalPrefix(rest: string, type: 'pass' | 'fail' | 'yes' | 'no'): ParsedConditional | null {
+function parseConditionalPrefix(
+  rest: string,
+  type: 'pass' | 'fail' | 'yes' | 'no',
+): ParsedConditional | null {
   let modifier: AggregationModifier = null;
   let remaining = rest;
 
@@ -503,14 +499,14 @@ export function parseConditional(text: string): ParsedConditional | null {
 
 function resolveAggregationMode(
   passModifier: AggregationModifier,
-  failModifier: AggregationModifier
+  failModifier: AggregationModifier,
 ): boolean {
   if (passModifier && failModifier) {
     if (passModifier === 'ALL' && failModifier === 'ANY') return true;
     if (passModifier === 'ANY' && failModifier === 'ALL') return false;
     throw new RunbookSyntaxError(
       `Invalid aggregation combination: PASS ${passModifier} + FAIL ${failModifier}. ` +
-        `Valid: PASS ALL + FAIL ANY (pessimistic) or PASS ANY + FAIL ALL (optimistic)`
+        `Valid: PASS ALL + FAIL ANY (pessimistic) or PASS ANY + FAIL ALL (optimistic)`,
     );
   }
 
@@ -532,16 +528,13 @@ function resolveAggregationMode(
  * @param isForContext - Whether the current context is within a FOR step
  * @throws {RunbookSyntaxError} When NEXT/BREAK used outside FOR context
  */
-export function validateNEXTUsage(
-  conditionals: ParsedConditional[],
-  isForContext: boolean
-): void {
+export function validateNEXTUsage(conditionals: ParsedConditional[], isForContext: boolean): void {
   for (const conditional of conditionals) {
     // Check first-class NEXT/BREAK — requires FOR context
     if (conditional.action.type === 'NEXT' || conditional.action.type === 'BREAK') {
       if (!isForContext) {
         throw new RunbookSyntaxError(
-          `${conditional.action.type} is only valid within substeps of a FOR step`
+          `${conditional.action.type} is only valid within substeps of a FOR step`,
         );
       }
     }

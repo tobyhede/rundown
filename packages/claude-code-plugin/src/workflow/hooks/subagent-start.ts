@@ -39,7 +39,7 @@ export function handleSubagentStart(input: HookInput): SubagentStartResult {
     const stderr = error.stderr?.toString() ?? '';
     if (stderr.includes('No pending step')) {
       return {
-        violation: 'SubagentStart with no pending step. Step dispatch must precede agent start.'
+        violation: 'SubagentStart with no pending step. Step dispatch must precede agent start.',
       };
     }
     return {};

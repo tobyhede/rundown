@@ -47,7 +47,7 @@ export function registerStashCommand(program: Command): void {
           });
           output.flush();
         },
-        { json: options.json }
+        { json: options.json },
       );
     });
 }

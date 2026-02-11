@@ -1,11 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
-import {
-  createTestWorkspace,
-  runCli,
-  type TestWorkspace,
-} from './helpers/test-utils.js';
+import { createTestWorkspace, runCli, type TestWorkspace } from './helpers/test-utils.js';
 
 describe('error handling', () => {
   let workspace: TestWorkspace;
@@ -59,9 +55,7 @@ This doesn't have proper ## headers
 
       // Corrupt the state file
       const stateDir = workspace.statePath();
-      const stateFiles = await import('fs/promises').then((fs) =>
-        fs.readdir(stateDir)
-      );
+      const stateFiles = await import('fs/promises').then((fs) => fs.readdir(stateDir));
       const stateFile = stateFiles.find((f) => f.endsWith('.json'));
       if (stateFile) {
         await writeFile(join(stateDir, stateFile), 'not valid json');

@@ -46,7 +46,7 @@ export interface TableOptions {
 export function formatTable<T = Record<string, unknown>>(
   rows: T[],
   columns: Column<T>[],
-  options?: TableOptions
+  options?: TableOptions,
 ): string[] {
   const separator = options?.separator ?? '  ';
 
@@ -105,7 +105,7 @@ export function formatTable<T = Record<string, unknown>>(
 export function printTable<T = Record<string, unknown>>(
   rows: T[],
   columns: Column<T>[],
-  options?: TableOptions
+  options?: TableOptions,
 ): void {
   const lines = formatTable(rows, columns, options);
   for (const line of lines) {

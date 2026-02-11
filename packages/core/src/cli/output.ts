@@ -4,15 +4,7 @@ import type { RunbookMetadata, StepPosition, ActionBlockData } from './types.js'
 import type { OutputWriter } from './writer.js';
 import { getWriter } from './context.js';
 import { renderStepForCLI } from './render.js';
-import {
-  success,
-  failure,
-  warning,
-  info,
-  dim,
-  colorizeStatus,
-  colorizeResult,
-} from './colors.js';
+import { success, failure, warning, info, dim, colorizeStatus, colorizeResult } from './colors.js';
 
 const SEPARATOR = '-----';
 const SEPARATOR_CHAR = '─';
@@ -71,10 +63,7 @@ export function printSeparator(writer: OutputWriter = getWriter()): void {
  * @param pos - The current step position to display in the separator
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printStepSeparator(
-  pos: StepPosition,
-  writer: OutputWriter = getWriter()
-): void {
+export function printStepSeparator(pos: StepPosition, writer: OutputWriter = getWriter()): void {
   const stepNum = formatStepNumber(pos);
   const prefix = `${SEPARATOR_CHAR}${SEPARATOR_CHAR}${SEPARATOR_CHAR} ${stepNum} `;
   const remainingWidth = Math.max(0, SEPARATOR_WIDTH - prefix.length);
@@ -91,10 +80,7 @@ export function printStepSeparator(
  * @param meta - The RunbookMetadata to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printMetadata(
-  meta: RunbookMetadata,
-  writer: OutputWriter = getWriter()
-): void {
+export function printMetadata(meta: RunbookMetadata, writer: OutputWriter = getWriter()): void {
   writer.writeLine(`File:     ${meta.file}`);
   writer.writeLine(`State:    ${colorizeStatus(meta.state)}`);
   if (meta.prompted) {
@@ -111,10 +97,7 @@ export function printMetadata(
  * @param data - The ActionBlockData containing action details
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printActionBlock(
-  data: ActionBlockData,
-  writer: OutputWriter = getWriter()
-): void {
+export function printActionBlock(data: ActionBlockData, writer: OutputWriter = getWriter()): void {
   writer.writeLine(`Action:   ${info(data.action)}`);
   if (data.from) {
     writer.writeLine(`From:     ${formatStepNumber(data.from)}`);
@@ -145,7 +128,7 @@ export function printStepBlock(
   pos: StepPosition,
   item: Step | Substep,
   showCommand?: boolean,
-  writer: OutputWriter = getWriter()
+  writer: OutputWriter = getWriter(),
 ): void {
   writer.writeLine('');
   writer.writeLine(renderStepForCLI(item, pos.current, pos.substep, showCommand));
@@ -160,10 +143,7 @@ export function printStepBlock(
  * @param command - The shell command to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printCommandExec(
-  command: string,
-  writer: OutputWriter = getWriter()
-): void {
+export function printCommandExec(command: string, writer: OutputWriter = getWriter()): void {
   writer.writeLine('');
   writer.writeLine(info(`$ ${command}`));
   writer.writeLine('');
@@ -177,10 +157,7 @@ export function printCommandExec(
  * @param message - Optional completion message to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printRunbookComplete(
-  message?: string,
-  writer: OutputWriter = getWriter()
-): void {
+export function printRunbookComplete(message?: string, writer: OutputWriter = getWriter()): void {
   writer.writeLine(`Runbook:  ${success('COMPLETE')}`);
 }
 
@@ -192,10 +169,7 @@ export function printRunbookComplete(
  * @param message - Optional stop message to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printRunbookStopped(
-  message?: string,
-  writer: OutputWriter = getWriter()
-): void {
+export function printRunbookStopped(message?: string, writer: OutputWriter = getWriter()): void {
   writer.writeLine(`Runbook:  ${failure('STOP')}`);
 }
 
@@ -211,7 +185,7 @@ export function printRunbookStopped(
 export function printRunbookStoppedAtStep(
   pos: StepPosition,
   message?: string,
-  writer: OutputWriter = getWriter()
+  writer: OutputWriter = getWriter(),
 ): void {
   writer.writeLine(`Runbook:  ${failure('STOP')}`);
 }
@@ -224,10 +198,7 @@ export function printRunbookStoppedAtStep(
  * @param pos - The step position where the runbook was stashed
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printRunbookStashed(
-  pos: StepPosition,
-  writer: OutputWriter = getWriter()
-): void {
+export function printRunbookStashed(pos: StepPosition, writer: OutputWriter = getWriter()): void {
   writer.writeLine('');
   writer.writeLine(`Step:     ${info(formatPosition(pos))}`);
   writer.writeLine('');
@@ -241,9 +212,7 @@ export function printRunbookStashed(
  *
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printNoActiveRunbook(
-  writer: OutputWriter = getWriter()
-): void {
+export function printNoActiveRunbook(writer: OutputWriter = getWriter()): void {
   writer.writeLine(dim('No active runbook.'));
 }
 
@@ -270,7 +239,7 @@ export function printNoRunbooks(writer: OutputWriter = getWriter()): void {
 export function printPolicyDenied(
   command: string,
   reason: string,
-  writer: OutputWriter = getWriter()
+  writer: OutputWriter = getWriter(),
 ): void {
   writer.writeLine('');
   writer.writeLine(`${failure('Policy Denied')}: ${command}`);
@@ -296,7 +265,7 @@ export function printRunbookListEntry(
   step: string,
   file: string,
   title?: string,
-  writer: OutputWriter = getWriter()
+  writer: OutputWriter = getWriter(),
 ): void {
   const titleStr = title ? `  [${title}]` : '';
   writer.writeLine(`${id}  ${colorizeStatus(status)}  ${step}  ${file}${titleStr}`);

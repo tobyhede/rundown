@@ -24,7 +24,7 @@ describe('Synthetic Events Integration', () => {
         hook_event_name: 'PreToolUse',
         cwd: testDir,
         tool_name: 'Skill',
-        tool_input: { skill: 'rundown:verify' }
+        tool_input: { skill: 'rundown:verify' },
       };
 
       await dispatch(input);
@@ -42,9 +42,9 @@ describe('Synthetic Events Integration', () => {
         tool_name: 'Step',
         tool_input: {
           description: '1.1 - Review code',
-          subagent_type: 'code-review-agent'
+          subagent_type: 'code-review-agent',
         },
-        tool_use_id: 'toolu_abc123'
+        tool_use_id: 'toolu_abc123',
       } as HookInput;
 
       await dispatch(input);
@@ -53,8 +53,8 @@ describe('Synthetic Events Integration', () => {
       const metadata = await session.get('metadata');
       expect(metadata).toEqual(
         expect.objectContaining({
-          toolUseIdToStepId: { toolu_abc123: '1.1' }
-        })
+          toolUseIdToStepId: { toolu_abc123: '1.1' },
+        }),
       );
     });
 
@@ -64,7 +64,7 @@ describe('Synthetic Events Integration', () => {
         cwd: testDir,
         tool_name: 'Step',
         tool_input: { description: '1.1 - First step' },
-        tool_use_id: 'toolu_1'
+        tool_use_id: 'toolu_1',
       } as HookInput;
 
       const input2 = {
@@ -72,7 +72,7 @@ describe('Synthetic Events Integration', () => {
         cwd: testDir,
         tool_name: 'Step',
         tool_input: { description: '1.2 - Second step' },
-        tool_use_id: 'toolu_2'
+        tool_use_id: 'toolu_2',
       } as HookInput;
 
       await dispatch(input1);
@@ -82,7 +82,7 @@ describe('Synthetic Events Integration', () => {
       const metadata = await session.get('metadata');
       expect(metadata.toolUseIdToStepId).toEqual({
         toolu_1: '1.1',
-        toolu_2: '1.2'
+        toolu_2: '1.2',
       });
     });
   });

@@ -141,72 +141,56 @@ describe('renderTemplate', () => {
       const markdown = '## 1. Run {{variable';
       const variables = {};
 
-      expect(() => renderTemplate(markdown, variables)).toThrow(
-        /Parse error on line 1/
-      );
+      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
     });
 
     it('should throw on unclosed helper block', () => {
       const markdown = '{{#if condition}}content';
       const variables = { condition: true };
 
-      expect(() => renderTemplate(markdown, variables)).toThrow(
-        /Parse error on line 1/
-      );
+      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
     });
 
     it('should throw on deeply nested braces', () => {
       const markdown = '{{{{var}}}}';
       const variables = { var: 'test' };
 
-      expect(() => renderTemplate(markdown, variables)).toThrow(
-        /Parse error on line 1/
-      );
+      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
     });
 
     it('should throw on mismatched helper closing tags', () => {
       const markdown = '{{#if condition}}content{{/unless}}';
       const variables = { condition: true };
 
-      expect(() => renderTemplate(markdown, variables)).toThrow(
-        /if doesn't match unless/
-      );
+      expect(() => renderTemplate(markdown, variables)).toThrow(/if doesn't match unless/);
     });
 
     it('should throw on unclosed triple braces', () => {
       const markdown = '{{{variable';
       const variables = { variable: 'test' };
 
-      expect(() => renderTemplate(markdown, variables)).toThrow(
-        /Parse error on line 1/
-      );
+      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
     });
 
     it('should throw on mismatched brace count', () => {
       const markdown = '{{variable}';
       const variables = { variable: 'test' };
 
-      expect(() => renderTemplate(markdown, variables)).toThrow(
-        /Parse error on line 1/
-      );
+      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
     });
 
     it('should throw on unclosed nested helpers', () => {
       const markdown = '{{#if a}}{{#each b}}{{name}}{{/if}}';
       const variables = { a: true, b: [{ name: 'test' }] };
 
-      expect(() => renderTemplate(markdown, variables)).toThrow(
-        /each doesn't match if/
-      );
+      expect(() => renderTemplate(markdown, variables)).toThrow(/each doesn't match if/);
     });
 
     it('should throw on only opening braces', () => {
       const markdown = 'Some text {{';
       const variables = {};
 
-      expect(() => renderTemplate(markdown, variables)).toThrow(
-        /Parse error on line 1/
-      );
+      expect(() => renderTemplate(markdown, variables)).toThrow(/Parse error on line 1/);
     });
   });
 });
@@ -214,48 +198,41 @@ describe('renderTemplate', () => {
 
 describe('expandLoopVariables', () => {
   it('should expand named loop variable', () => {
-    expect(expandLoopVariables('Handle {{batch}}', { batch: '2' }))
-      .toBe('Handle 2');
+    expect(expandLoopVariables('Handle {{batch}}', { batch: '2' })).toBe('Handle 2');
   });
 
   it('should expand Index built-in', () => {
-    expect(expandLoopVariables('Iteration {{Index}}', { Index: '3' }))
-      .toBe('Iteration 3');
+    expect(expandLoopVariables('Iteration {{Index}}', { Index: '3' })).toBe('Iteration 3');
   });
 
   it('should expand both named variable and Index', () => {
-    expect(expandLoopVariables('{{batch}} of {{Index}}', { batch: '2', Index: '2' }))
-      .toBe('2 of 2');
+    expect(expandLoopVariables('{{batch}} of {{Index}}', { batch: '2', Index: '2' })).toBe(
+      '2 of 2',
+    );
   });
 
   it('should preserve unmatched variables', () => {
-    expect(expandLoopVariables('{{batch}} and {{other}}', { batch: '1' }))
-      .toBe('1 and {{other}}');
+    expect(expandLoopVariables('{{batch}} and {{other}}', { batch: '1' })).toBe('1 and {{other}}');
   });
 
   it('should return text unchanged when no variables match', () => {
-    expect(expandLoopVariables('No variables here', { batch: '1' }))
-      .toBe('No variables here');
+    expect(expandLoopVariables('No variables here', { batch: '1' })).toBe('No variables here');
   });
 
   it('should handle variable with spaces around braces', () => {
-    expect(expandLoopVariables('{{ batch }}', { batch: '5' }))
-      .toBe('5');
+    expect(expandLoopVariables('{{ batch }}', { batch: '5' })).toBe('5');
   });
 
   it('should expand multiple occurrences of same variable', () => {
-    expect(expandLoopVariables('{{i}} then {{i}}', { i: '3' }))
-      .toBe('3 then 3');
+    expect(expandLoopVariables('{{i}} then {{i}}', { i: '3' })).toBe('3 then 3');
   });
 
   it('should expand Step variable', () => {
-    expect(expandLoopVariables('At step {{Step}}', { Step: '3.1' }))
-      .toBe('At step 3.1');
+    expect(expandLoopVariables('At step {{Step}}', { Step: '3.1' })).toBe('At step 3.1');
   });
 
   it('should expand Step for named step', () => {
-    expect(expandLoopVariables('At {{Step}}', { Step: 'ErrorHandler' }))
-      .toBe('At ErrorHandler');
+    expect(expandLoopVariables('At {{Step}}', { Step: 'ErrorHandler' })).toBe('At ErrorHandler');
   });
 });
 
@@ -302,7 +279,7 @@ describe('shellEscapeValue', () => {
   });
 
   it('should handle values with double quotes', () => {
-    expect(shellEscapeValue('say "hello"')).toBe("'say \"hello\"'");
+    expect(shellEscapeValue('say "hello"')).toBe('\'say "hello"\'');
   });
 
   it('should handle values with newlines', () => {
@@ -326,34 +303,28 @@ describe('shellEscapeValue', () => {
 
 describe('substituteText', () => {
   it('should substitute defined variables', () => {
-    expect(substituteText('Hello {{name}}', { name: 'World' }))
-      .toBe('Hello World');
+    expect(substituteText('Hello {{name}}', { name: 'World' })).toBe('Hello World');
   });
 
   it('should preserve undefined variables as literal text', () => {
-    expect(substituteText('Hello {{name}}', {}))
-      .toBe('Hello {{name}}');
+    expect(substituteText('Hello {{name}}', {})).toBe('Hello {{name}}');
   });
 
   it('should apply escape function when provided', () => {
     const escapeFn = (v: string) => `[${v}]`;
-    expect(substituteText('cmd {{arg}}', { arg: 'value' }, escapeFn))
-      .toBe('cmd [value]');
+    expect(substituteText('cmd {{arg}}', { arg: 'value' }, escapeFn)).toBe('cmd [value]');
   });
 
   it('should handle multiple occurrences', () => {
-    expect(substituteText('{{x}} and {{x}}', { x: 'A' }))
-      .toBe('A and A');
+    expect(substituteText('{{x}} and {{x}}', { x: 'A' })).toBe('A and A');
   });
 
   it('should handle multiple different variables', () => {
-    expect(substituteText('{{a}} {{b}}', { a: '1', b: '2' }))
-      .toBe('1 2');
+    expect(substituteText('{{a}} {{b}}', { a: '1', b: '2' })).toBe('1 2');
   });
 
   it('should handle spaces in braces', () => {
-    expect(substituteText('{{ name }}', { name: 'test' }))
-      .toBe('test');
+    expect(substituteText('{{ name }}', { name: 'test' })).toBe('test');
   });
 });
 
@@ -427,7 +398,9 @@ describe('substituteRunbookVariables', () => {
     });
     expect(result.steps[0].substeps![0].description).toBe('Check web server');
     // URL contains special chars (? and &) so gets quoted
-    expect(result.steps[0].substeps![0].command!.code).toContain("'http://example.com/path?q=1&x=2'");
+    expect(result.steps[0].substeps![0].command!.code).toContain(
+      "'http://example.com/path?q=1&x=2'",
+    );
   });
 
   it('prevents shell injection via variable substitution', () => {
@@ -457,22 +430,24 @@ describe('substituteRunbookVariables', () => {
 
 describe('expandLoopVariablesForCommand', () => {
   it('should shell-escape values', () => {
-    expect(expandLoopVariablesForCommand('echo {{msg}}', { msg: 'hello world' }))
-      .toBe("echo 'hello world'");
+    expect(expandLoopVariablesForCommand('echo {{msg}}', { msg: 'hello world' })).toBe(
+      "echo 'hello world'",
+    );
   });
 
   it('should pass through safe numeric values unquoted', () => {
-    expect(expandLoopVariablesForCommand('echo {{Index}}', { Index: '3' }))
-      .toBe('echo 3');
+    expect(expandLoopVariablesForCommand('echo {{Index}}', { Index: '3' })).toBe('echo 3');
   });
 
   it('should preserve unmatched variables', () => {
-    expect(expandLoopVariablesForCommand('{{batch}} and {{other}}', { batch: '1' }))
-      .toBe('1 and {{other}}');
+    expect(expandLoopVariablesForCommand('{{batch}} and {{other}}', { batch: '1' })).toBe(
+      '1 and {{other}}',
+    );
   });
 
   it('should shell-escape values with special characters', () => {
-    expect(expandLoopVariablesForCommand('deploy {{target}}', { target: 'prod; drop db' }))
-      .toBe("deploy 'prod; drop db'");
+    expect(expandLoopVariablesForCommand('deploy {{target}}', { target: 'prod; drop db' })).toBe(
+      "deploy 'prod; drop db'",
+    );
   });
 });

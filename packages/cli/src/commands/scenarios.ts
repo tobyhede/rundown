@@ -50,9 +50,11 @@ export function registerScenariosCommand(program: Command): void {
     .description('Execute a scenario and verify the result')
     .option('-q, --quiet', 'Suppress command output')
     .option('--json', 'Output as JSON for programmatic use')
-    .action(async (file: string, scenarioName: string, options: { quiet?: boolean; json?: boolean }) => {
-      await runScenario(file, scenarioName, options.quiet ?? false, options.json);
-    });
+    .action(
+      async (file: string, scenarioName: string, options: { quiet?: boolean; json?: boolean }) => {
+        await runScenario(file, scenarioName, options.quiet ?? false, options.json);
+      },
+    );
 }
 
 /**
@@ -186,7 +188,7 @@ function listScenarios(scenarios: Scenarios, output: OutputEmitter): void {
 function showScenarioDetails(name: string, scenarios: Scenarios, output: OutputEmitter): void {
   if (!(name in scenarios)) {
     output.error(`Scenario "${name}" not found`, 'SCENARIO_NOT_FOUND', {
-      available: Object.keys(scenarios)
+      available: Object.keys(scenarios),
     });
     output.flush();
     process.exit(1);
@@ -195,13 +197,16 @@ function showScenarioDetails(name: string, scenarios: Scenarios, output: OutputE
   const scenario = scenarios[name];
 
   // Emit unified scenario detail - renderer handles formatting
-  output.detail({
-    name,
-    description: scenario.description,
-    expected: scenario.result,
-    commands: scenario.commands,
-    tags: (scenario as { tags?: string[] }).tags
-  }, 'scenario');
+  output.detail(
+    {
+      name,
+      description: scenario.description,
+      expected: scenario.result,
+      commands: scenario.commands,
+      tags: (scenario as { tags?: string[] }).tags,
+    },
+    'scenario',
+  );
   output.flush();
 }
 
@@ -242,7 +247,12 @@ function extractReferencedRunbooks(scenario: Scenario): string[] {
  * @param quiet - Whether to suppress command output
  * @param json - Whether to output as JSON
  */
-async function runScenario(file: string, scenarioName: string, quiet: boolean, json?: boolean): Promise<void> {
+async function runScenario(
+  file: string,
+  scenarioName: string,
+  quiet: boolean,
+  json?: boolean,
+): Promise<void> {
   const output = new OutputEmitter({ json });
 
   // 1. Load and validate scenarios
@@ -250,7 +260,7 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean, j
 
   if (!(scenarioName in scenarios)) {
     output.error(`Scenario "${scenarioName}" not found`, 'SCENARIO_NOT_FOUND', {
-      available: Object.keys(scenarios)
+      available: Object.keys(scenarios),
     });
     output.flush();
     process.exit(1);
@@ -307,7 +317,7 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean, j
           cwd: tmpDir,
           encoding: 'utf-8',
           stdio: runQuiet ? 'pipe' : 'inherit',
-          env: { ...process.env, RUNDOWN_LOG: '0' }
+          env: { ...process.env, RUNDOWN_LOG: '0' },
         });
       } catch {
         // Command may exit non-zero for STOP scenarios, which is expected
@@ -323,11 +333,11 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean, j
     let actualResult = 'UNKNOWN';
 
     try {
-      const stateFiles = readdirSync(runsDir).filter(f => f.endsWith('.json'));
+      const stateFiles = readdirSync(runsDir).filter((f) => f.endsWith('.json'));
       if (stateFiles.length > 0) {
         // Get most recently modified state file
         const latestFile = stateFiles
-          .map(f => ({ name: f, path: join(runsDir, f) }))
+          .map((f) => ({ name: f, path: join(runsDir, f) }))
           .sort((a, b) => {
             const statA = readFileSync(a.path, 'utf-8');
             const statB = readFileSync(b.path, 'utf-8');
@@ -335,7 +345,9 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean, j
           })[0];
 
         const stateContent = readFileSync(latestFile.path, 'utf-8');
-        const state = JSON.parse(stateContent) as { variables?: { completed?: boolean; stopped?: boolean } };
+        const state = JSON.parse(stateContent) as {
+          variables?: { completed?: boolean; stopped?: boolean };
+        };
 
         if (state.variables?.completed) {
           actualResult = 'COMPLETE';
@@ -350,12 +362,15 @@ async function runScenario(file: string, scenarioName: string, quiet: boolean, j
     // 6. Report result using unified output
     const passed = actualResult === scenario.result;
 
-    output.detail({
-      result: passed,
-      scenario: scenarioName,
-      expected: scenario.result,
-      actual: actualResult,
-    }, 'scenario_result');
+    output.detail(
+      {
+        result: passed,
+        scenario: scenarioName,
+        expected: scenario.result,
+        actual: actualResult,
+      },
+      'scenario_result',
+    );
     output.flush();
 
     if (!passed) {

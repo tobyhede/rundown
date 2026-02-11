@@ -9,10 +9,7 @@
  * command dispatcher.
  */
 
-import {
-  RunbookStateManager,
-  type ExecutionResult,
-} from '@rundown-org/core';
+import { RunbookStateManager, type ExecutionResult } from '@rundown-org/core';
 import { isValidResult } from '../services/execution.js';
 
 /**
@@ -52,7 +49,7 @@ export interface EchoCommandResult {
 export async function executeEchoLogic(
   sequence: string[],
   commandArgs: string[],
-  cwd: string
+  cwd: string,
 ): Promise<EchoCommandResult> {
   const manager = new RunbookStateManager(cwd);
   const state = await manager.getActive();
@@ -66,9 +63,8 @@ export async function executeEchoLogic(
   }
 
   // Normalize sequence: lowercase and use default if empty
-  const normalizedSequence = sequence.length > 0
-    ? sequence.map(r => r.toLowerCase())
-    : DEFAULT_RESULT_SEQUENCE;
+  const normalizedSequence =
+    sequence.length > 0 ? sequence.map((r) => r.toLowerCase()) : DEFAULT_RESULT_SEQUENCE;
 
   // Validate all results are 'pass' or 'fail'
   for (const r of normalizedSequence) {

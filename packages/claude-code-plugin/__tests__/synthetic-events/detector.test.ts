@@ -9,7 +9,7 @@ describe('detectSyntheticEvents', () => {
       const input: HookInput = {
         hook_event_name: 'UserPromptSubmit',
         cwd: '/test',
-        user_message: '/cipherpowers:verify check this'
+        user_message: '/cipherpowers:verify check this',
       };
 
       const events = detectSyntheticEvents(input);
@@ -17,8 +17,8 @@ describe('detectSyntheticEvents', () => {
       expect(events).toContainEqual(
         expect.objectContaining({
           syntheticEvent: 'SlashCommandStart',
-          commandName: 'cipherpowers:verify'
-        })
+          commandName: 'cipherpowers:verify',
+        }),
       );
     });
 
@@ -26,7 +26,7 @@ describe('detectSyntheticEvents', () => {
       const input: HookInput = {
         hook_event_name: 'UserPromptSubmit',
         cwd: '/test',
-        user_message: '/commit fix the bug'
+        user_message: '/commit fix the bug',
       };
 
       const events = detectSyntheticEvents(input);
@@ -34,8 +34,8 @@ describe('detectSyntheticEvents', () => {
       expect(events).toContainEqual(
         expect.objectContaining({
           syntheticEvent: 'SlashCommandStart',
-          commandName: 'commit'
-        })
+          commandName: 'commit',
+        }),
       );
     });
   });
@@ -44,7 +44,7 @@ describe('detectSyntheticEvents', () => {
     it('emits SlashCommandEnd on Stop', () => {
       const input: HookInput = {
         hook_event_name: 'Stop',
-        cwd: '/test'
+        cwd: '/test',
       };
 
       const events = detectSyntheticEvents(input);
@@ -59,7 +59,7 @@ describe('detectSyntheticEvents', () => {
         hook_event_name: 'PreToolUse',
         cwd: '/test',
         tool_name: 'Skill',
-        tool_input: { skill: 'rundown:verifying-by-consensus' }
+        tool_input: { skill: 'rundown:verifying-by-consensus' },
       };
 
       const events = detectSyntheticEvents(input);
@@ -67,8 +67,8 @@ describe('detectSyntheticEvents', () => {
       expect(events).toContainEqual(
         expect.objectContaining({
           syntheticEvent: 'SkillStart',
-          skillName: 'rundown:verifying-by-consensus'
-        })
+          skillName: 'rundown:verifying-by-consensus',
+        }),
       );
     });
 
@@ -77,7 +77,7 @@ describe('detectSyntheticEvents', () => {
         hook_event_name: 'PostToolUse',
         cwd: '/test',
         tool_name: 'Skill',
-        tool_input: { skill: 'cipherpowers:commit' }
+        tool_input: { skill: 'cipherpowers:commit' },
       };
 
       const events = detectSyntheticEvents(input);
@@ -85,8 +85,8 @@ describe('detectSyntheticEvents', () => {
       expect(events).toContainEqual(
         expect.objectContaining({
           syntheticEvent: 'SkillEnd',
-          skillName: 'cipherpowers:commit'
-        })
+          skillName: 'cipherpowers:commit',
+        }),
       );
     });
   });
@@ -99,9 +99,9 @@ describe('detectSyntheticEvents', () => {
         tool_name: 'Step',
         tool_input: {
           description: '1.1 - Review authentication code',
-          subagent_type: 'cipherpowers:code-review-agent'
+          subagent_type: 'cipherpowers:code-review-agent',
         },
-        tool_use_id: 'toolu_abc123'
+        tool_use_id: 'toolu_abc123',
       } as HookInput;
 
       const events = detectSyntheticEvents(input);
@@ -111,8 +111,8 @@ describe('detectSyntheticEvents', () => {
           syntheticEvent: 'SubagentStart',
           stepId: '1.1',
           toolUseId: 'toolu_abc123',
-          subagentType: 'cipherpowers:code-review-agent'
-        })
+          subagentType: 'cipherpowers:code-review-agent',
+        }),
       );
     });
 
@@ -122,8 +122,8 @@ describe('detectSyntheticEvents', () => {
         cwd: '/test',
         tool_name: 'Step',
         tool_input: {
-          description: 'General exploration step'
-        }
+          description: 'General exploration step',
+        },
       };
 
       const events = detectSyntheticEvents(input);
@@ -131,8 +131,8 @@ describe('detectSyntheticEvents', () => {
       expect(events).toContainEqual(
         expect.objectContaining({
           syntheticEvent: 'SubagentStart',
-          stepId: undefined
-        })
+          stepId: undefined,
+        }),
       );
     });
   });
@@ -141,7 +141,7 @@ describe('detectSyntheticEvents', () => {
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       cwd: '/test',
-      tool_name: 'Edit'
+      tool_name: 'Edit',
     };
 
     expect(detectSyntheticEvents(input)).toEqual([]);

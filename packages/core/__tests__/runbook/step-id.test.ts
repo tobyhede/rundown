@@ -36,33 +36,20 @@ describe('stepIdToString', () => {
 
 describe('stepIdEquals', () => {
   it('returns true for equal positions', () => {
-    expect(stepIdEquals(
-      { step: '2', substep: '1' },
-      { step: '2', substep: '1' }
-    )).toBe(true);
+    expect(stepIdEquals({ step: '2', substep: '1' }, { step: '2', substep: '1' })).toBe(true);
   });
 
   it('returns false for different steps', () => {
-    expect(stepIdEquals(
-      { step: '2', substep: '1' },
-      { step: '3', substep: '1' }
-    )).toBe(false);
+    expect(stepIdEquals({ step: '2', substep: '1' }, { step: '3', substep: '1' })).toBe(false);
   });
 
   it('returns false for different substeps', () => {
-    expect(stepIdEquals(
-      { step: '2', substep: '1' },
-      { step: '2', substep: '2' }
-    )).toBe(false);
+    expect(stepIdEquals({ step: '2', substep: '1' }, { step: '2', substep: '2' })).toBe(false);
   });
 
   it('returns false when one has substep and other does not', () => {
-    expect(stepIdEquals(
-      { step: '2', substep: '1' },
-      { step: '2' }
-    )).toBe(false);
+    expect(stepIdEquals({ step: '2', substep: '1' }, { step: '2' })).toBe(false);
   });
-
 });
 
 describe('removed dynamic formats', () => {

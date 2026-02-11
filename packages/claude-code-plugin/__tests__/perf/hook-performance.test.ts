@@ -2,7 +2,12 @@
 // Performance budget tests for hook processing
 
 import * as path from 'path';
-import { dispatch, shouldProcessHook, gateMatchesKeywords, gateMatchesFilePattern } from '../../src/dispatcher.js';
+import {
+  dispatch,
+  shouldProcessHook,
+  gateMatchesKeywords,
+  gateMatchesFilePattern,
+} from '../../src/dispatcher.js';
 import { detectSyntheticEvents } from '../../src/synthetic-events/detector.js';
 import { loadConfig } from '../../src/shared/config.js';
 import {
@@ -11,7 +16,7 @@ import {
   measureExecutionTime,
   measureExecutionTimeSync,
   createTempTestDir,
-  writeTestConfig
+  writeTestConfig,
 } from '../helpers/test-utils.js';
 import type { GateConfig, HookConfig } from '../../src/shared/index.js';
 
@@ -49,22 +54,22 @@ describe('Hook Performance Budget', () => {
         hooks: {
           PostToolUse: {
             enabled_tools: ['Edit'],
-            gates: ['test-gate']
-          }
+            gates: ['test-gate'],
+          },
         },
         gates: {
           'test-gate': {
             command: 'echo "test"',
-            on_pass: 'CONTINUE'
-          }
-        }
+            on_pass: 'CONTINUE',
+          },
+        },
       });
       await writeTestConfig(testDir.path, config);
 
       const input = createMockHookInput('PostToolUse', {
         cwd: testDir.path,
         tool_name: 'Edit',
-        file_path: path.join(testDir.path, 'src/file.ts')
+        file_path: path.join(testDir.path, 'src/file.ts'),
       });
 
       // Warm up
@@ -80,17 +85,17 @@ describe('Hook Performance Budget', () => {
         hooks: {
           SubagentStop: {
             enabled_agents: ['test-agent'],
-            gates: []
-          }
+            gates: [],
+          },
         },
-        gates: {}
+        gates: {},
       });
       await writeTestConfig(testDir.path, config);
 
       const input = createMockHookInput('SubagentStop', {
         cwd: testDir.path,
         agent_name: 'test-agent',
-        output: 'STATUS: PASS'
+        output: 'STATUS: PASS',
       });
 
       // Warm up
@@ -103,7 +108,7 @@ describe('Hook Performance Budget', () => {
     it('handles missing config gracefully and quickly', async () => {
       // No config file in testDir
       const input = createMockHookInput('PostToolUse', {
-        cwd: testDir.path
+        cwd: testDir.path,
       });
 
       const { durationMs } = await measureExecutionTime(() => dispatch(input));
@@ -133,7 +138,7 @@ describe('Hook Performance Budget', () => {
     it('filters PostToolUse under budget', () => {
       const input = createMockHookInput('PostToolUse');
       const hookConfig: HookConfig = {
-        enabled_tools: ['Edit', 'Write', 'Read']
+        enabled_tools: ['Edit', 'Write', 'Read'],
       };
 
       const { durationMs } = measureExecutionTimeSync(() => {
@@ -149,7 +154,7 @@ describe('Hook Performance Budget', () => {
     it('filters SubagentStop under budget', () => {
       const input = createMockHookInput('SubagentStop');
       const hookConfig: HookConfig = {
-        enabled_agents: ['agent-a', 'agent-b', 'agent-c']
+        enabled_agents: ['agent-a', 'agent-b', 'agent-c'],
       };
 
       const { durationMs } = measureExecutionTimeSync(() => {
@@ -166,7 +171,7 @@ describe('Hook Performance Budget', () => {
     it('matches keywords under budget', () => {
       const gateConfig: GateConfig = {
         command: 'test',
-        keywords: ['test', 'verify', 'check', 'validate', 'run']
+        keywords: ['test', 'verify', 'check', 'validate', 'run'],
       };
       const message = 'Please run the tests and verify everything works correctly';
 
@@ -181,7 +186,7 @@ describe('Hook Performance Budget', () => {
 
     it('handles no keywords under budget', () => {
       const gateConfig: GateConfig = {
-        command: 'test'
+        command: 'test',
       };
       const message = 'Some user message';
 
@@ -199,7 +204,7 @@ describe('Hook Performance Budget', () => {
     it('matches patterns under budget', async () => {
       const gateConfig: GateConfig = {
         command: 'test',
-        file_patterns: ['packages/cts/**', 'packages/shared/**', 'src/**/*.ts']
+        file_patterns: ['packages/cts/**', 'packages/shared/**', 'src/**/*.ts'],
       };
       const filePath = '/project/packages/cts/src/index.ts';
       const cwd = '/project';
@@ -210,7 +215,7 @@ describe('Hook Performance Budget', () => {
       const durations: number[] = [];
       for (let i = 0; i < ITERATIONS; i++) {
         const { durationMs } = await measureExecutionTime(() =>
-          gateMatchesFilePattern(gateConfig, filePath, cwd)
+          gateMatchesFilePattern(gateConfig, filePath, cwd),
         );
         durations.push(durationMs);
       }
@@ -221,13 +226,13 @@ describe('Hook Performance Budget', () => {
 
     it('handles no patterns under budget', async () => {
       const gateConfig: GateConfig = {
-        command: 'test'
+        command: 'test',
       };
       const filePath = '/project/src/file.ts';
       const cwd = '/project';
 
       const { durationMs } = await measureExecutionTime(() =>
-        gateMatchesFilePattern(gateConfig, filePath, cwd)
+        gateMatchesFilePattern(gateConfig, filePath, cwd),
       );
 
       expect(durationMs).toBeLessThan(5);
@@ -240,17 +245,17 @@ describe('Synthetic Event Detection Performance', () => {
     const inputs = [
       createMockHookInput('PreToolUse', {
         tool_name: 'Skill',
-        tool_input: { skill: 'rundown:verify' }
+        tool_input: { skill: 'rundown:verify' },
       }),
       createMockHookInput('PostToolUse', {
         tool_name: 'Task',
         tool_input: { description: '1.1 - Implement feature', subagent_type: 'code-agent' },
-        tool_use_id: 'tool-123'
+        tool_use_id: 'tool-123',
       }),
       createMockHookInput('UserPromptSubmit', {
-        user_message: '/execute the plan'
+        user_message: '/execute the plan',
       }),
-      createMockHookInput('Stop')
+      createMockHookInput('Stop'),
     ];
 
     for (const input of inputs) {
@@ -269,11 +274,12 @@ describe('Synthetic Event Detection Performance', () => {
     const input = createMockHookInput('PostToolUse', {
       tool_name: 'Task',
       tool_input: {
-        description: '12.5 - This is a very long description that contains lots of text and details about what the task should accomplish including multiple sentences and various punctuation marks!',
+        description:
+          '12.5 - This is a very long description that contains lots of text and details about what the task should accomplish including multiple sentences and various punctuation marks!',
         subagent_type: 'cipherpowers:ultrathink-debugger',
-        prompt: 'A long prompt that explains what the agent should do in great detail...'
+        prompt: 'A long prompt that explains what the agent should do in great detail...',
       },
-      tool_use_id: 'a'.repeat(100) // Long ID
+      tool_use_id: 'a'.repeat(100), // Long ID
     });
 
     const { durationMs } = measureExecutionTimeSync(() => {
@@ -295,7 +301,7 @@ describe('Memory Usage', () => {
       await writeTestConfig(testDir.path, config);
 
       const input = createMockHookInput('PostToolUse', {
-        cwd: testDir.path
+        cwd: testDir.path,
       });
 
       // Force GC if available
@@ -333,12 +339,12 @@ describe('Concurrent Processing', () => {
 
     try {
       const config = createMockConfig({
-        gates: {}
+        gates: {},
       });
       await writeTestConfig(testDir.path, config);
 
       const input = createMockHookInput('PostToolUse', {
-        cwd: testDir.path
+        cwd: testDir.path,
       });
 
       // Launch 10 concurrent dispatches

@@ -103,9 +103,13 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
   }
 
   // Reject dynamic format placeholders {N}, {n}, and NEXT
-  if (stepInput === '{N}' || stepInput.startsWith('{N}.') ||
-      stepInput === 'NEXT' || stepInput.startsWith('NEXT.') ||
-      stepInput.includes('{n}')) {
+  if (
+    stepInput === '{N}' ||
+    stepInput.startsWith('{N}.') ||
+    stepInput === 'NEXT' ||
+    stepInput.startsWith('NEXT.') ||
+    stepInput.includes('{n}')
+  ) {
     return null;
   }
 

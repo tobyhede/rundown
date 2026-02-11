@@ -19,7 +19,7 @@ export function renderStepForCLI(
   item: Readonly<RenderableItem>,
   instanceNumber?: string,
   substepNumber?: string,
-  showCommand?: boolean
+  showCommand?: boolean,
 ): string {
   const lines: string[] = [];
 

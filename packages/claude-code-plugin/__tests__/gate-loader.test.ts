@@ -44,12 +44,12 @@ describe('Gate Loader - Shell Commands', () => {
 describe('Gate Loader - executeGate', () => {
   const mockInput: HookInput = {
     hook_event_name: 'PostToolUse',
-    cwd: process.cwd()
+    cwd: process.cwd(),
   };
 
   test('shell command gate with exit 0 returns passed=true', async () => {
     const gateConfig: GateConfig = {
-      command: 'echo "success"'
+      command: 'echo "success"',
     };
 
     const result = await executeGate('test-gate', gateConfig, mockInput);
@@ -60,7 +60,7 @@ describe('Gate Loader - executeGate', () => {
 
   test('shell command gate with exit 1 returns passed=false', async () => {
     const gateConfig: GateConfig = {
-      command: 'exit 1'
+      command: 'exit 1',
     };
 
     const result = await executeGate('test-gate', gateConfig, mockInput);
@@ -74,7 +74,7 @@ describe('Gate Loader - executeGate', () => {
     };
 
     await expect(executeGate('nonexistent-gate', gateConfig, mockInput)).rejects.toThrow(
-      'Failed to load built-in gate nonexistent-gate'
+      'Failed to load built-in gate nonexistent-gate',
     );
   });
 });
@@ -95,11 +95,14 @@ describe('Plugin Gate Loading', () => {
       gates: {
         'plan-compliance': {
           command: 'node dist/gates/plan-compliance.js',
-          on_fail: 'BLOCK'
-        }
-      }
+          on_fail: 'BLOCK',
+        },
+      },
     };
-    await fs.writeFile(path.join(cipherpowersDir, 'rundown-plugin.json'), JSON.stringify(gatesConfig));
+    await fs.writeFile(
+      path.join(cipherpowersDir, 'rundown-plugin.json'),
+      JSON.stringify(gatesConfig),
+    );
 
     // Set CLAUDE_PLUGIN_ROOT to point to rundown sibling
     originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
@@ -121,13 +124,13 @@ describe('Plugin Gate Loading', () => {
 
   test('throws when plugin rundown-plugin.json not found', async () => {
     await expect(loadPluginGate('nonexistent', 'some-gate')).rejects.toThrow(
-      "Cannot find rundown-plugin.json for plugin 'nonexistent'"
+      "Cannot find rundown-plugin.json for plugin 'nonexistent'",
     );
   });
 
   test('throws when gate not found in plugin', async () => {
     await expect(loadPluginGate('cipherpowers', 'nonexistent-gate')).rejects.toThrow(
-      "Gate 'nonexistent-gate' not found in plugin 'cipherpowers'"
+      "Gate 'nonexistent-gate' not found in plugin 'cipherpowers'",
     );
   });
 
@@ -142,9 +145,9 @@ describe('Plugin Gate Loading', () => {
         gates: {
           'bad-gate': {
             // Missing required fields (no command, plugin, or gate)
-          }
-        }
-      })
+          },
+        },
+      }),
     );
 
     // This should succeed loading but the gate config is invalid
@@ -156,12 +159,12 @@ describe('Plugin Gate Loading', () => {
   test('executeGate handles plugin gate reference', async () => {
     const gateConfig: GateConfig = {
       plugin: 'cipherpowers',
-      gate: 'plan-compliance'
+      gate: 'plan-compliance',
     };
 
     const mockInput: HookInput = {
       hook_event_name: 'SubagentStop',
-      cwd: '/some/project'
+      cwd: '/some/project',
     };
 
     // The command from cipherpowers will be executed in cipherpowers plugin dir

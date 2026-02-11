@@ -46,8 +46,8 @@ describe('setExecSync', () => {
       expect.objectContaining({
         cwd: '/project/path',
         stdio: 'pipe',
-        encoding: 'utf-8'
-      })
+        encoding: 'utf-8',
+      }),
     );
   });
 });
@@ -74,7 +74,7 @@ describe('rundown', () => {
     expect(mockExec).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(Array),
-      expect.objectContaining({ cwd: '/custom/directory' })
+      expect.objectContaining({ cwd: '/custom/directory' }),
     );
   });
 
@@ -87,14 +87,14 @@ describe('rundown', () => {
     expect(mockExec).toHaveBeenCalledWith(
       'node',
       [expect.any(String), 'fail', '--agent', 'abc-123', '--reason', 'Task incomplete'],
-      expect.any(Object)
+      expect.any(Object),
     );
   });
 
   it('propagates execSync errors', () => {
     const mockExec = createMockExecSyncError({
       message: 'Command failed',
-      stderr: 'Error details'
+      stderr: 'Error details',
     });
     setExecSync(mockExec);
 
@@ -108,11 +108,7 @@ describe('rundown', () => {
 
       rundown(['status'], '/test');
 
-      expect(mockExec).toHaveBeenCalledWith(
-        'node',
-        expect.any(Array),
-        expect.any(Object)
-      );
+      expect(mockExec).toHaveBeenCalledWith('node', expect.any(Array), expect.any(Object));
     });
 
     it('includes full CLI path in arguments', () => {
@@ -136,7 +132,7 @@ describe('rundown', () => {
       expect(mockExec).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(Array),
-        expect.objectContaining({ stdio: 'pipe' })
+        expect.objectContaining({ stdio: 'pipe' }),
       );
     });
 
@@ -149,7 +145,7 @@ describe('rundown', () => {
       expect(mockExec).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(Array),
-        expect.objectContaining({ encoding: 'utf-8' })
+        expect.objectContaining({ encoding: 'utf-8' }),
       );
     });
   });

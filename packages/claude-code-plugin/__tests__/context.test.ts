@@ -86,13 +86,13 @@ describe('extractNameAndStage coverage', () => {
     const input = {
       hook_event_name: 'SlashCommandStart',
       cwd: testDir,
-      command: '/commit'
+      command: '/commit',
     };
     // Creates .claude/context/commit-start.md
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
       path.join(testDir, '.claude', 'context', 'commit-start.md'),
-      'Start content'
+      'Start content',
     );
     const result = await injectContext('SlashCommandStart', input as any);
     expect(result).toBe('Start content');
@@ -102,7 +102,7 @@ describe('extractNameAndStage coverage', () => {
     const input = {
       hook_event_name: 'SlashCommandEnd',
       cwd: testDir,
-      command: '/commit'
+      command: '/commit',
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(path.join(testDir, '.claude', 'context', 'commit-end.md'), 'End content');
@@ -114,12 +114,12 @@ describe('extractNameAndStage coverage', () => {
     const input = {
       hook_event_name: 'SkillStart',
       cwd: testDir,
-      skill: 'cipherpowers:brainstorm'
+      skill: 'cipherpowers:brainstorm',
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
       path.join(testDir, '.claude', 'context', 'brainstorm-start.md'),
-      'Skill start'
+      'Skill start',
     );
     const result = await injectContext('SkillStart', input as any);
     expect(result).toBe('Skill start');
@@ -128,12 +128,12 @@ describe('extractNameAndStage coverage', () => {
   it('handles UserPromptSubmit', async () => {
     const input = {
       hook_event_name: 'UserPromptSubmit',
-      cwd: testDir
+      cwd: testDir,
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
       path.join(testDir, '.claude', 'context', 'prompt-submit.md'),
-      'Prompt context'
+      'Prompt context',
     );
     const result = await injectContext('UserPromptSubmit', input as any);
     expect(result).toBe('Prompt context');
@@ -142,7 +142,7 @@ describe('extractNameAndStage coverage', () => {
   it('returns null for unknown hook event', async () => {
     const input = {
       hook_event_name: 'UnknownEvent',
-      cwd: testDir
+      cwd: testDir,
     };
     const result = await injectContext('UnknownEvent', input as any);
     expect(result).toBeNull();
@@ -164,12 +164,12 @@ describe('Synthetic event context injection', () => {
     const input = {
       hook_event_name: 'SlashCommandStart',
       cwd: testDir,
-      command: 'cipherpowers:verify'
+      command: 'cipherpowers:verify',
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
       path.join(testDir, '.claude', 'context', 'verify-start.md'),
-      'Verify context'
+      'Verify context',
     );
     const result = await injectContext('SlashCommandStart', input as any);
     expect(result).toBe('Verify context');
@@ -179,12 +179,12 @@ describe('Synthetic event context injection', () => {
     const input = {
       hook_event_name: 'SlashCommandEnd',
       cwd: testDir,
-      command: 'cipherpowers:brainstorm'
+      command: 'cipherpowers:brainstorm',
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
       path.join(testDir, '.claude', 'context', 'brainstorm-end.md'),
-      'Brainstorm end context'
+      'Brainstorm end context',
     );
     const result = await injectContext('SlashCommandEnd', input as any);
     expect(result).toBe('Brainstorm end context');
@@ -194,12 +194,12 @@ describe('Synthetic event context injection', () => {
     const input = {
       hook_event_name: 'SkillStart',
       cwd: testDir,
-      skill: 'rundown:brainstorm'
+      skill: 'rundown:brainstorm',
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
       path.join(testDir, '.claude', 'context', 'brainstorm-start.md'),
-      'Brainstorm context'
+      'Brainstorm context',
     );
     const result = await injectContext('SkillStart', input as any);
     expect(result).toBe('Brainstorm context');
@@ -209,12 +209,12 @@ describe('Synthetic event context injection', () => {
     const input = {
       hook_event_name: 'SkillEnd',
       cwd: testDir,
-      skill: 'cipherpowers:code-review'
+      skill: 'cipherpowers:code-review',
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
       path.join(testDir, '.claude', 'context', 'code-review-end.md'),
-      'Code review end context'
+      'Code review end context',
     );
     const result = await injectContext('SkillEnd', input as any);
     expect(result).toBe('Code review end context');
@@ -224,12 +224,12 @@ describe('Synthetic event context injection', () => {
     const input = {
       hook_event_name: 'SubagentStart',
       cwd: testDir,
-      subagent_type: 'cipherpowers:code-review-agent'
+      subagent_type: 'cipherpowers:code-review-agent',
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
       path.join(testDir, '.claude', 'context', 'code-review-agent-start.md'),
-      'Review context'
+      'Review context',
     );
     const result = await injectContext('SubagentStart', input as any);
     expect(result).toBe('Review context');
@@ -239,12 +239,12 @@ describe('Synthetic event context injection', () => {
     const input = {
       hook_event_name: 'SubagentEnd',
       cwd: testDir,
-      subagent_type: 'rundown:verify-agent'
+      subagent_type: 'rundown:verify-agent',
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
       path.join(testDir, '.claude', 'context', 'verify-agent-end.md'),
-      'Verify agent end context'
+      'Verify agent end context',
     );
     const result = await injectContext('SubagentEnd', input as any);
     expect(result).toBe('Verify agent end context');
@@ -253,7 +253,7 @@ describe('Synthetic event context injection', () => {
   it('SubagentStart returns null when subagent_type is missing', async () => {
     const input = {
       hook_event_name: 'SubagentStart',
-      cwd: testDir
+      cwd: testDir,
     };
     const result = await injectContext('SubagentStart', input as any);
     expect(result).toBeNull();
@@ -262,7 +262,7 @@ describe('Synthetic event context injection', () => {
   it('SubagentEnd returns null when subagent_type is missing', async () => {
     const input = {
       hook_event_name: 'SubagentEnd',
-      cwd: testDir
+      cwd: testDir,
     };
     const result = await injectContext('SubagentEnd', input as any);
     expect(result).toBeNull();

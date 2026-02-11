@@ -24,10 +24,7 @@ import {
   type LastAction,
   type ForContext,
 } from '@rundown-org/core';
-import {
-  isInternalRdCommand,
-  executeRdCommandInternal,
-} from './internal-commands.js';
+import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import {
   getPolicyEvaluator,
   getPolicyPrompter,
@@ -74,7 +71,7 @@ export function buildStepVariables(
   stepId: string,
   substepId: string | undefined,
   forStack?: readonly ForContext[],
-  forClause?: Step['forClause']
+  forClause?: Step['forClause'],
 ): Record<string, string> {
   const step = substepId ? `${stepId}.${substepId}` : stepId;
   const vars: Record<string, string> = { Step: step };
@@ -121,7 +118,7 @@ export async function runExecutionLoop(
   cwd: string,
   prompted: boolean,
   agentId?: string,
-  emitter?: ExecutionEventEmitter
+  emitter?: ExecutionEventEmitter,
 ): Promise<'done' | 'stopped' | 'waiting'> {
   // Note: state is loaded here and reloaded at end of each loop iteration.
   // Some immutable properties (parentRunbookId, agentId) are accessed from
@@ -133,7 +130,7 @@ export async function runExecutionLoop(
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const currentStepIndex = steps.findIndex(s => s.name === state!.step);
+    const currentStepIndex = steps.findIndex((s) => s.name === state!.step);
     const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
 
     const displayStep = state.step;
@@ -143,7 +140,7 @@ export async function runExecutionLoop(
     let itemToRender: Step | Substep = currentStep;
     if (state.substep && currentStep.substeps) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const substep = currentStep.substeps.find(s => s.id === state!.substep);
+      const substep = currentStep.substeps.find((s) => s.id === state!.substep);
       if (substep) {
         itemToRender = substep;
       }
@@ -152,7 +149,12 @@ export async function runExecutionLoop(
     const displaySubstep = state.substep;
 
     // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration
-    const stepVars = buildStepVariables(state.step, state.substep, state.forStack, currentStep.forClause);
+    const stepVars = buildStepVariables(
+      state.step,
+      state.substep,
+      state.forStack,
+      currentStep.forClause,
+    );
     const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
     const expandedPrompt = itemToRender.prompt
       ? expandLoopVariables(itemToRender.prompt, stepVars)
@@ -173,7 +175,7 @@ export async function runExecutionLoop(
           : itemToRender.command?.code,
         commandLang: itemToRender.command?.lang,
         isSubstep,
-        prompted,  // CRITICAL: Pass prompted flag for correct command display
+        prompted, // CRITICAL: Pass prompted flag for correct command display
       });
     } else {
       const renderItem = {
@@ -181,7 +183,10 @@ export async function runExecutionLoop(
         description: expandedDescription,
         prompt: expandedPrompt,
         command: itemToRender.command
-          ? { ...itemToRender.command, code: expandLoopVariablesForCommand(itemToRender.command.code, stepVars) }
+          ? {
+              ...itemToRender.command,
+              code: expandLoopVariablesForCommand(itemToRender.command.code, stepVars),
+            }
           : itemToRender.command,
       };
       // Temporary fallback only when emitter is not provided.
@@ -221,7 +226,11 @@ export async function runExecutionLoop(
         execResult = internalResult;
       } else {
         // Fallback to spawn if internal execution not supported for this subcommand
-        execResult = await executeCommandWithPolicyCheck(expandedCommandCode, cwd, state.runbookPath);
+        execResult = await executeCommandWithPolicyCheck(
+          expandedCommandCode,
+          cwd,
+          state.runbookPath,
+        );
       }
     } else {
       execResult = await executeCommandWithPolicyCheck(expandedCommandCode, cwd, state.runbookPath);
@@ -290,11 +299,7 @@ export async function runExecutionLoop(
     // Read action from XState context (source of truth for retryMax and lastAction)
     const retryMax = extractRetryMax(snapshot);
     const lastActionFromContext = extractLastAction(snapshot);
-    const action = formatActionForDisplay(
-      lastActionFromContext,
-      updatedState.retryCount,
-      retryMax
-    );
+    const action = formatActionForDisplay(lastActionFromContext, updatedState.retryCount, retryMax);
 
     // Update lastAction in state (pass structured object directly — no lossy conversion)
     await manager.update(runbookId, { lastAction: lastActionFromContext });
@@ -332,13 +337,14 @@ export async function runExecutionLoop(
     // Handle runbook end states
     if (isComplete) {
       // Extract message from the transition that led to completion
-      const completionMessage = lastResult === 'pass'
-        ? evaluatePassCondition(currentStep).message
-        : evaluateFailCondition(currentStep, prevRetryCount).message;
+      const completionMessage =
+        lastResult === 'pass'
+          ? evaluatePassCondition(currentStep).message
+          : evaluateFailCondition(currentStep, prevRetryCount).message;
 
       const currentVars = updatedState.variables;
       await manager.update(runbookId, {
-        variables: { ...currentVars, completed: true }
+        variables: { ...currentVars, completed: true },
       });
       if (emitter) {
         emitter.emit('RUNBOOK_COMPLETED', {
@@ -353,10 +359,9 @@ export async function runExecutionLoop(
       // If this was a child runbook with agent, update parent's agent binding
 
       if (agentId && state.parentRunbookId) {
-
         await manager.updateAgentBinding(state.parentRunbookId, agentId, {
           status: 'done',
-          result: 'pass'
+          result: 'pass',
         });
       }
 
@@ -367,13 +372,14 @@ export async function runExecutionLoop(
 
     if (isStopped) {
       // Extract message from the transition that led to stop
-      const stopMessage = lastResult === 'pass'
-        ? evaluatePassCondition(currentStep).message
-        : evaluateFailCondition(currentStep, prevRetryCount).message;
+      const stopMessage =
+        lastResult === 'pass'
+          ? evaluatePassCondition(currentStep).message
+          : evaluateFailCondition(currentStep, prevRetryCount).message;
 
       const currentVars = updatedState.variables;
       await manager.update(runbookId, {
-        variables: { ...currentVars, stopped: true }
+        variables: { ...currentVars, stopped: true },
       });
       const stopPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
       if (emitter) {
@@ -390,10 +396,9 @@ export async function runExecutionLoop(
       // If this was a child runbook with agent, update parent's agent binding
 
       if (agentId && state.parentRunbookId) {
-
         await manager.updateAgentBinding(state.parentRunbookId, agentId, {
           status: 'done',
-          result: 'fail'
+          result: 'fail',
         });
       }
 
@@ -438,7 +443,12 @@ function isLastAction(value: unknown): value is LastAction {
       if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
         return false;
       }
-      if ('at' in value && value.at !== undefined && typeof value.at !== 'number' && typeof value.at !== 'string') {
+      if (
+        'at' in value &&
+        value.at !== undefined &&
+        typeof value.at !== 'number' &&
+        typeof value.at !== 'string'
+      ) {
         return false;
       }
       return true;
@@ -506,7 +516,7 @@ export function extractRetryMax(snapshot: unknown): number {
 export function formatActionForDisplay(
   lastAction: LastAction | undefined,
   retryCount: number,
-  retryMax: number
+  retryMax: number,
 ): string {
   if (!lastAction) return 'CONTINUE';
 
@@ -517,9 +527,8 @@ export function formatActionForDisplay(
       const gotoTarget = lastAction.substep
         ? `GOTO ${lastAction.target}.${lastAction.substep}`
         : `GOTO ${lastAction.target}`;
-      const result = lastAction.at !== undefined
-        ? `${gotoTarget} AT ${String(lastAction.at)}`
-        : gotoTarget;
+      const result =
+        lastAction.at !== undefined ? `${gotoTarget} AT ${String(lastAction.at)}` : gotoTarget;
       return result;
     }
     default:
@@ -587,7 +596,7 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
 export async function executeCommandWithPolicyCheck(
   command: string,
   cwd: string,
-  runbookPath?: string
+  runbookPath?: string,
 ): Promise<ExecutionResult> {
   // Check if policy enforcement is active
   if (!isPolicyEnforced()) {

@@ -12,23 +12,30 @@ const __dirname = dirname(__filename);
 const execAsync = promisify(exec);
 
 // Helper function to run hook dispatch safely using stdin
-async function runHookDispatch(cliPath: string, input: object): Promise<{ stdout: string; stderr: string; code: number | null }> {
+async function runHookDispatch(
+  cliPath: string,
+  input: object,
+): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
     const proc = spawn('node', [cliPath], { cwd: dirname(cliPath) });
     let stdout = '';
     let stderr = '';
-    
-    proc.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
-    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
-    
+
+    proc.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+    proc.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+
     proc.on('close', (code) => {
       resolve({ stdout, stderr, code });
     });
-    
+
     proc.on('error', (err) => {
       reject(err);
     });
-    
+
     proc.stdin.write(JSON.stringify(input));
     proc.stdin.end();
   });
@@ -58,7 +65,7 @@ describe('Integration Tests', () => {
       await execAsync(`node ${cliPath} session append file_extensions ts ${testDir}`);
 
       const result = await execAsync(
-        `node ${cliPath} session contains file_extensions ts ${testDir}`
+        `node ${cliPath} session contains file_extensions ts ${testDir}`,
       )
         .then(() => true)
         .catch(() => false);
@@ -81,19 +88,19 @@ describe('Integration Tests', () => {
         hook_event_name: 'PostToolUse',
         tool_name: 'Edit',
         file_path: 'main.ts',
-        cwd: testDir
+        cwd: testDir,
       };
 
       const { code } = await runHookDispatch(cliPath, hookInput);
       expect(code).toBe(0);
 
       const { stdout: files } = await execAsync(
-        `node ${cliPath} session get edited_files ${testDir}`
+        `node ${cliPath} session get edited_files ${testDir}`,
       );
       expect(files).toContain('main.ts');
 
       const containsTs = await execAsync(
-        `node ${cliPath} session contains file_extensions ts ${testDir}`
+        `node ${cliPath} session contains file_extensions ts ${testDir}`,
       )
         .then(() => true)
         .catch(() => false);
@@ -104,7 +111,7 @@ describe('Integration Tests', () => {
       const input = {
         hook_event_name: 'UserPromptSubmit',
         user_message: '/execute do something',
-        cwd: testDir
+        cwd: testDir,
       };
       const { code } = await runHookDispatch(cliPath, input);
       expect(code).toBe(0);
@@ -118,7 +125,7 @@ describe('Integration Tests', () => {
         hook_event_name: 'PreToolUse',
         tool_name: 'Skill',
         tool_input: { skill: 'executing-plans' },
-        cwd: testDir
+        cwd: testDir,
       };
       const { code } = await runHookDispatch(cliPath, input);
       expect(code).toBe(0);

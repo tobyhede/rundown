@@ -36,16 +36,14 @@ export const ErrorCodes = {
     code: 'RD-101',
     category: ErrorCategory.FILE_IO,
     title: 'Runbook file not found',
-    description:
-      'The specified runbook file does not exist or cannot be accessed.',
+    description: 'The specified runbook file does not exist or cannot be accessed.',
     docSlug: 'file-not-found',
   },
   FILE_NOT_READABLE: {
     code: 'RD-102',
     category: ErrorCategory.FILE_IO,
     title: 'File not readable',
-    description:
-      'The runbook file exists but cannot be read due to permission restrictions.',
+    description: 'The runbook file exists but cannot be read due to permission restrictions.',
     docSlug: 'file-not-readable',
   },
   STATE_DIR_NOT_ACCESSIBLE: {
@@ -68,16 +66,14 @@ export const ErrorCodes = {
     code: 'RD-202',
     category: ErrorCategory.PARSE_SYNTAX,
     title: 'No valid steps found',
-    description:
-      'The runbook file does not contain any valid step headings (## headers).',
+    description: 'The runbook file does not contain any valid step headings (## headers).',
     docSlug: 'no-steps-found',
   },
   INVALID_FRONTMATTER: {
     code: 'RD-203',
     category: ErrorCategory.PARSE_SYNTAX,
     title: 'Invalid frontmatter',
-    description:
-      'The YAML frontmatter is malformed or contains invalid syntax.',
+    description: 'The YAML frontmatter is malformed or contains invalid syntax.',
     docSlug: 'invalid-frontmatter',
   },
   SYNTAX_ERROR: {
@@ -93,8 +89,7 @@ export const ErrorCodes = {
     code: 'RD-301',
     category: ErrorCategory.STATE,
     title: 'No active runbook',
-    description:
-      'No runbook is currently running. Start a runbook with "rd run <file>".',
+    description: 'No runbook is currently running. Start a runbook with "rd run <file>".',
     docSlug: 'no-active-runbook',
   },
   STATE_PARSE_ERROR: {
@@ -109,16 +104,14 @@ export const ErrorCodes = {
     code: 'RD-303',
     category: ErrorCategory.STATE,
     title: 'Runbook already completed',
-    description:
-      'This runbook has already been marked as complete. Start a new run.',
+    description: 'This runbook has already been marked as complete. Start a new run.',
     docSlug: 'runbook-completed',
   },
   RUNBOOK_STOPPED: {
     code: 'RD-304',
     category: ErrorCategory.STATE,
     title: 'Runbook stopped',
-    description:
-      'This runbook was stopped. Start a new run or use "rd pop" to resume if stashed.',
+    description: 'This runbook was stopped. Start a new run or use "rd pop" to resume if stashed.',
     docSlug: 'runbook-stopped',
   },
 
@@ -150,16 +143,14 @@ export const ErrorCodes = {
     code: 'RD-502',
     category: ErrorCategory.EXECUTION,
     title: 'Runbook has no steps',
-    description:
-      'The runbook file does not contain any executable steps.',
+    description: 'The runbook file does not contain any executable steps.',
     docSlug: 'runbook-has-no-steps',
   },
   CHILD_RUNBOOK_ACTIVE: {
     code: 'RD-503',
     category: ErrorCategory.EXECUTION,
     title: 'Child runbook still active',
-    description:
-      'A child runbook is still running. Complete or stop it first.',
+    description: 'A child runbook is still running. Complete or stop it first.',
     docSlug: 'child-runbook-active',
   },
 

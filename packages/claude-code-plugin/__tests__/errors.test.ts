@@ -4,7 +4,7 @@ import {
   isError,
   getErrorMessage,
   type SessionLoadError,
-  isFileNotFoundError
+  isFileNotFoundError,
 } from '../src/shared/index.js';
 
 describe('isNodeError', () => {
@@ -58,7 +58,7 @@ describe('SessionLoadError', () => {
     const error: SessionLoadError = {
       type: 'parse_error',
       path: '/test',
-      message: 'Unexpected token'
+      message: 'Unexpected token',
     };
     expect(isFileNotFoundError(error)).toBe(false);
   });
@@ -67,7 +67,7 @@ describe('SessionLoadError', () => {
     const error: SessionLoadError = {
       type: 'validation_error',
       path: '/test',
-      message: 'Invalid type'
+      message: 'Invalid type',
     };
     expect(isFileNotFoundError(error)).toBe(false);
   });

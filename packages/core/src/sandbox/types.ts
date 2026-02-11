@@ -85,7 +85,7 @@ export interface SandboxAvailability {
  */
 export type SandboxExecutor = (
   command: string,
-  options: SandboxOptions
+  options: SandboxOptions,
 ) => Promise<SandboxExecutionResult>;
 
 /**

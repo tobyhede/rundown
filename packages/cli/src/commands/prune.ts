@@ -59,21 +59,24 @@ export function registerPruneCommand(program: Command): void {
         });
 
         // Enrich items with status string for display
-        const enrichedItems = toDelete.map(state => ({
+        const enrichedItems = toDelete.map((state) => ({
           ...state,
-          _status: getStatus(state, activeState, stashedId)
+          _status: getStatus(state, activeState, stashedId),
         }));
 
         // Define columns once for reuse
         const columns = [
           { header: 'ID', key: 'id' as const },
-          { header: 'STATUS', key: (item: typeof enrichedItems[0]) => item._status },
+          { header: 'STATUS', key: (item: (typeof enrichedItems)[0]) => item._status },
           { header: 'RUNBOOK', key: 'runbook' as const },
-          { header: 'TITLE', key: (item: typeof enrichedItems[0]) => item.title ? `[${item.title}]` : '' }
+          {
+            header: 'TITLE',
+            key: (item: (typeof enrichedItems)[0]) => (item.title ? `[${item.title}]` : ''),
+          },
         ];
 
         // JSON mapper to clean internal fields
-        const jsonMapper = (item: typeof enrichedItems[0]): Record<string, unknown> => {
+        const jsonMapper = (item: (typeof enrichedItems)[0]): Record<string, unknown> => {
           const { _status: _, ...rest } = item;
           return { ...rest, status: item._status };
         };
@@ -82,7 +85,7 @@ export function registerPruneCommand(program: Command): void {
           // Use output.list() for consistency - outputs raw array in JSON mode
           output.list([], columns as Parameters<typeof output.list>[1], {
             emptyMessage: 'No runbook state to prune.',
-            jsonMapper
+            jsonMapper,
           });
           output.flush();
           return;
@@ -96,7 +99,7 @@ export function registerPruneCommand(program: Command): void {
 
         // Perform deletion
         for (const state of toDelete) {
-           await manager.delete(state.id);
+          await manager.delete(state.id);
         }
 
         output.list(enrichedItems, columns as Parameters<typeof output.list>[1], { jsonMapper });

@@ -6,15 +6,17 @@ import type { Step } from '../../src/runbook/types.js';
 describe('GOTO to self (implicit retry)', () => {
   it('should increment retryCount when GOTO targets current step by numeric name', () => {
     // Tests non-dynamic step that uses GOTO to itself by step number
-    const steps: Step[] = [{
-      name: '1',
-      description: 'Retry Step',
-      transitions: {
-        all: false,
-        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-        fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1' } } }
-      }
-    }];
+    const steps: Step[] = [
+      {
+        name: '1',
+        description: 'Retry Step',
+        transitions: {
+          all: false,
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1' } } },
+        },
+      },
+    ];
 
     const machine = compileRunbookToMachine(steps);
     const actor = createActor(machine);
@@ -36,21 +38,21 @@ describe('GOTO to self (implicit retry)', () => {
       {
         name: '1',
         description: 'Step One',
-          transitions: {
+        transitions: {
           all: false,
           pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-          fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '2' } } }
-        }
+          fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
+        },
       },
       {
         name: '2',
         description: 'Step Two',
-          transitions: {
+        transitions: {
           all: false,
           pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
-          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
-        }
-      }
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      },
     ];
 
     const machine = compileRunbookToMachine(steps);
@@ -70,22 +72,28 @@ describe('GOTO to self (implicit retry)', () => {
 
   it('should increment retryCount when GOTO targets same step and substep', () => {
     // Transitions must be defined at substep level when step has substeps
-    const steps: Step[] = [{
-      name: '1',
-      description: 'Step with substeps',
-      substeps: [
-        {
-          id: 'a',
-          description: 'Substep A',
-              transitions: {
-            all: false,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1', substep: 'a' } } }
-          }
-        },
-        { id: 'b', description: 'Substep B' }
-      ]
-    }];
+    const steps: Step[] = [
+      {
+        name: '1',
+        description: 'Step with substeps',
+        substeps: [
+          {
+            id: 'a',
+            description: 'Substep A',
+            transitions: {
+              all: false,
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+              fail: {
+                kind: 'fail',
+                retry: 0,
+                action: { type: 'GOTO', target: { step: '1', substep: 'a' } },
+              },
+            },
+          },
+          { id: 'b', description: 'Substep B' },
+        ],
+      },
+    ];
 
     const machine = compileRunbookToMachine(steps);
     const actor = createActor(machine);
@@ -107,22 +115,28 @@ describe('GOTO to self (implicit retry)', () => {
 
   it('should reset retryCount when GOTO targets same step but different substep', () => {
     // Transitions must be defined at substep level when step has substeps
-    const steps: Step[] = [{
-      name: '1',
-      description: 'Step with substeps',
-      substeps: [
-        {
-          id: 'a',
-          description: 'Substep A',
-              transitions: {
-            all: false,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1', substep: 'b' } } }
-          }
-        },
-        { id: 'b', description: 'Substep B' }
-      ]
-    }];
+    const steps: Step[] = [
+      {
+        name: '1',
+        description: 'Step with substeps',
+        substeps: [
+          {
+            id: 'a',
+            description: 'Substep A',
+            transitions: {
+              all: false,
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+              fail: {
+                kind: 'fail',
+                retry: 0,
+                action: { type: 'GOTO', target: { step: '1', substep: 'b' } },
+              },
+            },
+          },
+          { id: 'b', description: 'Substep B' },
+        ],
+      },
+    ];
 
     const machine = compileRunbookToMachine(steps);
     const actor = createActor(machine);

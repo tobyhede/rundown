@@ -4,7 +4,7 @@ import {
   renderAction,
   renderTransitions,
   renderSubstep,
-  renderStep
+  renderStep,
 } from '../../src/runbook/renderer/renderer.js';
 import { parseRunbook } from '../../src/runbook/index.js';
 import type { Step, Substep } from '../../src/runbook/types.js';
@@ -44,7 +44,7 @@ describe('renderTransitions', () => {
     const result = renderTransitions({
       all: true,
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-      fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'failed' } }
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'failed' } },
     });
     expect(result).toBe('- PASS: CONTINUE\n- FAIL: STOP "failed"');
   });
@@ -53,7 +53,7 @@ describe('renderTransitions', () => {
     const result = renderTransitions({
       all: true,
       pass: { kind: 'pass', retry: 2, action: { type: 'STOP' } },
-      fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+      fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
     });
     expect(result).toBe('- PASS: RETRY 2 STOP\n- FAIL: CONTINUE');
   });
@@ -71,7 +71,11 @@ describe('renderSubstep', () => {
   });
 
   it('renders substep with child runbooks', () => {
-    const substep: Substep = { id: '1', description: 'With child runbook', workflows: ['task.runbook.md'] };
+    const substep: Substep = {
+      id: '1',
+      description: 'With child runbook',
+      workflows: ['task.runbook.md'],
+    };
     expect(renderSubstep(substep, '1')).toBe('### 1.1 With child runbook [@task.runbook.md]');
   });
 });
@@ -80,7 +84,7 @@ describe('renderStep', () => {
   it('renders basic step', () => {
     const step: Step = {
       name: '1',
-      description: 'First step'
+      description: 'First step',
     };
     const result = renderStep(step);
     expect(result).toContain('## 1. First step');
@@ -92,8 +96,8 @@ describe('renderStep', () => {
       description: 'Dispatch reviewers',
       substeps: [
         { id: '1', description: 'First reviewer' },
-        { id: '2', description: 'Second reviewer', agentType: 'code-agent' }
-      ]
+        { id: '2', description: 'Second reviewer', agentType: 'code-agent' },
+      ],
     };
     const result = renderStep(step);
     expect(result).toContain('### 3.1 First reviewer');
@@ -104,7 +108,7 @@ describe('renderStep', () => {
     const step: Step = {
       name: '1',
       description: 'Run tests',
-      command: { code: 'npm test' }
+      command: { code: 'npm test' },
     };
     const result = renderStep(step);
     expect(result).toContain('```bash');
@@ -117,7 +121,7 @@ describe('renderStep', () => {
   it('renders static step unchanged', () => {
     const step: Step = {
       name: '1',
-      description: 'Setup'
+      description: 'Setup',
     };
 
     const rendered = renderStep(step);
@@ -129,7 +133,7 @@ describe('renderSubstep with parent prefix', () => {
   it('uses numeric prefix for static parent', () => {
     const substep: Substep = {
       id: '1',
-      description: 'First task'
+      description: 'First task',
     };
 
     const rendered = renderSubstep(substep, '2');
@@ -139,7 +143,7 @@ describe('renderSubstep with parent prefix', () => {
   it('uses named step prefix for named parent', () => {
     const substep: Substep = {
       id: 'Recover',
-      description: 'Recovery task'
+      description: 'Recovery task',
     };
 
     const rendered = renderSubstep(substep, 'ErrorHandler');
@@ -209,12 +213,20 @@ PASS ALL: CONTINUE
 FAIL ANY: STOP`;
 
     const parsed1 = parseRunbook(original);
-    expect(parsed1[0].transitions?.pass).toEqual({ kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
+    expect(parsed1[0].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'GOTO', target: { step: '2', substep: '1' } },
+    });
 
     const rendered = parsed1.map(renderStep).join('\n\n');
     const parsed2 = parseRunbook(rendered);
 
-    expect(parsed2[0].transitions?.pass).toEqual({ kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2', substep: '1' } } });
+    expect(parsed2[0].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'GOTO', target: { step: '2', substep: '1' } },
+    });
   });
 
   it('validates substep child runbooks parsing', () => {

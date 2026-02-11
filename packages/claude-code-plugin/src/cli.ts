@@ -4,7 +4,7 @@ import {
   type SessionStateArrayKey,
   SESSION_STATE_KEYS,
   parseHookInput,
-  logger
+  logger,
 } from './shared/index.js';
 import { dispatch } from './dispatcher.js';
 import { Session } from './session.js';
@@ -194,25 +194,25 @@ async function handleHookDispatch(): Promise<void> {
     // ALWAYS log hook invocation (unconditional - for debugging)
     await logger.always('HOOK_INVOKED', {
       input_length: inputStr.length,
-      input_preview: inputStr.substring(0, 500)
+      input_preview: inputStr.substring(0, 500),
     });
 
     // Log raw input at CLI entry point
     await logger.debug('CLI received hook input', {
       input_length: inputStr.length,
-      input_preview: inputStr.substring(0, 200)
+      input_preview: inputStr.substring(0, 200),
     });
 
     // Parse and validate input
     if (inputStr.length === 0) {
       await logger.error('CLI received empty input', {
-        reason: 'stdin was empty - possible CLI race condition or cancelled operation'
+        reason: 'stdin was empty - possible CLI race condition or cancelled operation',
       });
       console.error(
         JSON.stringify({
           continue: false,
-          message: 'Empty input received'
-        })
+          message: 'Empty input received',
+        }),
       );
       process.exit(1);
     }
@@ -222,13 +222,13 @@ async function handleHookDispatch(): Promise<void> {
       await logger.error('CLI input validation failed', {
         input_length: inputStr.length,
         input_preview: inputStr.substring(0, 200),
-        error: parseResult.error
+        error: parseResult.error,
       });
       console.error(
         JSON.stringify({
           continue: false,
-          message: parseResult.error
-        })
+          message: parseResult.error,
+        }),
       );
       process.exit(1);
     }
@@ -242,7 +242,7 @@ async function handleHookDispatch(): Promise<void> {
       tool: input.tool_name,
       agent: input.agent_name,
       command: input.command,
-      skill: input.skill
+      skill: input.skill,
     });
 
     // Dispatch
@@ -271,7 +271,7 @@ async function handleHookDispatch(): Promise<void> {
       has_context: !!result.context,
       has_block: !!result.blockReason,
       has_stop: !!result.stopMessage,
-      output_keys: Object.keys(output)
+      output_keys: Object.keys(output),
     });
 
     // Write output
@@ -284,8 +284,8 @@ async function handleHookDispatch(): Promise<void> {
     console.error(
       JSON.stringify({
         continue: false,
-        message: `Unexpected error: ${String(error)}`
-      })
+        message: `Unexpected error: ${String(error)}`,
+      }),
     );
     process.exit(1);
   }

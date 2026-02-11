@@ -32,7 +32,9 @@ jest.unstable_mockModule('../../src/services/policy-context', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const policyContext = await import('../../src/services/policy-context');
-const { runExecutionLoop, executeCommandWithPolicyCheck } = await import('../../src/services/execution');
+const { runExecutionLoop, executeCommandWithPolicyCheck } = await import(
+  '../../src/services/execution'
+);
 
 describe('runExecutionLoop', () => {
   let mockManager: any;
@@ -45,8 +47,8 @@ describe('runExecutionLoop', () => {
       command: { code: 'echo hello', lang: 'sh' },
       transitions: {
         pass: { next: '2' },
-        fail: { next: 'STOP' }
-      }
+        fail: { next: 'STOP' },
+      },
     },
     {
       name: '2',
@@ -54,16 +56,16 @@ describe('runExecutionLoop', () => {
       command: { code: 'echo world', lang: 'sh' },
       transitions: {
         pass: { next: 'COMPLETE' },
-        fail: { next: 'STOP' }
-      }
-    }
+        fail: { next: 'STOP' },
+      },
+    },
   ];
 
   beforeEach(() => {
     jest.clearAllMocks();
-    
-    (policyContext.isPolicyEnforced).mockReturnValue(false);
-    (policyContext.getSandboxOptions).mockReturnValue({ sandbox: true, sandboxStrict: false });
+
+    policyContext.isPolicyEnforced.mockReturnValue(false);
+    policyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: false });
     (core.executeCommand as any).mockReset();
     (core.executeCommandWithPolicy as any).mockReset();
 
@@ -98,26 +100,47 @@ describe('runExecutionLoop', () => {
       step: '1',
       status: 'running',
     });
-    
-    const result = await runExecutionLoop(mockManager, runbookId, steps, '/tmp', true, undefined, mockEmitter);
-    
+
+    const result = await runExecutionLoop(
+      mockManager,
+      runbookId,
+      steps,
+      '/tmp',
+      true,
+      undefined,
+      mockEmitter,
+    );
+
     expect(result).toBe('waiting');
-    expect(mockEmitter.emit).toHaveBeenCalledWith('STEP_ENTERED', expect.objectContaining({
-      stepName: '1',
-      prompted: true
-    }));
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'STEP_ENTERED',
+      expect.objectContaining({
+        stepName: '1',
+        prompted: true,
+      }),
+    );
   });
 
   it('returns waiting if step has no command', async () => {
-    const stepsNoCmd = [{ name: '1', description: 'No command', transitions: { pass: { next: 'COMPLETE' } } }];
+    const stepsNoCmd = [
+      { name: '1', description: 'No command', transitions: { pass: { next: 'COMPLETE' } } },
+    ];
     mockManager.load.mockResolvedValue({
       id: runbookId,
       step: '1',
       status: 'running',
     });
-    
-    const result = await runExecutionLoop(mockManager, runbookId, stepsNoCmd as any, '/tmp', false, undefined, mockEmitter);
-    
+
+    const result = await runExecutionLoop(
+      mockManager,
+      runbookId,
+      stepsNoCmd as any,
+      '/tmp',
+      false,
+      undefined,
+      mockEmitter,
+    );
+
     expect(result).toBe('waiting');
   });
 
@@ -133,18 +156,26 @@ describe('runExecutionLoop', () => {
       getPersistedSnapshot: jest.fn().mockReturnValue({
         status: 'active',
         value: '2',
-        context: { lastAction: { type: 'CONTINUE' } }
-      })
+        context: { lastAction: { type: 'CONTINUE' } },
+      }),
     };
     mockManager.createActor.mockResolvedValue(mockActor);
     mockManager.updateFromActor.mockResolvedValue({ id: runbookId, step: '2', status: 'running' });
 
     const testSteps = [
       steps[0],
-      { name: '2', description: 'Step 2', transitions: { pass: { next: 'COMPLETE' } } }
+      { name: '2', description: 'Step 2', transitions: { pass: { next: 'COMPLETE' } } },
     ];
 
-    const result = await runExecutionLoop(mockManager, runbookId, testSteps, '/tmp', false, undefined, mockEmitter);
+    const result = await runExecutionLoop(
+      mockManager,
+      runbookId,
+      testSteps,
+      '/tmp',
+      false,
+      undefined,
+      mockEmitter,
+    );
 
     expect(result).toBe('waiting');
     expect(core.executeCommand).toHaveBeenCalled();
@@ -152,20 +183,31 @@ describe('runExecutionLoop', () => {
 
   it('handles policy denial', async () => {
     mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
-    (policyContext.isPolicyEnforced).mockReturnValue(true);
-    
+    policyContext.isPolicyEnforced.mockReturnValue(true);
+
     (core.executeCommandWithPolicy as any).mockResolvedValue({
       success: false,
       policyDenied: true,
-      denialReason: 'Not allowed'
+      denialReason: 'Not allowed',
     });
 
-    const result = await runExecutionLoop(mockManager, runbookId, steps, '/tmp', false, undefined, mockEmitter);
+    const result = await runExecutionLoop(
+      mockManager,
+      runbookId,
+      steps,
+      '/tmp',
+      false,
+      undefined,
+      mockEmitter,
+    );
 
     expect(result).toBe('stopped');
-    expect(mockEmitter.emit).toHaveBeenCalledWith('POLICY_DENIED', expect.objectContaining({
-      reason: 'Not allowed'
-    }));
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'POLICY_DENIED',
+      expect.objectContaining({
+        reason: 'Not allowed',
+      }),
+    );
   });
 
   it('completes the runbook', async () => {
@@ -177,40 +219,55 @@ describe('runExecutionLoop', () => {
       getPersistedSnapshot: jest.fn().mockReturnValue({
         status: 'done',
         value: 'COMPLETE',
-        context: { lastAction: { type: 'COMPLETE' } }
-      })
+        context: { lastAction: { type: 'COMPLETE' } },
+      }),
     };
     mockManager.createActor.mockResolvedValue(mockActor);
-    mockManager.updateFromActor.mockResolvedValue({ 
-      id: runbookId, 
-      step: '1', 
-      status: 'done', 
+    mockManager.updateFromActor.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      status: 'done',
       variables: {},
-      runbookPath: '/tmp/test.md' 
+      runbookPath: '/tmp/test.md',
     });
 
-    const result = await runExecutionLoop(mockManager, runbookId, steps, '/tmp', false, undefined, mockEmitter);
+    const result = await runExecutionLoop(
+      mockManager,
+      runbookId,
+      steps,
+      '/tmp',
+      false,
+      undefined,
+      mockEmitter,
+    );
 
     expect(result).toBe('done');
-    expect(mockEmitter.emit).toHaveBeenCalledWith('RUNBOOK_COMPLETED', expect.objectContaining({
-      message: 'Success'
-    }));
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'RUNBOOK_COMPLETED',
+      expect.objectContaining({
+        message: 'Success',
+      }),
+    );
     expect(mockManager.popRunbook).toHaveBeenCalled();
   });
 
   it('uses expanded command text in printStepBlock fallback (prompted mode, no emitter)', async () => {
-    const forSteps = [{
-      name: '1',
-      description: 'Process',
-      forClause: { variable: 'item', start: 1, end: 1 },
-      substeps: [{
-        id: '1',
-        description: 'Handle {{item}}',
-        command: { code: 'rd echo item={{item}}', lang: 'bash' },
+    const forSteps = [
+      {
+        name: '1',
+        description: 'Process',
+        forClause: { variable: 'item', start: 1, end: 1 },
+        substeps: [
+          {
+            id: '1',
+            description: 'Handle {{item}}',
+            command: { code: 'rd echo item={{item}}', lang: 'bash' },
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
         transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
-      }],
-      transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
-    }];
+      },
+    ];
 
     mockManager.load.mockResolvedValue({
       id: runbookId,
@@ -228,7 +285,7 @@ describe('runExecutionLoop', () => {
         description: 'Handle 1',
         command: expect.objectContaining({ code: 'rd echo item=1' }),
       }),
-      true
+      true,
     );
   });
 });
@@ -242,7 +299,7 @@ describe('executeCommandWithPolicyCheck', () => {
   });
 
   it('calls executeCommand directly if policy is not enforced', async () => {
-    (policyContext.isPolicyEnforced).mockReturnValue(false);
+    policyContext.isPolicyEnforced.mockReturnValue(false);
     (core.executeCommand as any).mockResolvedValue({ success: true });
 
     await executeCommandWithPolicyCheck(command, cwd);
@@ -252,21 +309,25 @@ describe('executeCommandWithPolicyCheck', () => {
   });
 
   it('calls executeCommandWithPolicy if policy is enforced', async () => {
-    (policyContext.isPolicyEnforced).mockReturnValue(true);
+    policyContext.isPolicyEnforced.mockReturnValue(true);
     const mockEvaluator = { setRunbookPath: jest.fn() };
-    (policyContext.getPolicyEvaluator).mockReturnValue(mockEvaluator);
-    (policyContext.getPolicyPrompter).mockReturnValue('prompter');
-    (policyContext.getSandboxOptions).mockReturnValue({ sandbox: true, sandboxStrict: true });
+    policyContext.getPolicyEvaluator.mockReturnValue(mockEvaluator);
+    policyContext.getPolicyPrompter.mockReturnValue('prompter');
+    policyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: true });
     (core.executeCommandWithPolicy as any).mockResolvedValue({ success: true });
 
     await executeCommandWithPolicyCheck(command, cwd, 'test.md');
 
     expect(mockEvaluator.setRunbookPath).toHaveBeenCalledWith('test.md');
-    expect(core.executeCommandWithPolicy).toHaveBeenCalledWith(command, cwd, expect.objectContaining({
-      evaluator: mockEvaluator,
-      prompter: 'prompter',
-      sandbox: true,
-      sandboxStrict: true
-    }));
+    expect(core.executeCommandWithPolicy).toHaveBeenCalledWith(
+      command,
+      cwd,
+      expect.objectContaining({
+        evaluator: mockEvaluator,
+        prompter: 'prompter',
+        sandbox: true,
+        sandboxStrict: true,
+      }),
+    );
   });
 });

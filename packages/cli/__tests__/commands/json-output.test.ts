@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import {
-  createTestWorkspace,
-  runCli,
-  type TestWorkspace,
-} from '../helpers/test-utils.js';
+import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -30,17 +26,20 @@ describe('JSON output integration tests', () => {
       // Start a runbook
       // For run command, file can be in root
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
-      fs.writeFileSync(runbookPath, `---
+      fs.writeFileSync(
+        runbookPath,
+        `---
 name: test-runbook
 ---
 ## Step 1
 prompt: Wait
-`);
+`,
+      );
       runCli('run --prompted test.runbook.md', workspace);
 
       const result = runCli('ls --json', workspace);
       const output = JSON.parse(result.stdout);
-      
+
       expect(Array.isArray(output)).toBe(true);
       expect(output).toHaveLength(1);
       expect(output[0]).toHaveProperty('id');
@@ -54,16 +53,19 @@ prompt: Wait
       // discovery requires runbooks to be in specific dirs
       const runbooksDir = path.join(workspace.cwd, '.claude', 'rundown', 'runbooks');
       fs.mkdirSync(runbooksDir, { recursive: true });
-      
+
       const runbookPath = path.join(runbooksDir, 'test.runbook.md');
-      fs.writeFileSync(runbookPath, `---
+      fs.writeFileSync(
+        runbookPath,
+        `---
 name: test-runbook
 description: A test runbook
 ---
 ## Step 1
 echo hello
-`);
-      
+`,
+      );
+
       const result = runCli('ls --all --json', workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
@@ -85,18 +87,21 @@ echo hello
       expect(output).toEqual({
         active: false,
         stashed: false,
-        result: true  // Added by JSONRenderer.flush()
+        result: true, // Added by JSONRenderer.flush()
       });
     });
 
     it('outputs active status details', () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
-      fs.writeFileSync(runbookPath, `---
+      fs.writeFileSync(
+        runbookPath,
+        `---
 name: test-runbook
 ---
 ## 1 Step
 prompt: Wait
-`);
+`,
+      );
       runCli('run --prompted test.runbook.md', workspace);
 
       const result = runCli('status --json', workspace);
@@ -114,10 +119,13 @@ prompt: Wait
   describe('check --json', () => {
     it('outputs valid status for correct runbook', () => {
       const runbookPath = path.join(workspace.cwd, 'valid.runbook.md');
-      fs.writeFileSync(runbookPath, `## Step 1
+      fs.writeFileSync(
+        runbookPath,
+        `## Step 1
 echo hello
-`);
-      
+`,
+      );
+
       const result = runCli(`check ${runbookPath} --json`, workspace);
       const output = JSON.parse(result.stdout);
 
@@ -129,15 +137,18 @@ echo hello
     it('outputs errors for invalid runbook', () => {
       const runbookPath = path.join(workspace.cwd, 'invalid.runbook.md');
       // Invalid transition to non-existent step
-      fs.writeFileSync(runbookPath, `## Step 1
+      fs.writeFileSync(
+        runbookPath,
+        `## Step 1
 - PASS: GOTO 99
 echo hello
-`);
+`,
+      );
 
       const result = runCli(`check ${runbookPath} --json`, workspace);
       // Exit code should be 1
       expect(result.exitCode).toBe(1);
-      
+
       const output = JSON.parse(result.stdout);
       expect(output.valid).toBe(false);
       expect(output.errors.length).toBeGreaterThan(0);
@@ -147,7 +158,7 @@ echo hello
     it('outputs error for non-existent file', () => {
       const result = runCli('check non-existent.md --json', workspace);
       expect(result.exitCode).toBe(1);
-      
+
       const output = JSON.parse(result.stdout);
       expect(output.valid).toBe(false);
       expect(output.errors[0].message).toContain('File not found');
@@ -165,7 +176,9 @@ echo hello
   describe('scenario --json', () => {
     it('ls outputs scenarios list', () => {
       const runbookPath = path.join(workspace.cwd, 'scenarios.runbook.md');
-      fs.writeFileSync(runbookPath, `---
+      fs.writeFileSync(
+        runbookPath,
+        `---
 name: scenarios-test
 scenarios:
   test-scenario:
@@ -176,7 +189,8 @@ scenarios:
 ---
 ## Step 1
 echo hello
-`);
+`,
+      );
 
       const result = runCli(`scenario ls ${runbookPath} --json`, workspace);
       expect(result.exitCode).toBe(0);
@@ -188,13 +202,15 @@ echo hello
         name: 'test-scenario',
         expected: 'COMPLETE',
         description: 'A test scenario',
-        tags: ''
+        tags: '',
       });
     });
 
     it('show outputs structured error for non-existent scenario', () => {
       const runbookPath = path.join(workspace.cwd, 'scenarios.runbook.md');
-      fs.writeFileSync(runbookPath, `---
+      fs.writeFileSync(
+        runbookPath,
+        `---
 name: scenarios-test
 scenarios:
   test-scenario:
@@ -205,7 +221,8 @@ scenarios:
 ---
 ## Step 1
 echo hello
-`);
+`,
+      );
 
       const result = runCli(`scenario show ${runbookPath} non-existent --json`, workspace);
       expect(result.exitCode).toBe(1);

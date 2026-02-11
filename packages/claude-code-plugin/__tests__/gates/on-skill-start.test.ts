@@ -6,11 +6,11 @@ const mockRundown = jest.fn();
 const mockReadFileSync = jest.fn();
 
 jest.unstable_mockModule('../../src/workflow/hooks/rundown.js', () => ({
-  rundown: mockRundown
+  rundown: mockRundown,
 }));
 
 jest.unstable_mockModule('fs', () => ({
-  readFileSync: mockReadFileSync
+  readFileSync: mockReadFileSync,
 }));
 
 const { execute } = await import('../../src/gates/on-skill-start.js');
@@ -81,7 +81,7 @@ description: No runbook
     it('returns empty for non-SkillStart events', async () => {
       const input: HookInput = {
         hook_event_name: 'PostToolUse',
-        cwd: '/test'
+        cwd: '/test',
       };
 
       const result = await execute(input);
@@ -93,7 +93,7 @@ description: No runbook
     it('returns empty when no skill name', async () => {
       const input: HookInput = {
         hook_event_name: 'SkillStart',
-        cwd: '/test'
+        cwd: '/test',
       };
 
       const result = await execute(input);
@@ -115,18 +115,15 @@ runbook: verify.runbook.md
       const input: HookInput = {
         hook_event_name: 'SkillStart',
         cwd: '/test',
-        skill: 'rundown:verify'
+        skill: 'rundown:verify',
       };
 
       const result = await execute(input);
 
       expect(result).toEqual({
-        additionalContext: 'Started runbook: verify.runbook.md'
+        additionalContext: 'Started runbook: verify.runbook.md',
       });
-      expect(mockRundown).toHaveBeenCalledWith(
-        ['run', 'verify.runbook.md'],
-        '/test'
-      );
+      expect(mockRundown).toHaveBeenCalledWith(['run', 'verify.runbook.md'], '/test');
     });
   });
 });

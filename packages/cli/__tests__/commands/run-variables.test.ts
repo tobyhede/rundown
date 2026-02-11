@@ -1,11 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
-import {
-  createTestWorkspace,
-  runCli,
-  type TestWorkspace,
-} from '../helpers/test-utils.js';
+import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
 
 describe('rd run --var and --var-file', () => {
   let workspace: TestWorkspace;
@@ -30,10 +26,7 @@ rd echo {{message}}
 `;
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-    await writeFile(
-      join(workspace.cwd, 'vars.yaml'),
-      'message: hello'
-    );
+    await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: hello');
 
     const result = runCli('run test.runbook.md --var-file vars.yaml --json', workspace);
 

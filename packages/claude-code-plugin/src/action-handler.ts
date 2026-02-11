@@ -13,25 +13,25 @@ export function handleAction(
   action: string,
   gateResult: GateResult,
   _config: RundownPluginConfig,
-  _input: HookInput
+  _input: HookInput,
 ): ActionResult {
   switch (action) {
     case 'CONTINUE':
       return {
         continue: true,
-        context: gateResult.additionalContext
+        context: gateResult.additionalContext,
       };
 
     case 'BLOCK':
       return {
         continue: false,
-        blockReason: gateResult.reason ?? 'Gate failed'
+        blockReason: gateResult.reason ?? 'Gate failed',
       };
 
     case 'STOP':
       return {
         continue: false,
-        stopMessage: gateResult.message ?? 'Gate stopped execution'
+        stopMessage: gateResult.message ?? 'Gate stopped execution',
       };
 
     default:
@@ -39,7 +39,7 @@ export function handleAction(
       return {
         continue: true,
         context: gateResult.additionalContext,
-        chainedGate: action
+        chainedGate: action,
       };
   }
 }
