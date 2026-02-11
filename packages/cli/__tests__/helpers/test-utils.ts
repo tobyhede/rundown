@@ -312,6 +312,34 @@ export function findActionOutput(stdout: string): Record<string, unknown> | null
 
 
 /**
+ * Configuration for a substep within a FOR loop or parent step.
+ */
+export interface SubstepConfig {
+  /** Substep title (after the qualified number) */
+  title: string;
+  /** PASS transition for the substep */
+  pass?: string;
+  /** FAIL transition for the substep */
+  fail?: string;
+  /** Additional markdown content before command block */
+  content?: string;
+  /** Bash command to execute */
+  command?: string;
+}
+
+/**
+ * Configuration for a FOR clause on a step.
+ */
+export interface ForClauseConfig {
+  /** Loop variable name (e.g., "item" → `FOR item IN start TO end`) */
+  variable?: string;
+  /** Loop start value (number or template var like "{{Min}}") */
+  start: number | string;
+  /** Loop end value (number or template var like "{{Max}}") */
+  end: number | string;
+}
+
+/**
  * Configuration for a runbook step.
  */
 export interface StepConfig {
@@ -325,6 +353,10 @@ export interface StepConfig {
   command?: string;
   /** Additional markdown content before command block */
   content?: string;
+  /** FOR clause for loop steps */
+  for?: ForClauseConfig;
+  /** Substeps (H3 headers with qualified numbering) */
+  substeps?: SubstepConfig[];
 }
 
 /**
@@ -380,19 +412,51 @@ export function createRunbook(options: CreateRunbookOptions): string {
 
   // Steps
   steps.forEach((step, index) => {
-    lines.push(`## ${String(index + 1)}. ${step.title}`);
-    if (step.pass) lines.push(`- PASS: ${step.pass}`);
-    if (step.fail) lines.push(`- FAIL: ${step.fail}`);
-    lines.push('');
-    if (step.content) {
-      lines.push(step.content);
-      lines.push('');
+    const stepNum = index + 1;
+    lines.push(`## ${String(stepNum)}. ${step.title}`);
+
+    // FOR clause (before transitions)
+    if (step.for) {
+      const varName = step.for.variable ?? 'i';
+      lines.push(`- FOR ${varName} IN ${String(step.for.start)} TO ${String(step.for.end)}`);
     }
-    if (step.command) {
-      lines.push('```bash');
-      lines.push(step.command);
-      lines.push('```');
-      lines.push('');
+
+    // Step-level transitions (use ALL/ANY qualifiers when step has substeps or FOR)
+    const hasAggregation = !!(step.for || step.substeps);
+    if (step.pass) lines.push(`- PASS${hasAggregation ? ' ALL' : ''}: ${step.pass}`);
+    if (step.fail) lines.push(`- FAIL${hasAggregation ? ' ANY' : ''}: ${step.fail}`);
+    lines.push('');
+
+    if (step.substeps) {
+      // Render substeps as H3 headers with qualified numbering
+      step.substeps.forEach((sub, subIndex) => {
+        lines.push(`### ${String(stepNum)}.${String(subIndex + 1)} ${sub.title}`);
+        if (sub.pass) lines.push(`- PASS: ${sub.pass}`);
+        if (sub.fail) lines.push(`- FAIL: ${sub.fail}`);
+        lines.push('');
+        if (sub.content) {
+          lines.push(sub.content);
+          lines.push('');
+        }
+        if (sub.command) {
+          lines.push('```bash');
+          lines.push(sub.command);
+          lines.push('```');
+          lines.push('');
+        }
+      });
+    } else {
+      // Step-level content/command (no substeps)
+      if (step.content) {
+        lines.push(step.content);
+        lines.push('');
+      }
+      if (step.command) {
+        lines.push('```bash');
+        lines.push(step.command);
+        lines.push('```');
+        lines.push('');
+      }
     }
   });
 
