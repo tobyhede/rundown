@@ -106,6 +106,7 @@ export function evaluatePassCondition(
  * @param passCount - Number of passing results
  * @param aggregationAll - True for ALL mode, false for ANY mode
  * @returns True if the aggregated outcome should be treated as PASS
+ * @see {@link evaluateAggregation}
  */
 export function shouldAggregationPass(
   hasFailed: boolean,

@@ -2289,7 +2289,7 @@ describe('runbook compiler', () => {
         {
           name: '1',
           forClause: { start: 1, end: 3 },
-          description: 'Loop with FAIL ANY',
+          description: 'Loop with PASS ALL',
           transitions: {
             all: true,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
@@ -2880,6 +2880,61 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail', 'pass']);
+    });
+
+    it('iterates descending range with two substeps', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 3, end: 1 },
+          description: 'Descending with two substeps',
+          substeps: [
+            {
+              id: '1',
+              description: 'First check',
+              transitions: DEFAULT_TRANSITIONS
+            },
+            {
+              id: '2',
+              description: 'Second check',
+              transitions: DEFAULT_TRANSITIONS
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1 (value=3): substep 1 pass, substep 2 pass
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'PASS' });
+
+      // Verify loop-back happened (still in step 1, iteration=2)
+      let snapshot = actor.getSnapshot();
+      expect(snapshot.context.forStack[0]?.iteration).toBe(2);
+
+      // Iteration 2 (value=2): substep 1 pass, substep 2 pass
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'PASS' });
+
+      snapshot = actor.getSnapshot();
+      expect(snapshot.context.forStack[0]?.iteration).toBe(1);
+
+      // Iteration 3 (value=1): substep 1 pass, substep 2 pass -> exit loop
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'PASS' });
+
+      snapshot = actor.getSnapshot();
+      // Should have exited to step 2
+      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass', 'pass']);
     });
   });
 });

@@ -1,4 +1,4 @@
-import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation, evaluateIterationAggregation } from '../../src/runbook/transition-handler.js';
+import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation, evaluateIterationAggregation, shouldAggregationPass } from '../../src/runbook/transition-handler.js';
 import type { Step } from '../../src/runbook/types.js';
 import type { SubstepState } from '../../src/runbook/types.js';
 
@@ -336,5 +336,31 @@ describe('evaluateIterationAggregation', () => {
       const result = evaluateIterationAggregation(['pass', 'fail'], retryTransitions, 2);
       expect(result).toEqual({ action: 'stopped' });
     });
+  });
+});
+
+describe('shouldAggregationPass', () => {
+  it('returns true in ALL mode when no failures exist', () => {
+    expect(shouldAggregationPass(false, 3, true)).toBe(true);
+  });
+
+  it('returns false in ALL mode when a failure exists', () => {
+    expect(shouldAggregationPass(true, 2, true)).toBe(false);
+  });
+
+  it('returns true in ANY mode when some iterations passed', () => {
+    expect(shouldAggregationPass(false, 2, false)).toBe(true);
+  });
+
+  it('returns false in ANY mode when none passed', () => {
+    expect(shouldAggregationPass(true, 0, false)).toBe(false);
+  });
+
+  it('returns true in ALL mode with zero pass count and no failures (vacuous truth)', () => {
+    expect(shouldAggregationPass(false, 0, true)).toBe(true);
+  });
+
+  it('returns true in ANY mode when has failure but also has passes', () => {
+    expect(shouldAggregationPass(true, 1, false)).toBe(true);
   });
 });

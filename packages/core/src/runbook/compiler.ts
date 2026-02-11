@@ -432,7 +432,7 @@ function resolveActionTarget(action: Action, stepName: string, steps: Step[]): s
     case 'NEXT':
     case 'BREAK':
       // Defensive: NEXT/BREAK are substep-level loop control actions and should
-      // never appear as parent-step aggregation actions. The parser/validator
+      // never appear as parent-step aggregation actions. The parser's validateNEXTUsage
       // prevents this, so this branch is unreachable in well-formed runbooks.
       return 'STOPPED';
   }
