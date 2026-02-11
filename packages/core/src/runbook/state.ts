@@ -39,6 +39,7 @@ interface CreateOptions {
   readonly parentStepId?: StepId;
   readonly prompted?: boolean;
   readonly runbookSrc?: string;
+  /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, string>;
 }
 
@@ -78,7 +79,7 @@ export class RunbookStateManager {
    *
    * @param runbookFile - Path to the runbook source file
    * @param runbook - The parsed runbook definition
-   * @param options - Optional configuration including agentId, parent runbook info, and prompted flag
+   * @param options - Configuration including agentId, parent runbook info, prompted flag, and templateVars for template variable replacements
    * @returns The newly created RunbookState
    */
   async create(runbookFile: string, runbook: Runbook, options: CreateOptions): Promise<RunbookState> {
