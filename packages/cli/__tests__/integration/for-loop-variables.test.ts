@@ -515,4 +515,79 @@ rd echo item={{item}}
     const allText = JSON.stringify(stepEnteredEvents);
     expect(allText).not.toContain('{{item}}');
   });
+
+  it('{{item}} preserved as literal outside FOR loop', async () => {
+    await writeFile(
+      join(workspace.cwd, 'item-outside-for.runbook.md'),
+      `---
+name: Item Outside FOR
+---
+# Item Outside
+
+## 1. Step with item reference {{item}}
+\`\`\`bash
+rd echo value={{item}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json item-outside-for.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+
+    expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(1);
+    // {{item}} should be preserved as literal since there's no FOR loop
+    expect(stepEnteredEvents[0].description).toContain('{{item}}');
+  });
+
+  it('FOR loop variable {{item}} does not leak into subsequent step', async () => {
+    await writeFile(
+      join(workspace.cwd, 'for-scope.runbook.md'),
+      `---
+name: FOR Variable Scope
+---
+# FOR Variable Scope
+
+## 1. Loop step
+- FOR item IN 1 TO 2
+- PASS ALL: CONTINUE
+### 1.1 Process item {{item}}
+\`\`\`bash
+rd echo item={{item}}
+\`\`\`
+
+## 2. After loop uses {{item}}
+\`\`\`bash
+rd echo after={{item}}
+\`\`\`
+`
+    );
+
+    const result = runCli('run --json for-scope.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+
+    // 2 FOR iterations + step 2 = 3 step_entered events
+    expect(stepEnteredEvents).toHaveLength(3);
+    expect(stepEnteredEvents[0].description).toContain('Process item 1');
+    expect(stepEnteredEvents[1].description).toContain('Process item 2');
+    // Step 2: {{item}} should be preserved as literal, NOT expanded to '2'
+    expect(stepEnteredEvents[2].description).toContain('{{item}}');
+  });
 });
