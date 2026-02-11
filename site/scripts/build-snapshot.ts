@@ -48,7 +48,7 @@ function resolveAllBinSymlinks(nodeModulesDir: string) {
             copyFileSync(resolvedTarget, filePath);
           }
         }
-      } else if (entry.name === 'node_modules' && entry.isDirectory()) {
+      } else if (entry.isDirectory() && entry.name !== '.bin') {
         walkAndResolve(fullPath);
       }
     }
