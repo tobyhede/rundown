@@ -2762,6 +2762,221 @@ describe('runbook compiler', () => {
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.lastAction).toEqual({ type: 'STOP' });
     });
+
+    it('PASS ALL failure triggers fail-path GOTO to non-FOR step', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 2 },
+          description: 'Loop that GOTOs on fail',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '3' } } }
+          },
+          substeps: [{
+            id: '1',
+            description: 'Process',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+              fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+            }
+          }]
+        },
+        {
+          name: '2',
+          description: 'Skipped',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        },
+        {
+          name: '3',
+          description: 'Error handler',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // iter 1 passes
+      actor.send({ type: 'FAIL' }); // iter 2 fails
+
+      // PASS ALL with one failure → aggregation fails → GOTO 3
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::3');
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'fail']);
+      expect(snapshot.context.forStack).toEqual([]);
+    });
+
+    it('PASS ALL failure triggers fail-path GOTO AT to target FOR step', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 2 },
+          description: 'Loop that GOTOs AT on fail',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '3', at: 2 } } }
+          },
+          substeps: [{
+            id: '1',
+            description: 'Process',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+              fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+            }
+          }]
+        },
+        {
+          name: '2',
+          description: 'Skipped',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        },
+        {
+          name: '3',
+          forClause: { start: 1, end: 4 },
+          description: 'Recovery loop',
+          substeps: [{
+            id: '1',
+            description: 'Recover',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+            }
+          }]
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // iter 1 passes
+      actor.send({ type: 'FAIL' }); // iter 2 fails
+
+      // PASS ALL with one failure → aggregation fails → GOTO 3 AT 2
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::3::1');
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', at: 2 });
+      expect(snapshot.context.forStack).toEqual([{ stepId: '3', iteration: 2, start: 1, end: 4 }]);
+      expect(snapshot.context.iterationResults).toEqual([]);
+    });
+
+    it('PASS ANY success triggers pass-path GOTO to non-FOR step', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          description: 'Loop with PASS ANY and GOTO',
+          transitions: {
+            all: false,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          },
+          substeps: [{
+            id: '1',
+            description: 'Process',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+              fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+            }
+          }]
+        },
+        {
+          name: '2',
+          description: 'Skipped',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        },
+        {
+          name: '3',
+          description: 'Success handler',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'FAIL' }); // iter 1 fails
+      actor.send({ type: 'PASS' }); // iter 2 passes
+      actor.send({ type: 'FAIL' }); // iter 3 fails
+
+      // PASS ANY with one pass → aggregation passes → GOTO 3
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::3');
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass', 'fail']);
+      expect(snapshot.context.forStack).toEqual([]);
+    });
+
+    it('BREAK triggers aggregation and exits via pass-path GOTO', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 5 },
+          description: 'Loop with BREAK and GOTO',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+              }
+            },
+            {
+              id: '2',
+              description: 'Maybe break',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'BREAK' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'Skipped',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        },
+        {
+          name: '3',
+          description: 'Post-break target',
+          transitions: { ...DEFAULT_TRANSITIONS, pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } } }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: substep 1 PASS→CONTINUE, substep 2 PASS→BREAK
+      actor.send({ type: 'PASS' }); // sub 1
+      actor.send({ type: 'PASS' }); // sub 2 → BREAK
+
+      // BREAK with iterationResult='pass', results=['pass']
+      // PASS ALL: no failures → aggregation passes → GOTO 3
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::3');
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.iterationResults).toEqual(['pass']);
+      expect(snapshot.context.forStack).toEqual([]);
+    });
   });
 
   describe('descending FOR loop ranges', () => {

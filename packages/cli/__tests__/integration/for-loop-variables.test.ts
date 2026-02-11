@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import { createTestWorkspace, createRunbook, runCli, type TestWorkspace } from '../helpers/test-utils.js';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 
@@ -15,22 +15,20 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
   });
 
   it('expands loop variables in JSON output for all iterations', async () => {
-    await writeFile(
-      join(workspace.cwd, 'for-vars.runbook.md'),
-      `---
-name: FOR Vars Test
----
-# FOR Vars
-
-## 1. Process items
-- FOR item IN 1 TO 3
-- PASS ALL: CONTINUE
-### 1.1 Handle item {{item}} index {{Index}}
-\`\`\`bash
-rd echo item={{item}} index={{Index}}
-\`\`\`
-`
-    );
+    const content = createRunbook({
+      name: 'FOR Vars Test',
+      title: 'FOR Vars',
+      steps: [{
+        title: 'Process items',
+        for: { variable: 'item', start: 1, end: 3 },
+        pass: 'CONTINUE',
+        substeps: [{
+          title: 'Handle item {{item}} index {{Index}}',
+          command: 'rd echo item={{item}} index={{Index}}',
+        }],
+      }],
+    });
+    await writeFile(join(workspace.cwd, 'for-vars.runbook.md'), content);
 
     const result = runCli('run --json for-vars.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -76,24 +74,15 @@ rd echo item={{item}} index={{Index}}
   });
 
   it('expands {{Step}} to step number for a simple step', async () => {
-    await writeFile(
-      join(workspace.cwd, 'step-var-simple.runbook.md'),
-      `---
-name: Step Var Simple
----
-# Step Var
-
-## 1. Running step {{Step}}
-\`\`\`bash
-rd echo step={{Step}}
-\`\`\`
-
-## 2. Running step {{Step}}
-\`\`\`bash
-rd echo step={{Step}}
-\`\`\`
-`
-    );
+    const content = createRunbook({
+      name: 'Step Var Simple',
+      title: 'Step Var',
+      steps: [
+        { title: 'Running step {{Step}}', command: 'rd echo step={{Step}}' },
+        { title: 'Running step {{Step}}', command: 'rd echo step={{Step}}' },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'step-var-simple.runbook.md'), content);
 
     const result = runCli('run --json step-var-simple.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -127,32 +116,25 @@ rd echo step={{Step}}
   });
 
   it('expands {{Step}} to qualified ID for a substep', async () => {
-    await writeFile(
-      join(workspace.cwd, 'step-var-substep.runbook.md'),
-      `---
-name: Step Var Substep
----
-# Step Var Substep
-
-## 1. Parent step
-- PASS ALL: CONTINUE
-
-### 1.1 Substep {{Step}}
-\`\`\`bash
-rd echo step={{Step}}
-\`\`\`
-
-### 1.2 Substep {{Step}}
-\`\`\`bash
-rd echo step={{Step}}
-\`\`\`
-
-## 2. Done at {{Step}}
-\`\`\`bash
-rd echo done={{Step}}
-\`\`\`
-`
-    );
+    const content = createRunbook({
+      name: 'Step Var Substep',
+      title: 'Step Var Substep',
+      steps: [
+        {
+          title: 'Parent step',
+          pass: 'CONTINUE',
+          substeps: [
+            { title: 'Substep {{Step}}', command: 'rd echo step={{Step}}' },
+            { title: 'Substep {{Step}}', command: 'rd echo step={{Step}}' },
+          ],
+        },
+        {
+          title: 'Done at {{Step}}',
+          command: 'rd echo done={{Step}}',
+        },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'step-var-substep.runbook.md'), content);
 
     const result = runCli('run --json step-var-substep.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -187,22 +169,20 @@ rd echo done={{Step}}
   });
 
   it('expands {{Step}} alongside {{Index}} in FOR loop steps', async () => {
-    await writeFile(
-      join(workspace.cwd, 'step-var-for.runbook.md'),
-      `---
-name: Step Var FOR
----
-# Step Var FOR
-
-## 1. Loop step
-- FOR i IN 1 TO 2
-- PASS ALL: CONTINUE
-### 1.1 Iteration {{Index}} of step {{Step}}
-\`\`\`bash
-rd echo step={{Step}} index={{Index}}
-\`\`\`
-`
-    );
+    const content = createRunbook({
+      name: 'Step Var FOR',
+      title: 'Step Var FOR',
+      steps: [{
+        title: 'Loop step',
+        for: { variable: 'i', start: 1, end: 2 },
+        pass: 'CONTINUE',
+        substeps: [{
+          title: 'Iteration {{Index}} of step {{Step}}',
+          command: 'rd echo step={{Step}} index={{Index}}',
+        }],
+      }],
+    });
+    await writeFile(join(workspace.cwd, 'step-var-for.runbook.md'), content);
 
     const result = runCli('run --json step-var-for.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -233,22 +213,20 @@ rd echo step={{Step}} index={{Index}}
   });
 
   it('expands loop variables on first iteration (bootstrap from forClause)', async () => {
-    await writeFile(
-      join(workspace.cwd, 'for-bootstrap.runbook.md'),
-      `---
-name: FOR Bootstrap
----
-# FOR Bootstrap
-
-## 1. First step is FOR
-- FOR i IN 1 TO 2
-- PASS ALL: CONTINUE
-### 1.1 Process iteration {{i}}
-\`\`\`bash
-rd echo iteration={{i}}
-\`\`\`
-`
-    );
+    const content = createRunbook({
+      name: 'FOR Bootstrap',
+      title: 'FOR Bootstrap',
+      steps: [{
+        title: 'First step is FOR',
+        for: { variable: 'i', start: 1, end: 2 },
+        pass: 'CONTINUE',
+        substeps: [{
+          title: 'Process iteration {{i}}',
+          command: 'rd echo iteration={{i}}',
+        }],
+      }],
+    });
+    await writeFile(join(workspace.cwd, 'for-bootstrap.runbook.md'), content);
 
     const result = runCli('run --json for-bootstrap.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -271,20 +249,16 @@ rd echo iteration={{i}}
     expect(stepEnteredEvents[0].description).not.toContain('{{i}}');
   });
 
-  it('{{Index}} preserved as literal outside FOR loop (I1)', async () => {
-    await writeFile(
-      join(workspace.cwd, 'index-outside-for.runbook.md'),
-      `---
-name: Index Outside FOR
----
-# Index Outside
-
-## 1. Step with Index reference {{Index}}
-\`\`\`bash
-rd echo value={{Index}}
-\`\`\`
-`
-    );
+  it('{{Index}} preserved as literal outside FOR loop', async () => {
+    const content = createRunbook({
+      name: 'Index Outside FOR',
+      title: 'Index Outside',
+      steps: [{
+        title: 'Step with Index reference {{Index}}',
+        command: 'rd echo value={{Index}}',
+      }],
+    });
+    await writeFile(join(workspace.cwd, 'index-outside-for.runbook.md'), content);
 
     const result = runCli('run --json index-outside-for.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -303,7 +277,9 @@ rd echo value={{Index}}
     expect(stepEnteredEvents[0].description).toContain('{{Index}}');
   });
 
-  it('{{Step}} expands to named identifier for named step (I2)', async () => {
+  it('{{Step}} expands to named identifier for named step', async () => {
+    // Named steps use a non-numeric identifier (e.g., "ErrorHandler.") which
+    // can't be expressed with createRunbook's auto-numbering, so use raw markdown
     await writeFile(
       join(workspace.cwd, 'step-named.runbook.md'),
       `---
@@ -347,29 +323,24 @@ rd echo step={{Step}}
     expect(commandStartedEvents[1].command).toContain('step=ErrorHandler');
   });
 
-  it('expands loop variables in prompt text (I3)', async () => {
-    await writeFile(
-      join(workspace.cwd, 'for-prompt.runbook.md'),
-      `---
-name: FOR Prompt Test
----
-# FOR Prompt
-
-## 1. Process items
-- FOR item IN 1 TO 2
-- PASS ALL: CONTINUE
-
-### 1.1 Handle item {{item}}
-- PASS: CONTINUE
-- FAIL: STOP
-
-Process item number {{item}} carefully.
-
-\`\`\`bash
-rd echo item={{item}}
-\`\`\`
-`
-    );
+  it('expands loop variables in prompt text', async () => {
+    const content = createRunbook({
+      name: 'FOR Prompt Test',
+      title: 'FOR Prompt',
+      steps: [{
+        title: 'Process items',
+        for: { variable: 'item', start: 1, end: 2 },
+        pass: 'CONTINUE',
+        substeps: [{
+          title: 'Handle item {{item}}',
+          pass: 'CONTINUE',
+          fail: 'STOP',
+          content: 'Process item number {{item}} carefully.',
+          command: 'rd echo item={{item}}',
+        }],
+      }],
+    });
+    await writeFile(join(workspace.cwd, 'for-prompt.runbook.md'), content);
 
     const result = runCli('run --json for-prompt.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -388,26 +359,22 @@ rd echo item={{item}}
     expect(stepEnteredEvents[0].prompt).toContain('Process item number 1 carefully.');
   });
 
-  it('FOR with variable bounds resolves through Phase 1 expansion (I4)', async () => {
-    await writeFile(
-      join(workspace.cwd, 'for-var-bounds.runbook.md'),
-      `---
-name: FOR Var Bounds
-vars:
-  Max: 3
----
-# FOR Var Bounds
-
-## 1. Process
-- FOR item IN 1 TO {{Max}}
-- PASS ALL: CONTINUE
-
-### 1.1 Iteration {{Index}}
-\`\`\`bash
-rd echo iter={{Index}}
-\`\`\`
-`
-    );
+  it('FOR with variable bounds resolves through Phase 1 expansion', async () => {
+    const content = createRunbook({
+      name: 'FOR Var Bounds',
+      title: 'FOR Var Bounds',
+      vars: { Max: 3 },
+      steps: [{
+        title: 'Process',
+        for: { variable: 'item', start: 1, end: '{{Max}}' },
+        pass: 'CONTINUE',
+        substeps: [{
+          title: 'Iteration {{Index}}',
+          command: 'rd echo iter={{Index}}',
+        }],
+      }],
+    });
+    await writeFile(join(workspace.cwd, 'for-var-bounds.runbook.md'), content);
 
     const result = runCli('run --json for-var-bounds.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -428,29 +395,21 @@ rd echo iter={{Index}}
     expect(stepEnteredEvents[2].description).toContain('Iteration 3');
   });
 
-  it('FOR with multiple substeps expands variables in each (I5)', async () => {
-    await writeFile(
-      join(workspace.cwd, 'for-multi-sub.runbook.md'),
-      `---
-name: FOR Multi Substep
----
-# FOR Multi Substep
-
-## 1. Process
-- FOR item IN 1 TO 2
-- PASS ALL: CONTINUE
-
-### 1.1 Fetch item {{item}}
-\`\`\`bash
-rd echo fetch={{item}}
-\`\`\`
-
-### 1.2 Store item {{item}}
-\`\`\`bash
-rd echo store={{item}}
-\`\`\`
-`
-    );
+  it('FOR with multiple substeps expands variables in each', async () => {
+    const content = createRunbook({
+      name: 'FOR Multi Substep',
+      title: 'FOR Multi Substep',
+      steps: [{
+        title: 'Process',
+        for: { variable: 'item', start: 1, end: 2 },
+        pass: 'CONTINUE',
+        substeps: [
+          { title: 'Fetch item {{item}}', command: 'rd echo fetch={{item}}' },
+          { title: 'Store item {{item}}', command: 'rd echo store={{item}}' },
+        ],
+      }],
+    });
+    await writeFile(join(workspace.cwd, 'for-multi-sub.runbook.md'), content);
 
     const result = runCli('run --json for-multi-sub.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -476,24 +435,21 @@ rd echo store={{item}}
     expect(stepEnteredEvents[3].description).toContain('Store item 2');
   });
 
-  it('FOR with single iteration (1 TO 1) works correctly (I6)', async () => {
-    await writeFile(
-      join(workspace.cwd, 'for-single-iter.runbook.md'),
-      `---
-name: FOR Single Iter
----
-# FOR Single Iteration
-
-## 1. Single
-- FOR item IN 1 TO 1
-- PASS ALL: CONTINUE
-
-### 1.1 Only iteration {{item}}
-\`\`\`bash
-rd echo item={{item}}
-\`\`\`
-`
-    );
+  it('FOR with single iteration (1 TO 1) works correctly', async () => {
+    const content = createRunbook({
+      name: 'FOR Single Iter',
+      title: 'FOR Single Iteration',
+      steps: [{
+        title: 'Single',
+        for: { variable: 'item', start: 1, end: 1 },
+        pass: 'CONTINUE',
+        substeps: [{
+          title: 'Only iteration {{item}}',
+          command: 'rd echo item={{item}}',
+        }],
+      }],
+    });
+    await writeFile(join(workspace.cwd, 'for-single-iter.runbook.md'), content);
 
     const result = runCli('run --json for-single-iter.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -514,5 +470,82 @@ rd echo item={{item}}
     // No raw {{item}} in output
     const allText = JSON.stringify(stepEnteredEvents);
     expect(allText).not.toContain('{{item}}');
+  });
+
+  it('{{item}} preserved as literal outside FOR loop', async () => {
+    const content = createRunbook({
+      name: 'Item Outside FOR',
+      title: 'Item Outside',
+      steps: [{
+        title: 'Step with item reference {{item}}',
+        command: 'rd echo value={{item}}',
+      }],
+    });
+    await writeFile(join(workspace.cwd, 'item-outside-for.runbook.md'), content);
+
+    const result = runCli('run --json item-outside-for.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+
+    expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(1);
+    // {{item}} should be preserved as literal since there's no FOR loop
+    expect(stepEnteredEvents[0].description).toContain('{{item}}');
+
+    // Command should also preserve {{item}} as literal
+    const commandEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'command_started'
+    );
+    expect(commandEvents.length).toBeGreaterThanOrEqual(1);
+    expect(commandEvents[0].command).toContain('{{item}}');
+  });
+
+  it('FOR loop variable {{item}} does not leak into subsequent step', async () => {
+    const content = createRunbook({
+      name: 'FOR Variable Scope',
+      title: 'FOR Variable Scope',
+      steps: [
+        {
+          title: 'Loop step',
+          for: { variable: 'item', start: 1, end: 2 },
+          pass: 'CONTINUE',
+          substeps: [{
+            title: 'Process item {{item}}',
+            command: 'rd echo item={{item}}',
+          }],
+        },
+        {
+          title: 'After loop uses {{item}}',
+          command: 'rd echo after={{item}}',
+        },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'for-scope.runbook.md'), content);
+
+    const result = runCli('run --json for-scope.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter(line => line.startsWith('{'))
+      .map(line => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered'
+    );
+
+    // 2 FOR iterations + step 2 = 3 step_entered events
+    expect(stepEnteredEvents).toHaveLength(3);
+    expect(stepEnteredEvents[0].description).toContain('Process item 1');
+    expect(stepEnteredEvents[1].description).toContain('Process item 2');
+    // Step 2: {{item}} should be preserved as literal, NOT expanded to '2'
+    expect(stepEnteredEvents[2].description).toContain('{{item}}');
   });
 });
