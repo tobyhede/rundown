@@ -2600,6 +2600,168 @@ describe('runbook compiler', () => {
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.iterationResults).toEqual(['fail', 'fail', 'fail']);
     });
+
+    it('PASS ALL with GOTO target records GOTO lastAction and initializes forStack for target FOR step', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 2 },
+          description: 'Loop that GOTOs on pass',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3', at: 1 } } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'Skipped step',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } }
+          }
+        },
+        {
+          name: '3',
+          forClause: { start: 1, end: 3 },
+          description: 'Target FOR step',
+          substeps: [
+            {
+              id: '1',
+              description: 'Target substep',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+              }
+            }
+          ]
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // All iterations pass
+      actor.send({ type: 'PASS' }); // iter 1
+      actor.send({ type: 'PASS' }); // iter 2
+
+      // PASS ALL succeeds → GOTO 3 AT 1
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::3::1');
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', at: 1 });
+      expect(snapshot.context.forStack).toEqual([
+        { stepId: '3', iteration: 1, start: 1, end: 3 }
+      ]);
+      expect(snapshot.context.iterationResults).toEqual([]);
+    });
+
+    it('FAIL ANY with COMPLETE action records COMPLETE lastAction', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 2 },
+          description: 'Loop that COMPLETEs on fail',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'COMPLETE' } }
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'After loop',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: PASS
+      actor.send({ type: 'PASS' });
+      // Iteration 2: FAIL
+      actor.send({ type: 'FAIL' });
+
+      // PASS ALL with one failure → aggregation fails → COMPLETE
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE' });
+    });
+
+    it('PASS ALL with STOP action records STOP lastAction', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 2 },
+          description: 'Loop that STOPs on pass',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'STOP' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'After loop',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // All iterations pass
+      actor.send({ type: 'PASS' }); // iter 1
+      actor.send({ type: 'PASS' }); // iter 2
+
+      // PASS ALL succeeds → STOP
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.lastAction).toEqual({ type: 'STOP' });
+    });
   });
 
   describe('descending FOR loop ranges', () => {

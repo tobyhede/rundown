@@ -408,6 +408,90 @@ function buildLoopExitAssign(
 }
 
 /**
+ * Build assign action for aggregation exit paths that applies parent transition action semantics.
+ *
+ * Unlike `buildLoopExitAssign` which records the substep exit mechanism (CONTINUE/NEXT/BREAK),
+ * this function records the parent step's transition action (GOTO/STOP/COMPLETE/CONTINUE) as
+ * the lastAction, and initializes forStack when the target is a FOR step.
+ *
+ * @param parentAction - The parent step's transition action
+ * @param exitTarget - The resolved XState target state ID
+ * @param iterationResult - Result of the current (final) iteration
+ * @param steps - The full steps array (for GOTO target lookup)
+ * @returns XState assign action
+ */
+function buildAggregationExitAssign(
+  parentAction: Action,
+  exitTarget: string,
+  iterationResult: 'pass' | 'fail',
+  steps: Step[]
+): AssignAction {
+  const baseAssign = {
+    retryCount: 0,
+    substep: extractSubstepFromStateId(exitTarget),
+    iterationResults: ({ context }: { context: RunbookContext }) => {
+      const results = context.iterationResults ?? [];
+      return [...results, iterationResult];
+    },
+  };
+
+  switch (parentAction.type) {
+    case 'GOTO': {
+      const targetStep = steps.find(s => s.name === parentAction.target.step);
+      const targetForClause = targetStep?.forClause;
+
+      if (targetStep?.substeps?.length && targetForClause) {
+        // GOTO to a FOR step: initialize FOR context for the target.
+        // targetForClause is truthy here so the step has an explicit FOR clause (not implicit).
+        return assign({
+          ...baseAssign,
+          forStack: [createForContext(
+            targetStep.name,
+            targetForClause,
+            parentAction.target.at !== undefined ? Number(parentAction.target.at) : undefined
+          )],
+          iterationResults: [] as ('pass' | 'fail')[],
+          lastAction: buildGotoLastAction(parentAction.target),
+          substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
+        });
+      }
+
+      return assign({
+        ...baseAssign,
+        forStack: [] as ForContext[],
+        lastAction: buildGotoLastAction(parentAction.target),
+      });
+    }
+    case 'STOP':
+      return assign({
+        ...baseAssign,
+        forStack: [] as ForContext[],
+        lastAction: { type: 'STOP' as const },
+      });
+    case 'COMPLETE':
+      return assign({
+        ...baseAssign,
+        forStack: [] as ForContext[],
+        lastAction: { type: 'COMPLETE' as const },
+      });
+    case 'CONTINUE':
+      return assign({
+        ...baseAssign,
+        forStack: [] as ForContext[],
+        lastAction: { type: 'CONTINUE' as const },
+      });
+    case 'NEXT':
+    case 'BREAK':
+      // Defensive: shouldn't appear as parent aggregation actions
+      return assign({
+        ...baseAssign,
+        forStack: [] as ForContext[],
+        lastAction: { type: parentAction.type },
+      });
+  }
+}
+
+/**
  * Resolve an Action to an XState target state ID for aggregation routing.
  *
  * @param action - The terminal action to resolve
@@ -481,7 +565,7 @@ function buildAggregationExitTransitions(
         return shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
       },
       target: passTarget,
-      actions: buildLoopExitAssign(actionType, passTarget, iterationResult)
+      actions: buildAggregationExitAssign(parentTransitions.pass.action, passTarget, iterationResult, steps)
     },
     {
       guard: ({ context }: { context: RunbookContext }) => {
@@ -491,7 +575,7 @@ function buildAggregationExitTransitions(
         return !shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
       },
       target: failTarget,
-      actions: buildLoopExitAssign(actionType, failTarget, iterationResult)
+      actions: buildAggregationExitAssign(parentTransitions.fail.action, failTarget, iterationResult, steps)
     }
   ];
 }
