@@ -69,7 +69,7 @@ export type LastAction =
       readonly type: 'GOTO';
       readonly target: string;
       readonly substep?: string;
-      readonly at?: number | string;
+      readonly at?: number | `{{${string}}}`;
     }
   | { readonly type: 'COMPLETE' }
   | { readonly type: 'STOP' }
@@ -142,7 +142,7 @@ export interface ForContext {
   /** Named loop variable (e.g., "batch") */
   readonly variable?: string;
   /** True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence. */
-  readonly implicit?: boolean;
+  readonly implicit: boolean;
 }
 
 /**

@@ -111,7 +111,13 @@ export const CommandSchema = z.object({
 export type ValidatedSessionState = z.infer<typeof SessionStateSchema>;
 
 // Re-export parser schemas needed by consumers
-import { StepIdSchema, ActionSchema, TransitionsSchema } from '@rundown-org/parser';
+import {
+  StepIdSchema,
+  ActionSchema,
+  TransitionsSchema,
+  MAX_FOR_BOUND,
+  TEMPLATE_VAR_PATTERN,
+} from '@rundown-org/parser';
 export { StepIdSchema, ActionSchema, TransitionsSchema };
 
 /**
@@ -187,11 +193,11 @@ export const RunbookStateSchema = z
       .array(
         z.object({
           stepId: z.string(), // Step name (e.g., "3") that owns this FOR loop
-          iteration: z.number().int(), // Current iteration number (1-based)
-          start: z.number().int(), // Start of the iteration range
-          end: z.number().int(), // End of the iteration range (inclusive)
+          iteration: z.number().int().positive().max(MAX_FOR_BOUND), // Current iteration number (1-based)
+          start: z.number().int().positive().max(MAX_FOR_BOUND), // Start of the iteration range
+          end: z.number().int().positive().max(MAX_FOR_BOUND), // End of the iteration range (inclusive)
           variable: z.string().optional(), // Named loop variable (e.g., "batch")
-          implicit: z.boolean().optional(), // True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence.
+          implicit: z.boolean().default(false), // True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence.
         }),
       )
       .optional(),
@@ -214,7 +220,9 @@ export const RunbookStateSchema = z
           type: z.literal('GOTO'),
           target: z.string(),
           substep: z.string().optional(),
-          at: z.union([z.number().int().positive(), z.string()]).optional(),
+          at: z
+            .union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)])
+            .optional(),
         }),
         z.object({ type: z.literal('COMPLETE') }),
         z.object({ type: z.literal('STOP') }),
@@ -239,6 +247,7 @@ export const RunbookStateSchema = z
             start: forStart ?? 1,
             end: forEnd ?? forIteration,
             variable: forVariable,
+            implicit: false,
           },
         ],
       };

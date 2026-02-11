@@ -155,7 +155,9 @@ export class RunbookStateManager {
 
       const result = RunbookStateSchema.safeParse(parsed);
       if (!result.success) return null;
-      return result.data;
+      // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
+      // The schema guarantees GOTO `at` matches TEMPLATE_VAR_PATTERN; cast to the stricter TS type.
+      return result.data as RunbookState;
     } catch (e) {
       // Re-throw legacy snapshot errors
       if (e instanceof Error && e.message.includes('dynamic-step snapshots')) {

@@ -2762,7 +2762,9 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3::1');
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', at: 1 });
-      expect(snapshot.context.forStack).toEqual([{ stepId: '3', iteration: 1, start: 1, end: 3 }]);
+      expect(snapshot.context.forStack).toEqual([
+        { stepId: '3', iteration: 1, start: 1, end: 3, variable: undefined, implicit: false },
+      ]);
       expect(snapshot.context.iterationResults).toEqual([]);
     });
 
@@ -2981,7 +2983,9 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3::1');
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', at: 2 });
-      expect(snapshot.context.forStack).toEqual([{ stepId: '3', iteration: 2, start: 1, end: 4 }]);
+      expect(snapshot.context.forStack).toEqual([
+        { stepId: '3', iteration: 2, start: 1, end: 4, variable: undefined, implicit: false },
+      ]);
       expect(snapshot.context.iterationResults).toEqual([]);
     });
 

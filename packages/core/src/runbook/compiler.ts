@@ -23,8 +23,8 @@ export interface RunbookContext {
   lastAction?: LastAction;
   /** Message from STOP/COMPLETE actions */
   lastMessage?: string;
-  /** FOR loop execution stack (empty when not in a loop) */
-  forStack: ForContext[];
+  /** FOR loop execution stack (empty when not in a loop). Currently depth-1 only; nested loop support is reserved. */
+  readonly forStack: readonly ForContext[];
   /** Per-iteration outcomes ('pass' or 'fail') */
   iterationResults?: ('pass' | 'fail')[];
 }
@@ -83,13 +83,19 @@ function extractSubstepFromStateId(stateId: string): string | undefined {
   return match?.[2];
 }
 
-/** Build a structured GOTO LastAction from a StepId target. */
+/**
+ * Build a structured GOTO LastAction from a StepId target.
+ *
+ * Note: StepId.at is validated against TEMPLATE_VAR_PATTERN at parse time,
+ * but Zod's .regex() doesn't narrow the TypeScript type from `string`.
+ * The cast here bridges the gap between the runtime guarantee and the type.
+ */
 function buildGotoLastAction(target: StepId): LastAction {
   return {
     type: 'GOTO' as const,
     target: target.step,
     ...(target.substep && { substep: target.substep }),
-    ...(target.at !== undefined && { at: target.at }),
+    ...(target.at !== undefined && { at: target.at as number | `{{${string}}}` }),
   };
 }
 
@@ -158,7 +164,7 @@ function getFirstSubstepOfStep(step: Step): string | null {
 }
 
 /** Peek at the top of the FOR context stack. */
-function peekForStack(stack: ForContext[]): ForContext | undefined {
+function peekForStack(stack: readonly ForContext[]): ForContext | undefined {
   return stack.length > 0 ? stack[stack.length - 1] : undefined;
 }
 
@@ -196,7 +202,7 @@ function resolveAtValue(at: number | string | undefined, defaultValue: number): 
 function resolveAtValueRuntime(
   at: number | string | undefined,
   defaultValue: number,
-  forStack: ForContext[],
+  forStack: readonly ForContext[],
 ): number {
   if (at === undefined) return defaultValue;
   if (typeof at === 'number') return at;
@@ -228,7 +234,7 @@ function createForContext(
   stepName: string,
   forClause: ForClause,
   atValue?: number | string,
-  implicit?: boolean,
+  implicit = false,
 ): ForContext {
   const iteration = resolveAtValue(atValue, forClause.start);
   return {
@@ -237,7 +243,7 @@ function createForContext(
     start: forClause.start,
     end: forClause.end,
     variable: forClause.variable,
-    ...(implicit && { implicit: true }),
+    implicit,
   };
 }
 
@@ -293,7 +299,7 @@ function buildSimpleGotoAssign(options: {
     ...(options.preserveForContext
       ? {}
       : {
-          forStack: [] as ForContext[],
+          forStack: [] as readonly ForContext[],
           iterationResults: undefined as ('pass' | 'fail')[] | undefined,
         }),
   });
@@ -394,7 +400,7 @@ function buildLoopExitAssign(
   isImplicit?: boolean,
 ): AssignAction {
   return assign({
-    forStack: [] as ForContext[],
+    forStack: [] as readonly ForContext[],
     iterationResults: isImplicit
       ? (undefined as ('pass' | 'fail')[] | undefined)
       : ({ context }: { context: RunbookContext }) => {
@@ -460,26 +466,26 @@ function buildAggregationExitAssign(
 
       return assign({
         ...baseAssign,
-        forStack: [] as ForContext[],
+        forStack: [] as readonly ForContext[],
         lastAction: buildGotoLastAction(parentAction.target),
       });
     }
     case 'STOP':
       return assign({
         ...baseAssign,
-        forStack: [] as ForContext[],
+        forStack: [] as readonly ForContext[],
         lastAction: { type: 'STOP' as const },
       });
     case 'COMPLETE':
       return assign({
         ...baseAssign,
-        forStack: [] as ForContext[],
+        forStack: [] as readonly ForContext[],
         lastAction: { type: 'COMPLETE' as const },
       });
     case 'CONTINUE':
       return assign({
         ...baseAssign,
-        forStack: [] as ForContext[],
+        forStack: [] as readonly ForContext[],
         lastAction: { type: 'CONTINUE' as const },
       });
     case 'NEXT':
@@ -487,7 +493,7 @@ function buildAggregationExitAssign(
       // Defensive: shouldn't appear as parent aggregation actions
       return assign({
         ...baseAssign,
-        forStack: [] as ForContext[],
+        forStack: [] as readonly ForContext[],
         lastAction: { type: parentAction.type },
       });
   }
@@ -561,16 +567,18 @@ function buildAggregationExitTransitions(
   const passTarget = resolveActionTarget(parentTransitions.pass.action, parentStep.name, steps);
   const failTarget = resolveActionTarget(parentTransitions.fail.action, parentStep.name, steps);
 
-  // Guards are mutually exclusive and exhaustive: the loop always accumulates
-  // at least one iteration result before exit, so exactly one guard fires.
+  // Helper: compute aggregation pass/fail from accumulated results + current iteration.
+  // Used by both guards (mutually exclusive and exhaustive).
+  const aggregationPasses = ({ context }: { context: RunbookContext }): boolean => {
+    const results = [...(context.iterationResults ?? []), iterationResult];
+    const hasFailed = results.some((r) => r === 'fail');
+    const passCount = results.filter((r) => r === 'pass').length;
+    return shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
+  };
+
   return [
     {
-      guard: ({ context }: { context: RunbookContext }) => {
-        const results = [...(context.iterationResults ?? []), iterationResult];
-        const hasFailed = results.some((r) => r === 'fail');
-        const passCount = results.filter((r) => r === 'pass').length;
-        return shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
-      },
+      guard: aggregationPasses,
       target: passTarget,
       actions: buildAggregationExitAssign(
         parentTransitions.pass.action,
@@ -580,12 +588,7 @@ function buildAggregationExitTransitions(
       ),
     },
     {
-      guard: ({ context }: { context: RunbookContext }) => {
-        const results = [...(context.iterationResults ?? []), iterationResult];
-        const hasFailed = results.some((r) => r === 'fail');
-        const passCount = results.filter((r) => r === 'pass').length;
-        return !shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
-      },
+      guard: ({ context }: { context: RunbookContext }) => !aggregationPasses({ context }),
       target: failTarget,
       actions: buildAggregationExitAssign(
         parentTransitions.fail.action,
@@ -714,7 +717,7 @@ function buildActionTransition(
         return {
           target: targetStateId,
           actions: assign({
-            forStack: ({ context }: { context: RunbookContext }): ForContext[] => {
+            forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] => {
               // Intra-loop GOTO: preserve existing forStack
               const top = peekForStack(context.forStack);
               if (top?.stepId === targetStepObj.name) {
@@ -733,7 +736,7 @@ function buildActionTransition(
                   start: forClause.start,
                   end: forClause.end,
                   variable: forClause.variable,
-                  ...(isImplicit && { implicit: true }),
+                  implicit: isImplicit,
                 },
               ];
             },
@@ -948,7 +951,7 @@ export function compileRunbookToMachine(steps: Step[]) {
               }: {
                 context: RunbookContext;
                 event: RunbookEvent;
-              }): ForContext[] => {
+              }): readonly ForContext[] => {
                 if (event.type !== 'GOTO') return [];
                 // Intra-loop GOTO: preserve existing forStack
                 const top = peekForStack(context.forStack);
@@ -968,7 +971,7 @@ export function compileRunbookToMachine(steps: Step[]) {
                     start: forStepForTarget.forClause.start,
                     end: forStepForTarget.forClause.end,
                     variable: forStepForTarget.forClause.variable,
-                    ...(forStepForTarget.implicit && { implicit: true }),
+                    implicit: forStepForTarget.implicit,
                   },
                 ];
               },
@@ -988,7 +991,7 @@ export function compileRunbookToMachine(steps: Step[]) {
                 if (event.type !== 'GOTO') return undefined;
                 const step = event.target.step;
                 const substep = event.target.substep ?? target.substepId;
-                const at = event.target.at;
+                const at = event.target.at as number | `{{${string}}}` | undefined;
                 return {
                   type: 'GOTO' as const,
                   target: step,
@@ -1005,7 +1008,7 @@ export function compileRunbookToMachine(steps: Step[]) {
                 if (event.type !== 'GOTO') return undefined;
                 const step = event.target.step;
                 const substep = event.target.substep ?? target.substepId;
-                const at = event.target.at;
+                const at = event.target.at as number | `{{${string}}}` | undefined;
                 return {
                   type: 'GOTO' as const,
                   target: step,

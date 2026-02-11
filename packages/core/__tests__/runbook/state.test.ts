@@ -543,20 +543,22 @@ describe('RunbookStateManager', () => {
 
       // Update with forStack
       const updated = await manager.update(state.id, {
-        forStack: [{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' }],
+        forStack: [
+          { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+        ],
         iterationResults: ['pass', 'pass'],
       });
 
       // Verify forStack is set
       expect(updated.forStack).toEqual([
-        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' },
+        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
       ]);
       expect(updated.iterationResults).toEqual(['pass', 'pass']);
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
       expect(loaded?.forStack).toEqual([
-        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' },
+        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
       ]);
       expect(loaded?.iterationResults).toEqual(['pass', 'pass']);
     });
@@ -591,7 +593,9 @@ describe('RunbookStateManager', () => {
 
       // First, set forStack
       await manager.update(state.id, {
-        forStack: [{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' }],
+        forStack: [
+          { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+        ],
         iterationResults: ['pass', 'pass'],
       });
 

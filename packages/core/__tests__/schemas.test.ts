@@ -285,6 +285,7 @@ describe('RunbookStateSchema migration', () => {
           start: 1,
           end: 3,
           variable: 'item',
+          implicit: false,
         },
       ]);
       // Verify flat fields are stripped
@@ -314,6 +315,7 @@ describe('RunbookStateSchema migration', () => {
           start: 1,
           end: 5,
           variable: 'x',
+          implicit: false,
         },
       ]);
     }
