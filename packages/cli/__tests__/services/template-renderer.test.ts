@@ -1,6 +1,15 @@
 import { describe, it, expect } from '@jest/globals';
-import { renderTemplate, expandLoopVariables } from '../../src/services/template-renderer.js';
+import { parseRunbookDocument } from '@rundown-org/core';
+import {
+  renderTemplate,
+  expandLoopVariables,
+  shellEscapeValue,
+  substituteText,
+  substituteRunbookVariables,
+  expandLoopVariablesForCommand,
+} from '../../src/services/template-renderer.js';
 
+/* eslint-disable @typescript-eslint/no-deprecated -- testing legacy renderTemplate function */
 describe('renderTemplate', () => {
   it('should expand variables in markdown', () => {
     const markdown = '## 1. Run Tests\n\n```bash\n{{test_command}}\n```';
@@ -201,6 +210,7 @@ describe('renderTemplate', () => {
     });
   });
 });
+/* eslint-enable @typescript-eslint/no-deprecated */
 
 describe('expandLoopVariables', () => {
   it('should expand named loop variable', () => {
@@ -246,5 +256,209 @@ describe('expandLoopVariables', () => {
   it('should expand Step for named step', () => {
     expect(expandLoopVariables('At {{Step}}', { Step: 'ErrorHandler' }))
       .toBe('At ErrorHandler');
+  });
+});
+
+describe('shellEscapeValue', () => {
+  it('should return safe alphanumeric values unquoted', () => {
+    expect(shellEscapeValue('main')).toBe('main');
+    expect(shellEscapeValue('feature/branch')).toBe('feature/branch');
+    expect(shellEscapeValue('v1.2.3')).toBe('v1.2.3');
+    expect(shellEscapeValue('file_name')).toBe('file_name');
+    expect(shellEscapeValue('path/to/file.txt')).toBe('path/to/file.txt');
+  });
+
+  it('should return numeric values unquoted', () => {
+    expect(shellEscapeValue('42')).toBe('42');
+    expect(shellEscapeValue('3.14')).toBe('3.14');
+  });
+
+  it('should wrap empty string in single quotes', () => {
+    expect(shellEscapeValue('')).toBe("''");
+  });
+
+  it('should wrap values with spaces in single quotes', () => {
+    expect(shellEscapeValue('hello world')).toBe("'hello world'");
+  });
+
+  it('should wrap values with semicolons in single quotes', () => {
+    expect(shellEscapeValue('main; rm -rf /')).toBe("'main; rm -rf /'");
+  });
+
+  it('should wrap values with pipes in single quotes', () => {
+    expect(shellEscapeValue('data | evil')).toBe("'data | evil'");
+  });
+
+  it('should escape internal single quotes', () => {
+    expect(shellEscapeValue("it's")).toBe("'it'\\''s'");
+  });
+
+  it('should handle values with backticks', () => {
+    expect(shellEscapeValue('echo `whoami`')).toBe("'echo `whoami`'");
+  });
+
+  it('should handle values with dollar signs', () => {
+    expect(shellEscapeValue('$HOME')).toBe("'$HOME'");
+  });
+
+  it('should handle values with double quotes', () => {
+    expect(shellEscapeValue('say "hello"')).toBe("'say \"hello\"'");
+  });
+
+  it('should handle values with newlines', () => {
+    expect(shellEscapeValue('line1\nline2')).toBe("'line1\nline2'");
+  });
+});
+
+describe('substituteText', () => {
+  it('should substitute defined variables', () => {
+    expect(substituteText('Hello {{name}}', { name: 'World' }))
+      .toBe('Hello World');
+  });
+
+  it('should preserve undefined variables as literal text', () => {
+    expect(substituteText('Hello {{name}}', {}))
+      .toBe('Hello {{name}}');
+  });
+
+  it('should apply escape function when provided', () => {
+    const escape = (v: string) => `[${v}]`;
+    expect(substituteText('cmd {{arg}}', { arg: 'value' }, escape))
+      .toBe('cmd [value]');
+  });
+
+  it('should handle multiple occurrences', () => {
+    expect(substituteText('{{x}} and {{x}}', { x: 'A' }))
+      .toBe('A and A');
+  });
+
+  it('should handle multiple different variables', () => {
+    expect(substituteText('{{a}} {{b}}', { a: '1', b: '2' }))
+      .toBe('1 2');
+  });
+
+  it('should handle spaces in braces', () => {
+    expect(substituteText('{{ name }}', { name: 'test' }))
+      .toBe('test');
+  });
+});
+
+describe('substituteRunbookVariables', () => {
+  it('should substitute description without escaping', () => {
+    const rawMarkdown = '# Test\n\n## 1. Deploy {{environment}}\n\nDeploy to {{environment}}.';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, { environment: 'staging & prod' });
+    expect(result.steps[0].description).toBe('Deploy staging & prod');
+  });
+
+  it('should substitute prompt without escaping', () => {
+    const rawMarkdown = '# Test\n\n## 1. Check\n\n> Is {{service}} running?\n';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, { service: 'my service' });
+    expect(result.steps[0].prompt).toContain('my service');
+  });
+
+  it('should shell-escape command.code values', () => {
+    const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, { BRANCH: 'main; rm -rf /' });
+    expect(result.steps[0].command!.code).toBe("git checkout 'main; rm -rf /'");
+  });
+
+  it('should pass through safe values unquoted in commands', () => {
+    const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, { BRANCH: 'main' });
+    expect(result.steps[0].command!.code).toBe('git checkout main');
+  });
+
+  it('should preserve undefined variables', () => {
+    const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, {});
+    expect(result.steps[0].command!.code).toBe('git checkout {{BRANCH}}');
+  });
+
+  it('should substitute runbook title', () => {
+    const rawMarkdown = '# {{project}} Runbook\n\n## 1. Start\n\nGo.';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, { project: 'MyApp' });
+    expect(result.title).toBe('MyApp Runbook');
+  });
+
+  it('should substitute runbook description', () => {
+    const rawMarkdown = '# Test\n\nDeploy {{app}} to production.\n\n## 1. Start\n\nGo.';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, { app: 'MyApp' });
+    expect(result.description).toContain('MyApp');
+  });
+
+  it('should handle substep commands with escaping', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Main step',
+      '',
+      '### 1.1 Check {{service}}',
+      '',
+      '```bash',
+      'curl {{url}}',
+      '```',
+      '',
+    ].join('\n');
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, {
+      service: 'web server',
+      url: 'http://example.com/path?q=1&x=2',
+    });
+    expect(result.steps[0].substeps![0].description).toBe('Check web server');
+    // URL contains special chars (? and &) so gets quoted
+    expect(result.steps[0].substeps![0].command!.code).toContain("'http://example.com/path?q=1&x=2'");
+  });
+
+  it('prevents shell injection via variable substitution', () => {
+    const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, { BRANCH: 'main; rm -rf /' });
+    // The injected command should be safely quoted
+    expect(result.steps[0].command!.code).toBe("git checkout 'main; rm -rf /'");
+    // Should NOT contain the unescaped injection
+    expect(result.steps[0].command!.code).not.toBe('git checkout main; rm -rf /');
+  });
+
+  it('prevents backtick injection', () => {
+    const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\necho {{MSG}}\n```';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, { MSG: '`whoami`' });
+    expect(result.steps[0].command!.code).toBe("echo '`whoami`'");
+  });
+
+  it('prevents dollar-sign injection', () => {
+    const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\necho {{MSG}}\n```';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const result = substituteRunbookVariables(runbook, { MSG: '$(cat /etc/passwd)' });
+    expect(result.steps[0].command!.code).toBe("echo '$(cat /etc/passwd)'");
+  });
+});
+
+describe('expandLoopVariablesForCommand', () => {
+  it('should shell-escape values', () => {
+    expect(expandLoopVariablesForCommand('echo {{msg}}', { msg: 'hello world' }))
+      .toBe("echo 'hello world'");
+  });
+
+  it('should pass through safe numeric values unquoted', () => {
+    expect(expandLoopVariablesForCommand('echo {{Index}}', { Index: '3' }))
+      .toBe('echo 3');
+  });
+
+  it('should preserve unmatched variables', () => {
+    expect(expandLoopVariablesForCommand('{{batch}} and {{other}}', { batch: '1' }))
+      .toBe('1 and {{other}}');
+  });
+
+  it('should shell-escape values with special characters', () => {
+    expect(expandLoopVariablesForCommand('deploy {{target}}', { target: 'prod; drop db' }))
+      .toBe("deploy 'prod; drop db'");
   });
 });

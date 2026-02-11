@@ -39,6 +39,7 @@ interface CreateOptions {
   readonly parentStepId?: StepId;
   readonly prompted?: boolean;
   readonly runbookSrc?: string;
+  readonly templateVars?: Record<string, string>;
 }
 
 /**
@@ -105,7 +106,8 @@ export class RunbookStateManager {
       startedAt: now,
       updatedAt: now,
       prompted: options.prompted,
-      runbookSrc: options.runbookSrc
+      runbookSrc: options.runbookSrc,
+      templateVars: options.templateVars,
     };
 
     await this.save(state);

@@ -186,6 +186,9 @@ export interface RunbookState {
 
   readonly snapshot?: unknown;
 
-  /** Runbook source content (rendered from template), frozen at run time */
+  /** Runbook source content (raw markdown with {{placeholders}}), frozen at run time */
   readonly runbookSrc?: string;
+
+  /** Template variables used for AST-level substitution, frozen at run time */
+  readonly templateVars?: Readonly<Record<string, string>>;
 }

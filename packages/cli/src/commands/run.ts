@@ -22,7 +22,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import { collect } from './echo.js';
 import { collectVariables, extractVarsFromMarkdown } from '../services/variable-discovery.js';
-import { renderTemplate } from '../services/template-renderer.js';
+import { substituteRunbookVariables, expandForClauseVariables } from '../services/template-renderer.js';
 
 /**
  * Emit RUNBOOK_STARTED event with metadata.
@@ -115,24 +115,22 @@ export function registerRunCommand(program: Command): void {
             process.exit(1);
           }
 
-          // Load and render template
+          // Load raw markdown and collect variables
           const rawContent = await fs.readFile(filePath, 'utf8');
           const frontmatterVars = extractVarsFromMarkdown(rawContent);
           const mergedVariables = await collectVariables(
             { varFile: options.varFile, var: options.var, frontmatterVars },
             cwd
           );
-          let runbookSrc: string;
-          try {
-            runbookSrc = renderTemplate(rawContent, mergedVariables);
-          } catch (err) {
-            output.error(`Template error: ${(err as Error).message}`, 'TEMPLATE_ERROR');
-            output.flush();
-            process.exit(1);
-          }
 
-          // Parse expanded content
-          const runbook = parseRunbookDocument(runbookSrc, path.basename(filePath));
+          // Pre-expand FOR clause bounds (parser needs numeric values)
+          const forExpandedContent = expandForClauseVariables(rawContent, mergedVariables);
+
+          // Parse markdown ({{variables}} in non-FOR contexts are literal text in mdast)
+          const rawRunbook = parseRunbookDocument(forExpandedContent, path.basename(filePath));
+
+          // Then substitute variables into parsed AST with context-aware escaping
+          const runbook = substituteRunbookVariables(rawRunbook, mergedVariables);
 
           if (runbook.steps.length === 0) {
             output.error('Runbook has no steps', 'VALIDATION_ERROR', {
@@ -146,8 +144,9 @@ export function registerRunCommand(program: Command): void {
           const state = await manager.create(file, runbook, {
             runbookPath,
             prompted: options.prompted,
-            agentId: options.agent,  // Pass agent ID
-            runbookSrc,  // Store expanded content
+            agentId: options.agent,
+            runbookSrc: rawContent,        // Store raw markdown (not expanded)
+            templateVars: mergedVariables,  // Store variables for resume re-application
           });
 
           await manager.pushRunbook(state.id, options.agent);
@@ -215,24 +214,18 @@ export function registerRunCommand(program: Command): void {
               process.exit(1);
             }
 
-            // Load and render child template (inherit parent's variables context)
+            // Load raw child markdown and collect variables
             const rawContent = await fs.readFile(runbookPath, 'utf8');
             const frontmatterVars = extractVarsFromMarkdown(rawContent);
             const mergedVariables = await collectVariables(
               { varFile: options.varFile, var: options.var, frontmatterVars },
               cwd
             );
-            let childRunbookSrc: string;
-            try {
-              childRunbookSrc = renderTemplate(rawContent, mergedVariables);
-            } catch (err) {
-              output.error(`Template error: ${(err as Error).message}`, 'TEMPLATE_ERROR');
-              output.flush();
-              process.exit(1);
-            }
 
-            // Parse expanded content
-            const runbook = parseRunbookDocument(childRunbookSrc, path.basename(runbookPath));
+            // Pre-expand FOR clause bounds, then parse and substitute into AST
+            const forExpandedContent = expandForClauseVariables(rawContent, mergedVariables);
+            const rawRunbook = parseRunbookDocument(forExpandedContent, path.basename(runbookPath));
+            const runbook = substituteRunbookVariables(rawRunbook, mergedVariables);
 
             if (runbook.steps.length === 0) {
               output.error('Child runbook has no steps', 'VALIDATION_ERROR', {
@@ -252,8 +245,9 @@ export function registerRunCommand(program: Command): void {
               agentId: options.agent,
               parentRunbookId: state.id,
               parentStepId: pending.stepId,
-              prompted: parentPrompted,  // Inherit from parent
-              runbookSrc: childRunbookSrc,  // Store expanded child content
+              prompted: parentPrompted,
+              runbookSrc: rawContent,          // Store raw markdown
+              templateVars: mergedVariables,   // Store variables for resume
             });
 
             await manager.updateAgentBinding(state.id, options.agent, {

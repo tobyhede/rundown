@@ -208,7 +208,8 @@ export const RunbookStateSchema = z.object({
     z.object({ type: z.literal('NEXT') }),
     z.object({ type: z.literal('BREAK') }),
   ]).optional(),
-  runbookSrc: z.string().optional()
+  runbookSrc: z.string().optional(),
+  templateVars: z.record(z.string(), z.string()).optional(),
 }).transform((data) => {
   const { forIteration, forStart, forEnd, forVariable, ...rest } = data;
   // Migrate old flat FOR fields → forStack

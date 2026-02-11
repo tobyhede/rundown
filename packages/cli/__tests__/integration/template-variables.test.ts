@@ -71,8 +71,8 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find(e => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      // Empty value renders as empty string (no trailing space after 'rd echo')
-      expect(commandStartedEvent.command).toBe('rd echo');
+      // Empty value is shell-escaped to '' (single-quoted empty string)
+      expect(commandStartedEvent.command).toBe("rd echo ''");
       expect(commandStartedEvent.command).not.toContain('from-file');
     });
 

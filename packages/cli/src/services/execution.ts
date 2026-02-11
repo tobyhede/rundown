@@ -34,7 +34,7 @@ import {
   isPolicyEnforced,
   getSandboxOptions,
 } from './policy-context.js';
-import { expandLoopVariables } from './template-renderer.js';
+import { expandLoopVariables, expandLoopVariablesForCommand } from './template-renderer.js';
 
 /**
  * Check if runbook snapshot indicates completion.
@@ -169,7 +169,7 @@ export async function runExecutionLoop(
         prompt: expandedPrompt,
         hasCommand: !!itemToRender.command,
         commandCode: itemToRender.command?.code
-          ? expandLoopVariables(itemToRender.command.code, stepVars)
+          ? expandLoopVariablesForCommand(itemToRender.command.code, stepVars)
           : itemToRender.command?.code,
         commandLang: itemToRender.command?.lang,
         isSubstep,
@@ -181,7 +181,7 @@ export async function runExecutionLoop(
         description: expandedDescription,
         prompt: expandedPrompt,
         command: itemToRender.command
-          ? { ...itemToRender.command, code: expandLoopVariables(itemToRender.command.code, stepVars) }
+          ? { ...itemToRender.command, code: expandLoopVariablesForCommand(itemToRender.command.code, stepVars) }
           : itemToRender.command,
       };
       // Temporary fallback only when emitter is not provided.
@@ -195,7 +195,7 @@ export async function runExecutionLoop(
     }
 
     // Expand command code for execution (after guard — itemToRender.command is guaranteed)
-    const expandedCommandCode = expandLoopVariables(itemToRender.command.code, stepVars);
+    const expandedCommandCode = expandLoopVariablesForCommand(itemToRender.command.code, stepVars);
 
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
