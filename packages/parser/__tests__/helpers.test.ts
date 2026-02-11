@@ -1,16 +1,16 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseAction, extractRunbookList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, validateNEXTUsage, type ParsedConditional } from '../src/index.js';
+import { parseAction, extractRunbookList, isPromptCodeBlock, parseQuotedOrIdentifier, RESERVED_WORDS, isReservedWord, parseStepIdFromString, extractStepHeader, extractSubstepHeader, parseConditional, convertToTransitions, validateNEXTUsage, parseForClause, type ParsedConditional } from '../src/index.js';
 import { formatAction, isExecutableCodeBlock } from '../src/helpers.js';
 
-describe('parseAction GOTO NEXT', () => {
-  it('parses GOTO NEXT as action', () => {
-    const result = parseAction('GOTO NEXT');
-    expect(result).toEqual({ type: 'GOTO', target: { step: 'NEXT' } });
+describe('parseAction NEXT and BREAK', () => {
+  it('parses standalone NEXT as first-class NEXT action', () => {
+    const result = parseAction('NEXT');
+    expect(result).toEqual({ type: 'NEXT' });
   });
 
-  it('parses standalone NEXT as GOTO NEXT', () => {
-    const result = parseAction('NEXT');
-    expect(result).toEqual({ type: 'GOTO', target: { step: 'NEXT' } });
+  it('parses standalone BREAK as first-class BREAK action', () => {
+    const result = parseAction('BREAK');
+    expect(result).toEqual({ type: 'BREAK' });
   });
 });
 
@@ -69,13 +69,6 @@ describe('parseAction GOTO with named targets', () => {
     });
   });
 
-  it('parses GOTO {N} with named substep', () => {
-    const result = parseAction('GOTO {N}.Recovery');
-    expect(result).toEqual({
-      type: 'GOTO',
-      target: { step: '{N}', substep: 'Recovery' }
-    });
-  });
 
   it('returns null for quoted GOTO target (names must be identifiers)', () => {
     const result = parseAction('GOTO "Error Handler"');
@@ -384,18 +377,7 @@ describe('extractStepHeader with named steps', () => {
     it('extracts numeric step', () => {
       expect(extractStepHeader('1 Do something')).toEqual({
         name: '1',
-        isDynamic: false,
         description: 'Do something',
-      });
-    });
-  });
-
-  describe('dynamic steps', () => {
-    it('extracts {N} step', () => {
-      expect(extractStepHeader('{N} Process each item')).toEqual({
-        name: '{N}',
-        isDynamic: true,
-        description: 'Process each item',
       });
     });
   });
@@ -404,7 +386,6 @@ describe('extractStepHeader with named steps', () => {
     it('extracts named step', () => {
       expect(extractStepHeader('Cleanup')).toEqual({
         name: 'Cleanup',
-        isDynamic: false,
         description: 'Cleanup',
       });
     });
@@ -412,7 +393,6 @@ describe('extractStepHeader with named steps', () => {
     it('extracts named step with title', () => {
       expect(extractStepHeader('ErrorHandler Handle all errors')).toEqual({
         name: 'ErrorHandler',
-        isDynamic: false,
         description: 'Handle all errors',
       });
     });
@@ -420,7 +400,6 @@ describe('extractStepHeader with named steps', () => {
     it('extracts named step with underscore', () => {
       expect(extractStepHeader('error_handler')).toEqual({
         name: 'error_handler',
-        isDynamic: false,
         description: 'error_handler',
       });
     });
@@ -428,7 +407,6 @@ describe('extractStepHeader with named steps', () => {
     it('extracts single letter named step', () => {
       expect(extractStepHeader('A')).toEqual({
         name: 'A',
-        isDynamic: false,
         description: 'A',
       });
     });
@@ -446,7 +424,6 @@ describe('extractStepHeader with named steps', () => {
     it('strips trailing period from named step', () => {
       expect(extractStepHeader('Rollback. Handle rollback')).toEqual({
         name: 'Rollback',
-        isDynamic: false,
         description: 'Handle rollback',
       });
     });
@@ -454,7 +431,6 @@ describe('extractStepHeader with named steps', () => {
     it('strips trailing colon from named step', () => {
       expect(extractStepHeader('Rollback: Handle rollback')).toEqual({
         name: 'Rollback',
-        isDynamic: false,
         description: 'Handle rollback',
       });
     });
@@ -462,7 +438,6 @@ describe('extractStepHeader with named steps', () => {
     it('strips trailing em dash from named step', () => {
       expect(extractStepHeader('Rollback— Handle rollback')).toEqual({
         name: 'Rollback',
-        isDynamic: false,
         description: 'Handle rollback',
       });
     });
@@ -470,7 +445,6 @@ describe('extractStepHeader with named steps', () => {
     it('strips trailing arrow from named step', () => {
       expect(extractStepHeader('Rollback→ Handle rollback')).toEqual({
         name: 'Rollback',
-        isDynamic: false,
         description: 'Handle rollback',
       });
     });
@@ -478,7 +452,6 @@ describe('extractStepHeader with named steps', () => {
     it('strips trailing hyphen from named step', () => {
       expect(extractStepHeader('Rollback- Handle rollback')).toEqual({
         name: 'Rollback',
-        isDynamic: false,
         description: 'Handle rollback',
       });
     });
@@ -486,7 +459,6 @@ describe('extractStepHeader with named steps', () => {
     it('strips trailing closing parenthesis from named step', () => {
       expect(extractStepHeader('Rollback) Handle rollback')).toEqual({
         name: 'Rollback',
-        isDynamic: false,
         description: 'Handle rollback',
       });
     });
@@ -494,7 +466,6 @@ describe('extractStepHeader with named steps', () => {
     it('strips multiple trailing separators from named step', () => {
       expect(extractStepHeader('Rollback.) Handle rollback')).toEqual({
         name: 'Rollback',
-        isDynamic: false,
         description: 'Handle rollback',
       });
     });
@@ -502,7 +473,6 @@ describe('extractStepHeader with named steps', () => {
     it('handles named step with trailing separator and no description', () => {
       expect(extractStepHeader('Rollback.')).toEqual({
         name: 'Rollback',
-        isDynamic: false,
         description: 'Rollback',
       });
     });
@@ -537,9 +507,6 @@ describe('parseStepIdFromString with named steps', () => {
       expect(parseStepIdFromString('ErrorHandler.Recover')).toEqual({ step: 'ErrorHandler', substep: 'Recover' });
     });
 
-    it('parses {N} with named substep', () => {
-      expect(parseStepIdFromString('{N}.Recovery')).toEqual({ step: '{N}', substep: 'Recovery' });
-    });
   });
 
   describe('invalid named steps', () => {
@@ -551,9 +518,6 @@ describe('parseStepIdFromString with named steps', () => {
       expect(parseStepIdFromString('1."Clean Up"')).toBeNull();
     });
 
-    it('parses NEXT as special target', () => {
-      expect(parseStepIdFromString('NEXT')).toEqual({ step: 'NEXT' });
-    });
 
     it('returns null for identifier starting with digit', () => {
       expect(parseStepIdFromString('123abc')).toBeNull();
@@ -603,34 +567,7 @@ describe('parseStepIdFromString with named steps', () => {
   });
 });
 
-describe('parseStepIdFromString dynamic patterns', () => {
-  it('parses {N} as step target (restart current dynamic instance)', () => {
-    const result = parseStepIdFromString('{N}');
-    expect(result).toEqual({ step: '{N}' });
-  });
 
-  it('parses {N}.{n} as current step with current substep', () => {
-    const result = parseStepIdFromString('{N}.{n}');
-    expect(result).toEqual({ step: '{N}', substep: '{n}' });
-  });
-});
-
-describe('parseStepIdFromString substep {n}', () => {
-  it('parses 1.{n} as step 1 with dynamic substep', () => {
-    const result = parseStepIdFromString('1.{n}');
-    expect(result).toEqual({ step: '1', substep: '{n}' });
-  });
-
-  it('parses ErrorHandler.{n} as named step with dynamic substep', () => {
-    const result = parseStepIdFromString('ErrorHandler.{n}');
-    expect(result).toEqual({ step: 'ErrorHandler', substep: '{n}' });
-  });
-
-  it('rejects bare {n} as step', () => {
-    const result = parseStepIdFromString('{n}');
-    expect(result).toBeNull();
-  });
-});
 
 describe('extractSubstepHeader with named substeps', () => {
   describe('static substeps', () => {
@@ -640,20 +577,6 @@ describe('extractSubstepHeader with named substeps', () => {
         stepRef: '1',
         id: '1',
         description: 'First substep',
-        isDynamic: false,
-        agentType: undefined,
-      });
-    });
-  });
-
-  describe('dynamic substeps', () => {
-    it('extracts {n} substep', () => {
-      const result = extractSubstepHeader('{N}.{n} Process item');
-      expect(result).toEqual({
-        stepRef: '{N}',
-        id: '{n}',
-        description: 'Process item',
-        isDynamic: true,
         agentType: undefined,
       });
     });
@@ -666,7 +589,6 @@ describe('extractSubstepHeader with named substeps', () => {
         stepRef: '1',
         id: 'Cleanup',
         description: 'Handle cleanup',
-        isDynamic: false,
         agentType: undefined,
       });
     });
@@ -677,21 +599,10 @@ describe('extractSubstepHeader with named substeps', () => {
         stepRef: 'ErrorHandler',
         id: 'Recover',
         description: 'Recovery logic',
-        isDynamic: false,
         agentType: undefined,
       });
     });
 
-    it('extracts named substep of {N} step', () => {
-      const result = extractSubstepHeader('{N}.Recovery Handle recovery');
-      expect(result).toEqual({
-        stepRef: '{N}',
-        id: 'Recovery',
-        description: 'Handle recovery',
-        isDynamic: false,
-        agentType: undefined,
-      });
-    });
 
     it('extracts substep with minimal single-word description', () => {
       const result = extractSubstepHeader('1.A Do');
@@ -699,7 +610,6 @@ describe('extractSubstepHeader with named substeps', () => {
         stepRef: '1',
         id: 'A',
         description: 'Do',
-        isDynamic: false,
         agentType: undefined,
       });
     });
@@ -707,70 +617,6 @@ describe('extractSubstepHeader with named substeps', () => {
     it('rejects reserved word as substep name', () => {
       expect(extractSubstepHeader('1.NEXT Invalid')).toBeNull();
     });
-  });
-});
-
-describe('parseAction GOTO NEXT with target', () => {
-  it('parses GOTO NEXT {N} as qualified NEXT (advance step)', () => {
-    const result = parseAction('GOTO NEXT {N}');
-    expect(result).toEqual({
-      type: 'GOTO',
-      target: { step: 'NEXT', qualifier: { step: '{N}' } }
-    });
-  });
-
-  it('parses GOTO NEXT {N}.{n} as qualified NEXT (advance substep, same step)', () => {
-    const result = parseAction('GOTO NEXT {N}.{n}');
-    expect(result).toEqual({
-      type: 'GOTO',
-      target: { step: 'NEXT', qualifier: { step: '{N}', substep: '{n}' } }
-    });
-  });
-
-  it('parses GOTO NEXT 1.{n} as qualified NEXT to substep', () => {
-    const result = parseAction('GOTO NEXT 1.{n}');
-    expect(result).toEqual({
-      type: 'GOTO',
-      target: { step: 'NEXT', qualifier: { step: '1', substep: '{n}' } }
-    });
-  });
-
-  it('parses GOTO NEXT ErrorHandler.{n}', () => {
-    const result = parseAction('GOTO NEXT ErrorHandler.{n}');
-    expect(result).toEqual({
-      type: 'GOTO',
-      target: { step: 'NEXT', qualifier: { step: 'ErrorHandler', substep: '{n}' } }
-    });
-  });
-});
-
-describe('validateNEXTUsage with dynamic substeps', () => {
-  const makeConditional = (action: { type: string; target?: { step: string } }): ParsedConditional => ({
-    type: 'pass',
-    retry: 0,
-    action: action as any,
-    modifier: null,
-    raw: 'test'
-  });
-
-  it('allows NEXT in dynamic substep of static step', () => {
-    expect(() => {
-      validateNEXTUsage(
-        [makeConditional({ type: 'GOTO', target: { step: 'NEXT' } })],
-        false,  // step is NOT dynamic
-        true    // substep IS dynamic
-      );
-    }).not.toThrow();
-  });
-
-  it('rejects NEXT in static substep of static step', () => {
-    expect(() => {
-      validateNEXTUsage(
-        [makeConditional({ type: 'GOTO', target: { step: 'NEXT' } })],
-        false,  // step is NOT dynamic
-        false   // substep is NOT dynamic
-      );
-    }).toThrow('NEXT action is only allowed in dynamic contexts');
   });
 });
 
@@ -794,16 +640,20 @@ describe('stepIdToString', () => {
     expect(stepIdToString({ step: 'ErrorHandler', substep: 'Recover' })).toBe('ErrorHandler.Recover');
   });
 
-  it('formats dynamic step', () => {
-    expect(stepIdToString({ step: '{N}' })).toBe('{N}');
-  });
-
-  it('formats dynamic step with substep', () => {
-    expect(stepIdToString({ step: '{N}', substep: '{n}' })).toBe('{N}.{n}');
-  });
-
   it('formats NEXT target', () => {
     expect(stepIdToString({ step: 'NEXT' })).toBe('NEXT');
+  });
+
+  it('formats step with AT', () => {
+    expect(stepIdToString({ step: '3', at: 1 })).toBe('3 AT 1');
+  });
+
+  it('formats step.substep with AT', () => {
+    expect(stepIdToString({ step: '3', substep: '1', at: 2 })).toBe('3.1 AT 2');
+  });
+
+  it('formats step with template variable AT', () => {
+    expect(stepIdToString({ step: '3', at: '{{Index}}' })).toBe('3 AT {{Index}}');
   });
 });
 
@@ -839,6 +689,18 @@ describe('stepIdEquals', () => {
   it('returns true for equal NEXT targets', () => {
     expect(stepIdEquals({ step: 'NEXT' }, { step: 'NEXT' })).toBe(true);
   });
+
+  it('returns true for equal AT values', () => {
+    expect(stepIdEquals({ step: '3', at: 1 }, { step: '3', at: 1 })).toBe(true);
+  });
+
+  it('returns false when one has AT and one does not', () => {
+    expect(stepIdEquals({ step: '3', at: 1 }, { step: '3' })).toBe(false);
+  });
+
+  it('returns false for different AT values', () => {
+    expect(stepIdEquals({ step: '3', at: 1 }, { step: '3', at: 2 })).toBe(false);
+  });
 });
 
 describe('parseStepIdFromString edge cases', () => {
@@ -849,37 +711,23 @@ describe('parseStepIdFromString edge cases', () => {
   });
 
   describe('requireSeparator option', () => {
-    it('parses {N}.1 with separator requirement when followed by space', () => {
-      const result = parseStepIdFromString('{N}.1 Description', { requireSeparator: true });
-      expect(result).toEqual({ step: '{N}', substep: '1' });
+    it('parses 2.1 with separator requirement when followed by space', () => {
+      const result = parseStepIdFromString('2.1 Description', { requireSeparator: true });
+      expect(result).toEqual({ step: '2', substep: '1' });
     });
 
-    it('parses {N}.{n} with separator requirement when followed by colon', () => {
-      const result = parseStepIdFromString('{N}.{n}:text', { requireSeparator: true });
-      expect(result).toEqual({ step: '{N}', substep: '{n}' });
+    it('parses 3.Cleanup with separator requirement when followed by colon', () => {
+      const result = parseStepIdFromString('3.Cleanup:text', { requireSeparator: true });
+      expect(result).toEqual({ step: '3', substep: 'Cleanup' });
     });
 
-    it('parses {N}.abc without explicit separator since abc is a valid identifier', () => {
-      // Valid identifiers match before requireSeparator check
-      const result = parseStepIdFromString('{N}.abc', { requireSeparator: true });
-      expect(result).toEqual({ step: '{N}', substep: 'abc' });
-    });
 
-    it('parses {N}.Name with separator when followed by space', () => {
-      const result = parseStepIdFromString('{N}.Name Description', { requireSeparator: true });
-      expect(result).toEqual({ step: '{N}', substep: 'Name' });
+    it('parses 2.Name with separator when followed by space', () => {
+      const result = parseStepIdFromString('2.Name Description', { requireSeparator: true });
+      expect(result).toEqual({ step: '2', substep: 'Name' });
     });
   });
 
-  describe('malformed dynamic patterns', () => {
-    it('returns null for malformed {N}abc (no dot separator)', () => {
-      expect(parseStepIdFromString('{N}abc')).toBeNull();
-    });
-
-    it('returns null for {N}123 without dot', () => {
-      expect(parseStepIdFromString('{N}123')).toBeNull();
-    });
-  });
 
   describe('zero step/substep validation', () => {
     it('returns null for step 0', () => {
@@ -888,10 +736,6 @@ describe('parseStepIdFromString edge cases', () => {
 
     it('returns null for substep 0 in numeric step', () => {
       expect(parseStepIdFromString('1.0')).toBeNull();
-    });
-
-    it('returns null for substep 0 in dynamic step', () => {
-      expect(parseStepIdFromString('{N}.0')).toBeNull();
     });
 
     it('returns null for substep 0 in named step', () => {
@@ -909,35 +753,9 @@ describe('parseStepIdFromString edge cases', () => {
     });
   });
 
-  describe('bare {n} rejection', () => {
-    it('rejects bare {n} as step (only valid as substep)', () => {
-      expect(parseStepIdFromString('{n}')).toBeNull();
-    });
-  });
-
   describe('empty input', () => {
     it('returns null for empty string', () => {
       expect(parseStepIdFromString('')).toBeNull();
-    });
-  });
-
-  describe('{N}.numeric substep', () => {
-    it('parses {N}.1 as dynamic step with numeric substep', () => {
-      expect(parseStepIdFromString('{N}.1')).toEqual({ step: '{N}', substep: '1' });
-    });
-
-    it('parses {N}.99 as dynamic step with numeric substep', () => {
-      expect(parseStepIdFromString('{N}.99')).toEqual({ step: '{N}', substep: '99' });
-    });
-  });
-
-  describe('invalid {N}.xxx patterns', () => {
-    it('returns null for {N}.@invalid (invalid character)', () => {
-      expect(parseStepIdFromString('{N}.@invalid')).toBeNull();
-    });
-
-    it('returns null for {N}.-dash (starts with dash)', () => {
-      expect(parseStepIdFromString('{N}.-dash')).toBeNull();
     });
   });
 });
@@ -1119,13 +937,47 @@ describe('convertToTransitions aggregation conflicts', () => {
 });
 
 describe('validateNEXTUsage with RETRY containing NEXT', () => {
-  it('rejects RETRY with NEXT fallback in static context', () => {
+  it('rejects RETRY with NEXT fallback in non-FOR context', () => {
     expect(() => {
       validateNEXTUsage(
         [{ type: 'fail', retry: 2, action: { type: 'GOTO', target: { step: 'NEXT' } }, modifier: null, raw: 'RETRY 2 NEXT' }],
         false
       );
-    }).toThrow('NEXT action is only allowed in dynamic contexts');
+    }).not.toThrow();
+  });
+});
+
+describe('validateNEXTUsage with first-class NEXT/BREAK', () => {
+  it('rejects first-class NEXT outside FOR context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'NEXT' }, retry: 0, modifier: null, raw: 'NEXT' },
+    ];
+    expect(() => { validateNEXTUsage(conditionals, false); }).toThrow(
+      'NEXT is only valid within substeps of a FOR step'
+    );
+  });
+
+  it('accepts first-class NEXT in FOR context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'NEXT' }, retry: 0, modifier: null, raw: 'NEXT' },
+    ];
+    expect(() => { validateNEXTUsage(conditionals, true); }).not.toThrow();
+  });
+
+  it('rejects first-class BREAK outside FOR context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'BREAK' }, retry: 0, modifier: null, raw: 'BREAK' },
+    ];
+    expect(() => { validateNEXTUsage(conditionals, false); }).toThrow(
+      'BREAK is only valid within substeps of a FOR step'
+    );
+  });
+
+  it('accepts first-class BREAK in FOR context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'BREAK' }, retry: 0, modifier: null, raw: 'BREAK' },
+    ];
+    expect(() => { validateNEXTUsage(conditionals, true); }).not.toThrow();
   });
 });
 
@@ -1182,7 +1034,6 @@ describe('extractSubstepHeader edge cases', () => {
       stepRef: '1',
       id: '1',
       description: 'Run tests',
-      isDynamic: false,
       agentType: 'test-agent',
     });
   });
@@ -1193,7 +1044,6 @@ describe('extractSubstepHeader edge cases', () => {
       stepRef: '1',
       id: '1',
       description: '',
-      isDynamic: false,
       agentType: 'code-agent',
     });
   });
@@ -1204,7 +1054,6 @@ describe('extractSubstepHeader edge cases', () => {
       stepRef: '1',
       id: '1',
       description: '',
-      isDynamic: false,
       agentType: undefined,
     });
   });
@@ -1251,7 +1100,7 @@ describe('ParsedConditional with retry property', () => {
     expect(result).toEqual({
       type: 'pass',
       retry: 0,
-      action: { type: 'GOTO', target: { step: 'NEXT' } },
+      action: { type: 'NEXT' },
       modifier: null,
       raw: 'NEXT'
     });
@@ -1262,9 +1111,178 @@ describe('ParsedConditional with retry property', () => {
     expect(result).toEqual({
       type: 'fail',
       retry: 2,
-      action: { type: 'GOTO', target: { step: 'NEXT' } },
+      action: { type: 'NEXT' },
       modifier: null,
       raw: 'RETRY 2 NEXT'
+    });
+  });
+});
+
+describe('parseStepIdFromString with AT syntax', () => {
+  it('parses numeric step with AT', () => {
+    expect(parseStepIdFromString('3 AT 1')).toEqual({ step: '3', at: 1 });
+  });
+
+  it('parses step.substep with AT', () => {
+    expect(parseStepIdFromString('3.1 AT 2')).toEqual({ step: '3', substep: '1', at: 2 });
+  });
+
+  it('parses step with template variable AT', () => {
+    expect(parseStepIdFromString('3 AT {{Index}}')).toEqual({ step: '3', at: '{{Index}}' });
+  });
+
+  it('parses named step with AT', () => {
+    expect(parseStepIdFromString('ErrorHandler AT 5')).toEqual({ step: 'ErrorHandler', at: 5 });
+  });
+
+  it('rejects AT with zero', () => {
+    expect(parseStepIdFromString('3 AT 0')).toBeNull();
+  });
+
+  it('rejects AT with negative', () => {
+    expect(parseStepIdFromString('3 AT -1')).toBeNull();
+  });
+
+  it('rejects AT with invalid template', () => {
+    expect(parseStepIdFromString('3 AT {Index}')).toBeNull();
+  });
+
+  it('still works without AT (backward compat)', () => {
+    expect(parseStepIdFromString('3')).toEqual({ step: '3' });
+    expect(parseStepIdFromString('3.1')).toEqual({ step: '3', substep: '1' });
+  });
+});
+
+describe('parseForClause', () => {
+  describe('full form: FOR variable IN start TO end', () => {
+    it('parses named variable with numeric range', () => {
+      expect(parseForClause('FOR batch IN 1 TO 10')).toEqual({ variable: 'batch', start: 1, end: 10 });
+    });
+
+    it('parses underscore variable name', () => {
+      expect(parseForClause('FOR _idx IN 1 TO 5')).toEqual({ variable: '_idx', start: 1, end: 5 });
+    });
+  });
+
+  describe('unnamed range: FOR start TO end', () => {
+    it('parses numeric range', () => {
+      expect(parseForClause('FOR 1 TO 10')).toEqual({ start: 1, end: 10 });
+    });
+
+  });
+
+  describe('named count: FOR variable IN count', () => {
+    it('parses numeric count (start defaults to 1)', () => {
+      expect(parseForClause('FOR batch IN 10')).toEqual({ variable: 'batch', start: 1, end: 10 });
+    });
+
+  });
+
+  describe('unnamed count: FOR count', () => {
+    it('parses numeric count (start defaults to 1)', () => {
+      expect(parseForClause('FOR 10')).toEqual({ start: 1, end: 10 });
+    });
+
+  });
+
+  describe('rejects unresolved template variables', () => {
+    it('rejects named variable with template end', () => {
+      expect(parseForClause('FOR batch IN 1 TO {{Max}}')).toBeNull();
+    });
+
+    it('rejects named variable with template start and end', () => {
+      expect(parseForClause('FOR item IN {{Start}} TO {{End}}')).toBeNull();
+    });
+
+    it('rejects unnamed range with template end', () => {
+      expect(parseForClause('FOR 1 TO {{Max}}')).toBeNull();
+    });
+
+    it('rejects unnamed range with template start', () => {
+      expect(parseForClause('FOR {{Start}} TO 10')).toBeNull();
+    });
+
+    it('rejects named variable with template start', () => {
+      expect(parseForClause('FOR batch IN {{Start}} TO 10')).toBeNull();
+    });
+
+    it('rejects named variable with numeric start and template end', () => {
+      expect(parseForClause('FOR batch IN 1 TO {{End}}')).toBeNull();
+    });
+
+    it('rejects named count with template variable', () => {
+      expect(parseForClause('FOR batch IN {{Count}}')).toBeNull();
+    });
+
+    it('rejects unnamed count with template variable', () => {
+      expect(parseForClause('FOR {{Count}}')).toBeNull();
+    });
+  });
+
+  describe('invalid inputs', () => {
+    it('returns null for non-FOR text', () => {
+      expect(parseForClause('PASS: CONTINUE')).toBeNull();
+    });
+
+    it('returns null for bare FOR without arguments', () => {
+      expect(parseForClause('FOR')).toBeNull();
+    });
+
+    it('returns null for FOR with space but no arguments', () => {
+      expect(parseForClause('FOR ')).toBeNull();
+    });
+
+    it('returns null for zero as count', () => {
+      expect(parseForClause('FOR 0')).toBeNull();
+    });
+
+    it('returns null for negative count', () => {
+      expect(parseForClause('FOR -1')).toBeNull();
+    });
+
+    it('returns null for invalid variable name', () => {
+      expect(parseForClause('FOR 1batch IN 1 TO 10')).toBeNull();
+    });
+
+    it('returns null for reserved word as variable name', () => {
+      expect(parseForClause('FOR PASS IN 1 TO 10')).toBeNull();
+      expect(parseForClause('FOR FAIL IN 1 TO 5')).toBeNull();
+      expect(parseForClause('FOR GOTO IN 1 TO 3')).toBeNull();
+      expect(parseForClause('FOR TO IN 1 TO 5')).toBeNull();
+    });
+
+    it('returns null for invalid template format', () => {
+      expect(parseForClause('FOR {Count}')).toBeNull();
+    });
+
+    it('returns null for non-numeric, non-template end', () => {
+      expect(parseForClause('FOR 1 TO abc')).toBeNull();
+    });
+
+    it('returns null for text that starts with FOR but is not valid', () => {
+      expect(parseForClause('FOR something weird here')).toBeNull();
+    });
+  });
+
+  describe('reversed ranges (descending)', () => {
+    it('accepts reversed range (start > end)', () => {
+      expect(parseForClause('FOR 10 TO 1')).toEqual({ start: 10, end: 1 });
+    });
+
+    it('accepts reversed range with named variable', () => {
+      expect(parseForClause('FOR batch IN 5 TO 2')).toEqual({ variable: 'batch', start: 5, end: 2 });
+    });
+
+    it('accepts named variable with descending range', () => {
+      expect(parseForClause('FOR i IN 5 TO 1')).toEqual({ variable: 'i', start: 5, end: 1 });
+    });
+
+    it('accepts large descending range', () => {
+      expect(parseForClause('FOR 100 TO 50')).toEqual({ start: 100, end: 50 });
+    });
+
+    it('accepts minimal descending range', () => {
+      expect(parseForClause('FOR 2 TO 1')).toEqual({ start: 2, end: 1 });
     });
   });
 });

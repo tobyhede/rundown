@@ -67,7 +67,7 @@ export function getSearchPaths(cwd: string): SearchPath[] {
 }
 
 /**
- * Scan a directory for *.runbook.md files and extract metadata.
+ * Scan a directory recursively for *.runbook.md files and extract metadata.
  * Files that cannot be read or parsed are silently skipped.
  * Returns empty array if directory doesn't exist or cannot be read.
  * @param dirPath - Directory path to scan
@@ -77,38 +77,43 @@ export function getSearchPaths(cwd: string): SearchPath[] {
 export async function scanDirectory(dirPath: string, source: 'project' | 'plugin' | 'bundled'): Promise<DiscoveredRunbook[]> {
   const runbooks: DiscoveredRunbook[] = [];
 
-  try {
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  async function scanRecursive(currentPath: string): Promise<void> {
+    try {
+      const entries = await fs.readdir(currentPath, { withFileTypes: true });
 
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.endsWith('.runbook.md')) continue;
+      for (const entry of entries) {
+        const fullPath = path.join(currentPath, entry.name);
 
-      try {
-        const filePath = path.join(dirPath, entry.name);
-        const content = await fs.readFile(filePath, 'utf-8');
-        const { frontmatter } = extractFrontmatter(content);
+        if (entry.isDirectory()) {
+          // Recursively scan subdirectories
+          await scanRecursive(fullPath);
+        } else if (entry.isFile() && entry.name.endsWith('.runbook.md')) {
+          try {
+            const content = await fs.readFile(fullPath, 'utf-8');
+            const { frontmatter } = extractFrontmatter(content);
 
-        // Match by frontmatter name or filename stem
-        const runbookName = frontmatter?.name ?? nameFromFilename(entry.name);
+            // Match by frontmatter name or filename stem
+            const runbookName = frontmatter?.name ?? nameFromFilename(entry.name);
 
-        runbooks.push({
-          name: runbookName,
-          path: filePath,
-          source,
-          description: frontmatter?.description,
-          tags: frontmatter?.tags,
-        });
-      } catch {
-        // Skip files that can't be read or parsed
-        continue;
+            runbooks.push({
+              name: runbookName,
+              path: fullPath,
+              source,
+              description: frontmatter?.description,
+              tags: frontmatter?.tags,
+            });
+          } catch {
+            // Skip files that can't be read or parsed
+            continue;
+          }
+        }
       }
+    } catch {
+      // Directory doesn't exist or can't be read
     }
-  } catch {
-    // Directory doesn't exist or can't be read
-    return [];
   }
 
+  await scanRecursive(dirPath);
   return runbooks;
 }
 
@@ -149,6 +154,37 @@ export async function findRunbookByName(cwd: string, name: string): Promise<Disc
   const searchPaths = getSearchPaths(cwd);
 
   for (const { path: dirPath, source } of searchPaths) {
+    const runbooks = await scanDirectory(dirPath, source);
+
+    for (const runbook of runbooks) {
+      if (runbook.name === name) {
+        return runbook;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Find a runbook by name in a specific source.
+ * Used for explicit namespace resolution (e.g., rundown:write-plan).
+ * @param cwd - Current working directory
+ * @param name - Runbook name to search for
+ * @param targetSource - Source to search in ('project', 'plugin', or 'bundled')
+ * @returns The discovered runbook if found, or null if not found
+ */
+export async function findRunbookByNameInSource(
+  cwd: string,
+  name: string,
+  targetSource: 'project' | 'plugin' | 'bundled'
+): Promise<DiscoveredRunbook | null> {
+  const searchPaths = getSearchPaths(cwd);
+
+  for (const { path: dirPath, source } of searchPaths) {
+    // Only search in the specified source
+    if (source !== targetSource) continue;
+
     const runbooks = await scanDirectory(dirPath, source);
 
     for (const runbook of runbooks) {

@@ -1,4 +1,4 @@
-export * from './types.js';
+export type * from './types.js';
 export * from './step-id.js';
 export * from './step-utils.js';
 export { RunbookStateManager } from './state.js';

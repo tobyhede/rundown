@@ -14,42 +14,19 @@ export function getCwd(): string {
 }
 
 /**
- * Check if a runbook is dynamic (first step has isDynamic: true).
- *
- * @param cwd - Current working directory
- * @param runbookPath - Path to the runbook file
- * @returns True if the runbook's first step is dynamic, false otherwise or on error
- */
-export async function isDynamicRunbook(cwd: string, runbookPath: string): Promise<boolean> {
-  try {
-    const fullPath = await resolveRunbookFile(cwd, runbookPath);
-    if (!fullPath) return false;
-    const content = await fs.readFile(fullPath, 'utf8');
-    const steps = parseRunbook(content);
-    return steps.length > 0 && steps[0].isDynamic;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Get total step display value for a runbook.
- * Returns '{N}' for dynamic runbooks, numbered step count for static runbooks.
+ * Get total step count for a runbook.
  * Named steps (like "RECOVER") are excluded from the count.
  *
  * @param cwd - Current working directory
  * @param runbookPath - Path to the runbook file
- * @returns '{N}' for dynamic runbooks, or numbered step count for static runbooks, or 0 on error
+ * @returns Numbered step count or 0 on error
  */
-export async function getStepTotal(cwd: string, runbookPath: string): Promise<number | string> {
+export async function getStepTotal(cwd: string, runbookPath: string): Promise<number> {
   try {
     const fullPath = await resolveRunbookFile(cwd, runbookPath);
     if (!fullPath) return 0;
     const content = await fs.readFile(fullPath, 'utf8');
     const steps = parseRunbook(content);
-    if (steps.length > 0 && steps[0].isDynamic) {
-      return '{N}';
-    }
     return countNumberedSteps(steps);
   } catch {
     return 0;

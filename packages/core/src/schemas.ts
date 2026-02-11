@@ -1,5 +1,4 @@
 import { z } from 'zod';
-export * from '@rundown-org/parser';
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -111,12 +110,16 @@ export const CommandSchema = z.object({
 
 export type ValidatedSessionState = z.infer<typeof SessionStateSchema>;
 
+// Re-export parser schemas needed by consumers
 import {
-  StepIdSchema
+  StepIdSchema,
+  ActionSchema,
+  TransitionsSchema,
 } from '@rundown-org/parser';
+export { StepIdSchema, ActionSchema, TransitionsSchema };
 
 /**
- * For RunbookState.step - always a string: "1", "ErrorHandler", "{N}"
+ * For RunbookState.step - always a string: "1" or "ErrorHandler"
  */
 const RunbookStepSchema = z.string().min(1);
 
@@ -148,8 +151,7 @@ export const RunbookStateSchema = z.object({
   runbookPath: z.string(),
   title: z.string().optional(),
   description: z.string().optional(),
-  step: RunbookStepSchema, // UNIFIED: "1", "ErrorHandler", "{N}"
-  instance: z.number().int().positive().optional(), // Dynamic runbook instance (1, 2, 3, ...)
+  step: RunbookStepSchema, // "1" or "ErrorHandler"
   substep: z.string().optional(),
   stepName: z.string(),
   retryCount: z.number().nonnegative().int(),
@@ -176,13 +178,58 @@ export const RunbookStateSchema = z.object({
     runbook: z.string(),
     instanceId: z.string()
   }).optional(),
+  // FOR loop tracking: stack of loop contexts for nested loops
+  forStack: z.array(z.object({
+    stepId: z.string(),           // Step name (e.g., "3") that owns this FOR loop
+    iteration: z.number().int(),  // Current iteration number (1-based)
+    start: z.number().int(),      // Start of the iteration range
+    end: z.number().int(),        // End of the iteration range (inclusive)
+    variable: z.string().optional(),           // Named loop variable (e.g., "batch")
+    implicit: z.boolean().optional(),          // True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence.
+  })).optional(),
+  // Backward compat: accept old flat fields for migration
+  forIteration: z.number().int().positive().optional(),
+  forStart: z.number().int().optional(),
+  forEnd: z.number().int().optional(),
+  forVariable: z.string().optional(),
+  iterationResults: z.array(z.enum(['pass', 'fail'])).optional(),
   startedAt: z.string(),
   updatedAt: z.string(),
   snapshot: z.unknown().optional(), // XState snapshot
   prompted: z.boolean().optional(),
   lastResult: z.enum(['pass', 'fail']).optional(),
-  lastAction: z.enum(['START', 'CONTINUE', 'GOTO', 'COMPLETE', 'STOP', 'RETRY']).optional(),
+  lastAction: z.discriminatedUnion('type', [
+    z.object({ type: z.literal('START') }),
+    z.object({ type: z.literal('CONTINUE') }),
+    z.object({ type: z.literal('GOTO'), target: z.string(), substep: z.string().optional(), at: z.union([z.number().int().positive(), z.string()]).optional() }),
+    z.object({ type: z.literal('COMPLETE') }),
+    z.object({ type: z.literal('STOP') }),
+    z.object({ type: z.literal('RETRY') }),
+    z.object({ type: z.literal('NEXT') }),
+    z.object({ type: z.literal('BREAK') }),
+  ]).optional(),
   runbookSrc: z.string().optional()
+}).transform((data) => {
+  const { forIteration, forStart, forEnd, forVariable, ...rest } = data;
+  // Migrate old flat FOR fields → forStack
+  if (!rest.forStack && forIteration !== undefined && rest.step) {
+    return {
+      ...rest,
+      forStack: [{
+        stepId: rest.step,
+        iteration: forIteration,
+        start: forStart ?? 1,
+        end: forEnd ?? forIteration,
+        variable: forVariable,
+      }],
+    };
+  }
+  // Strip implicit entries if they leaked into persisted state
+  const forStack = rest.forStack?.filter(fc => !fc.implicit);
+  return {
+    ...rest,
+    forStack: forStack?.length ? forStack : undefined,
+  };
 });
 
 export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;

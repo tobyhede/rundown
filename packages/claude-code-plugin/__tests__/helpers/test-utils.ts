@@ -5,7 +5,64 @@ import { jest } from '@jest/globals';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
 import type { HookInput, RundownPluginConfig, SessionState } from '../../src/shared/index.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/**
+ * Result from running CLI command.
+ * Pattern: matches packages/cli/__tests__/helpers/test-utils.ts
+ */
+export interface CliResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/**
+ * Get the absolute path to the rundown CLI entry point.
+ *
+ * @returns Absolute path to the CLI entry point
+ */
+export function getCliPath(): string {
+  return path.join(__dirname, '..', '..', '..', 'cli', 'dist', 'cli.js');
+}
+
+/**
+ * Run rundown CLI via subprocess.
+ * Pattern: simplified from packages/cli/__tests__/helpers/test-utils.ts
+ *
+ * @param args - Command arguments as string or array. Use array for paths with spaces.
+ * @param cwd - Working directory for the command
+ * @returns CLI execution result with stdout, stderr, and exit code
+ *
+ * @example
+ * runCli('status --json', tempDir)           // Simple args
+ * runCli(['check', '/path/to/file.md'], tempDir)  // Path with spaces
+ */
+export function runCli(args: string | string[], cwd: string): CliResult {
+  const cliPath = getCliPath();
+  const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
+
+  const result = spawnSync('node', [cliPath, ...argArray], {
+    cwd,
+    encoding: 'utf-8',
+    env: {
+      ...process.env,
+      NO_COLOR: '1',
+      RUNDOWN_LOG: '0',
+    },
+  });
+
+  return {
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+    exitCode: result.status ?? 1,
+  };
+}
 
 /**
  * Factory for creating HookInput objects with sensible defaults.

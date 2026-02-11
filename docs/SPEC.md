@@ -8,6 +8,123 @@ Rundown is a format for defining executable runbooks using Markdown.
 
 ---
 
+## Quick Reference for AI Agents
+
+Rundown = executable Markdown runbooks. Steps are H2 headers with identifiers, optional transitions, and content (prompt/code/substeps/runbooks).
+
+### Document Hierarchy
+
+| Level | Purpose | Example |
+|-------|---------|---------|
+| H1 | Title (optional) | `# Deploy Service` |
+| H2 | Step | `## 1 Build` |
+| H3 | Substep | `### 1 Compile` |
+
+### Step Identifiers
+
+| Format | Type | Usage |
+|--------|------|-------|
+| `1`, `2` | Static | Sequential steps |
+| `1`, `1.1` | Substep | Nested sequence (parent prefix optional) |
+| `Name` | Named | GOTO target only (skipped by CONTINUE) |
+
+Any step can include a `- FOR var IN 1 TO N` annotation to loop its substeps over a range. See [FOR Steps](#for-steps).
+
+### Transitions
+
+```text
+- PASS [ALL|ANY]: action
+- FAIL [ALL|ANY]: action
+```
+
+Aliases: YES=PASS, NO=FAIL.
+
+### Default Behaviors (Pessimistic)
+
+| Condition | Default |
+|-----------|---------|
+| PASS without modifier | PASS ALL |
+| FAIL without modifier | FAIL ANY |
+| PASS omitted | PASS ALL: CONTINUE |
+| FAIL omitted | FAIL ANY: STOP |
+
+### Actions
+
+| Action | Effect |
+|--------|--------|
+| `CONTINUE` | Next step in sequence |
+| `COMPLETE [msg]` | Success termination |
+| `STOP [msg]` | Halt execution |
+| `GOTO N` | Jump to step N |
+| `GOTO N AT I` | Jump to step N at iteration I (only if N is a FOR step) |
+| `NEXT` | Skip to next iteration (inside FOR) |
+| `BREAK` | Exit loop (inside FOR) |
+| `RETRY [n] [action]` | Retry n times, then action |
+
+### Code Blocks
+
+| Tag | Behavior |
+|-----|----------|
+| `bash`, `sh`, `shell` | Execute; exit 0=PASS, else FAIL |
+| `bash prompt`, `prompt` | Display only, never execute |
+| other (`json`, etc.) | Display only |
+
+One code block per step maximum.
+
+### Template Variables
+
+- `{{variable}}` - Expanded at run time via `--var name=value`
+- `{{Step}}` - Current step identifier (built-in)
+- `{{Index}}` - Current loop iteration number (built-in, inside FOR)
+
+Undefined variables preserved as literal text.
+
+### Step Content Order
+
+When present, content MUST appear in order:
+1. FOR annotation (if applicable)
+2. Transitions (bullet list)
+3. Prompt (text)
+4. Body (code block OR substeps OR runbooks)
+
+### Authoring Conventions
+
+**Transitions: Always explicit.** Write both PASS and FAIL transitions on every step, even when they match the defaults. Transitions define control flow — the most important aspect of a runbook. Omitting them saves two lines but forces the reader to recall default behavior.
+
+```markdown
+## 1 Build
+- PASS: CONTINUE
+- FAIL: STOP
+```
+
+**Messages: Only when they add information.** STOP and COMPLETE accept optional messages. Include a message only when it provides context the step title does not — typically actionable guidance on what went wrong or what to check. Omit when the step title makes the outcome self-evident.
+
+```markdown
+## 1 Compile
+- PASS: CONTINUE
+- FAIL: STOP
+```
+
+Not:
+```markdown
+## 1 Compile
+- FAIL: STOP "Compilation failed."
+```
+
+Good use of a message — adds actionable context:
+```markdown
+## 1 Authenticate
+- FAIL: STOP "Check that gh is authenticated: run gh auth status"
+```
+
+Better use of a message (no message) - include actionable context in the step itself:
+```markdown
+## 1 Github Authentication
+- FAIL: STOP
+```
+
+---
+
 ## Table of Contents
 
 - [Syntax Synopsis](#syntax-synopsis)
@@ -84,12 +201,16 @@ Variable names must be valid identifiers matching the pattern: `/^[a-zA-Z_][a-zA
 - Can contain letters, digits, and underscores
 - Case-sensitive
 
-### Distinction from Dynamic Steps
+### Built-In Variables
 
-Template variables use **double braces** `{{var}}` and are expanded before parsing:
-- `{{environment}}` → template variable (replaced with value at `rd run`)
-- `{N}` → dynamic step identifier (handled by parser)
-- `{n}` → dynamic substep identifier (handled by parser)
+Rundown provides built-in variables using PascalCase, consistent with existing built-ins (Date, WorkPath).
+
+| Variable | Value | Available |
+|----------|-------|-----------|
+| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`) | Always |
+| `{{Index}}` | Current loop iteration number | Inside FOR steps |
+
+These join the template variable context alongside user-defined variables. `{{Step}}` is always available and expands to the qualified step identifier. `{{Index}}` is only defined inside a FOR loop; outside a loop it is preserved as literal text.
 
 ### Undefined Variable Behavior
 
@@ -101,6 +222,8 @@ When a variable is not provided, it is preserved as literal text in the output:
 ### Expansion Timing
 
 Template variables are expanded **once** when `rd run` is invoked. The expanded content is stored in the runbook state, ensuring that resume commands (`pass`, `fail`, `goto`, `status`, `pop`) work consistently without re-rendering.
+
+**Per-step variables** (`{{Step}}`, `{{Index}}`, and named FOR loop variables like `{{batch}}`) are expanded **per-iteration**. `{{Step}}` is re-evaluated at each step; `{{Index}}` and named loop variables are re-evaluated at the start of each FOR iteration. All other variables retain their initial expansion.
 
 ---
 
@@ -121,38 +244,69 @@ A step may contain ONE of the following content types:
 
 ### Identifiers
 Step identifiers define the sequence and structure of the runbook.
-Steps can be `dynamic`. Dynamic steps enable steps to be defined at runtime.
 
 | Format | Type | Description |
 |--------|------|-------------|
 | `1` | Static | Standard sequential step |
-| `1.1` | Static Substep | Explicitly numbered nested step |
-| `1.{n}` | Dynamic Substep | Template nested step |
-| `{N}` | Dynamic | Template step instantiated at runtime |
-| `{N}.1` | Nested Static | Static child of dynamic parent |
-| `{N}.{n}`| Nested Dynamic | Dynamic child of dynamic parent |
+| `1`, `2.1` | Substep | Sequential substep (parent prefix optional) |
 | `Name` | Named | Jump target step (GOTO only) |
-| `1.Name` | Named Substep | Named child of static parent |
-| `{N}.Name` | Named Substep | Named child of dynamic parent |
-| `Name.Name` | Named Substep | Named child of named parent |
+| `1.Name` | Named Substep | Named child of parent step |
 
 **Rules:**
-1. Static steps MUST be numbered sequentially starting from 1.
-2. Static substeps MUST be numbered sequentially starting from 1.
-3. Only one dynamic step can be defined at each level.
-4. Dynamic identifiers (`{N}`, `{n}`) are placeholders.
+1. Steps MUST be numbered sequentially starting from 1.
+2. Substeps MUST be numbered sequentially starting from 1.
 
-#### Dynamic Identifiers and Steps
+### FOR Steps
 
-- Dynamic steps are for repeating the same procedure across a set of targets until the work is COMPLETE.
-- Think of a Dynamic Step as a **loop construct** for agents. Instead of hardcoding steps, a "template" is defined that can be repeated as many times as required.
+A step with a `FOR` annotation iterates its substeps.
 
-Example:
+**Syntax:**
+
 ```markdown
-## {N} For each assigned task
-### {N}.1 Implement the code
-### {N}.2 Run the tests
+## 3 Implement tasks in batches
+- FOR batch IN 1 TO {{BatchCount}}
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+### 1 Implement (code-agent)
+- PASS: CONTINUE
+- FAIL: BREAK
+### 2 Review (review-agent)
+- PASS: CONTINUE
+- FAIL: BREAK
 ```
+
+**FOR clause variants:**
+
+| Syntax | Description |
+|--------|-------------|
+| `FOR var IN 1 TO 10` | Ascending range, named variable |
+| `FOR 1 TO 10` | Ascending range, no variable |
+| `FOR var IN 10 TO 1` | Descending range, named variable |
+| `FOR 10 TO 1` | Descending range, no variable |
+| `FOR var IN 10` | Implicit start (1), named variable |
+| `FOR 10` | Implicit start (1), no variable |
+| `FOR var IN 1 TO {{Max}}` | Variable range |
+
+**Direction inference:** When `start > end`, the loop iterates downward by 1 (e.g., `FOR 10 TO 1` iterates 10, 9, 8, ..., 1). When `start <= end`, it iterates upward by 1. Single-number shorthand (`FOR 5`) always starts at 1 and is ascending.
+
+**Loop variable:** The named variable joins the template variable context per-iteration. Accessible as `{{var}}` in step content and code blocks. Its value equals the iteration index.
+
+**Aggregation:** Parent FOR step transitions use ALL/ANY to aggregate **across iterations**. Substep transitions control within-iteration flow (CONTINUE, NEXT, BREAK, STOP, GOTO). Parent transitions evaluate the post-loop aggregate (PASS ALL, FAIL ANY, etc.).
+
+```markdown
+## 3 Review all batches
+- FOR batch IN 1 TO {{BatchCount}}
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+### 1 Security review
+- PASS: CONTINUE
+- FAIL: BREAK
+### 2 Code review
+- PASS: CONTINUE
+- FAIL: BREAK
+```
+
+Parallel vs sequential execution of substeps is a **runtime decision**, orthogonal to syntax. ALL/ANY defines aggregation logic, not execution strategy.
 
 ---
 
@@ -161,10 +315,10 @@ Example:
 Named steps (and named substeps) are identified by a name instead of a number. They follow all the same rules as regular steps but are only reachable via explicit GOTO.
 
 **Rules:**
-- Named steps can coexist with static OR dynamic steps
+- Named steps can coexist with static steps
 - Named steps and named substeps are NOT part of sequential flow - CONTINUE skips them
 - Names must match: `/^[A-Za-z_][A-Za-z0-9_]*$/`
-- Reserved words cannot be used as names: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY
+- Reserved words cannot be used as names: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY, BREAK, FOR, IN, TO, AT
 - **Reserved word matching is case-sensitive.** `NEXT` is reserved, but `Next`, `next`, or `NextStep` are valid identifiers.
 
 **Example:**
@@ -245,14 +399,14 @@ Substeps enable grouping of related processes within a Step.
 - **Exclusivity**: Like Steps, a Substep MUST contain either a **Prompt** or a **Runbook List**, but not both.
 
 #### Identifiers
-Substep identifiers must strictly match the parent Step ID prefix.
 
-| Format | Parent | Child | Context |
-| :--- | :--- | :--- | :--- |
-| `1.1` | Static | Static | Sequential task in a static step. |
-| `1.{n}` | Static | Dynamic | Iterative task in a static step. |
-| `{N}.1` | Dynamic | Static | Fixed task within a dynamic instance. |
-| `{N}.{n}` | Dynamic | Dynamic | Iterative task within a dynamic instance. |
+Substep identifiers must be numbered sequentially. The parent prefix is optional.
+
+| Format | Description |
+|--------|-------------|
+| `### 1` | Sequential substep (short form) |
+| `### 2.1` | Sequential substep (qualified form) |
+| `### 1.Name` | Named substep |
 
 #### Result Aggregation
 When a Step contains Substeps, the parent step's final outcome is derived from the collective results of its children. This aggregation is controlled by [Transitions](#transitions) using `ALL` or `ANY` modifiers.
@@ -277,7 +431,7 @@ Example:
 Transitions define the control flow based on the result of a step or substep.
 
 **Syntax:**
-```
+```text
 - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: action
 ```
 
@@ -298,8 +452,8 @@ Used when a step has substeps or runbooks.
 
 **Partial Transition Defaults:**
 When only one transition is defined, the other uses its default action:
-- If only `PASS` defined → `FAIL` defaults to `FAIL ANY: STOP`
-- If only `FAIL` defined → `PASS` defaults to `PASS ALL: CONTINUE`
+- If only `PASS` defined -> `FAIL` defaults to `FAIL ANY: STOP`
+- If only `FAIL` defined -> `PASS` defaults to `PASS ALL: CONTINUE`
 
 ---
 
@@ -312,7 +466,9 @@ Actions determine what happens next.
 | `CONTINUE` | Proceed to the next unit in sequence. |
 | `COMPLETE [msg]` | Runbook has completed successfully. Optional message. |
 | `STOP [msg]` | Halt runbook execution immediately. Optional message. |
-| `GOTO {id \| NEXT}` | Jump to Step `id` or create new dynamic step instance. |
+| `GOTO {id} [AT index]` | Jump to Step `id`. `AT index` is only valid when the target step has a FOR annotation. |
+| `NEXT` | Skip remaining substeps, advance to next FOR iteration. |
+| `BREAK` | Exit the FOR loop; parent transitions evaluate. |
 | `RETRY [n] [action]` | Retry the current unit `n` times (default 1). If exhausted, perform `action`. |
 
 **Default Actions:**
@@ -322,34 +478,49 @@ Actions determine what happens next.
 
 ### GOTO
 
-| Target              | Valid From                | Description                                       |
-|---------------------|---------------------------|---------------------------------------------------|
-| GOTO N              | Any step                  | Jump to step N (must exist)                       |
-| GOTO N.M            | Any step                  | Jump to substep M of step N                       |
-| GOTO Name           | Any step                  | Jump to named step                                |
-| GOTO Name.M         | Any step                  | Jump to substep M of named step                   |
-| GOTO {N}            | Any (dynamic context)     | Restart current dynamic step instance             |
-| GOTO {N}.M          | Any (dynamic context)     | Jump to substep M within current dynamic instance |
-| GOTO {N}.{n}        | Any (dynamic context)     | Resume at current substep of current runbook step |
-| GOTO X.{n}          | Any (dynamic context)     | Jump to current dynamic substep instance          |
-| GOTO NEXT           | Any (dynamic context)     | Advance innermost dynamic context                 |
-| GOTO NEXT {N}       | Any step                  | Advance to next dynamic step instance             |
-| GOTO NEXT {N}.{n}   | Any (dynamic context)     | Advance substep, stay in current step instance    |
-| GOTO NEXT X.{n}     | Any step                  | Advance to next substep instance in step X        |
+| Target | Valid From | Description |
+|--------|-----------|-------------|
+| `GOTO N` | Any step | Jump to step N (if FOR step, implies AT 1) |
+| `GOTO N.M` | Any step | Jump to substep M of step N |
+| `GOTO Name` | Any step | Jump to named step |
+| `GOTO Name.M` | Any step | Jump to substep M of named step |
+| `GOTO N AT I` | Any step | Enter FOR step N at iteration I (only if N is a FOR step) |
+| `GOTO N AT {{Index}}` | Inside FOR | Re-enter FOR step N at current iteration |
+| `GOTO N.M AT I` | Any step | Jump to substep M of FOR step N at iteration I (only if N is a FOR step) |
+| `GOTO Name AT I` | Any step | Enter named FOR step at iteration I (only if Name is a FOR step) |
 
-**Semantics:**
-- `GOTO {N}` restarts the current dynamic step instance from the beginning.
-- `GOTO {N}.{n}` resumes at exactly where we were (current step, current substep).
-- `GOTO NEXT` without qualifier advances the innermost dynamic context.
-- `GOTO NEXT {N}` advances to the next step instance.
-- `GOTO NEXT {N}.{n}` advances to the next substep, staying in the current step instance.
+**AT syntax (FOR steps):**
 
-**Dynamic Context:**
-- "Any (dynamic context)" means the target is valid from any step or substep, including named steps, as long as there is an active dynamic step instance.
-- The runtime tracks the current dynamic context. When a named step is reached via GOTO from within a dynamic step, it inherits that dynamic context.
-- Example: `## {N}` → `GOTO ErrorHandler` → `GOTO {N}` returns to the active dynamic instance.
+`AT` is only valid when the target is a step with a FOR annotation. It specifies the iteration. If omitted, it defaults to 1 (restart from beginning):
 
+| Syntax | Meaning |
+|--------|---------|
+| `GOTO 3 AT 1` | Enter step 3 loop at iteration 1 (reset) |
+| `GOTO 3 AT {{Index}}` | Re-enter step 3 at current iteration (restart) |
+| `GOTO 3.1 AT {{Index}}` | Jump to substep 1 of step 3 at current iteration |
+| `GOTO 3` (no AT) | Implies `GOTO 3 AT 1` (reset to first iteration) |
 
+**Named step context:** Named steps inherit loop context. `GOTO ErrorHandler` from inside a FOR preserves `{{Index}}`, enabling error handlers that are aware of the current iteration. Dynamic error handler targets (e.g., computed step references) are not currently supported.
+
+### NEXT and BREAK
+
+`NEXT` and `BREAK` are loop control actions, valid **only within substeps of a FOR step**.
+
+| Action | Effect |
+|--------|--------|
+| `NEXT` | Skip remaining substeps in this iteration, advance to next iteration |
+| `BREAK` | Exit the FOR loop entirely; parent step transitions evaluate |
+
+These actions are **invalid** at the parent FOR step level. The parent step uses standard actions (CONTINUE, STOP, COMPLETE, GOTO).
+
+### CONTINUE Semantics
+
+CONTINUE means "proceed to the next thing in sequence." The runtime resolves context:
+
+- More substeps -> next substep
+- Last substep, more iterations -> next iteration
+- Last substep, last iteration (or no FOR) -> exit loop, parent evaluates
+- No substeps -> next step
 
 ---
 
@@ -358,12 +529,14 @@ Actions determine what happens next.
 Parsers and executors must adhere to strict validation:
 
 1. **Hierarchy**: H1 is Metadata. H2 is Step. H3 is Substep. H4+ is invalid.
-2. **Step Pattern**: A runbook contains EITHER static steps OR exactly one dynamic step template at each level.
-3. **Sequencing**: Static steps must be strictly sequential (1, 2, 3...).
-4. **Ordering**: Within a step or substep, content MUST appear in order: transitions (if any), prompt (if any), body (if any).
-5. **Exclusivity**: Units MUST contain exactly one of their permitted body types (code_block, substeps, or runbooks).
-6. **Single Command**: Each step/substep may have at most one code block (bash, sh, shell, prompt).
-7. **Recursion**: `RETRY` actions cannot contain another `RETRY`.
+2. **Sequencing**: Steps must be strictly sequential (1, 2, 3...).
+3. **Ordering**: Within a step or substep, content MUST appear in order: FOR annotation (if any), transitions (if any), prompt (if any), body (if any).
+4. **Exclusivity**: Units MUST contain exactly one of their permitted body types (code_block, substeps, or runbooks).
+5. **Single Command**: Each step/substep may have at most one code block (bash, sh, shell, prompt).
+6. **Recursion**: `RETRY` actions cannot contain another `RETRY`.
+7. **FOR validation**: `NEXT` and `BREAK` are only valid within substeps of a FOR step.
+8. **FOR steps require substeps**: A step with a FOR annotation must contain substeps; FOR is invalid on steps with code blocks or runbooks.
+9. **FOR placement**: The FOR annotation must appear before transitions in the bullet list.
 
 ---
 
@@ -371,5 +544,7 @@ Parsers and executors must adhere to strict validation:
 
 Executable examples and conformance test cases are maintained in the `packages/parser/fixtures/conformance/` directory.
 
-- **Valid Runbooks**: `packages/parser/fixtures/conformance/valid/` (symlinks to `runbooks/patterns/` for shared examples)
+- **Valid Runbooks**: `packages/parser/fixtures/conformance/valid/` contains symlinks to `runbooks/patterns/` - browse the patterns directory directly for example runbooks
 - **Invalid Runbooks (Error Cases)**: `packages/parser/fixtures/conformance/invalid/`
+
+> **Tip:** For browsable examples, see `runbooks/patterns/` directly. The symlinks in `valid/` are for conformance testing.

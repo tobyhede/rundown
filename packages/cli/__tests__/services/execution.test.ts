@@ -1,14 +1,12 @@
-import { describe, it, expect, jest } from '@jest/globals';
+import { describe, it, expect } from '@jest/globals';
 import {
   isRunbookComplete,
   isRunbookStopped,
   isValidResult,
   getStepRetryMax,
-  deriveAction,
-  handleNextInstanceFlags,
+  buildStepVariables,
 } from '../../src/services/execution.js';
-// We mock RunbookStateManager
-import type { RunbookStateManager, Step, RunbookState } from '@rundown-org/core';
+import type { Step } from '@rundown-org/core';
 
 describe('execution service', () => {
   describe('isRunbookComplete', () => {
@@ -89,158 +87,40 @@ describe('execution service', () => {
     });
   });
 
-  describe('deriveAction', () => {
-    // deriveAction params:
-    // prevStep, newStep, prevSubstep, newSubstep, prevRetry, newRetry, retryMax, isComplete, isStopped, instance, substepInstance
-
-    it('returns COMPLETE if runbook is complete', () => {
-      expect(deriveAction('1', '1', undefined, undefined, 0, 0, 0, true, false)).toBe('COMPLETE');
+  describe('buildStepVariables', () => {
+    it('returns Step for simple step', () => {
+      const vars = buildStepVariables('3', undefined);
+      expect(vars).toEqual({ Step: '3' });
     });
 
-    it('returns STOP if runbook is stopped', () => {
-      expect(deriveAction('1', '1', undefined, undefined, 0, 0, 0, false, true)).toBe('STOP');
+    it('returns Step for substep', () => {
+      const vars = buildStepVariables('3', '1');
+      expect(vars).toEqual({ Step: '3.1' });
     });
 
-    it('returns RETRY if retry count increased', () => {
-      expect(deriveAction('1', '1', undefined, undefined, 0, 1, 3, false, false)).toBe('RETRY (1/3)');
+    it('returns Step for named step', () => {
+      const vars = buildStepVariables('ErrorHandler', undefined);
+      expect(vars).toEqual({ Step: 'ErrorHandler' });
     });
 
-    it('returns CONTINUE if sequential step', () => {
-      expect(deriveAction('1', '2', undefined, undefined, 0, 0, 0, false, false)).toBe('CONTINUE');
+    it('returns Index and named variable from forStack', () => {
+      const vars = buildStepVariables('1', '1', [
+        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'batch' }
+      ]);
+      expect(vars).toMatchObject({ Step: '1.1', Index: '2', batch: '2' });
     });
 
-    it('returns GOTO if non-sequential step', () => {
-      expect(deriveAction('1', '3', undefined, undefined, 0, 0, 0, false, false)).toBe('GOTO 3');
+    it('omits Index for implicit ForContext', () => {
+      const vars = buildStepVariables('1', '1', [
+        { stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }
+      ]);
+      expect(vars).toEqual({ Step: '1.1' });
+      expect(vars).not.toHaveProperty('Index');
     });
 
-    it('returns GOTO if steps are not numbers', () => {
-      expect(deriveAction('Start', 'End', undefined, undefined, 0, 0, 0, false, false)).toBe('GOTO End');
-    });
-
-    it('returns CONTINUE for sequential substeps', () => {
-      expect(deriveAction('1', '1', '1', '2', 0, 0, 0, false, false)).toBe('CONTINUE');
-    });
-
-    it('returns GOTO for non-sequential substeps', () => {
-      expect(deriveAction('1', '1', '1', '3', 0, 0, 0, false, false)).toBe('GOTO 1.3');
-    });
-
-    it('resolves placeholders in GOTO', () => {
-      // deriveAction(prevStep, newStep, prevSubstep, newSubstep, ...)
-      // instance=5
-      expect(deriveAction('1', '{N}', undefined, undefined, 0, 0, 0, false, false, 5)).toBe('GOTO 5');
-    });
-
-     it('resolves placeholders in GOTO substep', () => {
-       // instance=5, substepInstance=2
-       // GOTO {N}.{n} -> GOTO 5.2
-       expect(deriveAction('1', '{N}', '1', '{n}', 0, 0, 0, false, false, 5, 2)).toBe('GOTO 5.2');
-    });
-  });
-
-  describe('handleNextInstanceFlags', () => {
-    let mockUpdate: jest.Mock;
-    let mockAddDynamicSubstep: jest.Mock;
-    let mockManager: jest.Mocked<RunbookStateManager>;
-    let mockState: RunbookState;
-
-    beforeEach(() => {
-      mockUpdate = jest.fn();
-      mockAddDynamicSubstep = jest.fn();
-      mockManager = {
-        update: mockUpdate,
-        addDynamicSubstep: mockAddDynamicSubstep,
-      } as unknown as jest.Mocked<RunbookStateManager>;
-
-      mockState = {
-        step: '{N}',
-        instance: 1,
-        runbook: 'test.md',
-        runbookPath: '/path/to/test.md',
-        id: 'run-1',
-        status: 'running',
-        variables: {},
-        retryCount: 0,
-        substepStates: []
-      } as RunbookState;
-    });
-
-    it('increments instance when nextInstance is true', async () => {
-      const snapshot = { context: { nextInstance: true } };
-      mockUpdate.mockResolvedValue({ ...mockState, instance: 2 });
-
-      await handleNextInstanceFlags(
-        snapshot,
-        mockState,
-        mockManager,
-        'run-1',
-        [],
-        false,
-        false
-      );
-
-      expect(mockUpdate).toHaveBeenCalledWith('run-1', {
-        instance: 2,
-        substep: '1'
-      });
-    });
-
-    it('does not increment instance if runbook complete', async () => {
-      const snapshot = { context: { nextInstance: true } };
-      await handleNextInstanceFlags(
-        snapshot,
-        mockState,
-        mockManager,
-        'run-1',
-        [],
-        true, // isComplete
-        false
-      );
-      expect(mockUpdate).not.toHaveBeenCalled();
-    });
-
-    it('handles nextSubstepInstance', async () => {
-      const snapshot = { context: { nextSubstepInstance: true } };
-      const steps = [
-        { name: '{N}', isDynamic: true, substeps: [{ isDynamic: true }] }
-      ] as unknown as Step[];
-
-      mockAddDynamicSubstep.mockResolvedValue('sub-2');
-      mockUpdate.mockResolvedValue({ ...mockState, substep: 'sub-2' });
-
-      await handleNextInstanceFlags(
-        snapshot,
-        mockState,
-        mockManager,
-        'run-1',
-        steps,
-        false,
-        false
-      );
-
-      expect(mockAddDynamicSubstep).toHaveBeenCalledWith('run-1');
-      expect(mockUpdate).toHaveBeenCalledWith('run-1', {
-        substep: 'sub-2'
-      });
-    });
-
-    it('ignores nextSubstepInstance if no dynamic substep in definition', async () => {
-       const snapshot = { context: { nextSubstepInstance: true } };
-       const steps = [
-         { name: '{N}', isDynamic: true, substeps: [{ isDynamic: false }] } // No dynamic substep
-       ] as unknown as Step[];
-
-       await handleNextInstanceFlags(
-         snapshot,
-         mockState,
-         mockManager,
-         'run-1',
-         steps,
-         false,
-         false
-       );
-
-       expect(mockAddDynamicSubstep).not.toHaveBeenCalled();
+    it('falls back to forClause when forStack empty', () => {
+      const vars = buildStepVariables('1', '1', [], { start: 1, end: 3 });
+      expect(vars).toMatchObject({ Step: '1.1', Index: '1' });
     });
   });
 });

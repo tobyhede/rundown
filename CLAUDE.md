@@ -64,6 +64,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `Month` | `02` | Current month (01-12) |
 | `Day` | `04` | Current day (01-31) |
 | `WorkPath` | `.work` | Default artifact directory |
+| `Step` | `3.1` | Current qualified step identifier |
 
 Built-in variables use PascalCase and can be overridden by any other source.
 
@@ -90,7 +91,6 @@ Server running on port {{ port }} in {{ environment }} mode.
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
-- Template variables (`{{var}}`) differ from dynamic step references (`{N}`)
 - Frontmatter vars support string, number, and boolean values (converted to strings)
 
 ## Schema Output
@@ -107,7 +107,46 @@ This enables programmatic validation of CLI output against the schema.
 
 ## State Persistence
 
-State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown/session.json` (active runbook tracking). Runbook source files are discovered from `.claude/rundown/runbooks/`. All persist across context clears.
+State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown/session.json` (active runbook tracking). Runbook source files are discovered from multiple locations (see [Runbook Discovery](#runbook-discovery)). State files persist across context clears.
+
+## Runbook Discovery
+
+Runbooks are discovered from multiple sources with the following priority (highest to lowest):
+
+| Source | Location | Description |
+|--------|----------|-------------|
+| Project | `.claude/rundown/runbooks/` | Project-local runbooks |
+| Plugin | `$CLAUDE_PLUGIN_ROOT/runbooks/` | Plugin-provided runbooks |
+| Bundled | CLI package `dist/runbooks/` | Bundled pattern runbooks |
+
+Directories are scanned recursively, so subdirectory structures like `planning/write-plan.runbook.md` are supported.
+
+### Namespace Syntax
+
+Use `namespace:name` syntax for explicit source targeting:
+
+| Syntax | Resolution |
+|--------|------------|
+| `write-plan` | Priority chain: project → plugin → bundled |
+| `rundown:write-plan` | Explicit: from plugin only |
+
+**Examples:**
+
+```bash
+rd run write-plan              # Resolves via priority chain
+rd run rundown:write-plan      # Explicit: from plugin
+rd run rundown:nonexistent     # Error: not found in rundown namespace
+```
+
+The `rundown` namespace maps to the plugin source (`@rundown-org/claude-code-plugin`).
+
+### Listing Runbooks
+
+```bash
+rd ls --all                    # List all discoverable runbooks with source
+```
+
+Output shows NAME, SOURCE, DESCRIPTION, and TAGS columns. The SOURCE column indicates where each runbook was found (project, plugin, or bundled).
 
 ## Policy Options
 
@@ -186,9 +225,10 @@ export function parseRunbookDocument(
 
 ## CLI Output Standards
 
-New CLI commands MUST use `OutputEmitter` for consistent output with format-agnostic rendering:
+New CLI commands MUST use `OutputEmitter` for consistent output with format-agnostic rendering. Import paths are relative to `packages/cli/src/commands/`:
 
 ```typescript
+// In packages/cli/src/commands/your-command.ts
 import { OutputEmitter } from '../services/output-emitter.js';
 
 const output = new OutputEmitter({ json: options.json });
@@ -206,7 +246,7 @@ output.action({ action, from, result, at });
 output.flush();
 ```
 
-For direct table formatting without JSON support, use `formatTable` from `../helpers/table-formatter.js`.
+For direct table formatting (no `--json` flag support), use `formatTable` from `../helpers/table-formatter.js` (also relative to commands/).
 
 Key conventions:
 - UPPERCASE headers, 2-space column separators
@@ -229,3 +269,5 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 
 - [docs/SPEC.md](docs/SPEC.md) - Rundown specification
 - [docs/MCP.md](docs/MCP.md) - MCP server reference
+- [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
+- [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide

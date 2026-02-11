@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { TransitionsSchema, TransitionObjectSchema, StepIdSchema } from '../src/schemas.js';
+import { TransitionsSchema, TransitionObjectSchema, StepIdSchema, ForClauseSchema, ActionSchema } from '../src/schemas.js';
 
 describe('TransitionsSchema with kind', () => {
   it('should validate transitions with kind', () => {
@@ -140,8 +140,8 @@ describe('StepIdSchema with named steps', () => {
     expect(StepIdSchema.safeParse({ step: '1' }).success).toBe(true);
   });
 
-  it('accepts {N} dynamic step', () => {
-    expect(StepIdSchema.safeParse({ step: '{N}' }).success).toBe(true);
+  it('rejects {N} dynamic step (no longer supported)', () => {
+    expect(StepIdSchema.safeParse({ step: '{N}' }).success).toBe(false);
   });
 
   it('accepts NEXT', () => {
@@ -171,7 +171,7 @@ describe('StepIdSchema with named steps', () => {
   it('rejects NEXT with both qualifier AND substep', () => {
     expect(StepIdSchema.safeParse({
       step: 'NEXT',
-      qualifier: { step: '{N}' },
+      qualifier: { step: 'Cleanup' },
       substep: '1'
     }).success).toBe(false);
   });
@@ -226,11 +226,6 @@ describe('unified naming schemas', () => {
     expect(result.success).toBe(true);
   });
 
-  it('StepIdSchema accepts {N} for dynamic step references', () => {
-    const result = StepIdSchema.safeParse({ step: '{N}', substep: '1' });
-    expect(result.success).toBe(true);
-  });
-
   it('StepNameSchema rejects reserved words as step names', () => {
     const result = StepIdSchema.safeParse({ step: 'CONTINUE' });
     expect(result.success).toBe(false);
@@ -245,9 +240,127 @@ describe('unified naming schemas', () => {
     const result = StepIdSchema.safeParse({ step: 'ErrorHandler' });
     expect(result.success).toBe(true);
   });
+});
 
-  it('StepNameSchema accepts {N} for dynamic steps', () => {
-    const result = StepIdSchema.safeParse({ step: '{N}' });
-    expect(result.success).toBe(true);
+describe('ForClauseSchema', () => {
+  it('validates basic numeric range', () => {
+    expect(ForClauseSchema.safeParse({ start: 1, end: 10 }).success).toBe(true);
+  });
+
+  it('validates range with variable name', () => {
+    expect(ForClauseSchema.safeParse({ variable: 'batch', start: 1, end: 10 }).success).toBe(true);
+  });
+
+  it('rejects template variable end', () => {
+    expect(ForClauseSchema.safeParse({ variable: 'item', start: 1, end: '{{MaxItems}}' }).success).toBe(false);
+  });
+
+  it('rejects template variable start', () => {
+    expect(ForClauseSchema.safeParse({ start: '{{StartIdx}}', end: 10 }).success).toBe(false);
+  });
+
+  it('rejects both template variables', () => {
+    expect(ForClauseSchema.safeParse({ start: '{{Start}}', end: '{{End}}' }).success).toBe(false);
+  });
+
+  it('rejects zero as start', () => {
+    expect(ForClauseSchema.safeParse({ start: 0, end: 10 }).success).toBe(false);
+  });
+
+  it('rejects negative start', () => {
+    expect(ForClauseSchema.safeParse({ start: -1, end: 10 }).success).toBe(false);
+  });
+
+  it('rejects negative end', () => {
+    expect(ForClauseSchema.safeParse({ start: 1, end: -5 }).success).toBe(false);
+  });
+
+  it('rejects zero as end', () => {
+    expect(ForClauseSchema.safeParse({ start: 1, end: 0 }).success).toBe(false);
+  });
+
+  it('rejects invalid variable name (starts with digit)', () => {
+    expect(ForClauseSchema.safeParse({ variable: '1batch', start: 1, end: 10 }).success).toBe(false);
+  });
+
+  it('rejects invalid variable name (contains hyphen)', () => {
+    expect(ForClauseSchema.safeParse({ variable: 'my-var', start: 1, end: 10 }).success).toBe(false);
+  });
+
+  it('rejects invalid template variable format', () => {
+    expect(ForClauseSchema.safeParse({ start: 1, end: '{MaxItems}' }).success).toBe(false);
+  });
+
+  it('rejects string that is not a template variable', () => {
+    expect(ForClauseSchema.safeParse({ start: 1, end: 'notavar' }).success).toBe(false);
+  });
+
+  it('accepts reversed range (start > end)', () => {
+    expect(ForClauseSchema.safeParse({ start: 10, end: 5 }).success).toBe(true);
+  });
+
+  it('allows start equal to end (single iteration)', () => {
+    expect(ForClauseSchema.safeParse({ start: 5, end: 5 }).success).toBe(true);
+  });
+
+});
+
+describe('ActionSchema with NEXT and BREAK', () => {
+  it('validates NEXT action', () => {
+    expect(ActionSchema.safeParse({ type: 'NEXT' }).success).toBe(true);
+  });
+
+  it('validates BREAK action', () => {
+    expect(ActionSchema.safeParse({ type: 'BREAK' }).success).toBe(true);
+  });
+
+  it('still validates CONTINUE action', () => {
+    expect(ActionSchema.safeParse({ type: 'CONTINUE' }).success).toBe(true);
+  });
+
+  it('still validates COMPLETE action', () => {
+    expect(ActionSchema.safeParse({ type: 'COMPLETE' }).success).toBe(true);
+  });
+
+  it('still validates STOP action', () => {
+    expect(ActionSchema.safeParse({ type: 'STOP' }).success).toBe(true);
+  });
+
+  it('still validates GOTO action', () => {
+    expect(ActionSchema.safeParse({ type: 'GOTO', target: { step: '1' } }).success).toBe(true);
+  });
+
+  it('rejects unknown action type', () => {
+    expect(ActionSchema.safeParse({ type: 'INVALID' }).success).toBe(false);
+  });
+});
+
+describe('StepIdSchema with AT field', () => {
+  it('accepts step with numeric AT', () => {
+    expect(StepIdSchema.safeParse({ step: '3', at: 1 }).success).toBe(true);
+  });
+
+  it('accepts step with template variable AT', () => {
+    expect(StepIdSchema.safeParse({ step: '3', at: '{{Index}}' }).success).toBe(true);
+  });
+
+  it('accepts step with substep and AT', () => {
+    expect(StepIdSchema.safeParse({ step: '3', substep: '1', at: 1 }).success).toBe(true);
+  });
+
+  it('accepts step without AT (backward compat)', () => {
+    expect(StepIdSchema.safeParse({ step: '3' }).success).toBe(true);
+  });
+
+  it('rejects AT with zero', () => {
+    expect(StepIdSchema.safeParse({ step: '3', at: 0 }).success).toBe(false);
+  });
+
+  it('rejects AT with negative number', () => {
+    expect(StepIdSchema.safeParse({ step: '3', at: -1 }).success).toBe(false);
+  });
+
+  it('rejects AT with invalid template format', () => {
+    expect(StepIdSchema.safeParse({ step: '3', at: '{Index}' }).success).toBe(false);
   });
 });

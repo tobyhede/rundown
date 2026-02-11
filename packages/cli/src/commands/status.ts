@@ -11,6 +11,7 @@ import { getCwd } from '../helpers/context.js';
 import {
   getStepRetryMax,
   buildMetadata,
+  formatActionForDisplay,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -88,9 +89,7 @@ export function registerStatusCommand(program: Command): void {
           const stashed = await manager.load(stashedId);
           if (stashed) {
             const steps = getRunbookFromState(stashed, cwd);
-            const totalSteps = steps.length > 0 && steps[0].isDynamic
-              ? '{N}'
-              : countNumberedSteps(steps);
+            const totalSteps = countNumberedSteps(steps);
             const metadata = buildMetadata(stashed);
 
             const statusData: StatusOutputData = {
@@ -119,16 +118,10 @@ export function registerStatusCommand(program: Command): void {
 
         // Case 3: Active runbook
         const steps = getRunbookFromState(state, cwd);
-        const isDynamic = steps.length > 0 && steps[0].isDynamic;
-        // For dynamic runbooks, find step by checking if it's the dynamic template
-        const currentStepIndex = isDynamic ? 0 : steps.findIndex(s => s.name === state.step);
+        const currentStepIndex = steps.findIndex(s => s.name === state.step);
         const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
-        // '{N}' indicates dynamic runbook with unbounded iterations
-        const totalSteps: number | string = isDynamic ? '{N}' : countNumberedSteps(steps);
-        // Use state.instance for dynamic runbooks, state.step for static
-        const displayStep = isDynamic && state.instance !== undefined
-          ? String(state.instance)
-          : state.step;
+        const totalSteps = countNumberedSteps(steps);
+        const displayStep = state.step;
 
         const metadata = buildMetadata(state);
 
@@ -136,11 +129,8 @@ export function registerStatusCommand(program: Command): void {
         let actionBlockData: ActionBlockData | undefined;
         if (state.lastAction) {
           const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
-          actionBlockData = {
-            action: state.lastAction === 'GOTO' ? `GOTO ${state.step}` :
-                    state.lastAction === 'RETRY' ? `RETRY (${String(state.retryCount)}/${String(retryMaxForAction)})` :
-                    state.lastAction,
-          };
+          const actionStr = formatActionForDisplay(state.lastAction, state.retryCount, retryMaxForAction);
+          actionBlockData = { action: actionStr };
           if (state.lastResult) {
             actionBlockData.result = state.lastResult === 'pass';
           }

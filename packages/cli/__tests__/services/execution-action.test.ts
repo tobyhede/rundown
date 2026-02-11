@@ -9,11 +9,11 @@ describe('execution action helpers', () => {
     it('extracts lastAction from valid snapshot', () => {
       const snapshot = {
         context: {
-          lastAction: 'CONTINUE',
+          lastAction: { type: 'CONTINUE' },
           retryCount: 0,
         },
       };
-      expect(extractLastAction(snapshot)).toBe('CONTINUE');
+      expect(extractLastAction(snapshot)).toEqual({ type: 'CONTINUE' });
     });
 
     it('returns undefined for snapshot without context', () => {
@@ -43,26 +43,32 @@ describe('execution action helpers', () => {
     });
 
     it('extracts various action types', () => {
-      expect(extractLastAction({ context: { lastAction: 'STOP' } })).toBe('STOP');
-      expect(extractLastAction({ context: { lastAction: 'COMPLETE' } })).toBe('COMPLETE');
-      expect(extractLastAction({ context: { lastAction: 'RETRY' } })).toBe('RETRY');
-      expect(extractLastAction({ context: { lastAction: 'GOTO ErrorHandler' } })).toBe('GOTO ErrorHandler');
-      expect(extractLastAction({ context: { lastAction: 'GOTO NEXT' } })).toBe('GOTO NEXT');
+      expect(extractLastAction({ context: { lastAction: { type: 'STOP' } } })).toEqual({ type: 'STOP' });
+      expect(extractLastAction({ context: { lastAction: { type: 'COMPLETE' } } })).toEqual({ type: 'COMPLETE' });
+      expect(extractLastAction({ context: { lastAction: { type: 'RETRY' } } })).toEqual({ type: 'RETRY' });
+      expect(extractLastAction({ context: { lastAction: { type: 'GOTO', target: 'ErrorHandler' } } })).toEqual({ type: 'GOTO', target: 'ErrorHandler' });
+    });
+
+    it('rejects malformed lastAction shapes', () => {
+      expect(extractLastAction({ context: { lastAction: { type: 'GOTO' } } })).toBeUndefined();
+      expect(extractLastAction({ context: { lastAction: { type: 'GOTO', target: 42 } } })).toBeUndefined();
+      expect(extractLastAction({ context: { lastAction: { type: 'GOTO', target: '3', at: { bad: true } } } })).toBeUndefined();
+      expect(extractLastAction({ context: { lastAction: { type: 'NOT_REAL' } } })).toBeUndefined();
     });
   });
 
   describe('formatActionForDisplay', () => {
     describe('basic action types', () => {
       it('returns CONTINUE when lastAction is CONTINUE', () => {
-        expect(formatActionForDisplay('CONTINUE', 0, 3)).toBe('CONTINUE');
+        expect(formatActionForDisplay({ type: 'CONTINUE' }, 0, 3)).toBe('CONTINUE');
       });
 
       it('returns STOP when lastAction is STOP', () => {
-        expect(formatActionForDisplay('STOP', 0, 3)).toBe('STOP');
+        expect(formatActionForDisplay({ type: 'STOP' }, 0, 3)).toBe('STOP');
       });
 
       it('returns COMPLETE when lastAction is COMPLETE', () => {
-        expect(formatActionForDisplay('COMPLETE', 0, 3)).toBe('COMPLETE');
+        expect(formatActionForDisplay({ type: 'COMPLETE' }, 0, 3)).toBe('COMPLETE');
       });
 
       it('returns CONTINUE as default when lastAction is undefined', () => {
@@ -72,69 +78,46 @@ describe('execution action helpers', () => {
 
     describe('RETRY formatting', () => {
       it('formats RETRY with count details', () => {
-        expect(formatActionForDisplay('RETRY', 1, 3)).toBe('RETRY (1/3)');
-        expect(formatActionForDisplay('RETRY', 2, 3)).toBe('RETRY (2/3)');
-        expect(formatActionForDisplay('RETRY', 3, 3)).toBe('RETRY (3/3)');
+        expect(formatActionForDisplay({ type: 'RETRY' }, 1, 3)).toBe('RETRY (1/3)');
+        expect(formatActionForDisplay({ type: 'RETRY' }, 2, 3)).toBe('RETRY (2/3)');
+        expect(formatActionForDisplay({ type: 'RETRY' }, 3, 3)).toBe('RETRY (3/3)');
       });
 
       it('formats RETRY with different max values', () => {
-        expect(formatActionForDisplay('RETRY', 1, 5)).toBe('RETRY (1/5)');
-        expect(formatActionForDisplay('RETRY', 1, 10)).toBe('RETRY (1/10)');
+        expect(formatActionForDisplay({ type: 'RETRY' }, 1, 5)).toBe('RETRY (1/5)');
+        expect(formatActionForDisplay({ type: 'RETRY' }, 1, 10)).toBe('RETRY (1/10)');
       });
     });
 
     describe('GOTO formatting', () => {
-      it('passes through GOTO with named step', () => {
-        expect(formatActionForDisplay('GOTO ErrorHandler', 0, 3)).toBe('GOTO ErrorHandler');
+      it('formats GOTO with named step', () => {
+        expect(formatActionForDisplay({ type: 'GOTO', target: 'ErrorHandler' }, 0, 3)).toBe('GOTO ErrorHandler');
       });
 
-      it('passes through GOTO with numbered step', () => {
-        expect(formatActionForDisplay('GOTO 3', 0, 3)).toBe('GOTO 3');
+      it('formats GOTO with numbered step', () => {
+        expect(formatActionForDisplay({ type: 'GOTO', target: '3' }, 0, 3)).toBe('GOTO 3');
       });
 
-      it('passes through GOTO with substep', () => {
-        expect(formatActionForDisplay('GOTO 2.3', 0, 3)).toBe('GOTO 2.3');
+      it('formats GOTO with substep', () => {
+        expect(formatActionForDisplay({ type: 'GOTO', target: '2', substep: '3' }, 0, 3)).toBe('GOTO 2.3');
       });
 
-      it('passes through GOTO NEXT', () => {
-        expect(formatActionForDisplay('GOTO NEXT', 0, 3)).toBe('GOTO NEXT');
-      });
-    });
-
-    describe('placeholder resolution', () => {
-      it('resolves {N} placeholder with instance number', () => {
-        expect(formatActionForDisplay('GOTO {N}.3', 0, 3, 5)).toBe('GOTO 5.3');
-        expect(formatActionForDisplay('GOTO {N}', 0, 3, 1)).toBe('GOTO 1');
+      it('formats GOTO with AT qualifier', () => {
+        expect(formatActionForDisplay({ type: 'GOTO', target: '3', at: 2 }, 0, 3)).toBe('GOTO 3 AT 2');
       });
 
-      it('resolves {n} placeholder with substep instance number', () => {
-        expect(formatActionForDisplay('GOTO 1.{n}', 0, 3, undefined, 3)).toBe('GOTO 1.3');
-        expect(formatActionForDisplay('GOTO {N}.{n}', 0, 3, 2, 5)).toBe('GOTO 2.5');
+      it('formats GOTO with substep and AT qualifier', () => {
+        expect(formatActionForDisplay({ type: 'GOTO', target: '3', substep: '1', at: 5 }, 0, 3)).toBe('GOTO 3.1 AT 5');
       });
 
-      it('resolves multiple placeholders', () => {
-        expect(formatActionForDisplay('GOTO {N}.{n}', 0, 3, 10, 20)).toBe('GOTO 10.20');
-      });
-
-      it('leaves placeholders unresolved when instance not provided', () => {
-        expect(formatActionForDisplay('GOTO {N}.3', 0, 3)).toBe('GOTO {N}.3');
-        expect(formatActionForDisplay('GOTO 1.{n}', 0, 3)).toBe('GOTO 1.{n}');
-      });
-
-      it('does not resolve placeholders in non-GOTO actions', () => {
-        expect(formatActionForDisplay('CONTINUE', 0, 3, 5, 10)).toBe('CONTINUE');
-        expect(formatActionForDisplay('STOP', 0, 3, 5, 10)).toBe('STOP');
+      it('formats GOTO with template variable AT qualifier', () => {
+        expect(formatActionForDisplay({ type: 'GOTO', target: '3', at: '{{Index}}' }, 0, 3)).toBe('GOTO 3 AT {{Index}}');
       });
     });
 
     describe('edge cases', () => {
       it('handles zero retry count', () => {
-        expect(formatActionForDisplay('RETRY', 0, 3)).toBe('RETRY (0/3)');
-      });
-
-      it('handles empty string lastAction', () => {
-        // Empty string is falsy, should return default
-        expect(formatActionForDisplay('', 0, 3)).toBe('CONTINUE');
+        expect(formatActionForDisplay({ type: 'RETRY' }, 0, 3)).toBe('RETRY (0/3)');
       });
     });
   });

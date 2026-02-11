@@ -16,6 +16,7 @@ import {
   type RunbookState,
   type StepPosition,
   type StepId,
+  type LastAction,
 } from '@rundown-org/core';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
@@ -25,7 +26,6 @@ import {
   extractRetryMax,
   isRunbookComplete,
   isRunbookStopped,
-  handleNextInstanceFlags,
 } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
@@ -187,8 +187,6 @@ export async function buildTransitionContext(
 /**
  * Calculate display position info for a runbook state.
  *
- * Handles dynamic {N} runbooks and substep {n} placeholders.
- *
  * @param state - Current runbook state
  * @param steps - Parsed runbook steps
  * @returns Display position with step, total, and optional substep
@@ -196,21 +194,9 @@ export async function buildTransitionContext(
 export function calculatePosition(
   state: RunbookState,
   steps: Step[]
-): { displayStep: string; totalSteps: number | string; displaySubstep?: string } {
-  const isDynamic = steps.length > 0 && steps[0].isDynamic;
-  // '{N}' indicates dynamic runbook with unbounded iterations
-  const totalSteps: number | string = isDynamic ? '{N}' : countNumberedSteps(steps);
-  // Use state.instance for dynamic runbooks
-  const displayStep = isDynamic && state.instance !== undefined
-    ? String(state.instance)
-    : state.step;
-
-  // Resolve {n} in substep for display
-  const displaySubstep = state.substep === '{n}'
-    ? String(state.substepStates?.length ?? 1)
-    : state.substep;
-
-  return { displayStep, totalSteps, displaySubstep };
+): { displayStep: string; totalSteps: number; displaySubstep?: string } {
+  const totalSteps = countNumberedSteps(steps);
+  return { displayStep: state.step, totalSteps, displaySubstep: state.substep };
 }
 
 /**
@@ -226,49 +212,36 @@ export function buildPositions(
   newState: RunbookState,
   steps: Step[]
 ): { prevPos: StepPosition; newPos: StepPosition } {
-  const isDynamic = steps.length > 0 && steps[0].isDynamic;
-  const totalSteps: number | string = isDynamic ? '{N}' : countNumberedSteps(steps);
+  const totalSteps = countNumberedSteps(steps);
 
-  // Compute prev display step
-  const prevDisplayStep = isDynamic && prevState.instance !== undefined
-    ? String(prevState.instance)
-    : prevState.step;
-
-  // Resolve {n} in prev substep for display
-  const prevSubstepStatesLen = prevState.substepStates?.length ?? 1;
-  const prevDisplaySubstep = prevState.substep === '{n}'
-    ? String(prevSubstepStatesLen)
-    : prevState.substep;
-
-  // Compute new display step (position after transition)
-  const newDisplayStep = isDynamic && newState.instance !== undefined
-    ? String(newState.instance)
-    : newState.step;
-
-  // Resolve {n} in new substep for display
-  const newDisplaySubstep = newState.substep === '{n}'
-    ? String(newState.substepStates?.length ?? 1)
-    : newState.substep;
-
-  const prevPos: StepPosition = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
-  const newPos: StepPosition = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
+  const prevPos: StepPosition = { current: prevState.step, total: totalSteps, substep: prevState.substep };
+  const newPos: StepPosition = { current: newState.step, total: totalSteps, substep: newState.substep };
 
   return { prevPos, newPos };
 }
 
 /**
- * Derive actionType from formatted action string.
+ * Derive actionType from structured LastAction.
  *
- * @param action - Formatted action string (e.g., 'GOTO 3', 'RETRY (1/3)')
- * @returns Action type
+ * Maps the discriminated union type to the simplified ActionType used
+ * for display-layer result computation.
+ *
+ * @param lastAction - The structured LastAction from XState context
+ * @returns Action type for display-layer use
  */
-export function parseActionType(action: string): ActionType {
-  if (action.startsWith('GOTO')) {
-    return 'GOTO';
-  } else if (action.startsWith('RETRY')) {
-    return 'RETRY';
-  } else {
-    return action as 'CONTINUE' | 'COMPLETE' | 'STOP';
+export function parseActionType(lastAction: LastAction | undefined): ActionType {
+  if (!lastAction) return 'CONTINUE';
+  switch (lastAction.type) {
+    case 'GOTO':
+      return 'GOTO';
+    case 'RETRY':
+      return 'RETRY';
+    case 'COMPLETE':
+      return 'COMPLETE';
+    case 'STOP':
+      return 'STOP';
+    default:
+      return 'CONTINUE';
   }
 }
 
@@ -474,7 +447,7 @@ export async function executeTransition(
   // Send event
   actor.send({ type: config.eventType });
 
-  let updatedState = await manager.updateFromActor(state.id, actor, steps);
+  const updatedState = await manager.updateFromActor(state.id, actor, steps);
 
   // XState snapshot type is not fully typed
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
@@ -484,60 +457,30 @@ export async function executeTransition(
   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
   const isStopped = isRunbookStopped(snapshot);
 
-  // Handle NEXT instance/substep flags
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-  updatedState = await handleNextInstanceFlags(snapshot, updatedState, manager, state.id, steps, isComplete, isStopped);
-
   // Read action from XState context (source of truth for retryMax and lastAction)
   const prevStepIndex = steps.findIndex(s => s.name === prevState.step);
   const currentStep = prevStepIndex >= 0 ? steps[prevStepIndex] : steps[0];
   const retryMax = extractRetryMax(snapshot);
   const lastActionFromContext = extractLastAction(snapshot);
 
-  // Compute substep instance for {n} resolution
-  const substepInstance = updatedState.substep
-    ? (updatedState.substep === '{n}'
-        ? (updatedState.substepStates?.length ?? 1)
-        : parseInt(updatedState.substep, 10) || undefined)
-    : undefined;
-
   const action = formatActionForDisplay(
     lastActionFromContext,
     updatedState.retryCount,
-    retryMax,
-    updatedState.instance,
-    substepInstance
+    retryMax
   );
 
   // Derive action type and compute result
-  const actionType = parseActionType(action);
+  const actionType = parseActionType(lastActionFromContext);
   const actionResult = config.computeActionResult(actionType);
 
-  // Update lastAction and lastResult in persistent state
-  await manager.update(state.id, { lastAction: actionType, lastResult: config.lastResult });
+  // Update lastAction and lastResult in persistent state (pass structured object directly)
+  await manager.update(state.id, { lastAction: lastActionFromContext, lastResult: config.lastResult });
 
   // Build positions for output
-  const isDynamic = steps.length > 0 && steps[0].isDynamic;
-  const totalStepsValue: number | string = isDynamic ? '{N}' : countNumberedSteps(steps);
+  const totalStepsValue = countNumberedSteps(steps);
 
-  // Resolve {n} in prev substep for display
-  const prevSubstepStatesLen = prevState.substepStates?.length ?? 1;
-  const prevDisplaySubstepResolved = prevSubstep === '{n}'
-    ? String(prevSubstepStatesLen)
-    : prevSubstep;
-
-  // Compute new display step (position after transition)
-  const newDisplayStep = isDynamic && updatedState.instance !== undefined
-    ? String(updatedState.instance)
-    : updatedState.step;
-
-  // Resolve {n} in new substep for display
-  const newDisplaySubstep = updatedState.substep === '{n}'
-    ? String(updatedState.substepStates?.length ?? 1)
-    : updatedState.substep;
-
-  const prevPos = { current: displayStep, total: totalStepsValue, substep: prevDisplaySubstepResolved };
-  const newPos = { current: newDisplayStep, total: totalStepsValue, substep: newDisplaySubstep };
+  const prevPos = { current: displayStep, total: totalStepsValue, substep: prevSubstep };
+  const newPos = { current: updatedState.step, total: totalStepsValue, substep: updatedState.substep };
 
   // Emit action block
   output.action({

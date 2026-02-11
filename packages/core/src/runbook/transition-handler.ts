@@ -94,6 +94,52 @@ export function evaluatePassCondition(
 }
 
 /**
+ * Determine whether aggregated iteration/substep results should be treated as passing.
+ *
+ * Pure predicate shared between the transition handler (runtime evaluation) and
+ * the compiler (XState guard closures) to keep ALL/ANY logic in one place.
+ *
+ * - ALL mode (`aggregationAll = true`): passes only when no failures exist
+ * - ANY mode (`aggregationAll = false`): passes when at least one result passed
+ *
+ * @param hasFailed - Whether any result was a failure
+ * @param passCount - Number of passing results
+ * @param aggregationAll - True for ALL mode, false for ANY mode
+ * @returns True if the aggregated outcome should be treated as PASS
+ * @see {@link evaluateAggregation}
+ */
+export function shouldAggregationPass(
+  hasFailed: boolean,
+  passCount: number,
+  aggregationAll: boolean
+): boolean {
+  return aggregationAll ? !hasFailed : passCount > 0;
+}
+
+/**
+ * Evaluate ALL/ANY aggregation logic given pre-computed pass/fail indicators.
+ *
+ * @param hasFailed - Whether any result was a failure
+ * @param passCount - Number of passing results
+ * @param transitions - The transitions defining aggregation behavior (all/any)
+ * @param currentRetryCount - Current retry count
+ * @returns A ConditionResult indicating the action to take
+ */
+function evaluateAggregation(
+  hasFailed: boolean,
+  passCount: number,
+  transitions: Transitions,
+  currentRetryCount: number
+): ConditionResult {
+  return evaluateTransition(
+    shouldAggregationPass(hasFailed, passCount, transitions.all)
+      ? transitions.pass
+      : transitions.fail,
+    currentRetryCount
+  );
+}
+
+/**
  * Evaluate aggregation conditions across substep results.
  *
  * When all substeps are complete, determines the parent step's outcome
@@ -115,21 +161,33 @@ export function evaluateSubstepAggregation(
   if (!allDone) return null;
 
   const passCount = substepStates.filter(s => s.result === 'pass').length;
+  const hasFailed = substepStates.some(s => s.result === 'fail');
+  return evaluateAggregation(hasFailed, passCount, transitions, currentRetryCount);
+}
 
-  if (transitions.all) {
-    // ALL mode: Pass if all passed, fail if any failed
-    const anyFailed = substepStates.some(s => s.result === 'fail');
-    if (anyFailed) {
-      return evaluateTransition(transitions.fail, currentRetryCount);
-    }
-    return evaluateTransition(transitions.pass, currentRetryCount);
-  } else {
-    // ANY mode: Pass if any passed, fail only if all failed
-    if (passCount > 0) {
-      return evaluateTransition(transitions.pass, currentRetryCount);
-    }
-    return evaluateTransition(transitions.fail, currentRetryCount);
-  }
+/**
+ * Evaluate aggregation conditions across iteration results.
+ *
+ * When all iterations of a FOR loop are complete, determines the parent step's outcome
+ * based on the aggregation mode (ALL or ANY) defined in transitions:
+ * - ALL mode: Pass if all iterations passed, fail if any failed
+ * - ANY mode: Pass if any iteration passed, fail only if all failed
+ *
+ * @param iterationResults - The per-iteration outcomes ('pass' or 'fail')
+ * @param transitions - The transitions defining aggregation behavior (all/any)
+ * @param currentRetryCount - Current retry count (defaults to 0)
+ * @returns A ConditionResult if iterations exist, null if empty
+ */
+export function evaluateIterationAggregation(
+  iterationResults: readonly ('pass' | 'fail')[],
+  transitions: Transitions,
+  currentRetryCount = 0
+): ConditionResult | null {
+  if (iterationResults.length === 0) return null;
+
+  const passCount = iterationResults.filter(r => r === 'pass').length;
+  const hasFailed = iterationResults.some(r => r === 'fail');
+  return evaluateAggregation(hasFailed, passCount, transitions, currentRetryCount);
 }
 
 /**
@@ -150,6 +208,12 @@ function evaluateAction(action: Action): ConditionResult {
       return { action: 'complete', message: action.message };
     case 'GOTO':
       return { action: 'goto', gotoTarget: action.target };
+    case 'NEXT':
+      // FOR loop: advance to next iteration (compiler handles the actual loop logic)
+      return { action: 'continue' };
+    case 'BREAK':
+      // FOR loop: exit loop immediately (compiler handles the actual exit logic)
+      return { action: 'continue' };
     default: {
       // Handle unknown action types (should not occur with valid schema)
       const _exhaustive: never = action;

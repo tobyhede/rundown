@@ -1,4 +1,4 @@
-import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation } from '../../src/runbook/transition-handler.js';
+import { evaluateFailCondition, evaluatePassCondition, evaluateSubstepAggregation, evaluateIterationAggregation, shouldAggregationPass } from '../../src/runbook/transition-handler.js';
 import type { Step } from '../../src/runbook/types.js';
 import type { SubstepState } from '../../src/runbook/types.js';
 
@@ -7,11 +7,11 @@ describe('GOTO NEXT action handling', () => {
     const step = {
       name: '1',
       description: 'Test',
-      isDynamic: true,
+      
       transitions: {
         all: true as const,
-        pass: { kind: 'pass' as const, action: { type: 'GOTO' as const, target: { step: 'NEXT' as const } } },
-        fail: { kind: 'fail' as const, action: { type: 'STOP' as const } }
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: 'NEXT' as const } } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } }
       }
     };
     const result = evaluatePassCondition(step);
@@ -23,11 +23,11 @@ describe('GOTO NEXT action handling', () => {
     const step = {
       name: '1',
       description: 'Test',
-      isDynamic: true,
+      
       transitions: {
         all: true as const,
-        pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, action: { type: 'GOTO' as const, target: { step: 'NEXT' as const } } }
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: 'NEXT' as const } } }
       }
     };
     const result = evaluateFailCondition(step, 0);
@@ -41,13 +41,14 @@ describe('evaluatePassCondition', () => {
     const step = {
       name: '1',
       description: 'Test',
-      isDynamic: false,
+      
       transitions: {
         pass: {
           kind: 'pass' as const,
+          retry: 0,
           action: { type: 'COMPLETE' as const, message: 'Success message' }
         },
-        fail: { kind: 'fail' as const, action: { type: 'STOP' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
         all: true as const
       }
     };
@@ -61,15 +62,15 @@ describe('evaluateSubstepAggregation', () => {
   // PASS ALL mode (all: true)
   const passAllTransitions = {
     all: true,
-    pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-    fail: { kind: 'fail' as const, action: { type: 'STOP' as const, message: 'Substep failed' } }
+    pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+    fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const, message: 'Substep failed' } }
   };
 
   // PASS ANY mode (all: false)
   const passAnyTransitions = {
     all: false,
-    pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-    fail: { kind: 'fail' as const, action: { type: 'STOP' as const, message: 'All substeps failed' } }
+    pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+    fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const, message: 'All substeps failed' } }
   };
 
   describe('PASS ALL mode', () => {
@@ -132,11 +133,11 @@ describe('evaluateFailCondition', () => {
     const step: any = {
       name: '1',
       description: 'Test',
-      isDynamic: false,
+      
       transitions: {
         all: true,
-        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-        fail: { kind: 'fail', action: { type: 'COMPLETE', message: 'Failed gracefully' } },
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'COMPLETE', message: 'Failed gracefully' } },
       }
     };
     const result = evaluateFailCondition(step, 0);
@@ -150,7 +151,7 @@ describe('evaluateFailCondition edge cases', () => {
     const step = {
       name: '1',
       description: 'Test step without transitions',
-      isDynamic: false,
+      
     };
 
     const result = evaluateFailCondition(step, 0);
@@ -164,7 +165,7 @@ describe('evaluatePassCondition edge cases', () => {
     const step = {
       name: '1',
       description: 'Test step without transitions',
-      isDynamic: false,
+      
     };
 
     const result = evaluatePassCondition(step);
@@ -175,11 +176,11 @@ describe('evaluatePassCondition edge cases', () => {
     const step: any = {
       name: '1',
       description: 'Test',
-      isDynamic: false,
+      
       transitions: {
         all: true,
-        pass: { kind: 'pass', action: { type: 'STOP', message: 'Halted on pass' } },
-        fail: { kind: 'fail', action: { type: 'STOP' } }
+        pass: { kind: 'pass', retry: 0, action: { type: 'STOP', message: 'Halted on pass' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
       }
     };
 
@@ -192,8 +193,8 @@ describe('evaluatePassCondition edge cases', () => {
 describe('evaluateSubstepAggregation edge cases', () => {
   const passAnyTransitions = {
     all: false,
-    pass: { kind: 'pass' as const, action: { type: 'CONTINUE' as const } },
-    fail: { kind: 'fail' as const, action: { type: 'STOP' as const, message: 'All failed' } }
+    pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+    fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const, message: 'All failed' } }
   };
 
   it('returns fail in ANY mode when all substeps have zero passes', () => {
@@ -213,7 +214,7 @@ describe('evaluateFailCondition with retry property', () => {
   it('returns retry when retry > 0 and count < retry', () => {
     const step: Step = {
       name: '1',
-      isDynamic: false,
+      
       description: 'Test',
       transitions: {
         all: true,
@@ -230,7 +231,7 @@ describe('evaluateFailCondition with retry property', () => {
   it('returns action when retries exhausted', () => {
     const step: Step = {
       name: '1',
-      isDynamic: false,
+      
       description: 'Test',
       transitions: {
         all: true,
@@ -275,5 +276,91 @@ describe('evaluateSubstepAggregation with retry property', () => {
 
     const result = evaluateSubstepAggregation(substepStates, transitions, 2);
     expect(result?.action).toBe('stopped');
+  });
+});
+
+describe('evaluateIterationAggregation', () => {
+  const passAction = { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } };
+  const failAction = { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } };
+  const allTransitions = { all: true, pass: passAction, fail: failAction };
+  const anyTransitions = { all: false, pass: passAction, fail: failAction };
+
+  it('returns null for empty iteration results', () => {
+    expect(evaluateIterationAggregation([], allTransitions)).toBeNull();
+  });
+
+  describe('ALL mode', () => {
+    it('returns pass transition when all iterations passed', () => {
+      const result = evaluateIterationAggregation(['pass', 'pass', 'pass'], allTransitions);
+      expect(result).toEqual({ action: 'continue' });
+    });
+
+    it('returns fail transition when any iteration failed', () => {
+      const result = evaluateIterationAggregation(['pass', 'fail', 'pass'], allTransitions);
+      expect(result).toEqual({ action: 'stopped' });
+    });
+
+    it('returns fail transition when all iterations failed', () => {
+      const result = evaluateIterationAggregation(['fail', 'fail'], allTransitions);
+      expect(result).toEqual({ action: 'stopped' });
+    });
+  });
+
+  describe('ANY mode', () => {
+    it('returns pass transition when any iteration passed', () => {
+      const result = evaluateIterationAggregation(['fail', 'pass', 'fail'], anyTransitions);
+      expect(result).toEqual({ action: 'continue' });
+    });
+
+    it('returns fail transition when all iterations failed', () => {
+      const result = evaluateIterationAggregation(['fail', 'fail', 'fail'], anyTransitions);
+      expect(result).toEqual({ action: 'stopped' });
+    });
+
+    it('returns pass transition when single iteration passed', () => {
+      const result = evaluateIterationAggregation(['pass'], anyTransitions);
+      expect(result).toEqual({ action: 'continue' });
+    });
+  });
+
+  describe('with retry', () => {
+    const failWithRetry = { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } };
+    const retryTransitions = { all: true, pass: passAction, fail: failWithRetry };
+
+    it('returns retry when under retry limit', () => {
+      const result = evaluateIterationAggregation(['pass', 'fail'], retryTransitions, 0);
+      expect(result).toEqual({ action: 'retry', newRetryCount: 1 });
+    });
+
+    it('returns fail action when retries exhausted', () => {
+      const result = evaluateIterationAggregation(['pass', 'fail'], retryTransitions, 2);
+      expect(result).toEqual({ action: 'stopped' });
+    });
+  });
+});
+
+describe('shouldAggregationPass', () => {
+  it('returns true in ALL mode when no failures exist', () => {
+    expect(shouldAggregationPass(false, 3, true)).toBe(true);
+  });
+
+  it('returns false in ALL mode when a failure exists', () => {
+    expect(shouldAggregationPass(true, 2, true)).toBe(false);
+  });
+
+  it('returns true in ANY mode when some iterations passed', () => {
+    expect(shouldAggregationPass(false, 2, false)).toBe(true);
+  });
+
+  it('returns false in ANY mode when none passed', () => {
+    expect(shouldAggregationPass(true, 0, false)).toBe(false);
+  });
+
+  it('returns true in ALL mode with zero pass count and no failures (vacuous truth)', () => {
+    expect(shouldAggregationPass(false, 0, true)).toBe(true);
+  });
+
+  it('returns true in ANY mode when has failure but also has passes', () => {
+    expect(shouldAggregationPass(true, 1, false)).toBe(true);
   });
 });

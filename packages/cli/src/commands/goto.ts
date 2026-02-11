@@ -46,13 +46,6 @@ export function registerGotoCommand(program: Command): void {
           process.exit(1);
         }
 
-        // Reject NEXT via CLI
-        if (target.step === 'NEXT') {
-          output.error('GOTO NEXT is only valid as a runbook transition, not via CLI', 'INVALID_SYNTAX');
-          output.flush();
-          process.exit(1);
-        }
-
         let steps: Step[];
         try {
           steps = [...getRunbookFromState(state, cwd)];
@@ -62,46 +55,49 @@ export function registerGotoCommand(program: Command): void {
           process.exit(1);
         }
 
-        // Validate step exists (numeric steps and named steps - dynamic {N} references are validated at runtime)
-        if (target.step !== '{N}') {
-          // Look up step by name (includes numeric names like "1", "2")
-          const stepIndex = steps.findIndex(s => s.name === target.step);
-          if (stepIndex === -1) {
-            output.error(`Step "${target.step}" does not exist`, 'STEP_NOT_FOUND', {
-              requested: target.step,
-              available: steps.map(s => s.name)
+        // Validate step exists
+        const stepIndex = steps.findIndex(s => s.name === target.step);
+        if (stepIndex === -1) {
+          output.error(`Step "${target.step}" does not exist`, 'STEP_NOT_FOUND', {
+            requested: target.step,
+            available: steps.map(s => s.name)
+          });
+          output.flush();
+          process.exit(1);
+        }
+
+        // Validate AT - target must be a FOR step
+        if (target.at !== undefined) {
+          const step = steps[stepIndex];
+          if (!step.forClause) {
+            output.error(
+              `GOTO AT is only valid when the target step has a FOR clause (step "${target.step}" has no FOR)`,
+              'INVALID_AT_TARGET',
+              { step: target.step, at: target.at }
+            );
+            output.flush();
+            process.exit(1);
+          }
+        }
+
+        // Validate substep exists (if specified)
+        if (target.substep) {
+          const step = steps[stepIndex];
+          if (!step.substeps || step.substeps.length === 0) {
+            output.error(`Step ${stepIdToString({ step: target.step })} has no substeps`, 'STEP_NOT_FOUND', {
+              step: target.step
             });
             output.flush();
             process.exit(1);
           }
-
-          // Validate substep exists (if specified)
-          if (target.substep) {
-            const step = steps[stepIndex];
-            if (!step.substeps || step.substeps.length === 0) {
-              output.error(`Step ${stepIdToString({ step: target.step })} has no substeps`, 'STEP_NOT_FOUND', {
-                step: target.step
-              });
-              output.flush();
-              process.exit(1);
-            }
-            if (step.substeps.some(s => s.isDynamic)) {
-              output.error(`Cannot goto substep of dynamic step. Use: rd goto ${target.step}`, 'INVALID_SYNTAX', {
-                step: target.step,
-                suggestion: `rd goto ${target.step}`
-              });
-              output.flush();
-              process.exit(1);
-            }
-            const substepExists = step.substeps.some(s => s.id === target.substep);
-            if (!substepExists) {
-              output.error(`Substep ${stepIdToString(target)} does not exist`, 'STEP_NOT_FOUND', {
-                requested: stepIdToString(target),
-                available: step.substeps.map(s => s.id)
-              });
-              output.flush();
-              process.exit(1);
-            }
+          const substepExists = step.substeps.some(s => s.id === target.substep);
+          if (!substepExists) {
+            output.error(`Substep ${stepIdToString(target)} does not exist`, 'STEP_NOT_FOUND', {
+              requested: stepIdToString(target),
+              available: step.substeps.map(s => s.id)
+            });
+            output.flush();
+            process.exit(1);
           }
         }
 
@@ -126,7 +122,7 @@ export function registerGotoCommand(program: Command): void {
 
         // Update lastAction and CLEAR lastResult (prevent stale PASS/FAIL leaking)
         await manager.update(state.id, {
-          lastAction: 'GOTO',
+          lastAction: { type: 'GOTO', target: target.step, ...(target.substep && { substep: target.substep }) },
           lastResult: undefined  // CRITICAL: Clear stale result on manual goto
         });
 

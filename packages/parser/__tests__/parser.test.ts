@@ -55,7 +55,7 @@ describe('parseRunbook with substep runbooks', () => {
 
 ## 1. Dispatch agents
 
-### 1.{n} Review step
+### 1.1 Review step
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -69,6 +69,24 @@ describe('parseRunbook with substep runbooks', () => {
       'review.runbook.md',
       'security.runbook.md'
     ]);
+  });
+});
+
+describe('inline code preservation', () => {
+  it('preserves inline code in step description', () => {
+    const md = `## 1. Path: \`/some/path\`
+Content here.`;
+    const steps = parseRunbook(md);
+    expect(steps[0].description).toBe('Path: `/some/path`');
+  });
+
+  it('preserves inline code in prompt text', () => {
+    const md = `## 1. Execute
+- PASS: CONTINUE
+
+Run the command \`npm install\` first.`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toContain('`npm install`');
   });
 });
 
@@ -242,22 +260,6 @@ Do something.
     expect(() => parseRunbook(markdown)).toThrow(/substep does not exist/i);
   });
 
-  it('rejects GOTO N.M into dynamic substeps', () => {
-    const markdown = `
-## 1. First
-- PASS: GOTO 2.1
-- FAIL: STOP
-
-## 2. Dynamic
-
-### 2.{n} Agent dispatch
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
-
-Do work.
-`;
-    expect(() => parseRunbook(markdown)).toThrow(/substep does not exist/i);
-  });
 });
 
 describe('substep with prompts', () => {
@@ -507,11 +509,9 @@ Handle cleanup`;
     expect(steps).toHaveLength(2);
     expect(steps[0]).toMatchObject({
       name: '1',
-      isDynamic: false,
     });
     expect(steps[1]).toMatchObject({
       name: 'Cleanup',
-      isDynamic: false,
     });
   });
 
@@ -524,11 +524,9 @@ Handle cleanup`;
     expect(steps[0].substeps).toHaveLength(2);
     expect(steps[0].substeps![0]).toMatchObject({
       id: '1',
-      isDynamic: false,
     });
     expect(steps[0].substeps![1]).toMatchObject({
       id: 'Cleanup',
-      isDynamic: false,
     });
   });
 
@@ -543,19 +541,6 @@ Handle errors`;
     expect(steps[2].name).toBe('ErrorHandler');
   });
 
-  it('allows named step to coexist with dynamic step', () => {
-    const md = `## {N} Process each
-### {N}.1 Do work
-
-## ErrorHandler
-Handle errors`;
-
-    const steps = parseRunbook(md);
-    expect(steps).toHaveLength(2);
-    expect(steps[0].isDynamic).toBe(true);
-    expect(steps[1].name).toBe('ErrorHandler');
-  });
-
   it('rejects reserved word as step name', () => {
     const md = `## NEXT Do something`;
 
@@ -565,20 +550,6 @@ Handle errors`;
 
 describe('parser validation edge cases', () => {
   describe('substep-parent mismatch', () => {
-    it('rejects substep with numeric prefix when parent is dynamic', () => {
-      const md = `## {N} Dynamic step
-### 1.1 Wrong prefix substep
-Do work.`;
-      expect(() => parseRunbook(md)).toThrow(/uses numeric prefix but parent step is dynamic/);
-    });
-
-    it('rejects substep with {N} prefix when parent is static', () => {
-      const md = `## 1 Static step
-### {N}.1 Wrong prefix substep
-Do work.`;
-      expect(() => parseRunbook(md)).toThrow(/uses \{N\} prefix but parent step .* is static/);
-    });
-
     it('rejects substep referencing wrong parent step', () => {
       const md = `## 1 First step
 ### 2.1 Wrong parent substep
@@ -593,26 +564,6 @@ Do work.`;
 ### 1.1 First substep
 ### 1.1 Duplicate substep`;
       expect(() => parseRunbook(md)).toThrow(/Duplicate substep ID/);
-    });
-  });
-
-  describe('mixed substep types', () => {
-    it('rejects mixing static and dynamic substeps', () => {
-      const md = `## 1 Step
-### 1.1 Static substep
-Do something.
-### 1.{n} Dynamic substep
-Do something else.`;
-      expect(() => parseRunbook(md)).toThrow(/Cannot mix static and dynamic substeps/);
-    });
-
-    it('rejects mixing dynamic and static substeps', () => {
-      const md = `## 1 Step
-### 1.{n} Dynamic substep
-Do something.
-### 1.2 Static substep
-Do something else.`;
-      expect(() => parseRunbook(md)).toThrow(/Cannot mix static and dynamic substeps/);
     });
   });
 
@@ -768,5 +719,26 @@ npm test
 - some list item that is not a transition`;
       expect(() => parseRunbook(md)).toThrow(/Prompt text must appear before code blocks, substeps, or runbooks/);
     });
+  });
+});
+
+describe('parseRunbook with FOR clause', () => {
+  it('parses FOR clause from full markdown', () => {
+    const md = `## 1. Process batches
+- FOR batch IN 1 TO 3
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+### 1.1 Handle batch
+\`\`\`bash
+echo batch
+\`\`\`
+
+## 2. Done
+- PASS: COMPLETE
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
+    expect(steps[0].substeps).toHaveLength(1);
   });
 });

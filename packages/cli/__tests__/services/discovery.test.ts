@@ -5,6 +5,7 @@ import { join } from 'path';
 import {
   discoverRunbooks,
   findRunbookByName,
+  findRunbookByNameInSource,
   scanDirectory,
   getSearchPaths,
 } from '../../src/services/discovery.js';
@@ -667,6 +668,250 @@ name: minimal-runbook
 
       expect(runbook?.description).toBeUndefined();
       expect(runbook?.tags).toBeUndefined();
+    });
+  });
+
+  describe('recursive directory scanning', () => {
+    it('finds runbooks in subdirectories', async () => {
+      // Create a subdirectory structure
+      const planningDir = join(projectRunbooksDir, 'planning');
+      await mkdir(planningDir, { recursive: true });
+
+      const runbookContent = `---
+name: write-plan
+description: Write detailed plans
+---
+
+## 1. Step
+`;
+
+      await writeFile(
+        join(planningDir, 'write-plan.runbook.md'),
+        runbookContent
+      );
+
+      const runbooks = await scanDirectory(projectRunbooksDir, 'project');
+
+      expect(runbooks).toHaveLength(1);
+      expect(runbooks[0].name).toBe('write-plan');
+      expect(runbooks[0].path).toContain('planning');
+    });
+
+    it('finds runbooks in deeply nested directories', async () => {
+      const deepDir = join(projectRunbooksDir, 'level1', 'level2', 'level3');
+      await mkdir(deepDir, { recursive: true });
+
+      const runbookContent = `---
+name: deep-runbook
+---
+
+## 1. Step
+`;
+
+      await writeFile(
+        join(deepDir, 'deep-runbook.runbook.md'),
+        runbookContent
+      );
+
+      const runbooks = await scanDirectory(projectRunbooksDir, 'project');
+
+      expect(runbooks).toHaveLength(1);
+      expect(runbooks[0].name).toBe('deep-runbook');
+    });
+
+    it('combines runbooks from root and subdirectories', async () => {
+      const planningDir = join(projectRunbooksDir, 'planning');
+      await mkdir(planningDir, { recursive: true });
+
+      const rootRunbook = `---
+name: root-runbook
+---
+
+## 1. Step
+`;
+
+      const nestedRunbook = `---
+name: nested-runbook
+---
+
+## 1. Step
+`;
+
+      await writeFile(
+        join(projectRunbooksDir, 'root-runbook.runbook.md'),
+        rootRunbook
+      );
+      await writeFile(
+        join(planningDir, 'nested-runbook.runbook.md'),
+        nestedRunbook
+      );
+
+      const runbooks = await scanDirectory(projectRunbooksDir, 'project');
+
+      expect(runbooks).toHaveLength(2);
+      const names = runbooks.map((r) => r.name);
+      expect(names).toContain('root-runbook');
+      expect(names).toContain('nested-runbook');
+    });
+
+    it('discoverRunbooks includes subdirectory runbooks', async () => {
+      const planningDir = join(projectRunbooksDir, 'planning');
+      await mkdir(planningDir, { recursive: true });
+
+      const runbookContent = `---
+name: write-plan
+description: Write detailed plans
+---
+
+## 1. Step
+`;
+
+      await writeFile(
+        join(planningDir, 'write-plan.runbook.md'),
+        runbookContent
+      );
+
+      const runbooks = await discoverRunbooks(tempDir);
+
+      expect(runbooks).toHaveLength(1);
+      expect(runbooks[0].name).toBe('write-plan');
+    });
+
+    it('findRunbookByName finds subdirectory runbooks', async () => {
+      const planningDir = join(projectRunbooksDir, 'planning');
+      await mkdir(planningDir, { recursive: true });
+
+      const runbookContent = `---
+name: write-plan
+description: Write detailed plans
+---
+
+## 1. Step
+`;
+
+      await writeFile(
+        join(planningDir, 'write-plan.runbook.md'),
+        runbookContent
+      );
+
+      const runbook = await findRunbookByName(tempDir, 'write-plan');
+
+      expect(runbook).not.toBeNull();
+      expect(runbook?.name).toBe('write-plan');
+      expect(runbook?.description).toBe('Write detailed plans');
+    });
+  });
+
+  describe('findRunbookByNameInSource()', () => {
+    it('finds runbook in specified source only', async () => {
+      // Set up plugin directory
+      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
+      const pluginRoot = join(tempDir, 'plugin-root');
+      const pluginRunbookDir = join(pluginRoot, 'runbooks');
+      await mkdir(pluginRunbookDir, { recursive: true });
+      process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+
+      try {
+        const projectRunbook = `---
+name: shared-runbook
+description: Project version
+---
+
+## 1. Step
+`;
+
+        const pluginRunbook = `---
+name: shared-runbook
+description: Plugin version
+---
+
+## 1. Step
+`;
+
+        await writeFile(
+          join(projectRunbooksDir, 'shared-runbook.runbook.md'),
+          projectRunbook
+        );
+        await writeFile(
+          join(pluginRunbookDir, 'shared-runbook.runbook.md'),
+          pluginRunbook
+        );
+
+        // Explicitly request plugin source
+        const pluginResult = await findRunbookByNameInSource(tempDir, 'shared-runbook', 'plugin');
+        expect(pluginResult).not.toBeNull();
+        expect(pluginResult?.source).toBe('plugin');
+        expect(pluginResult?.description).toBe('Plugin version');
+
+        // Explicitly request project source
+        const projectResult = await findRunbookByNameInSource(tempDir, 'shared-runbook', 'project');
+        expect(projectResult).not.toBeNull();
+        expect(projectResult?.source).toBe('project');
+        expect(projectResult?.description).toBe('Project version');
+      } finally {
+        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+      }
+    });
+
+    it('returns null when runbook not in specified source', async () => {
+      const runbookContent = `---
+name: project-only
+---
+
+## 1. Step
+`;
+
+      await writeFile(
+        join(projectRunbooksDir, 'project-only.runbook.md'),
+        runbookContent
+      );
+
+      // Should not find project runbook when looking in plugin source
+      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
+      const pluginRoot = join(tempDir, 'plugin-root');
+      const pluginRunbookDir = join(pluginRoot, 'runbooks');
+      await mkdir(pluginRunbookDir, { recursive: true });
+      process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+
+      try {
+        const result = await findRunbookByNameInSource(tempDir, 'project-only', 'plugin');
+        expect(result).toBeNull();
+      } finally {
+        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+      }
+    });
+
+    it('finds runbooks in subdirectories of specified source', async () => {
+      // Set up plugin directory with subdirectory
+      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
+      const pluginRoot = join(tempDir, 'plugin-root');
+      const pluginRunbookDir = join(pluginRoot, 'runbooks');
+      const planningDir = join(pluginRunbookDir, 'planning');
+      await mkdir(planningDir, { recursive: true });
+      process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+
+      try {
+        const runbookContent = `---
+name: write-plan
+description: From plugin planning subdirectory
+---
+
+## 1. Step
+`;
+
+        await writeFile(
+          join(planningDir, 'write-plan.runbook.md'),
+          runbookContent
+        );
+
+        const result = await findRunbookByNameInSource(tempDir, 'write-plan', 'plugin');
+
+        expect(result).not.toBeNull();
+        expect(result?.name).toBe('write-plan');
+        expect(result?.source).toBe('plugin');
+      } finally {
+        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+      }
     });
   });
 });

@@ -4,6 +4,8 @@ version: 1.0.0
 
 # Rundown Format
 
+Formal BNF-style grammar for Rundown runbook syntax. See [SPEC.md](./SPEC.md) for prose explanations and examples.
+
 ## Grammar Notation
 
 | Symbol | Meaning |
@@ -20,19 +22,14 @@ version: 1.0.0
 # title
 [ description ]
 
-{ static_steps | dynamic_step }
+steps
 
-where static_steps is:
-  static_step [ static_step ... ]
+where steps is:
+  step [ step ... ]
 
-where static_step is:
-  "##" integer [ separator ] title
-    [ transition ... ]
-    [ prompt ]
-    {{ code_block | substeps | runbooks }}
-
-where dynamic_step is:
-  "##" "{N}" [ separator ] title
+where step is:
+  "##" step-identifier [ separator ] title
+    [ for_clause ]
     [ transition ... ]
     [ prompt ]
     [{ code_block | substeps | runbooks }]
@@ -53,22 +50,22 @@ where substep is:
     [{ code_block  | runbooks }]
 
 where substep_id is:
-  parent_ref "." { integer | "{n}" }
+  integer                              -- short form (parent prefix omitted)
+  | parent_ref "." { integer | name }  -- qualified form
 
 where parent_ref is:
   integer    -- for static parent
-  | "{N}"    -- for dynamic parent
   | name     -- for named parent
 
 where step-identifier is:
-  integer | "{N}" | name
+  integer | name
 
 where substep-identifier is:
-  step-identifier "." ( integer | "{n}" | name )
+  step-identifier "." ( integer | name )
 
 where name is:
   [A-Za-z_][A-Za-z0-9_]*
-  (case-sensitive; must not be a reserved word: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY)
+  (case-sensitive; must not be a reserved word: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY, BREAK, FOR, IN, TO, AT)
 
 where code_block is:
   "```" [ info_string ]
@@ -77,6 +74,8 @@ where code_block is:
 
 where info_string is:
   [ language ] [ " " "prompt" ]
+
+Note: `prompt` alone (without a language) is valid for text-only prompts, e.g., ` ```prompt `.
 
 where runbooks is:
   - runbook_path [ ... ]
@@ -88,13 +87,33 @@ where result is:
   action | RETRY [ count ] [ action ]
 
 where action is:
-  CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | RETRY ...
+  CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK | RETRY ...
 
 where message is:
   name | "\"" text "\""
 
 where target is:
-  step-identifier | substep-identifier | "NEXT" | "NEXT" step-identifier | "NEXT" substep-identifier
+  step-identifier [ "AT" index ]
+  | substep-identifier [ "AT" index ]
+
+where index is:
+  integer | "{{" variable_name "}}"
+
+where for_clause is:
+  "- FOR" [ variable_name "IN" ] range
+
+where range is:
+  integer                              -- implicit start (1), end is integer
+  | integer "TO" integer               -- explicit start and end
+  | integer "TO" "{{" variable_name "}}"  -- variable end bound
+  | "{{" variable_name "}}" "TO" integer  -- variable start bound
+  | "{{" variable_name "}}" "TO" "{{" variable_name "}}"  -- variable both bounds
+  | "{{" variable_name "}}"            -- count-only with template variable
+
+Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result).
+
+where variable_name is:
+  [a-zA-Z_][a-zA-Z0-9_]*
 
 where frontmatter is:
   "---"
@@ -130,52 +149,104 @@ where scenario is:
 
 ---
 
-## Template Variable Preprocessing
+## FOR Clause
 
-Before parsing, runbook content is preprocessed to expand template variables.
+The FOR clause is a step-level annotation that makes a step iterate its substeps. It appears as a bullet point before transitions.
 
-Template variables use Handlebars double-brace syntax: `{{variableName}}`
+**Syntax variants:**
 
-```
-{{identifier}}  =>  value (from variable sources)
-{{undefined}}   =>  {{undefined}} (preserved as literal text)
-```
+| Form | Example | Description |
+|------|---------|-------------|
+| Named variable, ascending range | `- FOR batch IN 1 TO 10` | Iterates 1..10, `{{batch}}` available |
+| No variable, ascending range | `- FOR 1 TO 10` | Iterates 1..10, no named variable |
+| Named variable, descending range | `- FOR batch IN 10 TO 1` | Iterates 10..1, `{{batch}}` available |
+| No variable, descending range | `- FOR 10 TO 1` | Iterates 10..1, no named variable |
+| Named variable, implicit start | `- FOR batch IN 10` | Iterates 1..10, `{{batch}}` available |
+| No variable, implicit start | `- FOR 10` | Iterates 1..10, no named variable |
+| Variable bounds | `- FOR batch IN 1 TO {{Max}}` | End bound from template variable |
 
-**Variable name pattern (for --var flags):** `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
+**Direction inference:** When `start > end`, the loop iterates downward (step size −1). When `start <= end`, it iterates upward (step size +1). Single-number shorthand (`FOR N`) always ascends from 1.
 
-> Note: Variable names from `--var-file` and auto-discovered config files are accepted as-is without validation.
+**Rules:**
+- FOR must appear before transitions in the step's bullet list
+- `NEXT` and `BREAK` actions are only valid within substeps of a FOR step
+- `AT` is only valid when the GOTO target is a FOR step (cross-step allowed, but the target must be FOR and have substeps)
+- Parent FOR step transitions aggregate across iterations using ALL/ANY modifiers
 
-**Important:** Template variables (`{{var}}`) are distinct from dynamic step identifiers (`{N}`, `{n}`), which use single braces and are handled by the parser.
+---
+
+## Built-In Variables
+
+| Variable | Value | Available |
+|----------|-------|-----------|
+| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`) | Always |
+| `{{Index}}` | Current loop iteration number (1-based) | Inside FOR steps |
+
+These use PascalCase, consistent with other built-in variables (Date, WorkPath). `{{Step}}` is expanded per-step. The loop variable (if named) and `{{Index}}` are expanded per-iteration.
+
+---
+
+## Template Variables
+
+| Pattern             | Variable  | Expansion                               |
+|---------------------|-----------|-----------------------------------------|
+| `{{VariableName}}`  | defined   | literal variable value                  |
+| `{{VariableName}}`  | undefined | preserved as literal `{{VariableName}}` |
+
+
+ VariableName: `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 
 ---
 
 ## Expansion Rules
 
-Syntactic sugar is expanded before execution:
+### Transition Aliases
 
-```
--- Transition aliases
-YES X  =>  PASS X
-NO X   =>  FAIL X
+| Input | Expands To |
+|-------|------------|
+| `YES X` | `PASS X` |
+| `NO X` | `FAIL X` |
 
--- Modifier defaults
-PASS: X  =>  PASS ALL: X
-FAIL: X  =>  FAIL ANY: X
+### Modifier Defaults
 
--- RETRY defaults
-RETRY          =>  RETRY 1 STOP
-RETRY n        =>  RETRY n STOP
-RETRY n action =>  RETRY n action
+| Input | Expands To |
+|-------|------------|
+| `PASS: X` | `PASS ALL: X` |
+| `FAIL: X` | `FAIL ANY: X` |
 
--- Implicit transitions (when none defined)
-<none>  =>  - PASS ALL: CONTINUE
-            - FAIL ANY: STOP
+### RETRY Defaults
 
--- Partial transition defaults
-When only PASS defined  =>  FAIL defaults to FAIL ANY: STOP
-When only FAIL defined  =>  PASS defaults to PASS ALL: CONTINUE
+| Input | Expands To |
+|-------|------------|
+| `RETRY`          | `RETRY 1 STOP` |
+| `RETRY n`        | `RETRY n STOP` |
+| `RETRY n action` | `RETRY n action` |
 
--- Code block semantics
-```bash | sh | shell            =>  Command (Executable)
-```{language} prompt            =>  Command (rd prompt '...' - outputs content in fences)
-```{other language or no lang}  =>  Command (rd prompt '...' - outputs content in fences)
+### GOTO AT Defaults
+
+| Input | Expands To |
+|-------|------------|
+| `GOTO N` (FOR step) | `GOTO N AT 1` |
+| `GOTO N AT I` (FOR step) | `GOTO N AT I` |
+
+### Implicit Transitions
+
+| Condition         | Expands To |
+|-------------------|------------|
+| None defined      | `PASS ALL: CONTINUE` + `FAIL ANY: STOP` |
+| Only PASS defined | Adds `FAIL ANY: STOP` |
+| Only FAIL defined | Adds `PASS ALL: CONTINUE` |
+
+**Convention:** Always write both transitions explicitly. The parser supports implicit defaults, but runbooks should be readable without memorizing the default table.
+
+### Message Convention
+
+STOP and COMPLETE accept optional messages. Include a message only when it provides context beyond what the step title already communicates — such as actionable guidance or diagnostic hints. Omit when the step title makes the outcome self-evident.
+
+### Code Block Semantics
+
+| Info String | Behavior |
+|------------------------|----------|
+| `bash`, `sh`, `shell`  | Execute; exit 0=PASS, non-zero=FAIL |
+| `{language} prompt`    | Output only  |
+| other / none           | Output only  |

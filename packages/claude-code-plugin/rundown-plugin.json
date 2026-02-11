@@ -4,12 +4,20 @@
       "command": "npm run lint",
       "on_pass": "CONTINUE",
       "on_fail": "BLOCK"
-    }
+    },
+    "on-command-start": {},
+    "on-skill-start": {}
   },
   "hooks": {
     "PostToolUse": {
       "enabled_tools": ["Edit", "Write", "Step", "Task"],
       "gates": ["check"]
+    },
+    "SlashCommandStart": {
+      "gates": ["on-command-start"]
+    },
+    "SkillStart": {
+      "gates": ["on-skill-start"]
     }
   }
 }

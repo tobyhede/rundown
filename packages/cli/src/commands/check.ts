@@ -3,6 +3,7 @@ import * as path from 'path';
 import type { Command } from 'commander';
 import { parseRunbookDocument, validateRunbook, type Step } from '@rundown-org/parser';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 
 function countSubsteps(steps: readonly Step[]): number {
   return steps.reduce((count, step) => {
@@ -21,14 +22,12 @@ export function registerCheckCommand(program: Command): void {
     .option('--json', 'Output as JSON')
     .action(async (file: string, options: { json?: boolean }) => {
       const output = new OutputEmitter({ json: options.json });
+      const cwd = process.cwd();
 
-      // Resolve file path
-      const resolvedPath = path.resolve(file);
+      // Resolve file path using discovery system (supports namespace:name syntax)
+      const resolvedPath = await resolveRunbookFile(cwd, file);
 
-      try {
-        // Check if file exists using async stat
-        await fs.access(resolvedPath);
-      } catch {
+      if (!resolvedPath) {
         // File not found
         output.detail({
           valid: false,

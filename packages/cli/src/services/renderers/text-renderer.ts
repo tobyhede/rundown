@@ -207,7 +207,7 @@ export class TextRenderer implements OutputRenderer {
       file?: string;
       state?: string;
       prompted?: boolean;
-      position?: { current: string; total: string | number; substep?: string };
+      position?: { current: string; total: number; substep?: string };
       step?: { name: string; description?: string };
       lastAction?: { action: string; result?: boolean };
       pending?: string[];
@@ -555,13 +555,13 @@ export class TextRenderer implements OutputRenderer {
    */
   private handleStepEntered(event: RunbookEventV1 & { type: 'STEP_ENTERED' }): void {
     const { payload } = event;
-    const { position, stepName, description, prompt, hasCommand, commandCode, commandLang, isSubstep, isDynamic, prompted } = payload;
+    const { position, stepName, description, prompt, hasCommand, commandCode, commandLang, isSubstep, prompted } = payload;
 
     // Create minimal step/substep object for rendering
     const command = hasCommand ? { code: commandCode ?? '', lang: commandLang ?? 'bash' } : undefined;
     const item = (isSubstep
-      ? { id: stepName, description, isDynamic, prompt, command }
-      : { name: stepName, description, isDynamic, prompt, command }
+      ? { id: stepName, description, prompt, command }
+      : { name: stepName, description, prompt, command }
     ) as Step | Substep;
 
     printStepBlock(position, item, prompted, this.writer);

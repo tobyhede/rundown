@@ -12,7 +12,8 @@ import {
   type Step,
   type Substep,
   type Runbook,
-  type Command
+  type Command,
+  type ForClause
 } from './ast.js';
 import {
   type ParsedConditional,
@@ -27,7 +28,8 @@ import {
   isExecutableCodeBlock,
   isPromptCodeBlock,
   escapeForShellSingleQuote,
-  validateNEXTUsage
+  validateNEXTUsage,
+  parseForClause
 } from './helpers.js';
 import { validateRunbook } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
@@ -46,6 +48,15 @@ function extractText(node: PhrasingContent | Heading | Paragraph | ListItem): st
   if (node.type === 'text') {
     return (node as { value: string }).value;
   }
+  if (node.type === 'inlineCode') {
+    const value = (node as { value: string }).value;
+    // Use double-backtick wrapping per CommonMark spec for inline code containing backticks
+    // This avoids the need to escape backticks and is more readable
+    if (value.includes('`')) {
+      return `\`\` ${value} \`\``;
+    }
+    return `\`${value}\``;
+  }
   if ('children' in node && Array.isArray(node.children)) {
     return node.children.map((child) => extractText(child as PhrasingContent | Heading | Paragraph | ListItem)).join('');
   }
@@ -56,7 +67,6 @@ interface SubstepBuilder {
   id: string;
   description: string;
   agentType?: string;
-  isDynamic: boolean;
   content: string;
   command?: Command;
   promptText: string;
@@ -69,7 +79,6 @@ interface SubstepBuilder {
 
 interface StepBuilder {
   name: string;
-  isDynamic: boolean;
   description: string;
   command?: Command;
   promptText: string;
@@ -80,6 +89,8 @@ interface StepBuilder {
   pendingSubstep?: SubstepBuilder;
   content: string;
   line?: number;
+  forClause?: ForClause;
+  hasSeenForClause: boolean;
 }
 
 /**
@@ -144,7 +155,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       const runbooks = extractRunbookList(ps.content);
 
       // Validate NEXT usage before converting to transitions
-      validateNEXTUsage(ps.pendingConditionals, currentStep.isDynamic, ps.isDynamic);
+      validateNEXTUsage(ps.pendingConditionals, currentStep.forClause !== undefined);
 
       const transitions = convertToTransitions(ps.pendingConditionals);
 
@@ -165,7 +176,6 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
         id: ps.id,
         description: ps.description,
         agentType: ps.agentType,
-        isDynamic: ps.isDynamic,
         command: ps.command,
         prompt: promptText.trim() || undefined,
         transitions: transitions ?? undefined,
@@ -210,7 +220,6 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       if (parsed) {
         currentStep = {
           name: parsed.name,
-          isDynamic: parsed.isDynamic,
           description: parsed.description,
           promptText: '',
           hasSeenContent: false,
@@ -218,7 +227,8 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
           hasSeenPromptText: false,
           substeps: [],
           content: '',
-          line: node.position?.start.line
+          line: node.position?.start.line,
+          hasSeenForClause: false
         };
       }
     }
@@ -238,23 +248,10 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       const parsed = extractSubstepHeader(headingText);
 
       if (parsed) {
-        if (currentStep.isDynamic) {
-          if (parsed.stepRef !== '{N}') {
-            throw new RunbookSyntaxError(
-              `Substep ${headingText} uses numeric prefix but parent step is dynamic ({N})`
-            );
-          }
-        } else {
-          if (parsed.stepRef === '{N}') {
-            throw new RunbookSyntaxError(
-              `Substep ${headingText} uses {N} prefix but parent step ${currentStep.name} is static`
-            );
-          }
-          if (parsed.stepRef !== currentStep.name) {
-            throw new RunbookSyntaxError(
-              `Substep ${headingText} does not belong to step ${currentStep.name}`
-            );
-          }
+        if (parsed.stepRef !== currentStep.name) {
+          throw new RunbookSyntaxError(
+            `Substep ${headingText} does not belong to step ${currentStep.name}`
+          );
         }
 
         const duplicateId = currentStep.substeps.find((s) => s.id === parsed.id);
@@ -265,20 +262,10 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
           );
         }
 
-        const hasStatic = currentStep.substeps.some((s) => !s.isDynamic);
-        const hasDynamic = currentStep.substeps.some((s) => s.isDynamic);
-        if ((hasStatic && parsed.isDynamic) || (hasDynamic && !parsed.isDynamic)) {
-          const stepLabel = currentStep.name;
-          throw new RunbookSyntaxError(
-            `Cannot mix static and dynamic substeps in step ${stepLabel}`
-          );
-        }
-
         currentStep.pendingSubstep = {
           id: parsed.id,
           description: parsed.description,
           agentType: parsed.agentType,
-          isDynamic: parsed.isDynamic,
           content: '',
           command: undefined,
           promptText: '',
@@ -415,6 +402,40 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       const firstParagraph = listItemNode.children.find((c) => c.type === 'paragraph');
       if (firstParagraph) {
         const text = extractText(firstParagraph as PhrasingContent | Heading | Paragraph | ListItem);
+
+        // Check for FOR clause BEFORE conditionals
+        const forClause = parseForClause(text);
+        if (forClause && !currentStep.pendingSubstep) {
+          // FOR is only valid at step level, not substep level
+          // Enforce: only one FOR per step
+          if (currentStep.hasSeenForClause) {
+            throw new RunbookSyntaxError(
+              `Step "${currentStep.name}" has multiple FOR clauses; only one is allowed`
+            );
+          }
+          // Enforce ordering: FOR must appear before transitions and content
+          if (currentStep.hasSeenTransitions) {
+            throw new RunbookSyntaxError(
+              `Step "${currentStep.name}": FOR clause must appear before transitions`
+            );
+          }
+          if (currentStep.hasSeenContent || currentStep.hasSeenPromptText) {
+            throw new RunbookSyntaxError(
+              `Step "${currentStep.name}": FOR clause must appear before content`
+            );
+          }
+          currentStep.forClause = forClause;
+          currentStep.hasSeenForClause = true;
+          return; // Don't process this list item further
+        }
+
+        // If FOR text appears in a substep context, that's an error
+        if (forClause && currentStep.pendingSubstep) {
+          throw new RunbookSyntaxError(
+            `FOR is only valid on steps (H2), not substeps (H3) (found on "${currentStep.name}.${currentStep.pendingSubstep.id}")`
+          );
+        }
+
         const conditional = parseConditional(text);
         if (conditional) {
           if (currentStep.pendingSubstep) {
@@ -521,14 +542,14 @@ function finalizeStep(
   }
 
   // Validate NEXT usage before converting to transitions
-  validateNEXTUsage(pendingConditionals, step.isDynamic);
+  validateNEXTUsage(pendingConditionals, step.forClause !== undefined);
 
   const transitions = convertToTransitions(pendingConditionals);
   const runbooks = extractRunbookList(step.content);
 
   return {
     name: step.name,
-    isDynamic: step.isDynamic,
+    forClause: step.forClause,
     description: step.description,
     command: step.command,
     prompt: promptText.trim() || undefined,

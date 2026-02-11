@@ -51,8 +51,7 @@ describe('CLISubscriber', () => {
         description: 'Test step',
         hasCommand: true,
         isSubstep: false,
-        isDynamic: false,
-        prompted: true,
+          prompted: true,
       })
     );
     const output = writer.getOutput();
@@ -65,7 +64,7 @@ describe('CLISubscriber', () => {
         action: 'CONTINUE',
         from: { current: '1', total: 5 },
         to: { current: '2', total: 5 },
-        result: 'PASS',
+        result: true,
       })
     );
     const output = writer.getOutput();

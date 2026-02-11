@@ -21,6 +21,8 @@ import {
   countNumberedSteps,
   extractDisplayCommand,
   type ExecutionEventEmitter,
+  type LastAction,
+  type ForContext,
 } from '@rundown-org/core';
 import {
   isInternalRdCommand,
@@ -32,6 +34,7 @@ import {
   isPolicyEnforced,
   getSandboxOptions,
 } from './policy-context.js';
+import { expandLoopVariables } from './template-renderer.js';
 
 /**
  * Check if runbook snapshot indicates completion.
@@ -52,62 +55,48 @@ export function isRunbookStopped(snapshot: { status: string; value: unknown }): 
 }
 
 /**
- * Handle dynamic instance and substep advancement via NEXT flags.
+ * Build per-step dynamic variables for Phase 2 expansion.
  *
- * When a transition sets nextInstance or nextSubstepInstance flags,
- * this function applies the appropriate state updates.
+ * Always returns a variable map containing at least `Step` (the qualified step
+ * identifier). When inside an explicit FOR loop, also includes `Index` and any
+ * named loop variable.
  *
- * @param snapshot - XState snapshot with context and flags
- * @param updatedState - Current runbook state to potentially update
- * @param manager - Runbook state manager
- * @param runbookId - ID of the runbook
- * @param steps - Array of runbook steps
- * @param isComplete - Whether the runbook is complete
- * @param isStopped - Whether the runbook is stopped
- * @returns Updated runbook state with instance/substep advancement applied
+ * Falls back to the step's `forClause` definition when `forStack` is empty
+ * (initial state created without actor snapshot, before first transition).
+ *
+ * @param stepId - Current step identifier (e.g., "3" or "ErrorHandler")
+ * @param substepId - Optional substep identifier (e.g., "1")
+ * @param forStack - Current FOR loop stack from persisted state
+ * @param forClause - FOR clause from the step definition (bootstrap fallback)
+ * @returns Variable map with `Step` and optional `Index` / named variable
  */
-export async function handleNextInstanceFlags(
-  snapshot: { context: { nextInstance?: boolean; nextSubstepInstance?: boolean } },
-  updatedState: RunbookState,
-  manager: RunbookStateManager,
-  runbookId: string,
-  steps: Step[],
-  isComplete: boolean,
-  isStopped: boolean
-): Promise<RunbookState> {
-  let state = updatedState;
+export function buildStepVariables(
+  stepId: string,
+  substepId: string | undefined,
+  forStack?: readonly ForContext[],
+  forClause?: Step['forClause']
+): Record<string, string> {
+  const step = substepId ? `${stepId}.${substepId}` : stepId;
+  const vars: Record<string, string> = { Step: step };
 
-  // Handle NEXT step action: increment instance for dynamic runbooks
-  const nextInstance = snapshot.context.nextInstance;
-  if (nextInstance && !isComplete && !isStopped) {
-    // Check if this is a dynamic runbook (has instance field set)
-    if (state.instance !== undefined) {
-      const currentInstance = state.instance;
-      const nextInstanceNum = currentInstance + 1;
-      state = await manager.update(runbookId, {
-        instance: nextInstanceNum,
-        substep: '1'
-      });
+  // Primary: use forStack (available after first transition)
+  if (forStack?.length) {
+    const top = forStack[forStack.length - 1];
+    if (!top.implicit) {
+      vars.Index = String(top.iteration);
+      if (top.variable) {
+        vars[top.variable] = String(top.iteration);
+      }
+    }
+  } else if (forClause) {
+    // Bootstrap: first iteration before actor has run
+    vars.Index = String(forClause.start);
+    if (forClause.variable) {
+      vars[forClause.variable] = String(forClause.start);
     }
   }
 
-  // Handle NEXT substep action: create new dynamic substep instance
-  const nextSubstepInstance = snapshot.context.nextSubstepInstance;
-  if (nextSubstepInstance && !isComplete && !isStopped) {
-    // Guard: only advance if current step actually has a dynamic substep
-    const currentStepDef = steps.find(s => s.name === state.step || s.isDynamic);
-    const hasDynamicSubstep = currentStepDef?.substeps?.some(s => s.isDynamic);
-
-    if (hasDynamicSubstep) {
-      // Use addDynamicSubstep to properly track substep states and get new ID
-      const nextSubstepId = await manager.addDynamicSubstep(runbookId);
-      state = await manager.update(runbookId, {
-        substep: nextSubstepId
-      });
-    }
-  }
-
-  return state;
+  return vars;
 }
 
 /**
@@ -141,44 +130,33 @@ export async function runExecutionLoop(
   let state = await manager.load(runbookId);
   if (!state) return 'stopped';
 
-  // Detect if this is a dynamic runbook (first step has isDynamic: true)
-  // In dynamic runbooks, state.step is '{N}' but state.instance tracks the current instance number
-  const isDynamicRunbook = steps.length > 0 && steps[0].isDynamic;
-
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
-    // For dynamic runbooks, always use the template step (index 0)
-    // For static runbooks, use the step name to find index
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const currentStepIndex = isDynamicRunbook ? 0 : steps.findIndex(s => s.name === state!.step);
+    const currentStepIndex = steps.findIndex(s => s.name === state!.step);
     const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
 
-    // For dynamic runbooks, use state.instance for display; for static, use step name
-    // state.instance is set to 1 on initialization for dynamic runbooks
-    const displayStep = isDynamicRunbook && state.instance !== undefined
-      ? String(state.instance)   // Use instance field: 1, 2, 3, ...
-      : state.step;              // Use step name: "1", "ErrorHandler", etc.
-
-    // For dynamic runbooks, display {N} as total; for static, use numbered step count
-    // '{N}' indicates dynamic runbook with unbounded iterations
-    const totalSteps: number | string = isDynamicRunbook ? '{N}' : countNumberedSteps(steps);
+    const displayStep = state.step;
+    const totalSteps = countNumberedSteps(steps);
 
     // Determine what to render: substep if we're at one, otherwise the step
     let itemToRender: Step | Substep = currentStep;
     if (state.substep && currentStep.substeps) {
-      // Find the substep - for dynamic substeps use the template, otherwise match by id
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const substep = currentStep.substeps.find(s => s.isDynamic || s.id === state!.substep);
+      const substep = currentStep.substeps.find(s => s.id === state!.substep);
       if (substep) {
         itemToRender = substep;
       }
     }
 
-    // Resolve {n} in substep for display
-    // If substep is {n}, use substepStates count; otherwise use as-is
-    const displaySubstep = state.substep === '{n}'
-      ? String(state.substepStates?.length ?? 1)
-      : state.substep;
+    const displaySubstep = state.substep;
+
+    // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration
+    const stepVars = buildStepVariables(state.step, state.substep, state.forStack, currentStep.forClause);
+    const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
+    const expandedPrompt = itemToRender.prompt
+      ? expandLoopVariables(itemToRender.prompt, stepVars)
+      : itemToRender.prompt;
 
     // Emit STEP_ENTERED event or print step/substep block
     const stepPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
@@ -187,18 +165,27 @@ export async function runExecutionLoop(
       emitter.emit('STEP_ENTERED', {
         position: stepPosition,
         stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as Step).name,
-        description: itemToRender.description,
-        prompt: itemToRender.prompt,
+        description: expandedDescription,
+        prompt: expandedPrompt,
         hasCommand: !!itemToRender.command,
-        commandCode: itemToRender.command?.code,
+        commandCode: itemToRender.command?.code
+          ? expandLoopVariables(itemToRender.command.code, stepVars)
+          : itemToRender.command?.code,
         commandLang: itemToRender.command?.lang,
         isSubstep,
-        isDynamic: itemToRender.isDynamic,
         prompted,  // CRITICAL: Pass prompted flag for correct command display
       });
     } else {
+      const renderItem = {
+        ...itemToRender,
+        description: expandedDescription,
+        prompt: expandedPrompt,
+        command: itemToRender.command
+          ? { ...itemToRender.command, code: expandLoopVariables(itemToRender.command.code, stepVars) }
+          : itemToRender.command,
+      };
       // Temporary fallback only when emitter is not provided.
-      printStepBlock(stepPosition, itemToRender, prompted);
+      printStepBlock(stepPosition, renderItem, prompted);
     }
 
     // If CLI prompted mode, OR no command
@@ -207,15 +194,18 @@ export async function runExecutionLoop(
       return 'waiting';
     }
 
+    // Expand command code for execution (after guard — itemToRender.command is guaranteed)
+    const expandedCommandCode = expandLoopVariables(itemToRender.command.code, stepVars);
+
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
     // Use display command (with rd echo wrapper stripped) for cleaner output
     // Fall back to original command if extractDisplayCommand returns empty (e.g., "rd echo --result pass")
-    const extracted = extractDisplayCommand(itemToRender.command.code);
-    const displayCommand = extracted || itemToRender.command.code;
+    const extracted = extractDisplayCommand(expandedCommandCode);
+    const displayCommand = extracted || expandedCommandCode;
     if (emitter) {
       emitter.emit('COMMAND_STARTED', {
-        command: itemToRender.command.code,
+        command: expandedCommandCode,
         displayCommand,
         position: { current: displayStep, total: totalSteps, substep: displaySubstep },
       });
@@ -225,23 +215,23 @@ export async function runExecutionLoop(
     }
     let execResult: ExecutionResult;
 
-    if (isInternalRdCommand(itemToRender.command.code)) {
-      const internalResult = await executeRdCommandInternal(itemToRender.command.code, cwd);
+    if (isInternalRdCommand(expandedCommandCode)) {
+      const internalResult = await executeRdCommandInternal(expandedCommandCode, cwd);
       if (internalResult !== null) {
         execResult = internalResult;
       } else {
         // Fallback to spawn if internal execution not supported for this subcommand
-        execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbookPath);
+        execResult = await executeCommandWithPolicyCheck(expandedCommandCode, cwd, state.runbookPath);
       }
     } else {
-      execResult = await executeCommandWithPolicyCheck(itemToRender.command.code, cwd, state.runbookPath);
+      execResult = await executeCommandWithPolicyCheck(expandedCommandCode, cwd, state.runbookPath);
     }
 
     // Emit COMMAND_COMPLETED event
     if (emitter) {
       const cmdPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
       emitter.emit('COMMAND_COMPLETED', {
-        command: itemToRender.command.code,
+        command: expandedCommandCode,
         success: execResult.success,
         exitCode: execResult.exitCode,
         position: cmdPosition,
@@ -256,7 +246,7 @@ export async function runExecutionLoop(
       const policyPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
       if (emitter) {
         emitter.emit('POLICY_DENIED', {
-          command: itemToRender.command.code,
+          command: expandedCommandCode,
           reason: execResult.denialReason ?? 'Permission denied',
           position: policyPosition,
         });
@@ -268,7 +258,7 @@ export async function runExecutionLoop(
         });
       } else {
         // Temporary fallback only when emitter is not provided.
-        printPolicyDenied(itemToRender.command.code, execResult.denialReason ?? 'Permission denied');
+        printPolicyDenied(expandedCommandCode, execResult.denialReason ?? 'Permission denied');
       }
       return 'stopped';
     }
@@ -279,7 +269,6 @@ export async function runExecutionLoop(
 
     // Capture prev state BEFORE mutation
     const prevStep = state.step;
-    const prevInstance = state.instance;
     const prevSubstep = state.substep;
     const prevRetryCount = state.retryCount;
 
@@ -288,7 +277,7 @@ export async function runExecutionLoop(
     if (!actor) return 'stopped';
 
     actor.send({ type: execResult.success ? 'PASS' : 'FAIL' });
-    let updatedState = await manager.updateFromActor(runbookId, actor, steps);
+    const updatedState = await manager.updateFromActor(runbookId, actor, steps);
 
     // XState snapshot type is not fully typed
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
@@ -298,54 +287,22 @@ export async function runExecutionLoop(
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     const isStopped = isRunbookStopped(snapshot);
 
-    // Handle NEXT instance/substep flags
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    updatedState = await handleNextInstanceFlags(snapshot, updatedState, manager, runbookId, steps, isComplete, isStopped);
-
     // Read action from XState context (source of truth for retryMax and lastAction)
     const retryMax = extractRetryMax(snapshot);
     const lastActionFromContext = extractLastAction(snapshot);
-    // Compute substep instance for {n} resolution
-    const substepInstance = updatedState.substep
-      ? (updatedState.substep === '{n}'
-          ? (updatedState.substepStates?.length ?? 1)
-          : parseInt(updatedState.substep, 10) || undefined)
-      : undefined;
     const action = formatActionForDisplay(
       lastActionFromContext,
       updatedState.retryCount,
-      retryMax,
-      updatedState.instance,
-      substepInstance
+      retryMax
     );
 
-    // Update lastAction in state
-    const actionType = action.startsWith('GOTO') ? 'GOTO' :
-                       action.startsWith('RETRY') ? 'RETRY' :
-                       action as 'CONTINUE' | 'COMPLETE' | 'STOP';
-    await manager.update(runbookId, { lastAction: actionType });
+    // Update lastAction in state (pass structured object directly — no lossy conversion)
+    await manager.update(runbookId, { lastAction: lastActionFromContext });
 
-    // Compute prev display step (for action block output)
-    const prevDisplayStep = isDynamicRunbook && prevInstance !== undefined
-      ? String(prevInstance)   // Use instance field: 1, 2, 3, ...
-      : prevStep;              // Use step name: "1", "ErrorHandler", etc.
-
-    // Resolve {n} in prev substep for display
-    // Use prev substep states count since this is the state before transition
-    const prevSubstepStatesLen = state.substepStates?.length ?? 1;
-    const prevDisplaySubstep = prevSubstep === '{n}'
-      ? String(prevSubstepStatesLen)
-      : prevSubstep;
-
-    // Compute new display step (position after transition)
-    const newDisplayStep = isDynamicRunbook && updatedState.instance !== undefined
-      ? String(updatedState.instance)
-      : updatedState.step;
-
-    // Resolve {n} in new substep for display
-    const newDisplaySubstep = updatedState.substep === '{n}'
-      ? String(updatedState.substepStates?.length ?? 1)
-      : updatedState.substep;
+    const prevDisplayStep = prevStep;
+    const prevDisplaySubstep = prevSubstep;
+    const newDisplayStep = updatedState.step;
+    const newDisplaySubstep = updatedState.substep;
 
     // Compute positions for output
     const prevPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
@@ -456,19 +413,47 @@ export async function runExecutionLoop(
  * Used for type-safe extraction of action and retry info from persisted snapshots.
  */
 interface SnapshotContext {
-  lastAction?: string;
+  lastAction?: LastAction;
   retryMax?: number;
-  nextInstance?: boolean;
-  nextSubstepInstance?: boolean;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isLastAction(value: unknown): value is LastAction {
+  if (!isObjectRecord(value) || typeof value.type !== 'string') return false;
+
+  switch (value.type) {
+    case 'START':
+    case 'CONTINUE':
+    case 'COMPLETE':
+    case 'STOP':
+    case 'RETRY':
+    case 'NEXT':
+    case 'BREAK':
+      return true;
+    case 'GOTO':
+      if (typeof value.target !== 'string') return false;
+      if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
+        return false;
+      }
+      if ('at' in value && value.at !== undefined && typeof value.at !== 'number' && typeof value.at !== 'string') {
+        return false;
+      }
+      return true;
+    default:
+      return false;
+  }
 }
 
 /**
  * Extract the lastAction from an XState snapshot in a type-safe way.
  *
  * @param snapshot - The persisted XState snapshot
- * @returns The lastAction string or undefined
+ * @returns The structured LastAction or undefined
  */
-export function extractLastAction(snapshot: unknown): string | undefined {
+export function extractLastAction(snapshot: unknown): LastAction | undefined {
   if (
     snapshot &&
     typeof snapshot === 'object' &&
@@ -477,7 +462,8 @@ export function extractLastAction(snapshot: unknown): string | undefined {
     typeof snapshot.context === 'object' &&
     'lastAction' in snapshot.context
   ) {
-    return (snapshot.context as SnapshotContext).lastAction;
+    const action = (snapshot.context as SnapshotContext).lastAction;
+    return isLastAction(action) ? action : undefined;
   }
   return undefined;
 }
@@ -507,40 +493,38 @@ export function extractRetryMax(snapshot: unknown): number {
 }
 
 /**
- * Format action for display, resolving placeholders and adding retry details.
+ * Format action for display, adding retry details.
  *
- * Reads the lastAction from XState context (source of truth) and formats
- * it for user-friendly display. Resolves {N} and {n} placeholders to actual
- * instance numbers, and appends retry count info for RETRY actions.
+ * Reads the structured LastAction from XState context (source of truth) and formats
+ * it for user-friendly display. Appends retry count info for RETRY actions.
  *
- * @param lastAction - The lastAction value from XState context
+ * @param lastAction - The structured LastAction from XState context
  * @param retryCount - Current retry count
  * @param retryMax - Maximum retries allowed
- * @param instance - Step instance number for resolving {N} placeholders
- * @param substepInstance - Substep instance number for resolving {n} placeholders
  * @returns Formatted action string for display
  */
 export function formatActionForDisplay(
-  lastAction: string | undefined,
+  lastAction: LastAction | undefined,
   retryCount: number,
-  retryMax: number,
-  instance?: number,
-  substepInstance?: number
+  retryMax: number
 ): string {
   if (!lastAction) return 'CONTINUE';
-  if (lastAction === 'RETRY') {
-    return `RETRY (${String(retryCount)}/${String(retryMax)})`;
-  }
 
-  // Resolve {N} and {n} placeholders with actual instance numbers
-  let result = lastAction;
-  if (instance !== undefined && result.includes('{N}')) {
-    result = result.replace(/\{N\}/g, String(instance));
+  switch (lastAction.type) {
+    case 'RETRY':
+      return `RETRY (${String(retryCount)}/${String(retryMax)})`;
+    case 'GOTO': {
+      const gotoTarget = lastAction.substep
+        ? `GOTO ${lastAction.target}.${lastAction.substep}`
+        : `GOTO ${lastAction.target}`;
+      const result = lastAction.at !== undefined
+        ? `${gotoTarget} AT ${String(lastAction.at)}`
+        : gotoTarget;
+      return result;
+    }
+    default:
+      return lastAction.type;
   }
-  if (substepInstance !== undefined && result.includes('{n}')) {
-    result = result.replace(/\{n\}/g, String(substepInstance));
-  }
-  return result;
 }
 
 /**
@@ -585,88 +569,6 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
     state: `.claude/rundown/runs/${state.id}.json`,
     prompted: state.prompted ?? undefined,
   };
-}
-
-/**
- * Derive action string from state transition.
- * @param prevStep - Previous step name
- * @param newStep - New step name after transition
- * @param prevSubstep - Previous substep ID
- * @param newSubstep - New substep ID after transition
- * @param prevRetryCount - Previous retry count
- * @param newRetryCount - New retry count after transition
- * @param retryMax - Maximum retries allowed for the step
- * @param isComplete - Whether the runbook is complete
- * @param isStopped - Whether the runbook is stopped
- * @param instance - Instance number for dynamic runbooks (to resolve {N} placeholders)
- * @param substepInstance - Substep instance number for dynamic substeps (to resolve {n} placeholders)
- * @returns Action string describing the transition (e.g., 'CONTINUE', 'GOTO 3', 'RETRY (1/3)')
- */
-export function deriveAction(
-  prevStep: string,
-  newStep: string,
-  prevSubstep: string | undefined,
-  newSubstep: string | undefined,
-  prevRetryCount: number,
-  newRetryCount: number,
-  retryMax: number,
-  isComplete: boolean,
-  isStopped: boolean,
-  instance?: number,
-  substepInstance?: number
-): string {
-  if (isComplete) return 'COMPLETE';
-  if (isStopped) return 'STOP';
-  if (newStep === prevStep && newRetryCount > prevRetryCount) {
-    return `RETRY (${String(newRetryCount)}/${String(retryMax)})`;
-  }
-
-  /**
-   * Resolve {N} and {n} placeholders with actual instance numbers.
-   */
-  const resolvePlaceholders = (s: string): string => {
-    let result = s;
-    if (instance !== undefined && result.includes('{N}')) {
-      result = result.replace(/\{N\}/g, String(instance));
-    }
-    if (substepInstance !== undefined && result.includes('{n}')) {
-      result = result.replace(/\{n\}/g, String(substepInstance));
-    }
-    return result;
-  };
-
-  // Helper to check if substep transition is sequential
-  const isSequentialSubstep = (prev: string | undefined, next: string | undefined): boolean => {
-    if (!prev || !next) return false;
-    const prevNum = parseInt(prev, 10);
-    const nextNum = parseInt(next, 10);
-    return !isNaN(prevNum) && !isNaN(nextNum) && nextNum === prevNum + 1;
-  };
-
-  // Handle substep transitions
-  if (newSubstep) {
-    // Same step, sequential substeps (1.1 → 1.2) = CONTINUE
-    if (newStep === prevStep && isSequentialSubstep(prevSubstep, newSubstep)) {
-      return 'CONTINUE';
-    }
-    // Non-sequential substep or different step = GOTO
-    const resolvedSubstep = resolvePlaceholders(newSubstep);
-    return `GOTO ${resolvePlaceholders(newStep)}.${resolvedSubstep}`;
-  }
-
-  // Check if step change is sequential (e.g., "1" → "2")
-  // Sequential means: both are numeric strings and newStep = prevStep + 1
-  if (newStep !== prevStep) {
-    const prevNum = parseInt(prevStep, 10);
-    const newNum = parseInt(newStep, 10);
-    const isSequential = !isNaN(prevNum) && !isNaN(newNum) && newNum === prevNum + 1;
-    if (!isSequential) {
-      return `GOTO ${resolvePlaceholders(newStep)}`;
-    }
-  }
-
-  // Sequential step change or same step = CONTINUE
-  return 'CONTINUE';
 }
 
 /**

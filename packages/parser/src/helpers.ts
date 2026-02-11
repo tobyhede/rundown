@@ -5,10 +5,11 @@ import {
 } from './types.js';
 import {
   type Action,
-  type Transitions
+  type Transitions,
 } from './schemas.js';
-import { MAX_STEP_NUMBER } from './schemas.js';
+import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
 import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
+import type { ForClause } from './ast.js';
 
 /**
  * Parse a quoted string or single-word identifier.
@@ -56,16 +57,13 @@ export function parseQuotedOrIdentifier(text: string): string {
  *
  * Represents the structured data extracted from substep headers like:
  * - "1.2 Description" (numeric)
- * - "{N}.1 Description" (dynamic step, static substep)
  * - "ErrorHandler.Recover Description (agent)" (named with agent type)
  */
 export interface ParsedSubstepHeader {
-  /** Reference to parent step: "1", "{N}", or named identifier like "ErrorHandler" */
+  /** Reference to parent step: "1" or named identifier like "ErrorHandler" */
   stepRef: string;
-  /** Substep identifier: numeric string, "{n}" for dynamic, or named identifier */
+  /** Substep identifier: numeric string or named identifier */
   id: string;
-  /** True if substep uses dynamic placeholder {n} */
-  isDynamic: boolean;
   /** Human-readable description from the header */
   description: string;
   /** Optional agent type specified in parentheses at end of header */
@@ -90,14 +88,11 @@ export function stripSeparator(text: string): string {
  *
  * Represents the structured data extracted from step headers like:
  * - "1. Description" (numeric)
- * - "{N}. Description" (dynamic)
  * - "ErrorHandler Description" (named)
  */
 export interface ParsedStepHeader {
-  /** Step identifier: numeric string like "1", dynamic "{N}", or named identifier */
+  /** Step identifier: numeric string like "1" or named identifier */
   name: string;
-  /** True if step uses dynamic placeholder {N} */
-  isDynamic: boolean;
   /** Human-readable description from the header */
   description: string;
 }
@@ -107,7 +102,6 @@ export interface ParsedStepHeader {
  *
  * Parses step headers in these formats:
  * - Numeric: "1. Description" or "1 Description"
- * - Dynamic: "{N}. Description" or "{N} Description"
  * - Named: "ErrorHandler Description" or just "ErrorHandler"
  *
  * @param text - The raw H2 header text (without the ## prefix)
@@ -115,14 +109,6 @@ export interface ParsedStepHeader {
  */
 export function extractStepHeader(text: string): ParsedStepHeader | null {
   const trimmed = text.trim();
-
-  // Check for dynamic step: {N} Description
-  if (trimmed.startsWith('{N}')) {
-    const rest = trimmed.slice(3);
-    const description = stripSeparator(rest);
-    if (!description) return null;
-    return { name: '{N}', isDynamic: true, description };
-  }
 
   // Check for numeric step: 1 Description
   let numEnd = 0;
@@ -138,7 +124,7 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
     const description = stripSeparator(trimmed.slice(numEnd));
     if (!description) return null;
 
-    return { name: numberStr, isDynamic: false, description };
+    return { name: numberStr, description };
   }
 
   // Check for named step: Name or Name Description
@@ -154,7 +140,7 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
   const restWords = words.slice(1);
   const description = restWords.length > 0 ? restWords.join(' ') : strippedName;
 
-  return { name: strippedName, isDynamic: false, description };
+  return { name: strippedName, description };
 }
 
 /**
@@ -162,14 +148,12 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
  *
  * Valid step references:
  * - Positive integer: "1", "2", "99"
- * - Dynamic placeholder: "{N}"
  * - Named identifier: "Setup", "my_step" (not a reserved word)
  *
  * @param s - The string to validate as a step reference
  * @returns True if the string is a valid step reference, false otherwise
  */
 function isValidStepRef(s: string): boolean {
-  if (s === '{N}') return true;
   if (/^\d+$/.test(s)) return parseInt(s, 10) > 0;
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) return !isReservedWord(s);
   return false;
@@ -180,14 +164,12 @@ function isValidStepRef(s: string): boolean {
  *
  * Valid substep identifiers:
  * - Positive integer: "1", "2", "99"
- * - Dynamic placeholder: "{n}"
  * - Named identifier: "Setup", "my_substep" (not a reserved word)
  *
  * @param s - The string to validate as a substep identifier
  * @returns True if the string is a valid substep identifier, false otherwise
  */
 function isValidSubstepId(s: string): boolean {
-  if (s === '{n}') return true;
   if (/^\d+$/.test(s)) return parseInt(s, 10) > 0;
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) return !isReservedWord(s);
   return false;
@@ -198,7 +180,6 @@ function isValidSubstepId(s: string): boolean {
  *
  * Parses substep headers in these formats:
  * - Numeric: "1.2" or "1.2 Description"
- * - Dynamic: "{N}.1", "1.{n}", "{N}.{n}" (with optional description)
  * - Named: "1.Cleanup", "ErrorHandler.Recover" (with optional description)
  * - With agent: "1.2 Description (agent-type)" or "1.2 (agent-type)"
  *
@@ -252,8 +233,83 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
     id: substepId,
     description: description ?? '',
     agentType,
-    isDynamic: substepId === '{n}',
   };
+}
+
+/**
+ * Parse a FOR loop clause from bullet text.
+ *
+ * Recognizes these grammar variants:
+ * - `FOR variable IN start TO end` (full form)
+ * - `FOR start TO end` (unnamed, range)
+ * - `FOR variable IN count` (named, count only — start defaults to 1)
+ * - `FOR count` (unnamed, count only — start defaults to 1)
+ *
+ * Bounds must be positive integers. Unresolved template variables (e.g., `{{Count}}`)
+ * cause the clause to be rejected (returns null).
+ *
+ * @param text - The bullet text (after `- ` prefix), e.g. "FOR batch IN 1 TO 10"
+ * @returns Parsed ForClause, or null if text is not a valid FOR clause
+ */
+export function parseForClause(text: string): ForClause | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('FOR ')) return null;
+
+  const rest = trimmed.slice(4).trim();
+  if (!rest) return null;
+
+  // Try to parse a bound value (positive integer only, capped at MAX_FOR_BOUND)
+  const parseBound = (s: string): number | null => {
+    const num = parseInt(s, 10);
+    if (!isNaN(num) && String(num) === s && num > 0 && num <= MAX_FOR_BOUND) return num;
+    return null;
+  };
+
+  // Pattern 1: FOR variable IN start TO end
+  // Pattern 2: FOR variable IN count (start defaults to 1)
+  const namedMatch = /^([a-zA-Z_][a-zA-Z0-9_]*)\s+IN\s+(.+)$/.exec(rest);
+  if (namedMatch) {
+    const variable = namedMatch[1];
+    if (isReservedWord(variable)) return null;
+    const rangeStr = namedMatch[2].trim();
+
+    // Try "start TO end"
+    const toMatch = /^(\S+)\s+TO\s+(\S+)$/.exec(rangeStr);
+    if (toMatch) {
+      const start = parseBound(toMatch[1]);
+      const end = parseBound(toMatch[2]);
+      if (start !== null && end !== null) {
+        return { variable, start, end };
+      }
+      return null;
+    }
+
+    // Try single count value
+    const end = parseBound(rangeStr);
+    if (end !== null) {
+      return { variable, start: 1, end };
+    }
+    return null;
+  }
+
+  // Pattern 3: FOR start TO end (unnamed)
+  const rangeMatch = /^(\S+)\s+TO\s+(\S+)$/.exec(rest);
+  if (rangeMatch) {
+    const start = parseBound(rangeMatch[1]);
+    const end = parseBound(rangeMatch[2]);
+    if (start !== null && end !== null) {
+      return { start, end };
+    }
+    return null;
+  }
+
+  // Pattern 4: FOR count (unnamed, count only)
+  const end = parseBound(rest);
+  if (end !== null) {
+    return { start: 1, end };
+  }
+
+  return null;
 }
 
 /**
@@ -264,7 +320,8 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
  * - COMPLETE / COMPLETE "message" - Mark runbook complete
  * - STOP / STOP "message" - Abort runbook
  * - GOTO target - Jump to specified step/substep
- * - NEXT - Shorthand for GOTO NEXT (dynamic steps only)
+ * - NEXT - First-class action for FOR loops (advance to next iteration)
+ * - BREAK - First-class action for FOR loops (exit loop)
  *
  * @param text - The action string to parse (e.g., "GOTO 2.1", "CONTINUE")
  * @returns Parsed Action object, or null if text is not a recognized action
@@ -302,18 +359,6 @@ export function parseAction(text: string): Action | null {
     }
   }
 
-  // Handle GOTO NEXT <target> (qualified NEXT)
-  if (trimmed.startsWith('GOTO NEXT ')) {
-    const targetStr = trimmed.slice(10).trim();
-    if (targetStr) {
-      const qualifier = parseStepIdFromString(targetStr);
-      if (qualifier) {
-        return { type: 'GOTO', target: { step: 'NEXT' as const, qualifier } };
-      }
-    }
-    // Fall through to bare GOTO NEXT handling
-  }
-
   if (trimmed.startsWith('GOTO ')) {
     const targetStr = trimmed.slice(5).trim();
     const target = parseStepIdFromString(targetStr);
@@ -324,7 +369,11 @@ export function parseAction(text: string): Action | null {
   }
 
   if (trimmed === 'NEXT') {
-    return { type: 'GOTO', target: { step: 'NEXT' as const } };
+    return { type: 'NEXT' };
+  }
+
+  if (trimmed === 'BREAK') {
+    return { type: 'BREAK' };
   }
 
   return null;
@@ -474,44 +523,27 @@ function resolveAggregationMode(
 }
 
 /**
- * Check if an action contains a NEXT target
- */
-function containsNEXT(action: Action): boolean {
-  if (action.type === 'GOTO' && 'target' in action) {
-    // GOTO NEXT without a qualifier is a bare NEXT action
-    // GOTO NEXT <target> (with qualifier) is allowed everywhere
-    return action.target.step === 'NEXT' && !action.target.qualifier;
-  }
-  return false;
-}
-
-/**
- * Validate that NEXT is only used in dynamic contexts.
+ * Validate that first-class NEXT/BREAK are only used in FOR contexts.
  *
- * The NEXT action is a shorthand for advancing to the next dynamic instance.
- * It is valid within dynamic step templates (steps with {N} prefix) OR
- * within dynamic substeps (substeps with {n} suffix).
+ * The first-class `NEXT` and `BREAK` actions are for FOR loop control flow
+ * and are only valid within substeps of a FOR step.
  *
- * @param conditionals - Array of parsed conditionals to check for NEXT usage
- * @param isDynamicStep - Whether the current step uses dynamic {N} prefix
- * @param isDynamicSubstep - Whether the current substep uses dynamic {n} suffix
- * @throws {RunbookSyntaxError} When NEXT is used outside a dynamic context
+ * @param conditionals - Array of parsed conditionals to check for NEXT/BREAK usage
+ * @param isForContext - Whether the current context is within a FOR step
+ * @throws {RunbookSyntaxError} When NEXT/BREAK used outside FOR context
  */
 export function validateNEXTUsage(
   conditionals: ParsedConditional[],
-  isDynamicStep: boolean,
-  isDynamicSubstep = false
+  isForContext: boolean
 ): void {
-  if (isDynamicStep || isDynamicSubstep) {
-    // NEXT is allowed in dynamic steps or dynamic substeps
-    return;
-  }
-
   for (const conditional of conditionals) {
-    if (containsNEXT(conditional.action)) {
-      throw new RunbookSyntaxError(
-        `NEXT action is only allowed in dynamic contexts (steps with {N} prefix or substeps with {n} suffix)`
-      );
+    // Check first-class NEXT/BREAK — requires FOR context
+    if (conditional.action.type === 'NEXT' || conditional.action.type === 'BREAK') {
+      if (!isForContext) {
+        throw new RunbookSyntaxError(
+          `${conditional.action.type} is only valid within substeps of a FOR step`
+        );
+      }
     }
   }
 }
@@ -677,6 +709,10 @@ export function formatAction(action: Action): string {
       return action.message ? `STOP "${action.message}"` : 'STOP';
     case 'GOTO':
       return `GOTO ${action.target.step}`;
+    case 'NEXT':
+      return 'NEXT';
+    case 'BREAK':
+      return 'BREAK';
     default:
       return 'UNKNOWN';
   }

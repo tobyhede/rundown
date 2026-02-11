@@ -1,6 +1,8 @@
 import { setup, assign } from 'xstate';
-import type { Step, Action, Transitions } from './types.js';
+import type { Step, Action, Transitions, LastAction, ForContext } from './types.js';
 import type { StepId } from './step-id.js';
+import type { ForClause } from '@rundown-org/parser';
+import { shouldAggregationPass } from './transition-handler.js';
 
 /**
  * Context passed through the XState runbook state machine.
@@ -15,16 +17,16 @@ export interface RunbookContext {
   retryMax?: number;
   /** Current substep ID within the active step */
   substep?: string;
-  /** Flag indicating transition to next dynamic step instance */
-  nextInstance?: boolean;
-  /** Flag indicating transition to next dynamic substep instance */
-  nextSubstepInstance?: boolean;
   /** User-defined runbook variables */
   variables: Record<string, boolean | number | string>;
   /** Last action taken by the state machine (source of truth for transition type) */
-  lastAction?: string;
+  lastAction?: LastAction;
   /** Message from STOP/COMPLETE actions */
   lastMessage?: string;
+  /** FOR loop execution stack (empty when not in a loop) */
+  forStack: ForContext[];
+  /** Per-iteration outcomes ('pass' or 'fail') */
+  iterationResults?: ('pass' | 'fail')[];
 }
 
 /**
@@ -42,6 +44,21 @@ export type RunbookEvent =
   | { type: 'GOTO'; target: StepId };
 
 /**
+ * XState transition configuration returned by transition builder functions.
+ * Can be a single transition or an array of guarded transitions.
+ */
+interface TransitionEntry {
+  target?: string | null;
+  actions?: unknown;
+  guard?: unknown;
+  entry?: unknown;
+  [key: string]: unknown;
+}
+/** XState action returned by assign() — opaque function type. */
+type AssignAction = (...args: never[]) => unknown;
+type TransitionConfig = TransitionEntry | TransitionEntry[];
+
+/**
  * DEFAULT Transitions according to RUNDOWN-SPEC 1.0.0
  * PASS ALL: CONTINUE
  * FAIL ANY: STOP
@@ -52,28 +69,205 @@ const DEFAULT_TRANSITIONS: Transitions = {
   fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
 };
 
-/** Clears dynamic instance flags to prevent stale state */
-const CLEAR_NEXT_FLAGS = { nextInstance: undefined, nextSubstepInstance: undefined } as const;
 
 /**
  * Internal helper to format state IDs for the XState machine.
  * Uses _ instead of . to avoid XState path resolution issues.
  */
 function formatStateId(stepName: string, substepId?: string): string {
-  return substepId ? `step_${stepName}_${substepId}` : `step_${stepName}`;
+  return substepId ? `step::${stepName}::${substepId}` : `step::${stepName}`;
+}
+
+/** Extract substep ID from a state ID string, or undefined if no substep. */
+function extractSubstepFromStateId(stateId: string): string | undefined {
+  const match = /^step::(.+?)::(.+)$/.exec(stateId);
+  return match?.[2];
+}
+
+/** Build a structured GOTO LastAction from a StepId target. */
+function buildGotoLastAction(target: StepId): LastAction {
+  return {
+    type: 'GOTO' as const,
+    target: target.step,
+    ...(target.substep && { substep: target.substep }),
+    ...(target.at !== undefined && { at: target.at }),
+  };
 }
 
 /**
- * Format a GOTO action string for display.
- * @param target - The StepId target of the GOTO action
- * @returns Formatted string like "GOTO 3" or "GOTO 3.1" or "GOTO ErrorHandler"
+ * Check if a state represents the first substep of a step with substeps.
+ * Returns step info with either the explicit forClause or a synthetic { start: 1, end: 1 }.
+ *
+ * @param stateId - The state ID to check (e.g., "step::3::1")
+ * @param steps - The full steps array
+ * @returns The step, its ForClause (explicit or synthetic), and implicit flag, or null otherwise
  */
-function formatGotoAction(target: StepId): string {
-  if (target.substep) {
-    return `GOTO ${target.step}.${target.substep}`;
+function getStepForFirstSubstep(
+  stateId: string,
+  steps: Step[]
+): { step: Step; forClause: ForClause; implicit: boolean } | null {
+  const match = /^step::(.+?)::(.+)$/.exec(stateId);
+  if (!match) return null;
+
+  const [, stepName, substepId] = match;
+  const step = steps.find(s => s.name === stepName);
+  if (!step?.substeps?.length) return null;
+
+  if (substepId === step.substeps[0].id) {
+    return {
+      step,
+      forClause: step.forClause ?? { start: 1, end: 1 },
+      implicit: !step.forClause,
+    };
   }
-  return `GOTO ${target.step}`;
+
+  return null;
 }
+
+/**
+ * Check if a state represents the last substep of a step with substeps.
+ *
+ * @param stepName - The step name
+ * @param substepId - The substep ID (undefined if not a substep)
+ * @param steps - The full steps array
+ * @returns True if this is the last substep of a step with substeps
+ */
+function isLastSubstepOfStep(
+  stepName: string,
+  substepId: string | undefined,
+  steps: Step[]
+): boolean {
+  if (!substepId) return false;
+  const step = steps.find(s => s.name === stepName);
+  if (!step?.substeps?.length) return false;
+
+  const lastSubstepId = step.substeps[step.substeps.length - 1].id;
+  return substepId === lastSubstepId;
+}
+
+/**
+ * Get the first substep state ID for a step.
+ *
+ * @param step - The step to get the first substep from
+ * @returns The state ID of the first substep, or null if step has no substeps
+ */
+function getFirstSubstepOfStep(step: Step): string | null {
+  if (step.substeps && step.substeps.length > 0) {
+    return formatStateId(step.name, step.substeps[0].id);
+  }
+  return null;
+}
+
+/** Peek at the top of the FOR context stack. */
+function peekForStack(stack: ForContext[]): ForContext | undefined {
+  return stack.length > 0 ? stack[stack.length - 1] : undefined;
+}
+
+/** Check if a FOR context iterates in descending order. */
+function isDescending(fc: ForContext): boolean {
+  return fc.start > fc.end;
+}
+
+/** Advance iteration by one step in the appropriate direction. */
+function nextIteration(fc: ForContext): number {
+  return isDescending(fc) ? fc.iteration - 1 : fc.iteration + 1;
+}
+
+/** Check whether the loop has more iterations remaining. */
+function hasMoreIterations(fc: ForContext): boolean {
+  return isDescending(fc) ? fc.iteration > fc.end : fc.iteration < fc.end;
+}
+
+/**
+ * Resolve an AT value (number | string | undefined) to a numeric iteration.
+ * Template variable strings that don't resolve to numbers fall back to defaultValue.
+ *
+ * @param at - The AT value to resolve
+ * @param defaultValue - Fallback value when AT is undefined or non-numeric string
+ * @returns Resolved numeric iteration value
+ */
+function resolveAtValue(
+  at: number | string | undefined,
+  defaultValue: number
+): number {
+  if (at === undefined) return defaultValue;
+  if (typeof at === 'number') return at;
+  const parsed = Number(at);
+  return Number.isNaN(parsed) ? defaultValue : parsed;
+}
+
+/** Resolve AT value at runtime, expanding template variables from forStack context. */
+function resolveAtValueRuntime(
+  at: number | string | undefined,
+  defaultValue: number,
+  forStack: ForContext[]
+): number {
+  if (at === undefined) return defaultValue;
+  if (typeof at === 'number') return at;
+  const parsed = Number(at);
+  if (!Number.isNaN(parsed)) return parsed;
+  // Try template variable resolution from current forStack
+  // NOTE: Only resolves from the topmost loop context. Nested loop support
+  // would require walking the full forStack to find matching variable names.
+  const top = forStack.length > 0 ? forStack[forStack.length - 1] : undefined;
+  if (at === '{{Index}}' && top) {
+    return top.iteration;
+  }
+  if (top?.variable && at === `{{${top.variable}}}`) {
+    return top.iteration;
+  }
+  return defaultValue;
+}
+
+/**
+ * Create a ForContext for a step's FOR clause.
+ *
+ * @param stepName - The step name that owns the loop
+ * @param forClause - The FOR clause definition
+ * @param atValue - Optional AT value for starting iteration
+ * @param implicit - Optional flag indicating implicit FOR context
+ * @returns A new ForContext
+ */
+function createForContext(
+  stepName: string,
+  forClause: ForClause,
+  atValue?: number | string,
+  implicit?: boolean
+): ForContext {
+  const iteration = resolveAtValue(atValue, forClause.start);
+  return {
+    stepId: stepName,
+    iteration,
+    start: forClause.start,
+    end: forClause.end,
+    variable: forClause.variable,
+    ...(implicit && { implicit: true }),
+  };
+}
+
+/**
+ * Check if a state represents ANY substep of a step with substeps.
+ *
+ * @param stateId - The state ID to check (e.g., "step::3::2")
+ * @param steps - The full steps array
+ * @returns The step, its ForClause (explicit or synthetic), and implicit flag, or null otherwise
+ */
+function getStepForSubstep(
+  stateId: string,
+  steps: Step[]
+): { step: Step; forClause: ForClause; implicit: boolean } | null {
+  const match = /^step::(.+?)::(.+)$/.exec(stateId);
+  if (!match) return null;
+  const [, stepName] = match;
+  const step = steps.find(s => s.name === stepName);
+  if (!step?.substeps?.length) return null;
+  return {
+    step,
+    forClause: step.forClause ?? { start: 1, end: 1 },
+    implicit: !step.forClause,
+  };
+}
+
 type GotoAssignValue<T> = T | ((args: { event: RunbookEvent }) => T);
 
 /**
@@ -85,11 +279,11 @@ type GotoAssignValue<T> = T | ((args: { event: RunbookEvent }) => T);
  * @returns XState assign action
  */
 function buildSimpleGotoAssign(options: {
-  lastAction: GotoAssignValue<string | undefined>;
+  lastAction: GotoAssignValue<LastAction | undefined>;
   resolvedSubstepId: GotoAssignValue<string | undefined>;
   isGotoToSelf: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-}): any {
+  preserveForContext?: boolean;
+}): AssignAction {
   return assign({
     lastAction: ({ event }: { event: RunbookEvent }) => {
       return typeof options.lastAction === 'function'
@@ -101,18 +295,21 @@ function buildSimpleGotoAssign(options: {
         context.retryCount + 1
       : 0,
     substep: options.resolvedSubstepId,
-    ...CLEAR_NEXT_FLAGS
+    ...(options.preserveForContext
+      ? {}
+      : {
+          forStack: [] as ForContext[],
+          iterationResults: undefined as ('pass' | 'fail')[] | undefined
+        })
   });
 }
 
 /**
  * Check if a step is a numbered step (vs named step).
- * Numbered steps: "1", "2", "10", "{N}" (dynamic)
+ * Numbered steps: "1", "2", "10"
  * Named steps: "ErrorHandler", "Cleanup", "Recovery"
  */
 function isNumberedStep(step: Step): boolean {
-  // Dynamic steps are part of the numbered sequence
-  if (step.isDynamic) return true;
   // Numeric step names: 1, 2, 3, etc.
   return /^\d+$/.test(step.name);
 }
@@ -122,34 +319,37 @@ function isNumberedStep(step: Step): boolean {
  * Handles retry property uniformly for all transitions.
  */
 function buildTransition(
-  transition: { retry: number; action: Action },
+  transition: { kind: string; retry: number; action: Action },
   currentStateId: string,
   stepName: string,
   substepId: string | undefined,
   steps: Step[]
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): any {
-  const { retry, action } = transition;
+): TransitionConfig {
+  const { retry, action, kind } = transition;
+  // Normalize kind to pass/fail for iteration result recording
+  const resultKind: 'pass' | 'fail' = kind === 'pass' || kind === 'yes' ? 'pass' : 'fail';
 
   if (retry > 0) {
     // Has retry: [retry guard -> stay, exhausted -> action]
-    return [
-      {
-        guard: ({ context }: { context: RunbookContext }) =>
-          context.retryCount < retry,
-        actions: assign({
-          lastAction: 'RETRY',
-          retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
-          retryMax: retry
-        }),
-        target: currentStateId
-      },
-      buildActionTransition(action, stepName, substepId, steps)
-    ];
+    const exhaustedTransition = buildActionTransition(action, stepName, substepId, steps, resultKind);
+    const retryGuard: TransitionEntry = {
+      guard: ({ context }: { context: RunbookContext }) =>
+        context.retryCount < retry,
+      actions: assign({
+        lastAction: { type: 'RETRY' as const },
+        retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
+        retryMax: retry
+      }),
+      target: currentStateId
+    };
+    const exhaustedEntries: TransitionEntry[] = Array.isArray(exhaustedTransition)
+      ? exhaustedTransition
+      : [exhaustedTransition];
+    return [retryGuard, ...exhaustedEntries];
   }
 
   // No retry: execute action directly
-  return buildActionTransition(action, stepName, substepId, steps);
+  return buildActionTransition(action, stepName, substepId, steps, resultKind);
 }
 
 /**
@@ -186,6 +386,230 @@ function findNextStateId(stepName: string, substepId: string | undefined, steps:
   return 'COMPLETE';
 }
 
+/** Build the exit-loop assign action for CONTINUE/NEXT/BREAK at the last substep. */
+function buildLoopExitAssign(
+  actionType: 'CONTINUE' | 'NEXT' | 'BREAK',
+  exitTarget: string,
+  iterationResult: 'pass' | 'fail',
+  isImplicit?: boolean
+): AssignAction {
+  return assign({
+    forStack: [] as ForContext[],
+    iterationResults: isImplicit
+      ? (undefined as ('pass' | 'fail')[] | undefined)
+      : ({ context }: { context: RunbookContext }) => {
+          const results = context.iterationResults ?? [];
+          return [...results, iterationResult];
+        },
+    lastAction: { type: actionType },
+    retryCount: 0,
+    substep: extractSubstepFromStateId(exitTarget),
+  });
+}
+
+/**
+ * Build assign action for aggregation exit paths that applies parent transition action semantics.
+ *
+ * Unlike `buildLoopExitAssign` which records the substep exit mechanism (CONTINUE/NEXT/BREAK),
+ * this function records the parent step's transition action (GOTO/STOP/COMPLETE/CONTINUE) as
+ * the lastAction, and initializes forStack when the target is a FOR step.
+ *
+ * @param parentAction - The parent step's transition action
+ * @param exitTarget - The resolved XState target state ID
+ * @param iterationResult - Result of the current (final) iteration
+ * @param steps - The full steps array (for GOTO target lookup)
+ * @returns XState assign action
+ */
+function buildAggregationExitAssign(
+  parentAction: Action,
+  exitTarget: string,
+  iterationResult: 'pass' | 'fail',
+  steps: Step[]
+): AssignAction {
+  const baseAssign = {
+    retryCount: 0,
+    substep: extractSubstepFromStateId(exitTarget),
+    iterationResults: ({ context }: { context: RunbookContext }) => {
+      const results = context.iterationResults ?? [];
+      return [...results, iterationResult];
+    },
+  };
+
+  switch (parentAction.type) {
+    case 'GOTO': {
+      const targetStep = steps.find(s => s.name === parentAction.target.step);
+      const targetForClause = targetStep?.forClause;
+
+      if (targetStep?.substeps?.length && targetForClause) {
+        // GOTO to a FOR step: initialize FOR context for the target.
+        // targetForClause is truthy here so the step has an explicit FOR clause (not implicit).
+        return assign({
+          ...baseAssign,
+          forStack: [createForContext(
+            targetStep.name,
+            targetForClause,
+            parentAction.target.at !== undefined ? Number(parentAction.target.at) : undefined
+          )],
+          iterationResults: [] as ('pass' | 'fail')[],
+          lastAction: buildGotoLastAction(parentAction.target),
+          substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
+        });
+      }
+
+      return assign({
+        ...baseAssign,
+        forStack: [] as ForContext[],
+        lastAction: buildGotoLastAction(parentAction.target),
+      });
+    }
+    case 'STOP':
+      return assign({
+        ...baseAssign,
+        forStack: [] as ForContext[],
+        lastAction: { type: 'STOP' as const },
+      });
+    case 'COMPLETE':
+      return assign({
+        ...baseAssign,
+        forStack: [] as ForContext[],
+        lastAction: { type: 'COMPLETE' as const },
+      });
+    case 'CONTINUE':
+      return assign({
+        ...baseAssign,
+        forStack: [] as ForContext[],
+        lastAction: { type: 'CONTINUE' as const },
+      });
+    case 'NEXT':
+    case 'BREAK':
+      // Defensive: shouldn't appear as parent aggregation actions
+      return assign({
+        ...baseAssign,
+        forStack: [] as ForContext[],
+        lastAction: { type: parentAction.type },
+      });
+  }
+}
+
+/**
+ * Resolve an Action to an XState target state ID for aggregation routing.
+ *
+ * @param action - The terminal action to resolve
+ * @param stepName - The parent step name (for CONTINUE target resolution)
+ * @param steps - The full steps array
+ * @returns The target state ID string
+ */
+function resolveActionTarget(action: Action, stepName: string, steps: Step[]): string {
+  switch (action.type) {
+    case 'CONTINUE':
+      return findNextStateId(stepName, undefined, steps);
+    case 'COMPLETE':
+      return 'COMPLETE';
+    case 'STOP':
+      return 'STOPPED';
+    case 'GOTO': {
+      const targetStep = steps.find(s => s.name === action.target.step);
+      if (!targetStep) return 'COMPLETE';
+      const substep = action.target.substep ?? targetStep.substeps?.[0]?.id;
+      return formatStateId(targetStep.name, substep);
+    }
+    case 'NEXT':
+    case 'BREAK':
+      // Defensive: NEXT/BREAK are substep-level loop control actions and should
+      // never appear as parent-step aggregation actions. The parser's validateNEXTUsage
+      // prevents this, so this branch is unreachable in well-formed runbooks.
+      return 'STOPPED';
+  }
+}
+
+/**
+ * Build exit transitions for a FOR loop with optional aggregation.
+ *
+ * When the parent step has aggregation transitions (PASS ALL/FAIL ANY or PASS ANY/FAIL ALL),
+ * returns guarded transitions that route based on accumulated iteration results.
+ * Otherwise returns a single unconditional exit transition.
+ *
+ * @param parentStep - The parent step owning the FOR loop
+ * @param exitTarget - Default exit target (next step after the loop)
+ * @param iterationResult - Result of the current (final) iteration
+ * @param actionType - The exit mechanism (CONTINUE, NEXT, or BREAK)
+ * @param steps - The full steps array
+ * @param isImplicit - Whether this is an implicit (synthetic 1..1) FOR loop
+ * @returns Array of exit transition entries (1 for unconditional, 2 for aggregation)
+ */
+function buildAggregationExitTransitions(
+  parentStep: Step,
+  exitTarget: string,
+  iterationResult: 'pass' | 'fail',
+  actionType: 'CONTINUE' | 'NEXT' | 'BREAK',
+  steps: Step[],
+  isImplicit?: boolean
+): TransitionEntry[] {
+  // No aggregation for implicit FOR loops or steps without explicit FOR + transitions
+  if (isImplicit || !parentStep.forClause || !parentStep.transitions) {
+    return [{ target: exitTarget, actions: buildLoopExitAssign(actionType, exitTarget, iterationResult, isImplicit) }];
+  }
+
+  const parentTransitions = parentStep.transitions;
+  const passTarget = resolveActionTarget(parentTransitions.pass.action, parentStep.name, steps);
+  const failTarget = resolveActionTarget(parentTransitions.fail.action, parentStep.name, steps);
+
+  // Guards are mutually exclusive and exhaustive: the loop always accumulates
+  // at least one iteration result before exit, so exactly one guard fires.
+  return [
+    {
+      guard: ({ context }: { context: RunbookContext }) => {
+        const results = [...(context.iterationResults ?? []), iterationResult];
+        const hasFailed = results.some(r => r === 'fail');
+        const passCount = results.filter(r => r === 'pass').length;
+        return shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
+      },
+      target: passTarget,
+      actions: buildAggregationExitAssign(parentTransitions.pass.action, passTarget, iterationResult, steps)
+    },
+    {
+      guard: ({ context }: { context: RunbookContext }) => {
+        const results = [...(context.iterationResults ?? []), iterationResult];
+        const hasFailed = results.some(r => r === 'fail');
+        const passCount = results.filter(r => r === 'pass').length;
+        return !shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
+      },
+      target: failTarget,
+      actions: buildAggregationExitAssign(parentTransitions.fail.action, failTarget, iterationResult, steps)
+    }
+  ];
+}
+
+/** Build the loop-back guarded transition shared by CONTINUE and NEXT. */
+function buildLoopBackTransition(
+  actionType: 'CONTINUE' | 'NEXT',
+  firstSubstepStateId: string | null,
+  iterationResult: 'pass' | 'fail',
+  firstSubstepId: string | undefined
+): TransitionEntry {
+  return {
+    guard: ({ context }: { context: RunbookContext }) => {
+      const top = peekForStack(context.forStack);
+      return top !== undefined && hasMoreIterations(top);
+    },
+    target: firstSubstepStateId,
+    actions: assign({
+      forStack: ({ context }: { context: RunbookContext }) => {
+        const top = peekForStack(context.forStack);
+        if (!top) return context.forStack;
+        return [{ ...top, iteration: nextIteration(top) }];
+      },
+      iterationResults: ({ context }: { context: RunbookContext }) => {
+        const results = context.iterationResults ?? [];
+        return [...results, iterationResult];
+      },
+      lastAction: { type: actionType },
+      retryCount: 0,
+      substep: firstSubstepId,
+    }),
+  };
+}
+
 /**
  * Build XState transition config from a terminal Action.
  */
@@ -193,22 +617,36 @@ function buildActionTransition(
   action: Action,
   stepName: string,
   substepId: string | undefined,
-  steps: Step[]
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): any {
+  steps: Step[],
+  kind?: 'pass' | 'fail'
+): TransitionConfig {
   switch (action.type) {
     case 'CONTINUE': {
       const target = findNextStateId(stepName, substepId, steps);
+
+      // Check if we're at the last substep of a FOR loop
+      const isLastSubstep = isLastSubstepOfStep(stepName, substepId, steps);
+      const currentStep = steps.find(s => s.name === stepName);
+
+      // If at last substep of FOR loop, use guarded transitions for loop-back or exit
+      if (isLastSubstep && currentStep) {
+        const firstSubstepStateId = getFirstSubstepOfStep(currentStep);
+        const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
+        const isImplicit = !currentStep.forClause;
+
+        return [
+          buildLoopBackTransition('CONTINUE', firstSubstepStateId, iterationResult, currentStep.substeps?.[0]?.id),
+          ...buildAggregationExitTransitions(currentStep, target, iterationResult, 'CONTINUE', steps, isImplicit)
+        ];
+      }
+
+      // Normal CONTINUE (not in FOR loop)
       return {
         target,
         actions: assign({
-          lastAction: 'CONTINUE',
+          lastAction: { type: 'CONTINUE' as const },
           retryCount: 0,
-          // Extract substep from ID: step_N_M -> M
-          substep: target.startsWith('step_') && target.includes('_', 5)
-            ? target.split('_')[2]
-            : undefined,
-          ...CLEAR_NEXT_FLAGS
+          substep: extractSubstepFromStateId(target)
         })
       };
     }
@@ -216,146 +654,73 @@ function buildActionTransition(
       return {
         target: 'COMPLETE',
         actions: assign({
-          lastAction: 'COMPLETE',
-          ...CLEAR_NEXT_FLAGS
+          lastAction: { type: 'COMPLETE' as const }
         })
       };
     case 'STOP':
       return {
         target: 'STOPPED',
         actions: assign({
-          lastAction: 'STOP',
-          ...CLEAR_NEXT_FLAGS
+          lastAction: { type: 'STOP' as const }
         })
       };
     case 'GOTO': {
       const targetStep = action.target.step;
-
-      // Handle GOTO NEXT - context-sensitive
-      if (targetStep === 'NEXT') {
-        const qualifier = action.target.qualifier;
-
-        // === QUALIFIED FORMS ===
-        if (qualifier) {
-          // GOTO NEXT X.{n} - advance substep instance in step X
-          // Does NOT require {N} step - works with static steps too (e.g., GOTO NEXT 1.{n})
-          if (qualifier.substep === '{n}') {
-            // Resolve target step: {N} means the dynamic step, otherwise use literal step name
-            let targetStepName: string;
-            if (qualifier.step === '{N}') {
-              const dynamicStep = steps.find(s => s.isDynamic);
-              if (!dynamicStep) {
-                return { target: 'STOPPED' };
-              }
-              targetStepName = dynamicStep.name;
-            } else {
-              targetStepName = qualifier.step;
-            }
-
-            const targetStepObj = steps.find(s => s.name === targetStepName);
-            const dynSubstep = targetStepObj?.substeps?.find(s => s.isDynamic);
-
-            if (!dynSubstep) {
-              return { target: 'STOPPED' };
-            }
-
-            return {
-              target: formatStateId(targetStepName, dynSubstep.id),
-              actions: assign({
-                lastAction: 'GOTO NEXT',
-                retryCount: 0,
-                substep: dynSubstep.id,
-                nextSubstepInstance: true
-              })
-            };
-          }
-
-          // GOTO NEXT {N} - advance step instance (requires dynamic step)
-          if (qualifier.step === '{N}' && !qualifier.substep) {
-            const dynamicStep = steps.find(s => s.isDynamic);
-            if (!dynamicStep) {
-              return { target: 'STOPPED' };
-            }
-            const nextSubstepId = dynamicStep.substeps?.[0]?.id;
-            return {
-              target: formatStateId(dynamicStep.name, nextSubstepId),
-              actions: assign({
-                lastAction: 'GOTO NEXT',
-                retryCount: 0,
-                substep: nextSubstepId,
-                nextInstance: true
-              })
-            };
-          }
-        }
-
-        // === UNQUALIFIED NEXT - context-sensitive ===
-        // Check if current substep is dynamic
-        const currentStep = steps.find(s => s.name === stepName);
-        const currentSubstep = currentStep?.substeps?.find(s => s.id === substepId);
-
-        if (currentSubstep?.isDynamic) {
-          // In dynamic substep context (e.g., 1.{n} or {N}.{n}): advance substep only
-          // Does NOT require {N} step - works with static parent step too
-          return {
-            target: formatStateId(stepName, substepId),
-            actions: assign({
-              lastAction: 'GOTO NEXT',
-              retryCount: 0,
-              substep: substepId,
-              nextSubstepInstance: true
-            })
-          };
-        }
-
-        // Fallback: advance step instance (requires dynamic step)
-        const dynamicStep = steps.find(s => s.isDynamic);
-        if (!dynamicStep) {
-          return { target: 'STOPPED' };
-        }
-        const nextSubstepId = dynamicStep.substeps?.[0]?.id;
-        return {
-          target: formatStateId(dynamicStep.name, nextSubstepId),
-          actions: assign({
-            lastAction: 'GOTO NEXT',
-            retryCount: 0,
-            substep: nextSubstepId,
-            nextInstance: true
-          })
-        };
-      }
-
-      // Handle dynamic {N} and {N}.M references
-      if (targetStep === '{N}') {
-        // {N} requires a dynamic step - validator should catch this,
-        // but fail safely if it reaches the compiler
-        const dynamicStep = steps.find(s => s.isDynamic);
-        if (!dynamicStep) {
-          return { target: 'STOPPED' };
-        }
-
-        const resolvedSubstepId = action.target.substep ??
-          (dynamicStep.substeps?.[0]?.id);
-        const computedTarget = formatStateId(dynamicStep.name, resolvedSubstepId);
-        const currentStateId = formatStateId(stepName, substepId);
-        const isGotoToSelf = computedTarget === currentStateId;
-
-        return {
-          target: computedTarget,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          actions: buildSimpleGotoAssign({
-            lastAction: formatGotoAction(action.target),
-            resolvedSubstepId,
-            isGotoToSelf
-          })
-        };
-      }
 
       // Named/numeric step target (both are strings now)
       const targetStepObj = steps.find(s => s.name === targetStep);
       if (!targetStepObj) {
         // Invalid target - go to COMPLETE
         return { target: 'COMPLETE' };
+      }
+
+      // Handle GOTO to step with substeps (explicit FOR or implicit 1..1)
+      if (targetStepObj.substeps?.length) {
+        const forClause = targetStepObj.forClause ?? { start: 1, end: 1 };
+        const isImplicit = !targetStepObj.forClause;
+        // Target either the specified substep or default to first
+        const resolvedSubstepId = action.target.substep ?? targetStepObj.substeps[0].id;
+        const targetStateId = formatStateId(targetStepObj.name, resolvedSubstepId);
+        const isGotoToSelf = targetStepObj.name === stepName && resolvedSubstepId === substepId;
+        return {
+          target: targetStateId,
+          actions: assign({
+            forStack: ({ context }: { context: RunbookContext }): ForContext[] => {
+              // Intra-loop GOTO: preserve existing forStack
+              const top = peekForStack(context.forStack);
+              if (top?.stepId === targetStepObj.name) {
+                return context.forStack;
+              }
+              // Cross-loop or fresh entry: create new context with runtime AT resolution
+              const iteration = resolveAtValueRuntime(
+                action.target.at,
+                forClause.start,
+                context.forStack
+              );
+              return [{
+                stepId: targetStepObj.name,
+                iteration,
+                start: forClause.start,
+                end: forClause.end,
+                variable: forClause.variable,
+                ...(isImplicit && { implicit: true }),
+              }];
+            },
+            iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] | undefined => {
+              // Intra-loop GOTO: preserve existing results
+              const top = peekForStack(context.forStack);
+              if (top?.stepId === targetStepObj.name) {
+                return context.iterationResults;
+              }
+              return isImplicit ? undefined : ([] as ('pass' | 'fail')[]);
+            },
+            lastAction: buildGotoLastAction(action.target),
+            retryCount: isGotoToSelf
+              ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
+              : 0,
+            substep: resolvedSubstepId
+          })
+        };
       }
 
       const resolvedSubstepId = action.target.substep ??
@@ -365,15 +730,51 @@ function buildActionTransition(
       const currentStateId = formatStateId(stepName, substepId);
       const isGotoToSelf = computedTarget === currentStateId;
 
+      // Detect intra-loop GOTO: target is within same FOR step
+      const currentStep = steps.find(s => s.name === stepName);
+      const isIntraLoopGoto = !!(currentStep?.forClause && targetStepObj.name === stepName);
+
       return {
         target: computedTarget,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         actions: buildSimpleGotoAssign({
-          lastAction: formatGotoAction(action.target),
+          lastAction: buildGotoLastAction(action.target),
           resolvedSubstepId,
-          isGotoToSelf
+          isGotoToSelf,
+          preserveForContext: isIntraLoopGoto
         })
       };
+    }
+
+    case 'NEXT': {
+      const currentStep = steps.find(s => s.name === stepName);
+      if (!currentStep?.forClause) {
+        // NEXT outside FOR loop - should not happen (validator catches this)
+        return { target: 'STOPPED', actions: assign({ lastAction: { type: 'NEXT' as const } }) };
+      }
+
+      const firstSubstepStateId = getFirstSubstepOfStep(currentStep);
+      const lastSubstep = currentStep.substeps?.[currentStep.substeps.length - 1];
+      const exitTarget = findNextStateId(stepName, lastSubstep?.id, steps);
+      const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
+
+      return [
+        buildLoopBackTransition('NEXT', firstSubstepStateId, iterationResult, currentStep.substeps?.[0]?.id),
+        ...buildAggregationExitTransitions(currentStep, exitTarget, iterationResult, 'NEXT', steps)
+      ];
+    }
+
+    case 'BREAK': {
+      const currentStep = steps.find(s => s.name === stepName);
+      if (!currentStep?.forClause) {
+        // BREAK outside FOR loop - should not happen (validator catches this)
+        return { target: 'STOPPED', actions: assign({ lastAction: { type: 'BREAK' as const } }) };
+      }
+
+      const lastSubstep = currentStep.substeps?.[currentStep.substeps.length - 1];
+      const exitTarget = findNextStateId(stepName, lastSubstep?.id, steps);
+      const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
+
+      return buildAggregationExitTransitions(currentStep, exitTarget, iterationResult, 'BREAK', steps);
     }
 
   }
@@ -393,8 +794,7 @@ function buildActionTransition(
 // XState snapshot type is not fully typed
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function compileRunbookToMachine(steps: Step[]) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const states: Record<string, any> = {};
+  const states: Record<string, { on: Record<string, unknown>; entry?: unknown }> = {};
 
   // Build a flat list of all states to generate GOTO transitions
   interface StateConfig {
@@ -433,10 +833,44 @@ export function compileRunbookToMachine(steps: Step[]) {
       config.transitions.fail.retry > 0 ? config.transitions.fail.retry :
       0;
 
+    // Check if this state is the first substep of a FOR step
+    // If so, add entry action to initialize FOR context
+    const stepInfo = getStepForFirstSubstep(config.id, steps);
+    const entryActions = stepInfo ? {
+      entry: assign({
+        forStack: ({ context }: { context: RunbookContext }) => {
+          const top = peekForStack(context.forStack);
+          // Loop-back: preserve current context
+          if (top?.stepId === stepInfo.step.name) {
+            return context.forStack;
+          }
+          // Fresh entry: push new context
+          return [createForContext(
+            stepInfo.step.name,
+            stepInfo.forClause,
+            undefined,
+            stepInfo.implicit
+          )];
+        },
+        iterationResults: ({ context }: { context: RunbookContext }) => {
+          const top = peekForStack(context.forStack);
+          // Loop-back: preserve accumulated results
+          if (top?.stepId === stepInfo.step.name) {
+            return context.iterationResults ?? ([] as ('pass' | 'fail')[]);
+          }
+          // Fresh entry: always reset
+          return [] as ('pass' | 'fail')[];
+        }
+      })
+    } : {};
+
     // Build per-state GOTO transitions
     const buildGotoTransitionsForState = allStates.map((target) => {
       // Compute isGotoToSelf at build time since target and config are known
       const isGotoToSelf = target.id === config.id;
+
+      // Check if this target is ANY substep of a FOR step (widened from first-only)
+      const forStepForTarget = getStepForSubstep(target.id, steps);
 
       return {
         guard: ({ event }: { event: RunbookEvent }) => {
@@ -455,24 +889,70 @@ export function compileRunbookToMachine(steps: Step[]) {
           return targetStep === target.stepName && event.target.substep === target.substepId;
         },
         target: target.id,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        actions: buildSimpleGotoAssign({
-          lastAction: ({ event }: { event: RunbookEvent }) => {
-            if (event.type !== 'GOTO') return undefined;
-            const step = event.target.step;
-            const substep = event.target.substep ?? target.substepId;
-            return substep ? `GOTO ${step}.${substep}` : `GOTO ${step}`;
-          },
-          resolvedSubstepId: ({ event }: { event: RunbookEvent }) =>
-            event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
-          isGotoToSelf
-        })
+        actions: forStepForTarget
+          ? assign({
+            // FOR step entry via GOTO event: initialize or preserve FOR context
+            forStack: ({ context, event }: { context: RunbookContext; event: RunbookEvent }): ForContext[] => {
+              if (event.type !== 'GOTO') return [];
+              // Intra-loop GOTO: preserve existing forStack
+              const top = peekForStack(context.forStack);
+              if (top?.stepId === forStepForTarget.step.name) {
+                return context.forStack;
+              }
+              // Cross-loop or fresh entry: create new context with runtime AT resolution
+              const iteration = resolveAtValueRuntime(
+                event.target.at,
+                forStepForTarget.forClause.start,
+                context.forStack
+              );
+              return [{
+                stepId: forStepForTarget.step.name,
+                iteration,
+                start: forStepForTarget.forClause.start,
+                end: forStepForTarget.forClause.end,
+                variable: forStepForTarget.forClause.variable,
+                ...(forStepForTarget.implicit && { implicit: true }),
+              }];
+            },
+            iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] | undefined => {
+              // Intra-loop GOTO: preserve existing results
+              const top = peekForStack(context.forStack);
+              if (top?.stepId === forStepForTarget.step.name) {
+                return context.iterationResults;
+              }
+              return forStepForTarget.implicit
+                ? undefined
+                : ([] as ('pass' | 'fail')[]);
+            },
+            lastAction: ({ event }: { event: RunbookEvent }): LastAction | undefined => {
+              if (event.type !== 'GOTO') return undefined;
+              const step = event.target.step;
+              const substep = event.target.substep ?? target.substepId;
+              const at = event.target.at;
+              return { type: 'GOTO' as const, target: step, ...(substep && { substep }), ...(at !== undefined && { at }) };
+            },
+            retryCount: 0,
+            substep: ({ event }: { event: RunbookEvent }) =>
+              event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined
+          })
+          : buildSimpleGotoAssign({
+            lastAction: ({ event }: { event: RunbookEvent }): LastAction | undefined => {
+              if (event.type !== 'GOTO') return undefined;
+              const step = event.target.step;
+              const substep = event.target.substep ?? target.substepId;
+              const at = event.target.at;
+              return { type: 'GOTO' as const, target: step, ...(substep && { substep }), ...(at !== undefined && { at }) };
+            },
+            resolvedSubstepId: ({ event }: { event: RunbookEvent }) =>
+              event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
+            isGotoToSelf
+          })
       };
     });
 
     states[config.id] = {
+      ...entryActions,
       on: {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         PASS: buildTransition(
           config.transitions.pass,
           config.id,
@@ -480,7 +960,6 @@ export function compileRunbookToMachine(steps: Step[]) {
           config.substepId,
           steps
         ),
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         FAIL: buildTransition(
           config.transitions.fail,
           config.id,
@@ -490,7 +969,7 @@ export function compileRunbookToMachine(steps: Step[]) {
         ),
         RETRY: {
           actions: assign({
-            lastAction: 'RETRY',
+            lastAction: { type: 'RETRY' as const },
             retryCount: ({ context }) => (context.retryCount as number) + 1,
             retryMax: retryMaxFromTransitions
           }),
@@ -508,16 +987,16 @@ export function compileRunbookToMachine(steps: Step[]) {
     },
   }).createMachine({
     id: 'runbook',
-    initial: allStates.length > 0 ? allStates[0].id : 'step_1',
+    initial: allStates.length > 0 ? allStates[0].id : 'step::1',
     context: {
       retryCount: 0,
       retryMax: undefined,
       substep: undefined,
-      nextInstance: undefined,
-      nextSubstepInstance: undefined,
       variables: {},
       lastAction: undefined,
       lastMessage: undefined,
+      forStack: [],
+      iterationResults: undefined,
     },
     states: {
       ...states,

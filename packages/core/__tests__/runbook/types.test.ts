@@ -1,9 +1,9 @@
 import { describe, it, expect } from '@jest/globals';
-import type { StepNumber, Action, SubtaskState, Substep, RunbookState } from '../../src/runbook/types.js';
+import type { Action, SubstepState, Substep, RunbookState } from '../../src/runbook/types.js';
 
-describe('SubtaskState type', () => {
+describe('SubstepState type', () => {
   it('has required fields', () => {
-    const subtaskState: SubtaskState = {
+    const subtaskState: SubstepState = {
       id: '1',
       status: 'pending',
       agentId: undefined,
@@ -36,14 +36,14 @@ describe('GOTO action type', () => {
     // This test documents the expected shape after the refactor
     const gotoAction: Action = {
       type: 'GOTO',
-      target: { step: 2 as StepNumber, substep: '1' }
+      target: { step: '2', substep: '1' }
     };
 
     // Type assertion - if this compiles, the type is correct
     expect(gotoAction.type).toBe('GOTO');
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- testing type narrowing
     if (gotoAction.type === 'GOTO') {
-      expect(gotoAction.target.step).toBe(2);
+      expect(gotoAction.target.step).toBe('2');
       expect(gotoAction.target.substep).toBe('1');
     }
   });
@@ -51,12 +51,12 @@ describe('GOTO action type', () => {
   it('allows GOTO without substep', () => {
     const gotoAction: Action = {
       type: 'GOTO',
-      target: { step: 3 as StepNumber }
+      target: { step: '3' }
     };
 
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- testing type narrowing
     if (gotoAction.type === 'GOTO') {
-      expect(gotoAction.target.step).toBe(3);
+      expect(gotoAction.target.step).toBe('3');
       expect(gotoAction.target.substep).toBeUndefined();
     }
   });
@@ -67,7 +67,6 @@ describe('Substep interface', () => {
     const substep: Substep = {
       id: '1',
       description: 'Test substep',
-      isDynamic: false,
       command: { code: 'npm test' }
     };
     expect(substep.command?.code).toBe('npm test');
@@ -77,7 +76,6 @@ describe('Substep interface', () => {
     const substep: Substep = {
       id: '1',
       description: 'Test substep',
-      isDynamic: false,
       prompt: 'Do the thing'
     };
     expect(substep.prompt).toBe('Do the thing');
@@ -87,7 +85,6 @@ describe('Substep interface', () => {
     const substep: Substep = {
       id: '1',
       description: 'Test substep',
-      isDynamic: false,
       transitions: {
         all: true,
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },

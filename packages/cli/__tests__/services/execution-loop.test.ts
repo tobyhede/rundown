@@ -133,7 +133,7 @@ describe('runExecutionLoop', () => {
       getPersistedSnapshot: jest.fn().mockReturnValue({
         status: 'active',
         value: '2',
-        context: { lastAction: 'CONTINUE' }
+        context: { lastAction: { type: 'CONTINUE' } }
       })
     };
     mockManager.createActor.mockResolvedValue(mockActor);
@@ -177,7 +177,7 @@ describe('runExecutionLoop', () => {
       getPersistedSnapshot: jest.fn().mockReturnValue({
         status: 'done',
         value: 'COMPLETE',
-        context: { lastAction: 'COMPLETE' }
+        context: { lastAction: { type: 'COMPLETE' } }
       })
     };
     mockManager.createActor.mockResolvedValue(mockActor);
@@ -196,6 +196,40 @@ describe('runExecutionLoop', () => {
       message: 'Success'
     }));
     expect(mockManager.popRunbook).toHaveBeenCalled();
+  });
+
+  it('uses expanded command text in printStepBlock fallback (prompted mode, no emitter)', async () => {
+    const forSteps = [{
+      name: '1',
+      description: 'Process',
+      forClause: { variable: 'item', start: 1, end: 1 },
+      substeps: [{
+        id: '1',
+        description: 'Handle {{item}}',
+        command: { code: 'rd echo item={{item}}', lang: 'bash' },
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      }],
+      transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+    }];
+
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      substep: '1',
+      status: 'running',
+    });
+
+    const result = await runExecutionLoop(mockManager, runbookId, forSteps as any, '/tmp', true);
+
+    expect(result).toBe('waiting');
+    expect(core.printStepBlock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        description: 'Handle 1',
+        command: expect.objectContaining({ code: 'rd echo item=1' }),
+      }),
+      true
+    );
   });
 });
 

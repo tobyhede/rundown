@@ -10,8 +10,8 @@ type RenderableItem = Step | Substep;
  * and nested runbook details that are not part of the CLI view.
  *
  * @param item - The Step or Substep to render
- * @param instanceNumber - For dynamic steps/substeps, the current instance number (replaces {N})
- * @param substepNumber - For dynamic substeps, the current substep number (replaces {n})
+ * @param instanceNumber - Current instance number for step/substep display
+ * @param substepNumber - Current substep number for nested substep display
  * @param showCommand - Whether to include the command code block in the output
  * @returns Markdown string suitable for CLI output
  */
@@ -24,34 +24,18 @@ export function renderStepForCLI(
   const lines: string[] = [];
 
   const isStep = 'name' in item;
-  const rawId = isStep ? item.name : item.id;
-  let resolvedId = rawId;
-
-  if (item.isDynamic) {
-    if (isStep && instanceNumber) {
-      resolvedId = rawId.replace('{N}', instanceNumber);
-    } else if (!isStep && substepNumber) {
-      resolvedId = rawId.replace('{n}', substepNumber);
-    }
-  }
+  const id = isStep ? item.name : item.id;
 
   const headingPrefix = isStep ? '##' : '###';
   const heading = isStep
-    ? `${headingPrefix} ${resolvedId}. ${item.description}`
-    : `${headingPrefix} ${instanceNumber ? `${instanceNumber}.${resolvedId}` : resolvedId}. ${item.description}`;
+    ? `${headingPrefix} ${id}. ${item.description}`
+    : `${headingPrefix} ${instanceNumber ? `${instanceNumber}.${id}` : id}. ${item.description}`;
 
   lines.push(heading);
 
   if (item.prompt) {
-    let resolvedPrompt = item.prompt;
-    if (instanceNumber) {
-      resolvedPrompt = resolvedPrompt.replace(/\{N\}/g, instanceNumber);
-    }
-    if (substepNumber) {
-      resolvedPrompt = resolvedPrompt.replace(/\{n\}/g, substepNumber);
-    }
     lines.push('');
-    lines.push(resolvedPrompt);
+    lines.push(item.prompt);
   }
 
   if (showCommand && item.command) {

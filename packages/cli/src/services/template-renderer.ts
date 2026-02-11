@@ -21,8 +21,8 @@ const TEMPLATE_VAR_REGEX = /{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}/g;
  * Uses `noEscape: true` to preserve markdown characters (no HTML escaping).
  * Missing variables are preserved as literal {{variable}} in output.
  *
- * Note: This does NOT affect Rundown's dynamic step syntax `{N}` and `{n}`,
- * which use single braces and are handled separately by the parser.
+ * Note: Single-brace syntax like {varName} is not affected by template rendering.
+ * Only double-brace Handlebars syntax {{varName}} is expanded.
  *
  * @param markdown - Raw markdown content with {{variable}} placeholders
  * @param variables - Key-value pairs for variable substitution
@@ -71,4 +71,29 @@ export function renderTemplate(
   // Compile with noEscape to preserve markdown characters
   const template = handlebars.compile(withPlaceholders, { noEscape: true });
   return template(variables);
+}
+
+/**
+ * Expand loop variables in text using simple regex substitution.
+ *
+ * Phase 2 of variable expansion: per-iteration loop variables (regex).
+ * Phase 1 (Handlebars via renderTemplate) runs once at rd-run startup.
+ *
+ * Unlike {@link renderTemplate} which uses Handlebars for full template processing,
+ * this function performs lightweight per-iteration variable expansion for FOR loops.
+ * Unmatched variables are preserved as literal `{{name}}` text.
+ *
+ * @param text - Text containing `{{variable}}` placeholders
+ * @param variables - Key-value pairs for substitution (e.g., `{ batch: "2", Index: "2" }`)
+ * @returns Text with matched variables replaced
+ */
+export function expandLoopVariables(
+  text: string,
+  variables: Record<string, string>
+): string {
+  return text.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
+    return Object.prototype.hasOwnProperty.call(variables, name)
+      ? variables[name]
+      : match;
+  });
 }

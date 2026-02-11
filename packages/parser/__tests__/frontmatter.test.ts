@@ -23,7 +23,7 @@ This is the runbook content.`;
     expect(result.frontmatter?.version).toBe('1.0.0');
     expect(result.frontmatter?.author).toBe('John Doe');
     expect(result.frontmatter?.tags).toEqual(['test', 'automation']);
-    expect(result.content).toBe('# Content\nThis is the runbook content.');
+    expect(result.content.trim()).toBe('# Content\nThis is the runbook content.');
   });
 
   it('extracts valid YAML with only required name field', () => {
@@ -39,7 +39,7 @@ Just content here.`;
     expect(result.frontmatter?.name).toBe('simple-runbook');
     expect(result.frontmatter?.description).toBeUndefined();
     expect(result.frontmatter?.version).toBeUndefined();
-    expect(result.content).toBe('# Content\nJust content here.');
+    expect(result.content.trim()).toBe('# Content\nJust content here.');
   });
 
   it('returns null frontmatter when no --- delimiter present', () => {
@@ -63,6 +63,7 @@ invalid yaml: [unclosed bracket
     const result = extractFrontmatter(markdown);
 
     expect(result.frontmatter).toBeNull();
+    // gray-matter still returns original content on parse error
     expect(result.content).toBe(markdown);
   });
 
@@ -75,20 +76,23 @@ name: invalid name with spaces
     const result = extractFrontmatter(markdown);
 
     expect(result.frontmatter).toBeNull();
-    expect(result.content).toBe(markdown);
+    // gray-matter strips frontmatter even when validation fails
+    expect(result.content.trim()).toBe('# Content');
   });
 
-  it('returns null frontmatter when frontmatter is unclosed (only opening ---)' , () => {
+  it('extracts frontmatter when no content follows closing delimiter', () => {
+    // Edge case: frontmatter-only document with no content after closing ---
     const markdown = `---
 name: my-runbook
-description: Never closed
-
-# Content starts here`;
+description: Test
+---`;
 
     const result = extractFrontmatter(markdown);
 
-    expect(result.frontmatter).toBeNull();
-    expect(result.content).toBe(markdown);
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('my-runbook');
+    expect(result.frontmatter?.description).toBe('Test');
+    expect(result.content.trim()).toBe('');
   });
 
   it('extracts frontmatter with vars field containing strings', () => {
@@ -193,7 +197,8 @@ vars:
 
     // Schema validation should fail for array values
     expect(result.frontmatter).toBeNull();
-    expect(result.content).toBe(markdown);
+    // gray-matter strips frontmatter even when validation fails
+    expect(result.content.trim()).toBe('# Content');
   });
 
   it('returns null frontmatter when vars contains invalid types (nested objects)', () => {
@@ -208,6 +213,96 @@ vars:
     const result = extractFrontmatter(markdown);
 
     // Schema validation should fail for nested object values
+    expect(result.frontmatter).toBeNull();
+    // gray-matter strips frontmatter even when validation fails
+    expect(result.content.trim()).toBe('# Content');
+  });
+
+  // New tests for gray-matter specific behavior
+
+  it('allows unknown fields via passthrough', () => {
+    const markdown = `---
+name: test-runbook
+skill: my-skill
+custom_field: some-value
+another_field: 123
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('test-runbook');
+    expect(result.frontmatter).toHaveProperty('skill', 'my-skill');
+    expect(result.frontmatter).toHaveProperty('custom_field', 'some-value');
+    expect(result.frontmatter).toHaveProperty('another_field', 123);
+    expect(result.content.trim()).toBe('# Content');
+  });
+
+  it('handles horizontal rules (--) in content', () => {
+    const markdown = `---
+name: test-runbook
+---
+
+# Title
+
+--
+
+More content after horizontal rule`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('test-runbook');
+    expect(result.content).toContain('--');
+    expect(result.content).toContain('More content after horizontal rule');
+  });
+
+  it('handles triple dash horizontal rules (---) in content', () => {
+    const markdown = `---
+name: test-runbook
+---
+
+# Title
+
+---
+
+More content after horizontal rule`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('test-runbook');
+    // The --- should be in the content, not treated as a second frontmatter block
+    expect(result.content).toContain('---');
+    expect(result.content).toContain('More content after horizontal rule');
+  });
+
+  it('returns null frontmatter for missing name field', () => {
+    const markdown = `---
+description: no name field here
+version: 1.0.0
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).toBeNull();
+    // Content is still stripped of frontmatter
+    expect(result.content.trim()).toBe('# Content');
+  });
+
+  it('returns null frontmatter when whitespace precedes opening ---', () => {
+    const markdown = `
+---
+name: whitespace-test
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    // gray-matter requires --- at the very start (no leading whitespace)
+    // This is consistent with most frontmatter parsers
     expect(result.frontmatter).toBeNull();
     expect(result.content).toBe(markdown);
   });

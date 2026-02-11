@@ -10,8 +10,7 @@ describe('RunbookStateManager', () => {
   let manager: RunbookStateManager;
   const mockSteps: Step[] = [{
     name: '1',
-    description: 'Initial step',
-    isDynamic: false
+    description: 'Initial step'
   }];
   const mockRunbook: Runbook = {
     title: 'Test Runbook',
@@ -71,8 +70,8 @@ describe('RunbookStateManager', () => {
   describe('RunbookStateManager substep initialization', () => {
     it('initializes substepStates when step has static substeps', async () => {
       const substeps = [
-        { id: '1', description: 'First reviewer', isDynamic: false, prompts: [] },
-        { id: '2', description: 'Second reviewer', isDynamic: false, prompts: [] }
+        { id: '1', description: 'First reviewer', prompts: [] },
+        { id: '2', description: 'Second reviewer', prompts: [] }
       ];
 
       const state = await manager.create('test.runbook.md', mockRunbook, { runbookPath: 'test.runbook.md' });
@@ -86,36 +85,6 @@ describe('RunbookStateManager', () => {
         agentId: undefined,
         result: undefined
       });
-    });
-
-    it('does not initialize for dynamic substeps', async () => {
-      const substeps = [
-        { id: '{n}', description: 'Dynamic step', isDynamic: true, prompts: [] }
-      ];
-
-      const state = await manager.create('test.runbook.md', mockRunbook, { runbookPath: 'test.runbook.md' });
-      await manager.initializeSubsteps(state.id, substeps);
-
-      const updated = await manager.load(state.id);
-      expect(updated?.substepStates).toEqual([]);
-    });
-  });
-
-  describe('RunbookStateManager dynamic substeps', () => {
-    it('adds dynamic substep with incrementing ID', async () => {
-      const state = await manager.create('test.runbook.md', mockRunbook, { runbookPath: 'test.runbook.md' });
-      await manager.update(state.id, { substepStates: [] });
-
-      const id1 = await manager.addDynamicSubstep(state.id);
-      expect(id1).toBe('1');
-
-      const id2 = await manager.addDynamicSubstep(state.id);
-      expect(id2).toBe('2');
-
-      const updated = await manager.load(state.id);
-      expect(updated?.substepStates).toHaveLength(2);
-      expect(updated?.substepStates?.[0].id).toBe('1');
-      expect(updated?.substepStates?.[1].id).toBe('2');
     });
   });
 
@@ -156,11 +125,11 @@ describe('RunbookStateManager', () => {
   });
 
   describe('updateFromActor flattened states', () => {
-    it('extracts substep ID from flattened machine state (step_N_M)', async () => {
+    it('extracts substep ID from flattened machine state (step::N::M)', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const actor = {
         getPersistedSnapshot: () => ({
-          value: 'step_1_2',
+          value: 'step::1::2',
           context: { variables: {}, retryCount: 0, substep: '2' }
         })
       };
@@ -170,19 +139,19 @@ describe('RunbookStateManager', () => {
       expect(updated.substep).toBe('2');
     });
 
-    it('extracts step number from simple machine state (step_N)', async () => {
+    it('extracts step number from simple machine state (step::N)', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const actor = {
         getPersistedSnapshot: () => ({
-          value: 'step_3',
+          value: 'step::3',
           context: { variables: {}, retryCount: 0 }
         })
       };
 
       const steps: Step[] = [
         ...mockSteps,
-        { name: '2', description: 'S2', isDynamic: false },
-        { name: '3', description: 'S3', isDynamic: false }
+        { name: '2', description: 'S2' },
+        { name: '3', description: 'S3' }
       ];
 
       const updated = await manager.updateFromActor(state.id, actor as any, steps);
@@ -200,41 +169,6 @@ describe('RunbookStateManager', () => {
     it('accepts prompted option', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md', prompted: true });
       expect(state.prompted).toBe(true);
-    });
-  });
-
-  describe('dynamic runbook initialization', () => {
-    it('initializes dynamic runbook with instance=1 and step={N}', async () => {
-      const dynamicRunbook: Runbook = {
-        title: 'Dynamic Test',
-        steps: [{
-          name: '{N}',
-          description: 'Process Batch',
-          isDynamic: true,
-        }],
-      };
-
-      const state = await manager.create('dynamic.runbook.md', dynamicRunbook, { runbookPath: 'dynamic.runbook.md' });
-
-      expect(state.step).toBe('{N}');        // Keep {N} for machine integrity
-      expect(state.instance).toBe(1);         // Use instance field for display
-      expect(state.stepName).toBe('Process Batch');
-    });
-
-    it('does not set instance for non-dynamic runbooks', async () => {
-      const staticRunbook: Runbook = {
-        title: 'Static Test',
-        steps: [{
-          name: 'Setup',
-          description: 'Setup Step',
-          isDynamic: false,
-        }],
-      };
-
-      const state = await manager.create('static.runbook.md', staticRunbook, { runbookPath: 'static.runbook.md' });
-
-      expect(state.step).toBe('Setup');
-      expect(state.instance).toBeUndefined();
     });
   });
 
@@ -583,6 +517,273 @@ describe('RunbookStateManager', () => {
       // Check mode is 0o600 (owner read/write only)
       // Note: mode includes file type bits, so mask with 0o777
       expect(stats.mode & 0o777).toBe(0o600);
+    });
+  });
+
+  describe('FOR loop context persistence', () => {
+    it('persists FOR fields through round-trip', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      // Update with forStack
+      const updated = await manager.update(state.id, {
+        forStack: [{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' }],
+        iterationResults: ['pass', 'pass']
+      });
+
+      // Verify forStack is set
+      expect(updated.forStack).toEqual([{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' }]);
+      expect(updated.iterationResults).toEqual(['pass', 'pass']);
+
+      // Load from disk and verify persistence
+      const loaded = await manager.load(state.id);
+      expect(loaded?.forStack).toEqual([{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' }]);
+      expect(loaded?.iterationResults).toEqual(['pass', 'pass']);
+    });
+
+    it('syncs FOR context fields from actor snapshot', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::1',
+          context: {
+            variables: { test: 'value' },
+            retryCount: 0,
+            forStack: [{ stepId: '1', iteration: 1, start: 1, end: 3, variable: 'item' }],
+            iterationResults: ['pass'],
+            lastAction: { type: 'START' }
+          }
+        })
+      };
+
+      const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
+
+      expect(updated.forStack).toEqual([{ stepId: '1', iteration: 1, start: 1, end: 3, variable: 'item' }]);
+      expect(updated.iterationResults).toEqual(['pass']);
+      expect(updated.lastAction).toEqual({ type: 'START' });
+    });
+
+    it('clears FOR fields when runbook completes', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      // First, set forStack
+      await manager.update(state.id, {
+        forStack: [{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' }],
+        iterationResults: ['pass', 'pass']
+      });
+
+      // Now simulate completion via updateFromActor
+      const completeActor = {
+        getPersistedSnapshot: () => ({
+          value: 'COMPLETE',
+          context: {
+            variables: { completed: true },
+            retryCount: 0
+          }
+        })
+      };
+
+      const completed = await manager.updateFromActor(state.id, completeActor as any, mockSteps);
+
+      // FOR fields should be cleared
+      expect(completed.forStack).toBeUndefined();
+      expect(completed.iterationResults).toBeUndefined();
+    });
+
+    it('migrates old snapshot context on createActor', async () => {
+      // Test the createActor migration path directly
+      // Start with a normal actor that has been running
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const actor1 = await manager.createActor(state.id, mockSteps);
+      expect(actor1).not.toBeNull();
+
+      // Get its snapshot
+      const snapshot1 = actor1!.getPersistedSnapshot() as any;
+
+      // Now manually modify the snapshot to have old-style flat fields
+      const oldSnapshot = {
+        ...snapshot1,
+        context: {
+          ...snapshot1.context,
+          forIteration: 2,
+          forStart: 1,
+          forEnd: 3,
+          forVariable: 'item',
+          // Remove forStack to simulate old state
+          forStack: undefined
+        }
+      };
+
+      // Save this old snapshot
+      await manager.update(state.id, { snapshot: oldSnapshot });
+
+      // Create a new actor - should trigger migration
+      const actor2 = await manager.createActor(state.id, mockSteps);
+      expect(actor2).not.toBeNull();
+
+      // Get the migrated snapshot
+      const snapshot2 = actor2!.getPersistedSnapshot() as any;
+      const context = snapshot2.context;
+
+      // Should have forStack, not flat fields
+      expect(context.forStack).toEqual([{
+        stepId: '1',
+        iteration: 2,
+        start: 1,
+        end: 3,
+        variable: 'item'
+      }]);
+      expect(context.forIteration).toBeUndefined();
+      expect(context.forStart).toBeUndefined();
+      expect(context.forEnd).toBeUndefined();
+      expect(context.forVariable).toBeUndefined();
+    });
+  });
+
+  describe('implicit ForContext filtering', () => {
+    it('implicit ForContext entries are not persisted', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::1::1',
+          context: {
+            forStack: [{ stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }],
+            iterationResults: [],
+            retryCount: 0,
+            variables: {},
+            lastAction: { type: 'START' },
+          }
+        })
+      };
+
+      const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
+      expect(updated.forStack).toBeUndefined();
+    });
+
+    it('iterationResults not persisted for implicit loops', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::1::1',
+          context: {
+            forStack: [{ stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }],
+            iterationResults: ['pass'],
+            retryCount: 0,
+            variables: {},
+            lastAction: { type: 'CONTINUE' },
+          }
+        })
+      };
+
+      const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
+      expect(updated.iterationResults).toBeUndefined();
+    });
+
+    it('explicit ForContext entries are persisted normally', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::1::1',
+          context: {
+            forStack: [{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'batch' }],
+            iterationResults: ['pass'],
+            retryCount: 0,
+            variables: {},
+            lastAction: { type: 'CONTINUE' },
+          }
+        })
+      };
+
+      const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
+      expect(updated.forStack).toHaveLength(1);
+      expect(updated.iterationResults).toEqual(['pass']);
+    });
+
+    it('iterationResults preserved after explicit FOR loop exits (empty forStack)', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::2',
+          context: {
+            forStack: [],
+            iterationResults: ['pass', 'fail', 'pass'],
+            retryCount: 0,
+            variables: {},
+            lastAction: { type: 'CONTINUE' },
+          }
+        })
+      };
+
+      const steps: Step[] = [
+        ...mockSteps,
+        { name: '2', description: 'After loop' }
+      ];
+
+      const updated = await manager.updateFromActor(state.id, actor as any, steps);
+      expect(updated.forStack).toBeUndefined(); // empty stack not persisted
+      expect(updated.iterationResults).toEqual(['pass', 'fail', 'pass']); // preserved
+    });
+  });
+
+  describe('Legacy snapshot rejection', () => {
+    it('rejects state with GOTO_NEXT action in lastAction', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      // Manually save legacy state with GOTO_NEXT
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const legacyState = {
+        ...state,
+        lastAction: { type: 'GOTO_NEXT' }
+      };
+      await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
+
+      // Attempt to load should throw
+      await expect(manager.load(state.id)).rejects.toThrow('dynamic-step snapshots');
+    });
+
+    it('rejects state with instance field', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      // Manually save legacy state with instance field
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const legacyState = {
+        ...state,
+        instance: 2
+      };
+      await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
+
+      // Attempt to load should throw
+      await expect(manager.load(state.id)).rejects.toThrow('dynamic-step snapshots');
+    });
+
+    it('provides helpful error message for legacy snapshots', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      // Manually save legacy state with GOTO_NEXT
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const legacyState = {
+        ...state,
+        lastAction: { type: 'GOTO_NEXT' }
+      };
+      await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
+
+      // Attempt to load should throw with helpful message
+      try {
+        await manager.load(state.id);
+        throw new Error('Should have thrown');
+      } catch (e) {
+        if (e instanceof Error) {
+          expect(e.message).toContain('dynamic-step snapshots');
+          expect(e.message).toContain('no longer supported');
+          expect(e.message).toContain('restart execution');
+        }
+      }
     });
   });
 });

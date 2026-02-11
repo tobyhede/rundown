@@ -4,51 +4,15 @@ import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import type { Step } from '../../src/runbook/types.js';
 
 describe('GOTO to self (implicit retry)', () => {
-  it('should increment retryCount when GOTO targets current step via {N}', () => {
-    // Use name: '{N}' to match how parser represents dynamic steps
-    const steps: Step[] = [{
-      name: '{N}',
-      description: 'Dynamic step',
-      isDynamic: true,
-      transitions: {
-        all: false,
-        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-        fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '{N}' } } }
-      }
-    }];
-
-    const machine = compileRunbookToMachine(steps);
-    const actor = createActor(machine);
-    actor.start();
-
-    // Initial state - state ID is step_{N} (string, not nested object)
-    expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_{N}');
-
-    // First FAIL - should increment retryCount (GOTO to self)
-    actor.send({ type: 'FAIL' });
-    expect(actor.getSnapshot().context.retryCount).toBe(1);
-    expect(actor.getSnapshot().value).toBe('step_{N}');
-
-    // Second FAIL - should increment again
-    actor.send({ type: 'FAIL' });
-    expect(actor.getSnapshot().context.retryCount).toBe(2);
-
-    // Third FAIL - should increment again
-    actor.send({ type: 'FAIL' });
-    expect(actor.getSnapshot().context.retryCount).toBe(3);
-  });
-
   it('should increment retryCount when GOTO targets current step by numeric name', () => {
     // Tests non-dynamic step that uses GOTO to itself by step number
     const steps: Step[] = [{
       name: '1',
       description: 'Retry Step',
-      isDynamic: false,
       transitions: {
         all: false,
-        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-        fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '1' } } }
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1' } } }
       }
     }];
 
@@ -57,11 +21,11 @@ describe('GOTO to self (implicit retry)', () => {
     actor.start();
 
     expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_1');
+    expect(actor.getSnapshot().value).toBe('step::1');
 
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(1);
-    expect(actor.getSnapshot().value).toBe('step_1');
+    expect(actor.getSnapshot().value).toBe('step::1');
 
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(2);
@@ -71,20 +35,20 @@ describe('GOTO to self (implicit retry)', () => {
     const steps: Step[] = [
       {
         name: '1',
-        title: 'Step One',
-        transitions: {
+        description: 'Step One',
+          transitions: {
           all: false,
-          pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-          fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '2' } } }
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '2' } } }
         }
       },
       {
         name: '2',
-        title: 'Step Two',
-        transitions: {
+        description: 'Step Two',
+          transitions: {
           all: false,
-          pass: { kind: 'pass', action: { type: 'COMPLETE' } },
-          fail: { kind: 'fail', action: { type: 'STOP' } }
+          pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
         }
       }
     ];
@@ -101,7 +65,7 @@ describe('GOTO to self (implicit retry)', () => {
     // FAIL with GOTO to different step should reset
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_2');
+    expect(actor.getSnapshot().value).toBe('step::2');
   });
 
   it('should increment retryCount when GOTO targets same step and substep', () => {
@@ -112,14 +76,14 @@ describe('GOTO to self (implicit retry)', () => {
       substeps: [
         {
           id: 'a',
-          title: 'Substep A',
-          transitions: {
+          description: 'Substep A',
+              transitions: {
             all: false,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '1', substep: 'a' } } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1', substep: 'a' } } }
           }
         },
-        { id: 'b', title: 'Substep B' }
+        { id: 'b', description: 'Substep B' }
       ]
     }];
 
@@ -129,12 +93,12 @@ describe('GOTO to self (implicit retry)', () => {
 
     // Initial state - starts at step 1 substep a
     expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_1_a');
+    expect(actor.getSnapshot().value).toBe('step::1::a');
 
     // FAIL with GOTO to same step+substep should increment
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(1);
-    expect(actor.getSnapshot().value).toBe('step_1_a');
+    expect(actor.getSnapshot().value).toBe('step::1::a');
 
     // Second FAIL should increment again
     actor.send({ type: 'FAIL' });
@@ -149,14 +113,14 @@ describe('GOTO to self (implicit retry)', () => {
       substeps: [
         {
           id: 'a',
-          title: 'Substep A',
-          transitions: {
+          description: 'Substep A',
+              transitions: {
             all: false,
-            pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', action: { type: 'GOTO', target: { step: '1', substep: 'b' } } }
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1', substep: 'b' } } }
           }
         },
-        { id: 'b', title: 'Substep B' }
+        { id: 'b', description: 'Substep B' }
       ]
     }];
 
@@ -166,7 +130,7 @@ describe('GOTO to self (implicit retry)', () => {
 
     // Initial state - starts at step 1 substep a
     expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_1_a');
+    expect(actor.getSnapshot().value).toBe('step::1::a');
 
     // Simulate some retries
     actor.send({ type: 'RETRY' });
@@ -176,6 +140,6 @@ describe('GOTO to self (implicit retry)', () => {
     // FAIL with GOTO to same step but different substep should reset
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.retryCount).toBe(0);
-    expect(actor.getSnapshot().value).toBe('step_1_b');
+    expect(actor.getSnapshot().value).toBe('step::1::b');
   });
 });

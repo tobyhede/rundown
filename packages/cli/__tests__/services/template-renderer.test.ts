@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { renderTemplate } from '../../src/services/template-renderer.js';
+import { renderTemplate, expandLoopVariables } from '../../src/services/template-renderer.js';
 
 describe('renderTemplate', () => {
   it('should expand variables in markdown', () => {
@@ -36,15 +36,6 @@ describe('renderTemplate', () => {
     const result = renderTemplate(markdown, variables);
 
     expect(result).toBe('## 1. Test & Verify <code>');
-  });
-
-  it('should not affect dynamic step syntax {N}', () => {
-    const markdown = '## {N}. Dynamic Step\n\n{{command}}';
-    const variables = { command: 'echo hello' };
-
-    const result = renderTemplate(markdown, variables);
-
-    expect(result).toBe('## {N}. Dynamic Step\n\necho hello');
   });
 
   it('should handle empty variables object', () => {
@@ -208,5 +199,52 @@ describe('renderTemplate', () => {
         /Parse error on line 1/
       );
     });
+  });
+});
+
+describe('expandLoopVariables', () => {
+  it('should expand named loop variable', () => {
+    expect(expandLoopVariables('Handle {{batch}}', { batch: '2' }))
+      .toBe('Handle 2');
+  });
+
+  it('should expand Index built-in', () => {
+    expect(expandLoopVariables('Iteration {{Index}}', { Index: '3' }))
+      .toBe('Iteration 3');
+  });
+
+  it('should expand both named variable and Index', () => {
+    expect(expandLoopVariables('{{batch}} of {{Index}}', { batch: '2', Index: '2' }))
+      .toBe('2 of 2');
+  });
+
+  it('should preserve unmatched variables', () => {
+    expect(expandLoopVariables('{{batch}} and {{other}}', { batch: '1' }))
+      .toBe('1 and {{other}}');
+  });
+
+  it('should return text unchanged when no variables match', () => {
+    expect(expandLoopVariables('No variables here', { batch: '1' }))
+      .toBe('No variables here');
+  });
+
+  it('should handle variable with spaces around braces', () => {
+    expect(expandLoopVariables('{{ batch }}', { batch: '5' }))
+      .toBe('5');
+  });
+
+  it('should expand multiple occurrences of same variable', () => {
+    expect(expandLoopVariables('{{i}} then {{i}}', { i: '3' }))
+      .toBe('3 then 3');
+  });
+
+  it('should expand Step variable', () => {
+    expect(expandLoopVariables('At step {{Step}}', { Step: '3.1' }))
+      .toBe('At step 3.1');
+  });
+
+  it('should expand Step for named step', () => {
+    expect(expandLoopVariables('At {{Step}}', { Step: 'ErrorHandler' }))
+      .toBe('At ErrorHandler');
   });
 });

@@ -1,7 +1,49 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { findRunbookByName } from '../services/discovery.js';
+import { findRunbookByName, findRunbookByNameInSource } from '../services/discovery.js';
 import { getBundledRunbooksPath } from './bundled-runbooks.js';
+
+/**
+ * Parsed runbook identifier with optional namespace.
+ */
+export interface ParsedIdentifier {
+  /** Namespace prefix (e.g., 'rundown') or null if none */
+  namespace: string | null;
+  /** Runbook name or path */
+  name: string;
+}
+
+/**
+ * Parse a runbook identifier into namespace and name components.
+ * Namespace syntax: `namespace:name` (e.g., `rundown:write-plan`)
+ *
+ * @param identifier - Runbook identifier to parse
+ * @returns Parsed identifier with namespace and name
+ */
+export function parseIdentifier(identifier: string): ParsedIdentifier {
+  // Match namespace:name pattern where namespace is lowercase alphanumeric with hyphens
+  const regex = /^([a-z][a-z0-9-]*):(.+)$/;
+  const match = regex.exec(identifier);
+  if (match) {
+    return { namespace: match[1], name: match[2] };
+  }
+  return { namespace: null, name: identifier };
+}
+
+/**
+ * Map namespace to source type.
+ * Currently only 'rundown' namespace maps to 'plugin' source.
+ *
+ * @param namespace - Namespace string
+ * @returns Source type or null if namespace not recognized
+ */
+function namespaceToSource(namespace: string): 'project' | 'plugin' | 'bundled' | null {
+  if (namespace === 'rundown') {
+    return 'plugin';
+  }
+  // Future: could support other namespaces
+  return null;
+}
 
 /**
  * Resolve runbook file by path (existing logic).
@@ -67,29 +109,49 @@ function isPathIdentifier(identifier: string): boolean {
  * Supports both path-based and name-based resolution:
  * - Path mode: .claude/rundown/runbooks/file.md, ./path/to/file.md, etc.
  * - Name mode: "verify", "my-runbook", etc.
+ * - Namespace mode: "rundown:write-plan" (explicit source targeting)
  *
  * Search order for path mode:
  * 1. .claude/rundown/runbooks/ (project-local)
  * 2. $CLAUDE_PLUGIN_ROOT/runbooks/ (plugin directory)
  * 3. Relative to cwd
+ * 4. Bundled runbooks
  *
- * Search order for name mode:
+ * Search order for name mode (no namespace):
  * 1. Project runbooks directory
  * 2. Plugin runbooks directory
+ * 3. Bundled runbooks
+ *
+ * Namespace mode (e.g., rundown:write-plan):
+ * - Searches only in the specified source (plugin for 'rundown' namespace)
  *
  * @param cwd - Current working directory
- * @param identifier - Runbook filename or name to find
+ * @param identifier - Runbook filename, name, or namespaced name to find
  * @returns Absolute path to runbook file, or null if not found
  * @throws May throw filesystem errors if directory access fails unexpectedly
  */
 export async function resolveRunbookFile(cwd: string, identifier: string): Promise<string | null> {
+  // Parse namespace from identifier
+  const { namespace, name } = parseIdentifier(identifier);
+
+  // If namespace specified, use explicit source lookup
+  if (namespace !== null) {
+    const source = namespaceToSource(namespace);
+    if (source === null) {
+      // Unknown namespace - not found
+      return null;
+    }
+    const discovered = await findRunbookByNameInSource(cwd, name, source);
+    return discovered ? discovered.path : null;
+  }
+
   // Detect if identifier is path-based or name-based
-  if (isPathIdentifier(identifier)) {
+  if (isPathIdentifier(name)) {
     // Path-based resolution: use existing logic
-    return resolveByPath(cwd, identifier);
+    return resolveByPath(cwd, name);
   } else {
     // Name-based resolution: use discovery service
-    const discovered = await findRunbookByName(cwd, identifier);
+    const discovered = await findRunbookByName(cwd, name);
     return discovered ? discovered.path : null;
   }
 }

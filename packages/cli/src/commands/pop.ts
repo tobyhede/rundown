@@ -10,6 +10,7 @@ import { getCwd } from '../helpers/context.js';
 import {
   getStepRetryMax,
   buildMetadata,
+  formatActionForDisplay,
 } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -50,11 +51,8 @@ export function registerPopCommand(program: Command): void {
           let actionBlockData: ActionBlockData | undefined;
           if (state.lastAction) {
             const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
-            actionBlockData = {
-              action: state.lastAction === 'GOTO' ? `GOTO ${state.step}` :
-                      state.lastAction === 'RETRY' ? `RETRY (${String(state.retryCount)}/${String(retryMaxForAction)})` :
-                      state.lastAction,
-            };
+            const actionStr = formatActionForDisplay(state.lastAction, state.retryCount, retryMaxForAction);
+            actionBlockData = { action: actionStr };
             if (state.lastResult) {
               actionBlockData.result = state.lastResult === 'pass';
             }

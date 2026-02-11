@@ -19,15 +19,12 @@ export function isNumberedStepName(stepName: string): boolean {
  * Count only numbered steps in a runbook.
  *
  * Excludes named steps (like "RECOVER") from the count.
- * Dynamic steps (with isDynamic: true) are counted as 1 numbered step
- * since they represent a repeatable numbered step.
  *
- * @param steps - Array of steps with name and isDynamic properties
- * @returns Count of numbered steps (including dynamic steps)
+ * @param steps - Array of steps with name property
+ * @returns Count of numbered steps
  */
 export function countNumberedSteps(
-  steps: readonly { name: string; isDynamic: boolean }[]
+  steps: readonly { name: string }[]
 ): number {
-  return steps.filter((step) => step.isDynamic || /^\d+$/.test(step.name))
-    .length;
+  return steps.filter((step) => /^\d+$/.test(step.name)).length;
 }

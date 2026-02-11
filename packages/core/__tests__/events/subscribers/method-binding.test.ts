@@ -49,7 +49,7 @@ describe('Subscriber method binding', () => {
         action: 'CONTINUE',
         from: { current: '1', total: 2 },
         to: { current: '2', total: 2 },
-        result: 'PASS',
+        result: true,
       });
       emitter.emit('RUNBOOK_COMPLETED', {
         finalPosition: { current: '2', total: 2 },
@@ -69,8 +69,10 @@ describe('Subscriber method binding', () => {
       const emitter = new ExecutionEventEmitter('wf-test', { name: 'test', path: 'test.md' });
       const output: string[] = [];
       const mockWriter = {
-        writeLine: (line: string) => output.push(line),
-        write: (text: string) => output.push(text),
+        writeLine: (text?: string) => { output.push(text ?? ''); },
+        write: (text: string) => { output.push(text); },
+        writeLines: (lines: string[]) => { lines.forEach(l => output.push(l)); },
+        writeError: (text: string) => { output.push(text); },
         writeJson: () => { /* no-op for test */ },
       };
       const cliSubscriber = new CLISubscriber(mockWriter);
@@ -95,8 +97,10 @@ describe('Subscriber method binding', () => {
       const emitter = new ExecutionEventEmitter('wf-test', { name: 'test', path: 'test.md' });
       const output: string[] = [];
       const mockWriter = {
-        writeLine: (line: string) => output.push(line),
-        write: (text: string) => output.push(text),
+        writeLine: (text?: string) => { output.push(text ?? ''); },
+        write: (text: string) => { output.push(text); },
+        writeLines: (lines: string[]) => { lines.forEach(l => output.push(l)); },
+        writeError: (text: string) => { output.push(text); },
         writeJson: () => { /* no-op for test */ },
       };
       const cliSubscriber = new CLISubscriber(mockWriter);

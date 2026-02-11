@@ -4,6 +4,7 @@ import * as path from 'path';
 import { createActor, type AnyActorRef } from 'xstate';
 import {
   type RunbookState,
+  type ForContext,
   type AgentBinding,
   type PendingStep,
   type Substep,
@@ -84,8 +85,6 @@ export class RunbookStateManager {
     const now = new Date().toISOString();
 
     const initialStep = runbook.steps[0];
-    // For dynamic runbooks, initialize instance counter to 1
-    const instance = initialStep.isDynamic ? 1 : undefined;
 
     const state: RunbookState = {
       id,
@@ -93,8 +92,7 @@ export class RunbookStateManager {
       runbookPath: options.runbookPath,
       title: runbook.title,
       description: runbook.description,
-      step: initialStep.name,    // Keep as '{N}' for dynamic, original name for static
-      instance,                   // 1 for dynamic, undefined for static
+      step: initialStep.name,
       stepName: initialStep.description,
       retryCount: 0,
       variables: {},
@@ -119,15 +117,43 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID (e.g., 'wf-2025-01-12-abc123')
    * @returns The loaded RunbookState, or null if not found or invalid
+   * @throws Error if the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
     try {
       const content = await fs.readFile(this.statePath(id), 'utf8');
       const parsed = JSON.parse(content) as unknown;
+
+      // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field
+      if (typeof parsed === 'object' && parsed !== null) {
+        const obj = parsed as Record<string, unknown>;
+        const lastAction = obj.lastAction;
+        if (
+          typeof lastAction === 'object' &&
+          lastAction !== null &&
+          (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
+        ) {
+          throw new Error(
+            'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
+              'Please restart execution from the runbook entrypoint.',
+          );
+        }
+        if (obj.instance !== undefined) {
+          throw new Error(
+            'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
+              'Please restart execution from the runbook entrypoint.',
+          );
+        }
+      }
+
       const result = RunbookStateSchema.safeParse(parsed);
       if (!result.success) return null;
       return result.data;
-    } catch {
+    } catch (e) {
+      // Re-throw legacy snapshot errors
+      if (e instanceof Error && e.message.includes('dynamic-step snapshots')) {
+        throw e;
+      }
       return null;
     }
   }
@@ -147,9 +173,45 @@ export class RunbookStateManager {
     if (!state) return null;
 
     const machine = compileRunbookToMachine(steps);
+
+    // Migrate old snapshot context: flat FOR fields → forStack
+    // Snapshot migration deals with untyped persisted data — any is unavoidable
+    /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
+    const snapshot = state.snapshot as any;
+    if (snapshot?.context && !snapshot.context.forStack) {
+      const ctx = snapshot.context as any;
+      if (ctx.forIteration !== undefined) {
+        // Derive stepId from snapshot.value (authoritative) with state.step fallback
+        const stateValue = snapshot.value as string | undefined;
+        const stepMatch = stateValue
+          ? (/^step::([^:]+)/.exec(stateValue) ?? /^step_([^_]+)/.exec(stateValue))
+          : null;
+        const stepId = stepMatch?.[1] ?? state.step;
+
+        snapshot.context = {
+          ...ctx,
+          forStack: [{
+            stepId,
+            iteration: ctx.forIteration,
+            start: ctx.forStart ?? 1,
+            end: ctx.forEnd ?? ctx.forIteration,
+            variable: ctx.forVariable,
+          }],
+          forIteration: undefined,
+          forStart: undefined,
+          forEnd: undefined,
+          forVariable: undefined,
+        };
+      } else {
+        // No active loop — just ensure forStack exists
+        snapshot.context = { ...ctx, forStack: [] };
+      }
+    }
+    /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
+
     const actor = createActor(machine, {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-      snapshot: state.snapshot as any
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      snapshot
     });
     actor.start();
     return actor;
@@ -250,12 +312,22 @@ export class RunbookStateManager {
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         const variables = (snapshot.context?.variables ?? {}) as Record<string, boolean | number | string>;
-        return await this.update(id, { variables, snapshot });
+        return await this.update(id, {
+          variables,
+          snapshot,
+          // Clear FOR loop state on completion
+          forStack: undefined,
+          iterationResults: undefined,
+        });
     }
 
     // Parse step name from XState state value
-    // Uses [^_]+ to match step name and substep ID (separated by underscore)
-    const match = /^step_([^_]+)(?:_([^_]+))?$/.exec(stateValue);
+    const primaryMatch = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
+    const legacyMatch = !primaryMatch ? /^step_([^_]+)(?:_([^_]+))?$/.exec(stateValue) : null;
+    if (legacyMatch) {
+      console.warn('Deprecated state-ID format "step_…" detected. Please restart execution to migrate to "step::…" format.');
+    }
+    const match = primaryMatch ?? legacyMatch;
     const stepName = match ? match[1] : steps[0].name;
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -272,13 +344,34 @@ export class RunbookStateManager {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const variables = (snapshot.context?.variables ?? {}) as Record<string, boolean | number | string>;
 
+    // FOR loop context
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const forStack = snapshot.context?.forStack as ForContext[] | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const iterationResults = snapshot.context?.iterationResults as ('pass' | 'fail')[] | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const lastAction = snapshot.context?.lastAction as RunbookState['lastAction'];
+
     return await this.update(id, {
       step: stepName,           // string
       substep,
       stepName: step.description,
       retryCount,
       variables,
-      snapshot
+      snapshot,
+      // Filter implicit ForContext entries — don't persist synthetic loop state
+      forStack: (() => {
+        const realForStack = forStack?.filter(fc => !fc.implicit);
+        return realForStack?.length ? realForStack : undefined;
+      })(),
+      // Only clear iterationResults when all stack entries were implicit.
+      // When forStack is empty after explicit FOR exit, iterationResults
+      // must be preserved for parent-step aggregation.
+      iterationResults: (() => {
+        const hasOnlyImplicit = forStack?.length ? forStack.every(fc => fc.implicit) : false;
+        return hasOnlyImplicit ? undefined : iterationResults;
+      })(),
+      lastAction,
     });
   }
 
@@ -623,8 +716,7 @@ export class RunbookStateManager {
   /**
    * Initialize substep tracking state for a runbook step.
    *
-   * Creates SubstepState entries for all non-dynamic substeps with 'pending' status.
-   * Dynamic substeps are added later via addDynamicSubstep.
+   * Creates SubstepState entries for all substeps with 'pending' status.
    *
    * @param id - The runbook state ID
    * @param substeps - The substep definitions from the step
@@ -634,9 +726,7 @@ export class RunbookStateManager {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);
 
-    const staticSubsteps = substeps.filter(s => !s.isDynamic);
-
-    const substepStates: SubstepState[] = staticSubsteps.map(s => ({
+    const substepStates: SubstepState[] = substeps.map(s => ({
       id: s.id,
       status: 'pending',
       agentId: undefined,
@@ -644,37 +734,6 @@ export class RunbookStateManager {
     }));
 
     await this.update(id, { substepStates });
-  }
-
-  /**
-   * Add a new dynamic substep to the runbook's substep tracking.
-   *
-   * Creates a new SubstepState with a sequential ID based on the current
-   * count of substeps. Used for steps that support dynamic substep creation.
-   *
-   * @param id - The runbook state ID
-   * @returns The ID of the newly created substep
-   * @throws Error if the runbook with the given ID is not found
-   */
-  async addDynamicSubstep(id: string): Promise<string> {
-    const state = await this.load(id);
-    if (!state) throw new Error(`Runbook ${id} not found`);
-
-    const existing = state.substepStates ?? [];
-    const nextId = String(existing.length + 1);
-
-    const newSubstep: SubstepState = {
-      id: nextId,
-      status: 'pending',
-      agentId: undefined,
-      result: undefined
-    };
-
-    await this.update(id, {
-      substepStates: [...existing, newSubstep]
-    });
-
-    return nextId;
   }
 
   /**

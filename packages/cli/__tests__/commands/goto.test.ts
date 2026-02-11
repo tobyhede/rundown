@@ -69,11 +69,11 @@ describe('goto command', () => {
       expect(result.stderr).toContain('missing required argument');
     });
 
-    it('rejects NEXT target via CLI', async () => {
-      const result = runCli(['goto', 'NEXT'], workspace);
+    it('rejects AT on non-FOR step', async () => {
+      const result = runCli(['goto', '2 AT 5'], workspace);
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('GOTO NEXT is only valid as a runbook transition');
+      expect(result.stderr).toContain('INVALID_AT_TARGET');
     });
   });
 });

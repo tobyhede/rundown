@@ -300,32 +300,6 @@ describe('Template Variables Integration', () => {
     });
   });
 
-  describe('dynamic step syntax preservation', () => {
-    it('does not affect {N} dynamic step syntax in status', async () => {
-      // Dynamic runbooks use {N} syntax which must be preserved (not expanded by Handlebars)
-      const runbookContent = `# Dynamic Test
-
-## {N}. Dynamic Step
-- PASS: GOTO NEXT
-
-\`\`\`bash
-rd echo "Instance {{command}}"
-\`\`\`
-`;
-      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
-
-      // Run in prompted mode to keep it paused
-      runCli('run test.runbook.md --var command=test --prompted', workspace);
-
-      // Status should show the dynamic step syntax was preserved
-      const result = runCli('status --json', workspace);
-
-      expect(result.exitCode).toBe(0);
-      // Should be dynamic runbook (unbounded total)
-      const output = JSON.parse(result.stdout);
-      expect(output.position.total).toBe('{N}');
-    });
-  });
 
   describe('resume with frozen runbookSrc', () => {
     it('should use stored runbookSrc in pass command', async () => {

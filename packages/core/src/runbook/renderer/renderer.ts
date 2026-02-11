@@ -4,7 +4,7 @@ import { stepIdToString } from '../step-id.js';
 /**
  * Render an Action to DSL string.
  *
- * @param action - The action to render (CONTINUE, COMPLETE, STOP, GOTO)
+ * @param action - The action to render (CONTINUE, COMPLETE, STOP, GOTO, NEXT, BREAK)
  * @returns The DSL string representation of the action
  */
 export function renderAction(action: Action): string {
@@ -17,6 +17,10 @@ export function renderAction(action: Action): string {
       return action.message ? `STOP "${action.message}"` : 'STOP';
     case 'GOTO':
       return `GOTO ${stepIdToString(action.target)}`;
+    case 'NEXT':
+      return 'NEXT';
+    case 'BREAK':
+      return 'BREAK';
   }
 }
 
@@ -51,7 +55,7 @@ export function renderTransitions(transitions: Transitions): string {
  * agent type suffix, and runbook references.
  *
  * @param substep - The Substep to render
- * @param parentStepName - The parent step name (e.g., "1", "ErrorHandler", "{N}")
+ * @param parentStepName - The parent step name (e.g., "1", "ErrorHandler")
  * @returns Markdown H3 header string for the substep
  */
 export function renderSubstep(substep: Substep, parentStepName: string): string {
@@ -72,7 +76,7 @@ export function renderSubstep(substep: Substep, parentStepName: string): string 
 export function renderStep(step: Step): string {
   const lines: string[] = [];
 
-  // Header - use step.name directly (already "{N}" for dynamic, "1" for numeric)
+  // Header - use step.name directly
   const stepId = step.name;
   lines.push(`## ${stepId}. ${step.description}`);
   lines.push('');

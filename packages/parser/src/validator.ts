@@ -22,41 +22,12 @@ function getErrorContext(step: Step, substepId?: string): string {
   return substepId ? `${step.name}.${substepId}` : step.name;
 }
 
-/**
- * Find the dynamic step template in a runbook.
- *
- * @param steps - Array of runbook steps
- * @returns The dynamic step if one exists, undefined otherwise
- */
-function findDynamicStep(steps: readonly Step[]): Step | undefined {
-  return steps.find(s => s.isDynamic);
-}
-
-/**
- * Check if a runbook has a dynamic step template ({N}).
- *
- * @param steps - Array of runbook steps
- * @returns True if the runbook has a dynamic step
- */
-function hasDynamicStep(steps: readonly Step[]): boolean {
-  return findDynamicStep(steps) !== undefined;
-}
-
-/**
- * Check if a step has a dynamic substep ({n}).
- *
- * @param step - The step to check
- * @returns True if the step has at least one dynamic substep
- */
-function hasDynamicSubstep(step: Step): boolean {
-  return step.substeps?.some(s => s.isDynamic) ?? false;
-}
 
 /**
  * Validates a parsed runbook against Rundown specification rules.
  *
  * Checks for conformance with:
- * - Step pattern rules (numeric vs dynamic vs named steps)
+ * - Step pattern rules (numeric vs named steps)
  * - Sequential numbering for numeric steps
  * - Exclusivity rule (step must have exactly one of: body, substeps, or runbook list)
  * - GOTO target validity and self-loop detection
@@ -85,35 +56,17 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
     }
   }
 
-  // Conformance Rule 2: Step Pattern
-  const staticSteps = steps.filter(s => !s.isDynamic);
-  const numericSteps = staticSteps.filter(s => /^\d+$/.test(s.name));
-  const dynamicSteps = steps.filter(s => s.isDynamic);
-
-  // Named steps can coexist with numeric steps OR dynamic steps
-  // But numeric steps cannot coexist with dynamic steps (unless separated by named steps)
-  if (numericSteps.length > 0 && dynamicSteps.length > 0) {
-    errors.push({
-      message: 'Invalid step pattern: runbook must contain numeric steps OR exactly one dynamic step template, not both (named steps can appear with either).'
-    });
-  }
-
-  if (dynamicSteps.length > 1) {
-    errors.push({
-      message: 'Invalid step pattern: runbook can have exactly one dynamic step template (## {N}.), not multiple.'
-    });
-  }
 
   // Conformance Rule 3: Sequencing
   // Only numeric steps must be sequential; named steps can appear anywhere
-  if (staticSteps.length > 0) {
+  if (steps.length > 0) {
     // Filter out named steps for sequencing check
-    const sequencedSteps = staticSteps.filter(s => /^\d+$/.test(s.name));
-    if (sequencedSteps.length > 0) {
+    const numericSteps = steps.filter(s => /^\d+$/.test(s.name));
+    if (numericSteps.length > 0) {
       // Check that numeric steps are sequential (ignoring named steps)
       let expectedNum = 1;
       for (const step of steps) {
-        if (!step.isDynamic && /^\d+$/.test(step.name)) {
+        if (/^\d+$/.test(step.name)) {
           const stepNum = parseInt(step.name, 10);
           if (stepNum !== expectedNum) {
             errors.push({
@@ -142,6 +95,33 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
       });
     }
 
+    // FOR step validation
+    if (step.forClause) {
+      // FOR steps must have substeps
+      if (!hasSubsteps) {
+        errors.push({
+          line: step.line,
+          message: `FOR step "${step.name}" must have at least one substep`
+        });
+      }
+
+      // Parent FOR step must not use NEXT/BREAK in its own transitions
+      if (step.transitions) {
+        if (step.transitions.pass.action.type === 'NEXT' || step.transitions.pass.action.type === 'BREAK') {
+          errors.push({
+            line: step.line,
+            message: `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`
+          });
+        }
+        if (step.transitions.fail.action.type === 'NEXT' || step.transitions.fail.action.type === 'BREAK') {
+          errors.push({
+            line: step.line,
+            message: `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`
+          });
+        }
+      }
+    }
+
     if (step.transitions) {
       validateAction(step.transitions.pass.action, undefined, steps, step, errors);
       validateAction(step.transitions.fail.action, undefined, steps, step, errors);
@@ -160,8 +140,8 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
         }
 
         if (substep.transitions) {
-          validateAction(substep.transitions.pass.action, substep.id, steps, step, errors, substep.isDynamic);
-          validateAction(substep.transitions.fail.action, substep.id, steps, step, errors, substep.isDynamic);
+          validateAction(substep.transitions.pass.action, substep.id, steps, step, errors);
+          validateAction(substep.transitions.fail.action, substep.id, steps, step, errors);
         }
       }
     }
@@ -171,12 +151,40 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
 }
 
 /**
+ * Validate that a GOTO AT target has a FOR clause.
+ *
+ * @param action - The GOTO action with target StepId
+ * @param targetStepObj - The resolved target step
+ * @param targetStep - The target step name (for error messages)
+ * @param currentStepObj - The step containing the GOTO (for error line)
+ * @param errors - Array to which validation errors are appended (mutated)
+ * @returns True if valid (or no AT), false if invalid AT target
+ */
+function validateGotoAtTarget(
+  action: { target: { at?: number | string } },
+  targetStepObj: Step,
+  targetStep: string,
+  currentStepObj: Step,
+  errors: ValidationError[]
+): boolean {
+  if ('at' in action.target && action.target.at !== undefined) {
+    if (!targetStepObj.forClause) {
+      errors.push({
+        line: currentStepObj.line,
+        message: `GOTO AT is only valid when the target step has a FOR clause (step "${targetStep}" has no FOR)`,
+      });
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Validates a single action within a step or substep context.
  *
  * Performs validation including:
  * - Schema validation of action structure
  * - GOTO target existence and accessibility
- * - Dynamic step context rules (NEXT only valid in dynamic contexts)
  * - Self-loop detection (GOTO to same location)
  * - Recursive validation of RETRY then-actions
  *
@@ -191,8 +199,7 @@ export function validateAction(
   currentSubstepId: string | undefined,
   steps: readonly Step[],
   currentStepObj: Step,
-  errors: ValidationError[],
-  isCurrentSubstepDynamic = false
+  errors: ValidationError[]
 ): void {
   const result = ActionSchema.safeParse(action);
   if (!result.success) {
@@ -204,138 +211,32 @@ export function validateAction(
     return;
   }
 
-  const isDynamicContext = currentStepObj.isDynamic || isCurrentSubstepDynamic;
+  // Validate NEXT/BREAK - only valid in substeps of FOR steps
+  if (action.type === 'NEXT' || action.type === 'BREAK') {
+    // Must be in a substep (currentSubstepId defined)
+    if (!currentSubstepId) {
+      errors.push({
+        line: currentStepObj.line,
+        message: `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`
+      });
+      return;
+    }
+    // Parent step must have a FOR clause
+    if (!currentStepObj.forClause) {
+      errors.push({
+        line: currentStepObj.line,
+        message: `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`
+      });
+    }
+    return;
+  }
 
   if (action.type === 'GOTO') {
     const targetStep = action.target.step;
     const targetSubstep = action.target.substep;
 
-    // Handle GOTO NEXT - only valid in dynamic context (steps or substeps)
-    if (targetStep === 'NEXT') {
-      // Check for qualified NEXT with target
-      if ('qualifier' in action.target && action.target.qualifier) {
-        const qualifier = action.target.qualifier;
-
-        // GOTO NEXT {N} - must have a dynamic step in runbook
-        if (qualifier.step === '{N}' && !qualifier.substep) {
-          const dynamicStepExists = hasDynamicStep(steps);
-          if (!dynamicStepExists) {
-            const context = getErrorContext(currentStepObj, currentSubstepId);
-            errors.push({
-              line: currentStepObj.line,
-              message: `Step ${context}: GOTO NEXT {N} invalid - no dynamic step exists in runbook.`
-            });
-          }
-          return;
-        }
-
-        // GOTO NEXT {N}.{n} - dynamic step must have dynamic substep
-        if (qualifier.step === '{N}' && qualifier.substep === '{n}') {
-          const dynamicStep = findDynamicStep(steps);
-          if (!dynamicStep) {
-            const context = getErrorContext(currentStepObj, currentSubstepId);
-            errors.push({
-              line: currentStepObj.line,
-              message: `Step ${context}: GOTO NEXT {N}.{n} invalid - no dynamic step exists in runbook.`
-            });
-            return;
-          }
-
-          if (!hasDynamicSubstep(dynamicStep)) {
-            const context = getErrorContext(currentStepObj, currentSubstepId);
-            errors.push({
-              line: currentStepObj.line,
-              message: `Step ${context}: GOTO NEXT {N}.{n} invalid - dynamic step has no dynamic substep.`
-            });
-          }
-          return;
-        }
-
-        // GOTO NEXT X.{n} - target step must have dynamic substep
-        if (qualifier.substep === '{n}') {
-          const targetStepObj = steps.find(s => s.name === qualifier.step);
-          if (!targetStepObj) {
-            const context = getErrorContext(currentStepObj, currentSubstepId);
-            errors.push({
-              line: currentStepObj.line,
-              message: `Step ${context}: GOTO NEXT ${qualifier.step}.{n} invalid - step "${qualifier.step}" does not exist.`
-            });
-            return;
-          }
-
-          if (!hasDynamicSubstep(targetStepObj)) {
-            const context = getErrorContext(currentStepObj, currentSubstepId);
-            errors.push({
-              line: currentStepObj.line,
-              message: `Step ${context}: GOTO NEXT ${qualifier.step}.{n} invalid - step "${qualifier.step}" has no dynamic substep.`
-            });
-          }
-          return;
-        }
-
-        // Other qualified NEXT patterns - just validate qualifier exists as valid step
-        return;
-      }
-
-      // Bare GOTO NEXT - only valid in dynamic context
-      if (!isDynamicContext) {
-        const context = getErrorContext(currentStepObj, currentSubstepId);
-        errors.push({
-          line: currentStepObj.line,
-          message: `Step ${context}: GOTO NEXT invalid - requires dynamic context (## {N}. step or .{n} substep).`
-        });
-      }
-      return;
-    }
-
-    // Handle GOTO {N} - valid if runbook has a dynamic step
-    if (targetStep === '{N}' && !targetSubstep) {
-      const dynamicStepExists = hasDynamicStep(steps);
-      if (!dynamicStepExists) {
-        const context = getErrorContext(currentStepObj, currentSubstepId);
-        errors.push({
-          line: currentStepObj.line,
-          message: `Step ${context}: GOTO {N} invalid - no dynamic step exists in runbook.`
-        });
-      }
-      return;
-    }
-
-    // Handle GOTO {N}.{n} - valid if runbook has dynamic step with dynamic substep
-    if (targetStep === '{N}' && targetSubstep === '{n}') {
-      const dynamicStep = findDynamicStep(steps);
-      if (!dynamicStep) {
-        const context = getErrorContext(currentStepObj, currentSubstepId);
-        errors.push({
-          line: currentStepObj.line,
-          message: `Step ${context}: GOTO {N}.{n} invalid - no dynamic step exists in runbook.`
-        });
-        return;
-      }
-      if (!hasDynamicSubstep(dynamicStep)) {
-        const context = getErrorContext(currentStepObj, currentSubstepId);
-        errors.push({
-          line: currentStepObj.line,
-          message: `Step ${context}: GOTO {N}.{n} invalid - dynamic step has no dynamic substep.`
-        });
-      }
-      return;
-    }
-
-    // Handle GOTO {N}.M (static substep of dynamic step) - must be in dynamic context
-    if (targetStep === '{N}') {
-      if (!isDynamicContext) {
-        const context = getErrorContext(currentStepObj, currentSubstepId);
-        errors.push({
-          line: currentStepObj.line,
-          message: `Step ${context}: GOTO {N}.${targetSubstep ?? ''} invalid - requires dynamic step context.`
-        });
-      }
-      return;
-    }
-
     // Handle named step target (not numeric strings - those are handled below)
-    if (typeof targetStep === 'string' && targetStep !== 'NEXT' && targetStep !== '{N}' && !/^\d+$/.test(targetStep)) {
+    if (typeof targetStep === 'string' && !/^\d+$/.test(targetStep)) {
       const namedStep = steps.find(s => s.name === targetStep);
       if (!namedStep) {
         const context = getErrorContext(currentStepObj, currentSubstepId);
@@ -345,6 +246,8 @@ export function validateAction(
         });
         return;
       }
+
+      if (!validateGotoAtTarget(action, namedStep, targetStep, currentStepObj, errors)) return;
 
       if (targetSubstep) {
         if (!namedStep.substeps || namedStep.substeps.length === 0) {
@@ -370,7 +273,7 @@ export function validateAction(
     }
 
     // At this point, targetStep is a numeric string (e.g., "1", "2")
-    // We've already handled '{N}', 'NEXT', and named steps above
+    // We've already handled named steps above
     // Look up by name, not array index (named steps can appear anywhere)
     const targetStepObj = steps.find(s => s.name === targetStep);
 
@@ -383,18 +286,7 @@ export function validateAction(
       return;
     }
 
-    const isTargetDynamic = targetStepObj.isDynamic;
-    // Check if we're inside the same dynamic step (compare by name, not index)
-    const isInsideDynamicStep = isDynamicContext && targetStep === currentStepObj.name;
-
-    if (isTargetDynamic && !isInsideDynamicStep) {
-      const context = getErrorContext(currentStepObj, currentSubstepId);
-      errors.push({
-        line: currentStepObj.line,
-        message: `Step ${context}: Cannot GOTO into dynamic step "${targetStep}" from outside. Use GOTO NEXT if it is the current template.`
-      });
-      return;
-    }
+    if (!validateGotoAtTarget(action, targetStepObj, targetStep, currentStepObj, errors)) return;
 
     if (targetSubstep) {
       if (!targetStepObj.substeps || targetStepObj.substeps.length === 0) {
@@ -406,29 +298,8 @@ export function validateAction(
         return;
       }
 
-      if (targetSubstep === '{n}') {
-        // GOTO X.{n} - target step must have a dynamic substep
-        if (!hasDynamicSubstep(targetStepObj)) {
-          const context = getErrorContext(currentStepObj, currentSubstepId);
-          errors.push({
-            line: currentStepObj.line,
-            message: `Step ${context}: GOTO ${targetStep}.{n} invalid - step "${targetStep}" has no dynamic substep.`
-          });
-        }
-        return;
-      }
-
       const substepExists = targetStepObj.substeps.some(s => s.id === targetSubstep);
       if (!substepExists) {
-        if (targetStepObj.isDynamic) {
-          const context = getErrorContext(currentStepObj, currentSubstepId);
-          errors.push({
-            line: currentStepObj.line,
-            message: `Step ${context}: cannot GOTO substep of dynamic step. Use GOTO ${targetStep} instead.`
-          });
-          return;
-        }
-
         const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
@@ -439,7 +310,8 @@ export function validateAction(
     }
 
     // Self-loop detection: compare step names, not numeric values
-    if (targetStep === currentStepObj.name && targetSubstep === currentSubstepId) {
+    // AT-qualified GOTOs change iteration, so they're not true self-loops
+    if (targetStep === currentStepObj.name && targetSubstep === currentSubstepId && action.target.at === undefined) {
       const context = getErrorContext(currentStepObj, currentSubstepId);
       errors.push({
         line: currentStepObj.line,

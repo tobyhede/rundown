@@ -7,4 +7,5 @@ coverage/
 .work/
 .worktree/
 .claude/settings.local.json
-.claude/rundown/
+.claude/rundown/runs/
+.claude/rundown/session.json
