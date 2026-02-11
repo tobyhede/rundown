@@ -192,7 +192,9 @@ export function extractPrimaryExecutable(command: string): string | null {
  * @returns Array of unique executable names
  */
 export function extractAllExecutables(command: string, depth = 0): string[] {
-  if (depth > 5) return []; // Prevent infinite recursion
+  if (depth > 5) {
+    return [];
+  }
 
   const commands = extractCommands(command);
   const executables = commands.map((c) => c.executable);
@@ -218,7 +220,7 @@ export function extractAllExecutables(command: string, depth = 0): string[] {
  * @returns Array of executable names found inside backticks
  */
 export function extractBacktickCommands(command: string, depth = 0): string[] {
-  const backtickRegex = /`([^`]+)`/g;
+  const backtickRegex = /`(.+)`/g;
   return extractRecursiveMatches(command, backtickRegex, depth);
 }
 
@@ -234,8 +236,8 @@ export function extractBacktickCommands(command: string, depth = 0): string[] {
  * @returns Array of executable names found inside $(...)
  */
 export function extractDollarSubstitutions(command: string, depth = 0): string[] {
-  // Simple regex for $(...) - does not handle nested parens perfectly but covers common cases
-  const dollarRegex = /\$\(([^)]+)\)/g;
+  // Greedy regex for $(...) to handle nesting by capturing outermost first
+  const dollarRegex = /\$\((.*)\)/g;
   return extractRecursiveMatches(command, dollarRegex, depth);
 }
 
