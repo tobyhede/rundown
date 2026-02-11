@@ -126,14 +126,15 @@ export function expandForClauseVariables(
 // ─── Secure AST-level substitution ───────────────────────────────────────────
 
 /** Pattern for values safe to leave unquoted in shell context */
-const SAFE_SHELL_VALUE = /^[a-zA-Z0-9_./-]+$/;
+const SAFE_SHELL_VALUE = /^(?!-)(?!.*\.\.)[a-zA-Z0-9_./-]+$/;
 
 /**
  * Shell-escape a variable value for safe interpolation into shell commands.
  *
  * Wraps value in single quotes with internal single-quote escaping (`'` becomes `'\''`).
- * Values matching `/^[a-zA-Z0-9_./-]+$/` are returned unquoted to avoid visual noise
+ * Values matching `/^(?!-)(?!.*\.\.)[a-zA-Z0-9_./-]+$/` are returned unquoted to avoid visual noise
  * for common safe values like branch names, paths, and numbers.
+ * Values starting with `-` or containing `..` are always quoted.
  *
  * @param value - The raw variable value to escape
  * @returns Shell-safe escaped value
@@ -151,18 +152,18 @@ export function shellEscapeValue(value: string): string {
  *
  * @param text - Text containing `{{variable}}` placeholders
  * @param variables - Key-value pairs for substitution
- * @param escape - Optional escape function applied to values before substitution
+ * @param escapeFn - Optional escape function applied to values before substitution
  * @returns Text with matched variables replaced
  */
 export function substituteText(
   text: string,
   variables: Record<string, string>,
-  escape?: (value: string) => string
+  escapeFn?: (value: string) => string
 ): string {
   return text.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
     if (!Object.prototype.hasOwnProperty.call(variables, name)) return match;
     const value = variables[name];
-    return escape ? escape(value) : value;
+    return escapeFn ? escapeFn(value) : value;
   });
 }
 

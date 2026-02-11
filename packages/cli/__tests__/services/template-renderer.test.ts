@@ -308,6 +308,20 @@ describe('shellEscapeValue', () => {
   it('should handle values with newlines', () => {
     expect(shellEscapeValue('line1\nline2')).toBe("'line1\nline2'");
   });
+
+  it('should quote values starting with a dash (flag injection)', () => {
+    expect(shellEscapeValue('-flag')).toBe("'-flag'");
+    expect(shellEscapeValue('--verbose')).toBe("'--verbose'");
+  });
+
+  it('should quote values containing directory traversal (..)', () => {
+    expect(shellEscapeValue('../etc/passwd')).toBe("'../etc/passwd'");
+    expect(shellEscapeValue('foo/../bar')).toBe("'foo/../bar'");
+  });
+
+  it('should still return safe paths unquoted (regression)', () => {
+    expect(shellEscapeValue('foo/bar')).toBe('foo/bar');
+  });
 });
 
 describe('substituteText', () => {
@@ -322,8 +336,8 @@ describe('substituteText', () => {
   });
 
   it('should apply escape function when provided', () => {
-    const escape = (v: string) => `[${v}]`;
-    expect(substituteText('cmd {{arg}}', { arg: 'value' }, escape))
+    const escapeFn = (v: string) => `[${v}]`;
+    expect(substituteText('cmd {{arg}}', { arg: 'value' }, escapeFn))
       .toBe('cmd [value]');
   });
 
