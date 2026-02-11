@@ -391,6 +391,90 @@ function buildLoopExitAssign(
   });
 }
 
+/**
+ * Resolve an Action to an XState target state ID for aggregation routing.
+ *
+ * @param action - The terminal action to resolve
+ * @param stepName - The parent step name (for CONTINUE target resolution)
+ * @param steps - The full steps array
+ * @returns The target state ID string
+ */
+function resolveActionTarget(action: Action, stepName: string, steps: Step[]): string {
+  switch (action.type) {
+    case 'CONTINUE':
+      return findNextStateId(stepName, undefined, steps);
+    case 'COMPLETE':
+      return 'COMPLETE';
+    case 'STOP':
+      return 'STOPPED';
+    case 'GOTO': {
+      const targetStep = steps.find(s => s.name === action.target.step);
+      if (!targetStep) return 'COMPLETE';
+      const substep = action.target.substep ?? targetStep.substeps?.[0]?.id;
+      return formatStateId(targetStep.name, substep);
+    }
+    case 'NEXT':
+    case 'BREAK':
+      return 'STOPPED';
+  }
+}
+
+/**
+ * Build exit transitions for a FOR loop with optional aggregation.
+ *
+ * When the parent step has aggregation transitions (PASS ALL/FAIL ANY or PASS ANY/FAIL ALL),
+ * returns guarded transitions that route based on accumulated iteration results.
+ * Otherwise returns a single unconditional exit transition.
+ *
+ * @param parentStep - The parent step owning the FOR loop
+ * @param exitTarget - Default exit target (next step after the loop)
+ * @param iterationResult - Result of the current (final) iteration
+ * @param actionType - The exit mechanism (CONTINUE, NEXT, or BREAK)
+ * @param steps - The full steps array
+ * @param isImplicit - Whether this is an implicit (synthetic 1..1) FOR loop
+ * @returns Array of exit transition entries (1 for unconditional, 2 for aggregation)
+ */
+function buildAggregationExitTransitions(
+  parentStep: Step,
+  exitTarget: string,
+  iterationResult: 'pass' | 'fail',
+  actionType: 'CONTINUE' | 'NEXT' | 'BREAK',
+  steps: Step[],
+  isImplicit?: boolean
+): TransitionEntry[] {
+  // No aggregation for implicit FOR loops or steps without explicit FOR + transitions
+  if (isImplicit || !parentStep.forClause || !parentStep.transitions) {
+    return [{ target: exitTarget, actions: buildLoopExitAssign(actionType, exitTarget, iterationResult, isImplicit) }];
+  }
+
+  const parentTransitions = parentStep.transitions;
+  const passTarget = resolveActionTarget(parentTransitions.pass.action, parentStep.name, steps);
+  const failTarget = resolveActionTarget(parentTransitions.fail.action, parentStep.name, steps);
+
+  return [
+    {
+      guard: ({ context }: { context: RunbookContext }) => {
+        const results = [...(context.iterationResults ?? []), iterationResult];
+        return parentTransitions.all
+          ? !results.some(r => r === 'fail')
+          : results.some(r => r === 'pass');
+      },
+      target: passTarget,
+      actions: buildLoopExitAssign(actionType, passTarget, iterationResult)
+    },
+    {
+      guard: ({ context }: { context: RunbookContext }) => {
+        const results = [...(context.iterationResults ?? []), iterationResult];
+        return parentTransitions.all
+          ? results.some(r => r === 'fail')
+          : !results.some(r => r === 'pass');
+      },
+      target: failTarget,
+      actions: buildLoopExitAssign(actionType, failTarget, iterationResult)
+    }
+  ];
+}
+
 /** Build the loop-back guarded transition shared by CONTINUE and NEXT. */
 function buildLoopBackTransition(
   actionType: 'CONTINUE' | 'NEXT',
@@ -447,7 +531,7 @@ function buildActionTransition(
 
         return [
           buildLoopBackTransition('CONTINUE', firstSubstepStateId, iterationResult, currentStep.substeps?.[0]?.id),
-          { target, actions: buildLoopExitAssign('CONTINUE', target, iterationResult, isImplicit) }
+          ...buildAggregationExitTransitions(currentStep, target, iterationResult, 'CONTINUE', steps, isImplicit)
         ];
       }
 
@@ -570,7 +654,7 @@ function buildActionTransition(
 
       return [
         buildLoopBackTransition('NEXT', firstSubstepStateId, iterationResult, currentStep.substeps?.[0]?.id),
-        { target: exitTarget, actions: buildLoopExitAssign('NEXT', exitTarget, iterationResult) }
+        ...buildAggregationExitTransitions(currentStep, exitTarget, iterationResult, 'NEXT', steps)
       ];
     }
 
@@ -585,10 +669,7 @@ function buildActionTransition(
       const exitTarget = findNextStateId(stepName, lastSubstep?.id, steps);
       const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
 
-      return {
-        target: exitTarget,
-        actions: buildLoopExitAssign('BREAK', exitTarget, iterationResult)
-      };
+      return buildAggregationExitTransitions(currentStep, exitTarget, iterationResult, 'BREAK', steps);
     }
 
   }

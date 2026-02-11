@@ -2279,21 +2279,9 @@ describe('runbook compiler', () => {
       // The parent step's transitions have all=true (pessimistic: PASS ALL / FAIL ANY)
       const snapshot = actor.getSnapshot();
 
-      // If aggregation is wired up: should be STOPPED (FAIL transition triggers STOP)
-      // If aggregation is NOT wired up: will be at step::2 (unconditional CONTINUE)
-      // We document whichever outcome occurs
-      const isAggregationWired = snapshot.value === 'STOPPED';
-      if (isAggregationWired) {
-        expect(snapshot.value).toBe('STOPPED');
-      } else {
-        // Aggregation not wired — loop exits unconditionally to next step
-        // This documents the gap: evaluateIterationAggregation exists but isn't called
-        expect(snapshot.value).toBe('step::2');
-        console.warn(
-          'AGGREGATION GAP: PASS ALL does not evaluate iteration results post-loop. ' +
-          'evaluateIterationAggregation() exists but is never called from the XState machine.'
-        );
-      }
+      // PASS ALL with one failure → aggregation fails → STOP
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'fail', 'pass']);
     });
 
     it('FAIL ANY triggers when any iteration fails', () => {
@@ -2341,16 +2329,10 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot();
-      const isAggregationWired = snapshot.value === 'STOPPED';
-      if (isAggregationWired) {
-        expect(snapshot.value).toBe('STOPPED');
-      } else {
-        expect(snapshot.value).toBe('step::2');
-        console.warn(
-          'AGGREGATION GAP: FAIL ANY does not evaluate iteration results post-loop. ' +
-          'evaluateIterationAggregation() exists but is never called from the XState machine.'
-        );
-      }
+
+      // FAIL ANY with one failure → aggregation fails → STOP
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass', 'pass']);
     });
 
     it('PASS ALL succeeds when all iterations pass', () => {
@@ -2399,6 +2381,176 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass', 'pass', 'pass']);
+    });
+
+    it('PASS ANY succeeds when one iteration passes', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          description: 'Loop with PASS ANY',
+          transitions: {
+            all: false,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Process',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'After loop',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: FAIL
+      actor.send({ type: 'FAIL' });
+      // Iteration 2: PASS
+      actor.send({ type: 'PASS' });
+      // Iteration 3: FAIL
+      actor.send({ type: 'FAIL' });
+
+      // PASS ANY with one pass → aggregation passes → CONTINUE to step 2
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass', 'fail']);
+    });
+
+    it('BREAK triggers aggregation on accumulated results', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 5 },
+          description: 'Loop with BREAK',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+              }
+            },
+            {
+              id: '2',
+              description: 'Maybe break',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'After loop',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: PASS substep 1, PASS substep 2 → loop back
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'PASS' });
+      // Iteration 2: PASS substep 1, PASS substep 2 → loop back
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'PASS' });
+      // Iteration 3: PASS substep 1, FAIL substep 2 → BREAK
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'FAIL' });
+
+      // BREAK at iter 3 with all passes so far → aggregation uses 3 results
+      // PASS ALL: results are [pass, pass, fail] → has failure → STOP
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass', 'fail']);
+    });
+
+    it('NEXT at last iteration triggers aggregation', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: { start: 1, end: 2 },
+          description: 'Loop with NEXT',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'NEXT' } }
+              }
+            },
+            {
+              id: '2',
+              description: 'Skipped by NEXT',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } }
+              }
+            }
+          ]
+        },
+        {
+          name: '2',
+          description: 'After loop',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } }
+          }
+        }
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: PASS substep 1 → NEXT (skip substep 2, loop back)
+      actor.send({ type: 'PASS' });
+      // Iteration 2: PASS substep 1 → NEXT (last iteration, exit loop)
+      actor.send({ type: 'PASS' });
+
+      // PASS ALL with all passes → aggregation passes → CONTINUE to step 2
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
     });
   });
 });
