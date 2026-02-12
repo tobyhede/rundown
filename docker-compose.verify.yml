@@ -6,33 +6,29 @@
 #   docker compose -f docker-compose.verify.yml build test-npm
 #   docker compose -f docker-compose.verify.yml run --rm test-npm
 
+x-common: &common
+  volumes:
+    - ./.claude-docker:/home/testuser/.claude
+    - ./logs:/home/testuser/logs
+  environment:
+    - RUNDOWN_LOG=1
+    - RUNDOWN_LOG_LEVEL=debug
+  stdin_open: true
+  tty: true
+
 services:
   test-local:
+    <<: *common
     build:
       context: .
       dockerfile: scripts/Dockerfile.verify
       target: local
     image: rundown-verify:local
-    volumes:
-      - ./.claude-docker:/home/testuser/.claude
-      - ./logs:/home/testuser/logs
-    environment:
-      - RUNDOWN_LOG=1
-      - RUNDOWN_LOG_LEVEL=debug
-    stdin_open: true
-    tty: true
 
   test-npm:
+    <<: *common
     build:
       context: .
       dockerfile: scripts/Dockerfile.verify
       target: npm
     image: rundown-verify:npm
-    volumes:
-      - ./.claude-docker:/home/testuser/.claude
-      - ./logs:/home/testuser/logs
-    environment:
-      - RUNDOWN_LOG=1
-      - RUNDOWN_LOG_LEVEL=debug
-    stdin_open: true
-    tty: true

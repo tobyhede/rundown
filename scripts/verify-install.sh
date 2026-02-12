@@ -57,12 +57,16 @@ if [ ! -f .claude-docker/.claude.json ]; then
   echo '{"onboardingComplete":true}' > .claude-docker/.claude.json
 fi
 
+# Clean up credentials on exit
+trap 'rm -f .claude-docker/credentials.json 2>/dev/null' EXIT
+
 # macOS: attempt to extract Claude Code credentials from Keychain
 if [[ "$OSTYPE" == darwin* ]]; then
   log "Attempting to extract Claude credentials from macOS Keychain..."
   CRED_JSON=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || true)
   if [ -n "$CRED_JSON" ]; then
     echo "$CRED_JSON" > .claude-docker/credentials.json
+    chmod 600 .claude-docker/credentials.json
     log "  Credentials extracted successfully."
   else
     log "  No credentials found in Keychain (Claude integration test will be skipped)."
@@ -82,8 +86,8 @@ docker compose -f docker-compose.verify.yml build "$SERVICE"
 hr
 log "Running verification container..."
 
-docker compose -f docker-compose.verify.yml run --rm "$SERVICE"
-EXIT_CODE=$?
+EXIT_CODE=0
+docker compose -f docker-compose.verify.yml run --rm "$SERVICE" || EXIT_CODE=$?
 
 # ── Result ───────────────────────────────────────────────────────────────────
 
