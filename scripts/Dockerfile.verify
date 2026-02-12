@@ -50,7 +50,7 @@ COPY dist/rundown-org-core-*.tgz /tmp/tarballs/
 COPY dist/rundown-org-cli-*.tgz /tmp/tarballs/
 COPY dist/rundown-org-claude-code-plugin-*.tgz /tmp/tarballs/
 
-# Install packages globally from tarballs (order matters for dependencies)
+# Install packages globally from tarballs (dependencies declared in package.json)
 RUN npm install -g \
     /tmp/tarballs/rundown-org-parser-*.tgz \
     /tmp/tarballs/rundown-org-core-*.tgz \
