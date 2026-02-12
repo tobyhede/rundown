@@ -34,6 +34,7 @@ if [ "$MODE" = "local" ]; then
   hr
   log "Packing tarballs into dist/..."
   mkdir -p dist
+  rm -f dist/*.tgz
 
   for pkg in parser core cli claude-code-plugin; do
     log "  Packing packages/$pkg..."
