@@ -78,6 +78,18 @@ fi
 
 hr
 SERVICE="test-${MODE}"
+
+# Pre-flight checks
+if [ ! -f docker-compose.verify.yml ]; then
+  log "ERROR: docker-compose.verify.yml not found in $(pwd)"
+  exit 1
+fi
+
+if ! docker version > /dev/null 2>&1; then
+  log "ERROR: Docker is not running or not installed"
+  exit 1
+fi
+
 log "Building Docker image for service: $SERVICE..."
 
 docker compose -f docker-compose.verify.yml build "$SERVICE"
