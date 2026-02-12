@@ -66,7 +66,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `WorkPath` | `.work` | Default artifact directory |
 | `Step` | `3.1` | Current qualified step identifier |
 
-Built-in variables use PascalCase and can be overridden by any other source.
+Built-in variables use PascalCase. The date/time variables (`Date`, `DateTime`, `Year`, `Month`, `Day`) and `WorkPath` are static run-time variables set once per execution and can be overridden via `--var`. The `Step` variable (and `Index` during FOR loops) are dynamic per-step variables that reflect the current execution position and cannot be overridden via `--var`.
 
 **CLI Example:**
 ```bash
@@ -181,10 +181,12 @@ See [docs/SECURITY.md](docs/SECURITY.md) for full security policy documentation.
 ## Development Commands
 
 ```bash
-npm run build      # Build all packages
-npm run test       # Run all tests (Jest)
-npm run lint       # Lint all packages
-npm run lint:fix   # Auto-fix lint issues
+npm run build         # Build all packages
+npm run test          # Run all tests (Jest)
+npm run lint          # Lint all packages
+npm run lint:fix      # Auto-fix lint issues
+npm run format        # Format all packages
+npm run format:check  # Check formatting
 ```
 
 ## TSDoc Standards
@@ -268,6 +270,12 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 ## Documentation
 
 - [docs/SPEC.md](docs/SPEC.md) - Rundown specification
+- [docs/FORMAT.md](docs/FORMAT.md) - Formal BNF-style grammar
 - [docs/MCP.md](docs/MCP.md) - MCP server reference
+- [docs/SECURITY.md](docs/SECURITY.md) - Security policy configuration
+- [docs/RUNDOWN.md](docs/RUNDOWN.md) - Rundown internal architecture
+- [docs/CLI-OUTPUT-SPEC.md](docs/CLI-OUTPUT-SPEC.md) - CLI output format specification
+- [docs/PATTERNS.md](docs/PATTERNS.md) - Runbook authoring patterns
+- [docs/SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
 - [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
 - [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide

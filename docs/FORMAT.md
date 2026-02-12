@@ -122,6 +122,7 @@ where frontmatter is:
     [ "version:" text ]
     [ "author:" text ]
     [ "tags:" tag_list ]
+    [ "vars:" vars_map ]
     [ scenarios ]
   "---"
 
@@ -135,6 +136,10 @@ where tag_list is:
 where tag is:
   text
   (any string - convention is lowercase alphanumeric with hyphens)
+
+where vars_map is:
+  variable_name ":" value { variable_name ":" value }
+  (YAML mapping of variable names to string, number, or boolean values)
 
 where scenarios is:
   "scenarios:"
