@@ -210,51 +210,6 @@ npm run format        # Format all packages
 npm run format:check  # Check formatting
 ```
 
-## Docker Verification
-
-Docker-based verification tests CLI and plugin installation in a clean Linux container. Two modes are available:
-
-| Mode | Purpose | When to use |
-|------|---------|-------------|
-| `local` | Build from source, pack tarballs, install in container | Pre-publish verification |
-| `npm` | Install from npm registry at runtime | Post-publish verification |
-
-**Quick start:**
-
-```bash
-./scripts/verify-install.sh local   # Pre-publish: build, pack, verify
-./scripts/verify-install.sh npm     # Post-publish: install from registry
-```
-
-**What it verifies:**
-1. `rd` and `rundown` binaries are executable
-2. Plugin directory exists with expected files and directories
-3. A test runbook executes successfully
-4. Claude Code integration (if credentials are available)
-
-**Files:**
-
-| File | Role |
-|------|------|
-| `scripts/verify-install.sh` | Host-side orchestrator (builds, packs, launches Docker) |
-| `scripts/Dockerfile.verify` | Multi-stage Dockerfile (`base`, `local`, `npm` stages) |
-| `scripts/docker-entrypoint.sh` | Container entrypoint running verification checks |
-| `docker-compose.verify.yml` | Compose services (`test-local`, `test-npm`) |
-
-**Direct Docker usage:**
-
-```bash
-# Build and run local verification
-docker compose -f docker-compose.verify.yml build test-local
-docker compose -f docker-compose.verify.yml run --rm test-local
-
-# Build and run npm verification
-docker compose -f docker-compose.verify.yml build test-npm
-docker compose -f docker-compose.verify.yml run --rm test-npm
-```
-
-**Prerequisites:** Docker and Docker Compose must be installed. On macOS, the orchestrator automatically attempts to extract Claude Code credentials from the Keychain for optional integration testing.
-
 ## TSDoc Standards
 
 All exported symbols must have TSDoc documentation following these requirements:
