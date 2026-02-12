@@ -34,9 +34,7 @@ export class ConsoleWriter implements OutputWriter {
   }
 
   writeJson(data: unknown, pretty = true): void {
-    const json = pretty
-      ? JSON.stringify(data, null, 2)
-      : JSON.stringify(data);
+    const json = pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data);
     this.writeLine(json);
   }
 }

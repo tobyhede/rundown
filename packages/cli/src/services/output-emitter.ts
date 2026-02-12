@@ -100,11 +100,7 @@ export class OutputEmitter {
    * @param columns - Column definitions for text display
    * @param options - Additional list options
    */
-  list<T, U = T>(
-    items: T[],
-    columns: ColumnDef<T>[],
-    options?: ListOptions<T, U>
-  ): void {
+  list<T, U = T>(items: T[], columns: ColumnDef<T>[], options?: ListOptions<T, U>): void {
     // Cast to OutputEvent since ListOutput<T, U> has compatible runtime shape
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const event: ListOutput<any, any> = {
@@ -125,7 +121,16 @@ export class OutputEmitter {
    */
   detail(
     data: Record<string, unknown>,
-    format: 'metadata' | 'step' | 'scenario' | 'scenario_result' | 'status' | 'echo' | 'prompt' | 'check' | 'custom' = 'custom'
+    format:
+      | 'metadata'
+      | 'step'
+      | 'scenario'
+      | 'scenario_result'
+      | 'status'
+      | 'echo'
+      | 'prompt'
+      | 'check'
+      | 'custom' = 'custom',
   ): void {
     const event: DetailOutput = {
       type: 'detail',
@@ -156,12 +161,7 @@ export class OutputEmitter {
    * @param message - Optional message about the result
    * @param data - Additional structured data
    */
-  status(
-    result: boolean,
-    action: string,
-    message?: string,
-    data?: Record<string, unknown>
-  ): void {
+  status(result: boolean, action: string, message?: string, data?: Record<string, unknown>): void {
     const event: StatusOutput = {
       type: 'status',
       result,
@@ -178,10 +178,7 @@ export class OutputEmitter {
    * @param block - The action block data
    * @param options - Additional options
    */
-  action(
-    block: ActionBlockData,
-    options?: { complete?: boolean; stopped?: boolean }
-  ): void {
+  action(block: ActionBlockData, options?: { complete?: boolean; stopped?: boolean }): void {
     const event: ActionOutput = {
       type: 'action',
       block,
@@ -210,10 +207,7 @@ export class OutputEmitter {
    * @param text - The message text
    * @param level - The message level for styling
    */
-  message(
-    text: string,
-    level: 'info' | 'success' | 'warning' | 'error' | 'dim' = 'info'
-  ): void {
+  message(text: string, level: 'info' | 'success' | 'warning' | 'error' | 'dim' = 'info'): void {
     const event: MessageOutput = {
       type: 'message',
       text,
@@ -254,7 +248,7 @@ export class OutputEmitter {
   error(
     message: string,
     codeOrDetails?: string | { code?: string; details?: Record<string, unknown> },
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ): void {
     let code: string | undefined;
     let errorDetails: Record<string, unknown> | undefined;
@@ -322,7 +316,6 @@ export class OutputEmitter {
     };
     this.renderer.render(event);
   }
-
 
   /**
    * Bridge an execution event to the renderer.

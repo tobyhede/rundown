@@ -152,7 +152,7 @@ export const SESSION_STATE_KEYS = [
   'active_skill',
   'edited_files',
   'file_extensions',
-  'metadata'
+  'metadata',
 ] as const satisfies readonly (keyof SessionState)[];
 
 /** Array field keys in SessionState (for type-safe operations) */

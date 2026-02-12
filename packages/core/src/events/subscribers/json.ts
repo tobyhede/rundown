@@ -33,11 +33,9 @@ export class JSONSubscriber {
    * Get events of a specific type.
    */
   getEventsByType<T extends RunbookEventV1['type']>(
-    type: T
+    type: T,
   ): Extract<RunbookEventV1, { type: T }>[] {
-    return this.events.filter(
-      (e): e is Extract<RunbookEventV1, { type: T }> => e.type === type
-    );
+    return this.events.filter((e): e is Extract<RunbookEventV1, { type: T }> => e.type === type);
   }
 
   /**
@@ -57,8 +55,14 @@ export class JSONSubscriber {
     const stoppedEvent = this.getEventsByType('RUNBOOK_STOPPED').at(0);
     const startedEvent = this.getEventsByType('RUNBOOK_STARTED').at(0);
 
-    const status: 'complete' | 'stopped' | 'running' = completeEvent ? 'complete' : stoppedEvent ? 'stopped' : 'running';
-    const finalPosition = completeEvent ? completeEvent.payload.finalPosition : stoppedEvent?.payload.position;
+    const status: 'complete' | 'stopped' | 'running' = completeEvent
+      ? 'complete'
+      : stoppedEvent
+        ? 'stopped'
+        : 'running';
+    const finalPosition = completeEvent
+      ? completeEvent.payload.finalPosition
+      : stoppedEvent?.payload.position;
     const message = completeEvent ? completeEvent.payload.message : stoppedEvent?.payload.message;
 
     return {

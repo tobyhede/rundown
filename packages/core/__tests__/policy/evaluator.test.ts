@@ -170,7 +170,10 @@ describe('PolicyEvaluator', () => {
 
     it('should allow write to .claude directory', () => {
       const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
-      const decision = evaluator.checkPath(path.join(repoRoot, '.claude/rundown/state.json'), 'write');
+      const decision = evaluator.checkPath(
+        path.join(repoRoot, '.claude/rundown/state.json'),
+        'write',
+      );
 
       expect(decision.allowed).toBe(true);
     });
@@ -497,7 +500,12 @@ describe('PolicyEvaluator', () => {
         },
         overrides: [],
         grants: [
-          { type: 'run', pattern: 'custom-tool', scope: 'session', grantedAt: new Date().toISOString() },
+          {
+            type: 'run',
+            pattern: 'custom-tool',
+            scope: 'session',
+            grantedAt: new Date().toISOString(),
+          },
         ],
       };
       const evaluator = new PolicyEvaluator(policy, { repoRoot });
@@ -538,7 +546,12 @@ describe('PolicyEvaluator', () => {
         },
         overrides: [],
         grants: [
-          { type: 'read', pattern: '/custom/path/**', scope: 'session', grantedAt: new Date().toISOString() },
+          {
+            type: 'read',
+            pattern: '/custom/path/**',
+            scope: 'session',
+            grantedAt: new Date().toISOString(),
+          },
         ],
       };
       const evaluator = new PolicyEvaluator(policy, { repoRoot });

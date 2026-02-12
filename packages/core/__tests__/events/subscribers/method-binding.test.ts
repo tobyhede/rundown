@@ -69,11 +69,21 @@ describe('Subscriber method binding', () => {
       const emitter = new ExecutionEventEmitter('wf-test', { name: 'test', path: 'test.md' });
       const output: string[] = [];
       const mockWriter = {
-        writeLine: (text?: string) => { output.push(text ?? ''); },
-        write: (text: string) => { output.push(text); },
-        writeLines: (lines: string[]) => { lines.forEach(l => output.push(l)); },
-        writeError: (text: string) => { output.push(text); },
-        writeJson: () => { /* no-op for test */ },
+        writeLine: (text?: string) => {
+          output.push(text ?? '');
+        },
+        write: (text: string) => {
+          output.push(text);
+        },
+        writeLines: (lines: string[]) => {
+          lines.forEach((l) => output.push(l));
+        },
+        writeError: (text: string) => {
+          output.push(text);
+        },
+        writeJson: () => {
+          /* no-op for test */
+        },
       };
       const cliSubscriber = new CLISubscriber(mockWriter);
 
@@ -97,11 +107,21 @@ describe('Subscriber method binding', () => {
       const emitter = new ExecutionEventEmitter('wf-test', { name: 'test', path: 'test.md' });
       const output: string[] = [];
       const mockWriter = {
-        writeLine: (text?: string) => { output.push(text ?? ''); },
-        write: (text: string) => { output.push(text); },
-        writeLines: (lines: string[]) => { lines.forEach(l => output.push(l)); },
-        writeError: (text: string) => { output.push(text); },
-        writeJson: () => { /* no-op for test */ },
+        writeLine: (text?: string) => {
+          output.push(text ?? '');
+        },
+        write: (text: string) => {
+          output.push(text);
+        },
+        writeLines: (lines: string[]) => {
+          lines.forEach((l) => output.push(l));
+        },
+        writeError: (text: string) => {
+          output.push(text);
+        },
+        writeJson: () => {
+          /* no-op for test */
+        },
       };
       const cliSubscriber = new CLISubscriber(mockWriter);
 

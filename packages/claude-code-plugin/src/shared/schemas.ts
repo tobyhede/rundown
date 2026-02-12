@@ -8,7 +8,7 @@ const ToolInputSchema = z
     description: z.string().optional(),
     subagent_type: z.string().optional(),
     prompt: z.string().optional(),
-    skill: z.string().optional()
+    skill: z.string().optional(),
   })
   .optional();
 
@@ -43,7 +43,7 @@ export const HookInputSchema = z.object({
   tool_response: z.unknown().optional(),
   step_id: z.string().optional(),
   task_id: z.string().optional(),
-  subagent_type: z.string().optional()
+  subagent_type: z.string().optional(),
 });
 
 export type HookInput = z.infer<typeof HookInputSchema>;
@@ -67,7 +67,7 @@ export function parseHookInput(json: string): ParseResult<HookInput> {
   } catch (e) {
     return {
       success: false,
-      error: `Invalid JSON input: ${e instanceof Error ? e.message : String(e)}`
+      error: `Invalid JSON input: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
 
@@ -75,7 +75,7 @@ export function parseHookInput(json: string): ParseResult<HookInput> {
   if (!result.success) {
     return {
       success: false,
-      error: `Invalid input: ${result.error.issues.map((i) => i.message).join(', ')}`
+      error: `Invalid input: ${result.error.issues.map((i) => i.message).join(', ')}`,
     };
   }
 
@@ -95,7 +95,7 @@ export const SessionStateSchema = z.object({
   active_skill: z.string().nullable().default(null),
   edited_files: z.array(z.string()).default([]),
   file_extensions: z.array(z.string()).default([]),
-  metadata: z.record(z.string(), z.unknown()).default({})
+  metadata: z.record(z.string(), z.unknown()).default({}),
 });
 
 /**

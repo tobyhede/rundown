@@ -6,21 +6,17 @@ import { RundownError } from './rundown-error.js';
  */
 export const Errors = {
   // File/IO
-  fileNotFound: (file: string): RundownError =>
-    new RundownError('FILE_NOT_FOUND', { file }),
+  fileNotFound: (file: string): RundownError => new RundownError('FILE_NOT_FOUND', { file }),
 
-  fileNotReadable: (file: string): RundownError =>
-    new RundownError('FILE_NOT_READABLE', { file }),
+  fileNotReadable: (file: string): RundownError => new RundownError('FILE_NOT_READABLE', { file }),
 
   stateDirNotAccessible: (path: string): RundownError =>
     new RundownError('STATE_DIR_NOT_ACCESSIBLE', { file: path }),
 
   // Parse/Syntax
-  emptyRunbook: (file: string): RundownError =>
-    new RundownError('EMPTY_RUNBOOK', { file }),
+  emptyRunbook: (file: string): RundownError => new RundownError('EMPTY_RUNBOOK', { file }),
 
-  noStepsFound: (file: string): RundownError =>
-    new RundownError('NO_STEPS_FOUND', { file }),
+  noStepsFound: (file: string): RundownError => new RundownError('NO_STEPS_FOUND', { file }),
 
   invalidFrontmatter: (file: string, message?: string): RundownError =>
     new RundownError('INVALID_FRONTMATTER', { file, message }),
@@ -29,8 +25,7 @@ export const Errors = {
     new RundownError('SYNTAX_ERROR', { file, line, message }),
 
   // State
-  noActiveRunbook: (): RundownError =>
-    new RundownError('NO_ACTIVE_RUNBOOK'),
+  noActiveRunbook: (): RundownError => new RundownError('NO_ACTIVE_RUNBOOK'),
 
   stateParseError: (file: string, message?: string): RundownError =>
     new RundownError('STATE_PARSE_ERROR', { file, message }),
@@ -38,8 +33,7 @@ export const Errors = {
   runbookCompleted: (file?: string): RundownError =>
     new RundownError('RUNBOOK_COMPLETED', { file }),
 
-  runbookStopped: (file?: string): RundownError =>
-    new RundownError('RUNBOOK_STOPPED', { file }),
+  runbookStopped: (file?: string): RundownError => new RundownError('RUNBOOK_STOPPED', { file }),
 
   // Validation
   gotoTargetNotFound: (step: string, substep?: string): RundownError =>
@@ -73,8 +67,7 @@ export const Errors = {
     new RundownError('SCENARIO_NOT_FOUND', { scenario, file }),
 
   // Agent
-  noPendingStep: (): RundownError =>
-    new RundownError('NO_PENDING_STEP'),
+  noPendingStep: (): RundownError => new RundownError('NO_PENDING_STEP'),
 
   agentNotBound: (agentId?: string): RundownError =>
     new RundownError('AGENT_NOT_BOUND', { agentId }),

@@ -31,18 +31,18 @@ describe('Session Property Tests', () => {
     active_skill: fc.option(fc.string({ maxLength: 100 }), { nil: null }),
     edited_files: fc.array(
       fc.string({ maxLength: 200 }).filter((s) => !s.includes('\0')),
-      { maxLength: 50 }
+      { maxLength: 50 },
     ),
     file_extensions: fc.array(
       fc.string({ minLength: 1, maxLength: 10 }).filter((s) => /^[a-zA-Z0-9]+$/.test(s)),
-      { maxLength: 20 }
+      { maxLength: 20 },
     ),
     metadata: fc.dictionary(
       fc
         .string({ minLength: 1, maxLength: 20 })
         .filter((s) => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(s) && s !== '__proto__'),
-      fc.jsonValue().filter((v) => !containsNegativeZero(v)) // Exclude -0 anywhere since JSON doesn't preserve it
-    )
+      fc.jsonValue().filter((v) => !containsNegativeZero(v)), // Exclude -0 anywhere since JSON doesn't preserve it
+    ),
   });
 
   it('roundtrips session state through save/load', async () => {
@@ -83,7 +83,7 @@ describe('Session Property Tests', () => {
         .afterEach(async () => {
           await fs.rm(testDir, { recursive: true, force: true });
         }),
-      { numRuns: 50 }
+      { numRuns: 50 },
     );
   });
 
@@ -102,7 +102,7 @@ describe('Session Property Tests', () => {
             const files = await session.get('edited_files');
             expect(files).toHaveLength(1);
             expect(files[0]).toBe(value);
-          }
+          },
         )
         .beforeEach(async () => {
           testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-test-session-prop-'));
@@ -110,7 +110,7 @@ describe('Session Property Tests', () => {
         .afterEach(async () => {
           await fs.rm(testDir, { recursive: true, force: true });
         }),
-      { numRuns: 100 }
+      { numRuns: 100 },
     );
   });
 
@@ -120,13 +120,13 @@ describe('Session Property Tests', () => {
         const result = SessionStateSchema.safeParse(state);
         expect(result.success).toBe(true);
       }),
-      { numRuns: 200 }
+      { numRuns: 200 },
     );
   });
 
   it('schema applies defaults for partial states', () => {
     const partialStateArb = fc.record({
-      active_command: fc.option(fc.string({ maxLength: 50 }), { nil: null })
+      active_command: fc.option(fc.string({ maxLength: 50 }), { nil: null }),
     });
 
     fc.assert(
@@ -141,7 +141,7 @@ describe('Session Property Tests', () => {
           expect(typeof result.data.started_at).toBe('string');
         }
       }),
-      { numRuns: 100 }
+      { numRuns: 100 },
     );
   });
 });

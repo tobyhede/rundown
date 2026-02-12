@@ -63,7 +63,9 @@ async function resolveByPath(cwd: string, filename: string): Promise<string | nu
   try {
     await fs.access(localPath);
     return localPath;
-  } catch { /* not found */ }
+  } catch {
+    /* not found */
+  }
 
   // 2. Check plugin runbooks directory
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
@@ -72,7 +74,9 @@ async function resolveByPath(cwd: string, filename: string): Promise<string | nu
     try {
       await fs.access(pluginPath);
       return pluginPath;
-    } catch { /* not found */ }
+    } catch {
+      /* not found */
+    }
   }
 
   // 3. Check relative to cwd
@@ -80,14 +84,18 @@ async function resolveByPath(cwd: string, filename: string): Promise<string | nu
   try {
     await fs.access(relativePath);
     return relativePath;
-  } catch { /* not found */ }
+  } catch {
+    /* not found */
+  }
 
   // 4. Check bundled runbooks (lowest priority)
   const bundledPath = path.join(getBundledRunbooksPath(), filename);
   try {
     await fs.access(bundledPath);
     return bundledPath;
-  } catch { /* not found */ }
+  } catch {
+    /* not found */
+  }
 
   return null;
 }

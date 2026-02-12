@@ -5,7 +5,7 @@ describe('HookInputSchema', () => {
   it('parses valid minimal input', () => {
     const input = {
       hook_event_name: 'PostToolUse',
-      cwd: '/Users/test/project'
+      cwd: '/Users/test/project',
     };
     const result = HookInputSchema.safeParse(input);
     expect(result.success).toBe(true);
@@ -16,7 +16,7 @@ describe('HookInputSchema', () => {
       hook_event_name: 'PostToolUse',
       cwd: '/Users/test/project',
       tool_name: 'Edit',
-      file_path: '/Users/test/project/src/index.ts'
+      file_path: '/Users/test/project/src/index.ts',
     };
     const result = HookInputSchema.safeParse(input);
     expect(result.success).toBe(true);
@@ -70,7 +70,7 @@ describe('SessionStateSchema', () => {
       active_skill: null,
       edited_files: ['main.ts'],
       file_extensions: ['ts'],
-      metadata: { key: 'value' }
+      metadata: { key: 'value' },
     };
     const result = SessionStateSchema.safeParse(state);
     expect(result.success).toBe(true);

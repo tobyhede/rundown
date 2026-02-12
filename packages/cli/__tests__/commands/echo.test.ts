@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import {
-  createTestWorkspace,
-  runCli,
-  type TestWorkspace,
-} from '../helpers/test-utils.js';
+import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
 
 describe('echo command', () => {
   let workspace: TestWorkspace;
@@ -51,12 +47,12 @@ describe('echo command', () => {
   });
 
   describe('error handling', () => {
-  it('fails when no active runbook', () => {
-    const result = runCli('echo "hello"', workspace);
+    it('fails when no active runbook', () => {
+      const result = runCli('echo "hello"', workspace);
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain('No active runbook');
-  });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('No active runbook');
+    });
 
     it('fails with invalid result value', () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);

@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFileSync } from 'fs';
-import {
-  createTestWorkspace,
-  runCli,
-  type TestWorkspace,
-} from '../helpers/test-utils.js';
+import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
 
 /**
  * Integration tests for action display.
@@ -54,7 +50,7 @@ rd echo --result pass
 
       // All transitions should show CONTINUE because that's the default
       const lines = result.stdout.split('\n');
-      const actionLines = lines.filter(line => line.includes('Action:'));
+      const actionLines = lines.filter((line) => line.includes('Action:'));
 
       // First action should be START
       expect(actionLines[0]).toContain('START');

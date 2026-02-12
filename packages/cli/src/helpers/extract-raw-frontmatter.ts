@@ -55,7 +55,10 @@ export function extractRawFrontmatter(markdown: string): RawFrontmatterResult {
     }
 
     // Extract remaining content (after closing ---)
-    const remaining = lines.slice(endIndex + 1).join('\n').trimStart();
+    const remaining = lines
+      .slice(endIndex + 1)
+      .join('\n')
+      .trimStart();
 
     return { frontmatter: parsed as Record<string, unknown>, content: remaining };
   } catch {

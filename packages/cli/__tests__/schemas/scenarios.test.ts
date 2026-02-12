@@ -44,7 +44,7 @@ describe('ScenarioSchema', () => {
   it('rejects invalid result value', () => {
     const scenario = {
       commands: ['rd pass'],
-      result: 'SUCCESS',  // Invalid - should be COMPLETE or STOP
+      result: 'SUCCESS', // Invalid - should be COMPLETE or STOP
     };
 
     const result = ScenarioSchema.safeParse(scenario);
@@ -101,7 +101,7 @@ describe('parseScenarios', () => {
       name: 'test',
       scenarios: {
         broken: {
-          commands: [],  // Invalid: empty array
+          commands: [], // Invalid: empty array
           result: 'COMPLETE',
         },
       },

@@ -128,7 +128,7 @@ export class TextRenderer implements OutputRenderer {
     // Column expects key (string) or get (function) as separate properties
     // Use Record<string, unknown> as the generic type to avoid type narrowing issues
     type Row = Record<string, unknown>;
-    const columns = event.columns.map(col => {
+    const columns = event.columns.map((col) => {
       if (typeof col.key === 'function') {
         return {
           header: col.header,
@@ -138,7 +138,7 @@ export class TextRenderer implements OutputRenderer {
       }
       return {
         header: col.header,
-        key: col.key as keyof Row  ,
+        key: col.key as keyof Row,
         align: col.align,
       };
     });
@@ -190,29 +190,19 @@ export class TextRenderer implements OutputRenderer {
    * Render status response as formatted text.
    */
   private renderStatusDetail(data: Record<string, unknown>): void {
-    const {
-      active,
-      stashed,
-      file,
-      state,
-      prompted,
-      position,
-      step,
-      lastAction,
-      pending,
-      agents,
-    } = data as {
-      active?: boolean;
-      stashed?: boolean;
-      file?: string;
-      state?: string;
-      prompted?: boolean;
-      position?: { current: string; total: number; substep?: string };
-      step?: { name: string; description?: string };
-      lastAction?: { action: string; result?: boolean };
-      pending?: string[];
-      agents?: Record<string, { step: string; status: string; result?: string }>;
-    };
+    const { active, stashed, file, state, prompted, position, step, lastAction, pending, agents } =
+      data as {
+        active?: boolean;
+        stashed?: boolean;
+        file?: string;
+        state?: string;
+        prompted?: boolean;
+        position?: { current: string; total: number; substep?: string };
+        step?: { name: string; description?: string };
+        lastAction?: { action: string; result?: boolean };
+        pending?: string[];
+        agents?: Record<string, { step: string; status: string; result?: string }>;
+      };
 
     // No active runbook
     if (!active && !stashed) {
@@ -223,7 +213,10 @@ export class TextRenderer implements OutputRenderer {
     // Stashed only (no active)
     if (!active && stashed && position) {
       if (file || state) {
-        printMetadata({ file: file ?? 'unknown', state: state ?? 'unknown', prompted }, this.writer);
+        printMetadata(
+          { file: file ?? 'unknown', state: state ?? 'unknown', prompted },
+          this.writer,
+        );
       }
       printRunbookStashed(position, this.writer);
       return;
@@ -370,13 +363,16 @@ export class TextRenderer implements OutputRenderer {
     if (valid) {
       const stepCount = stats?.steps ?? 0;
       const substepCount = stats?.substeps ?? 0;
-      const statsMessage = substepCount > 0
-        ? `PASS: ${String(stepCount)} step${stepCount !== 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount !== 1 ? 's' : ''}`
-        : `PASS: ${String(stepCount)} step${stepCount !== 1 ? 's' : ''}`;
+      const statsMessage =
+        substepCount > 0
+          ? `PASS: ${String(stepCount)} step${stepCount !== 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount !== 1 ? 's' : ''}`
+          : `PASS: ${String(stepCount)} step${stepCount !== 1 ? 's' : ''}`;
       this.writer.writeLine(success(statsMessage));
     } else if (errors && errors.length > 0) {
       const errorCount = errors.length;
-      this.writer.writeLine(failure(`FAIL: ${String(errorCount)} error${errorCount !== 1 ? 's' : ''}`));
+      this.writer.writeLine(
+        failure(`FAIL: ${String(errorCount)} error${errorCount !== 1 ? 's' : ''}`),
+      );
       for (const err of errors) {
         const linePrefix = err.line ? `Line ${String(err.line)}: ` : '';
         this.writer.writeLine(`  ${linePrefix}${err.message}`);
@@ -437,7 +433,11 @@ export class TextRenderer implements OutputRenderer {
     // Handle pop action with step data - render step block
     if (event.action === 'pop' && event.result && event.data?.step && event.data.position) {
       const pos = event.data.position as StepPosition;
-      const stepData = event.data.step as { name: string; description?: string; prompted?: boolean };
+      const stepData = event.data.step as {
+        name: string;
+        description?: string;
+        prompted?: boolean;
+      };
       // Create a minimal step object for printStepBlock
       const step = { name: stepData.name, description: stepData.description } as Step;
       printStepBlock(pos, step, stepData.prompted ?? false, this.writer);
@@ -495,7 +495,6 @@ export class TextRenderer implements OutputRenderer {
     }
   }
 
-
   /**
    * Render an execution event using the existing print functions.
    *
@@ -541,11 +540,14 @@ export class TextRenderer implements OutputRenderer {
    */
   private handleRunbookStarted(event: RunbookEventV1 & { type: 'RUNBOOK_STARTED' }): void {
     const { payload, runbook } = event;
-    printMetadata({
-      file: runbook.name ?? runbook.path ?? 'unknown',
-      state: payload.statePath,
-      prompted: payload.prompted,
-    }, this.writer);
+    printMetadata(
+      {
+        file: runbook.name ?? runbook.path ?? 'unknown',
+        state: payload.statePath,
+        prompted: payload.prompted,
+      },
+      this.writer,
+    );
 
     printActionBlock({ action: 'START' }, this.writer);
   }
@@ -555,13 +557,26 @@ export class TextRenderer implements OutputRenderer {
    */
   private handleStepEntered(event: RunbookEventV1 & { type: 'STEP_ENTERED' }): void {
     const { payload } = event;
-    const { position, stepName, description, prompt, hasCommand, commandCode, commandLang, isSubstep, prompted } = payload;
+    const {
+      position,
+      stepName,
+      description,
+      prompt,
+      hasCommand,
+      commandCode,
+      commandLang,
+      isSubstep,
+      prompted,
+    } = payload;
 
     // Create minimal step/substep object for rendering
-    const command = hasCommand ? { code: commandCode ?? '', lang: commandLang ?? 'bash' } : undefined;
-    const item = (isSubstep
-      ? { id: stepName, description, prompt, command }
-      : { name: stepName, description, prompt, command }
+    const command = hasCommand
+      ? { code: commandCode ?? '', lang: commandLang ?? 'bash' }
+      : undefined;
+    const item = (
+      isSubstep
+        ? { id: stepName, description, prompt, command }
+        : { name: stepName, description, prompt, command }
     ) as Step | Substep;
 
     printStepBlock(position, item, prompted, this.writer);

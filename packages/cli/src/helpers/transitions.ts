@@ -131,7 +131,7 @@ export interface TransitionContext {
  */
 export async function resolveActiveState(
   manager: RunbookStateManager,
-  agentId?: string
+  agentId?: string,
 ): Promise<RunbookState | null> {
   let state = await manager.getActive(agentId);
 
@@ -165,7 +165,7 @@ export async function resolveActiveState(
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-  agentId?: string
+  agentId?: string,
 ): Promise<TransitionContext | null> {
   const manager = new RunbookStateManager(cwd);
   const state = await resolveActiveState(manager, agentId);
@@ -193,7 +193,7 @@ export async function buildTransitionContext(
  */
 export function calculatePosition(
   state: RunbookState,
-  steps: Step[]
+  steps: Step[],
 ): { displayStep: string; totalSteps: number; displaySubstep?: string } {
   const totalSteps = countNumberedSteps(steps);
   return { displayStep: state.step, totalSteps, displaySubstep: state.substep };
@@ -210,12 +210,20 @@ export function calculatePosition(
 export function buildPositions(
   prevState: RunbookState,
   newState: RunbookState,
-  steps: Step[]
+  steps: Step[],
 ): { prevPos: StepPosition; newPos: StepPosition } {
   const totalSteps = countNumberedSteps(steps);
 
-  const prevPos: StepPosition = { current: prevState.step, total: totalSteps, substep: prevState.substep };
-  const newPos: StepPosition = { current: newState.step, total: totalSteps, substep: newState.substep };
+  const prevPos: StepPosition = {
+    current: prevState.step,
+    total: totalSteps,
+    substep: prevState.substep,
+  };
+  const newPos: StepPosition = {
+    current: newState.step,
+    total: totalSteps,
+    substep: newState.substep,
+  };
 
   return { prevPos, newPos };
 }
@@ -264,7 +272,7 @@ export async function handleTerminalState(
   isStopped: boolean,
   prevState: RunbookState,
   positions: { prevPos: StepPosition; newPos: StepPosition },
-  conditionResult: ConditionResult
+  conditionResult: ConditionResult,
 ): Promise<'complete' | 'stopped' | 'continue'> {
   const { output, manager, state, steps, agentId } = ctx;
   const { prevPos, newPos } = positions;
@@ -272,12 +280,15 @@ export async function handleTerminalState(
   /**
    * Apply terminal side effects based on configuration.
    */
-  const applySideEffects = async (effects: TerminalSideEffects, result: 'pass' | 'fail'): Promise<void> => {
+  const applySideEffects = async (
+    effects: TerminalSideEffects,
+    result: 'pass' | 'fail',
+  ): Promise<void> => {
     // updateParentBinding only executes when BOTH agentId AND parentRunbookId are present
     if (effects.updateParentBinding && agentId && state.parentRunbookId) {
       await manager.updateAgentBinding(state.parentRunbookId, agentId, {
         status: 'done',
-        result
+        result,
       });
     }
 
@@ -287,15 +298,16 @@ export async function handleTerminalState(
   };
 
   // Check terminal states in configured order
-  const checks = config.terminalOrder === 'complete-first'
-    ? [
-        { check: isComplete, type: 'complete' as const },
-        { check: isStopped, type: 'stopped' as const }
-      ]
-    : [
-        { check: isStopped, type: 'stopped' as const },
-        { check: isComplete, type: 'complete' as const }
-      ];
+  const checks =
+    config.terminalOrder === 'complete-first'
+      ? [
+          { check: isComplete, type: 'complete' as const },
+          { check: isStopped, type: 'stopped' as const },
+        ]
+      : [
+          { check: isStopped, type: 'stopped' as const },
+          { check: isComplete, type: 'complete' as const },
+        ];
 
   for (const { check, type } of checks) {
     if (!check) continue;
@@ -303,7 +315,7 @@ export async function handleTerminalState(
     if (type === 'complete') {
       await manager.update(state.id, {
         step: steps[steps.length - 1].name,
-        variables: { ...state.variables, completed: true }
+        variables: { ...state.variables, completed: true },
       });
 
       output.complete(conditionResult.message, newPos);
@@ -343,7 +355,7 @@ export async function handleTerminalState(
 export async function handleAgentBinding(
   ctx: TransitionContext,
   agentId: string,
-  config: TransitionConfig
+  config: TransitionConfig,
 ): Promise<boolean> {
   const { output, manager, state, steps, actor, cwd } = ctx;
   const binding = await manager.getAgentBinding(state.id, agentId);
@@ -356,7 +368,7 @@ export async function handleAgentBinding(
 
   // Agent binding exists - evaluate condition for RETRY/GOTO (same for pass and fail)
   const stepName = binding.stepId.step;
-  const stepIndex = steps.findIndex(s => s.name === stepName);
+  const stepIndex = steps.findIndex((s) => s.name === stepName);
   const agentStep = stepIndex >= 0 ? steps[stepIndex] : steps[0];
   const conditionResult = config.evaluateCondition(agentStep, state);
 
@@ -365,11 +377,19 @@ export async function handleAgentBinding(
     const retryState = await manager.updateFromActor(state.id, actor, steps);
     output.status(true, 'retry', `Agent ${agentId} retrying step ${stepName}`, {
       agent: agentId,
-      step: stepName
+      step: stepName,
     });
     // Continue with execution loop for retry
     const retryEmitter = createBridgedEmitter(retryState, output);
-    const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, agentId, retryEmitter);
+    const loopResult = await runExecutionLoop(
+      manager,
+      state.id,
+      steps,
+      cwd,
+      !!state.prompted,
+      agentId,
+      retryEmitter,
+    );
     output.flush();
     if (loopResult === 'stopped') process.exit(1);
     return true;
@@ -380,11 +400,19 @@ export async function handleAgentBinding(
     const gotoState = await manager.updateFromActor(state.id, actor, steps);
     output.status(true, 'goto', `Agent ${agentId} triggered goto to step ${gotoState.step}`, {
       agent: agentId,
-      step: gotoState.step
+      step: gotoState.step,
     });
     // Continue with execution loop after GOTO
     const gotoEmitter = createBridgedEmitter(gotoState, output);
-    const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, agentId, gotoEmitter);
+    const loopResult = await runExecutionLoop(
+      manager,
+      state.id,
+      steps,
+      cwd,
+      !!state.prompted,
+      agentId,
+      gotoEmitter,
+    );
     output.flush();
     if (loopResult === 'stopped') process.exit(1);
     return true;
@@ -396,7 +424,9 @@ export async function handleAgentBinding(
   if (binding.childRunbookId) {
     const childResult = await manager.getChildRunbookResult(binding.childRunbookId);
     if (childResult === null) {
-      throw new Error(`Child runbook still active. Complete or stop it first.\nChild runbook: ${binding.childRunbookId}`);
+      throw new Error(
+        `Child runbook still active. Complete or stop it first.\nChild runbook: ${binding.childRunbookId}`,
+      );
     }
     result = childResult;
   }
@@ -408,14 +438,15 @@ export async function handleAgentBinding(
   const runningCount = bindings.filter((b) => b.status === 'running').length;
 
   const action = config.lastResult === 'pass' ? 'agent_completed' : 'agent_failed';
-  const statusMessage = runningCount > 0
-    ? `Agent ${agentId} marked as ${config.lastResult} (${String(runningCount)} agent(s) still running)`
-    : `Agent ${agentId} marked as ${config.lastResult} (All agents complete)`;
+  const statusMessage =
+    runningCount > 0
+      ? `Agent ${agentId} marked as ${config.lastResult} (${String(runningCount)} agent(s) still running)`
+      : `Agent ${agentId} marked as ${config.lastResult} (All agents complete)`;
 
   output.status(config.lastResult === 'pass', action, statusMessage, {
     agent: agentId,
     result,
-    agentsRunning: runningCount
+    agentsRunning: runningCount,
   });
   output.flush();
   return true;
@@ -433,7 +464,7 @@ export async function handleAgentBinding(
  */
 export async function executeTransition(
   ctx: TransitionContext,
-  config: TransitionConfig
+  config: TransitionConfig,
 ): Promise<void> {
   const { output, manager, state, steps, actor, cwd, agentId } = ctx;
 
@@ -458,29 +489,32 @@ export async function executeTransition(
   const isStopped = isRunbookStopped(snapshot);
 
   // Read action from XState context (source of truth for retryMax and lastAction)
-  const prevStepIndex = steps.findIndex(s => s.name === prevState.step);
+  const prevStepIndex = steps.findIndex((s) => s.name === prevState.step);
   const currentStep = prevStepIndex >= 0 ? steps[prevStepIndex] : steps[0];
   const retryMax = extractRetryMax(snapshot);
   const lastActionFromContext = extractLastAction(snapshot);
 
-  const action = formatActionForDisplay(
-    lastActionFromContext,
-    updatedState.retryCount,
-    retryMax
-  );
+  const action = formatActionForDisplay(lastActionFromContext, updatedState.retryCount, retryMax);
 
   // Derive action type and compute result
   const actionType = parseActionType(lastActionFromContext);
   const actionResult = config.computeActionResult(actionType);
 
   // Update lastAction and lastResult in persistent state (pass structured object directly)
-  await manager.update(state.id, { lastAction: lastActionFromContext, lastResult: config.lastResult });
+  await manager.update(state.id, {
+    lastAction: lastActionFromContext,
+    lastResult: config.lastResult,
+  });
 
   // Build positions for output
   const totalStepsValue = countNumberedSteps(steps);
 
   const prevPos = { current: displayStep, total: totalStepsValue, substep: prevSubstep };
-  const newPos = { current: updatedState.step, total: totalStepsValue, substep: updatedState.substep };
+  const newPos = {
+    current: updatedState.step,
+    total: totalStepsValue,
+    substep: updatedState.substep,
+  };
 
   // Emit action block
   output.action({
@@ -501,7 +535,7 @@ export async function executeTransition(
     isStopped,
     prevState,
     { prevPos, newPos },
-    conditionResult
+    conditionResult,
   );
 
   if (terminalResult !== 'continue') {
@@ -511,7 +545,15 @@ export async function executeTransition(
   // Create emitter bridged to unified output
   const emitter = createBridgedEmitter(updatedState, output);
 
-  const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, !!state.prompted, agentId, emitter);
+  const loopResult = await runExecutionLoop(
+    manager,
+    state.id,
+    steps,
+    cwd,
+    !!state.prompted,
+    agentId,
+    emitter,
+  );
 
   // Flush any remaining output
   output.flush();

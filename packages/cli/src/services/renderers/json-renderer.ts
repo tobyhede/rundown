@@ -210,9 +210,7 @@ export class JSONRenderer implements OutputRenderer {
    * for raw array output when this is the only event type.
    */
   private renderList(event: OutputEvent & { type: 'list' }): void {
-    const items = event.jsonMapper
-      ? event.items.map(event.jsonMapper)
-      : event.items;
+    const items = event.jsonMapper ? event.items.map(event.jsonMapper) : event.items;
 
     // Store for raw array output
     this.listItems = items;
@@ -262,7 +260,6 @@ export class JSONRenderer implements OutputRenderer {
       this.output.stopped = true;
     }
   }
-
 
   /**
    * Render an execution event as NDJSON.

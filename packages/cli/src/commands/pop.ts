@@ -1,17 +1,9 @@
 // packages/cli/src/commands/pop.ts
 
 import type { Command } from 'commander';
-import {
-  RunbookStateManager,
-  countNumberedSteps,
-  type ActionBlockData,
-} from '@rundown-org/core';
+import { RunbookStateManager, countNumberedSteps, type ActionBlockData } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
-import {
-  getStepRetryMax,
-  buildMetadata,
-  formatActionForDisplay,
-} from '../services/execution.js';
+import { getStepRetryMax, buildMetadata, formatActionForDisplay } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
@@ -43,7 +35,7 @@ export function registerPopCommand(program: Command): void {
           }
 
           const steps = getRunbookFromState(state, cwd);
-          const currentStepIndex = steps.findIndex(s => s.name === state.step);
+          const currentStepIndex = steps.findIndex((s) => s.name === state.step);
           const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
           const totalSteps = countNumberedSteps(steps);
 
@@ -51,7 +43,11 @@ export function registerPopCommand(program: Command): void {
           let actionBlockData: ActionBlockData | undefined;
           if (state.lastAction) {
             const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
-            const actionStr = formatActionForDisplay(state.lastAction, state.retryCount, retryMaxForAction);
+            const actionStr = formatActionForDisplay(
+              state.lastAction,
+              state.retryCount,
+              retryMaxForAction,
+            );
             actionBlockData = { action: actionStr };
             if (state.lastResult) {
               actionBlockData.result = state.lastResult === 'pass';
@@ -89,7 +85,7 @@ export function registerPopCommand(program: Command): void {
           });
           output.flush();
         },
-        { json: options.json }
+        { json: options.json },
       );
     });
 }

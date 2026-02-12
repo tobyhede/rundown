@@ -56,7 +56,11 @@ function getNodeExecutionPaths(): string[] {
     // Also allow the parent directory for version managers like mise
     // (e.g., ~/.local/share/mise/installs)
     const versionManagerDir = dirname(nodeInstallDir);
-    if (versionManagerDir.includes('mise') || versionManagerDir.includes('nvm') || versionManagerDir.includes('nodenv')) {
+    if (
+      versionManagerDir.includes('mise') ||
+      versionManagerDir.includes('nvm') ||
+      versionManagerDir.includes('nodenv')
+    ) {
       paths.push(versionManagerDir);
     }
   } catch {
@@ -124,12 +128,12 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
 
   // Build read-only path rules from policy
   const readOnlyRules = options.readOnlyPaths
-    .map(p => `(allow file-read* (subpath "${escapePath(p)}"))`)
+    .map((p) => `(allow file-read* (subpath "${escapePath(p)}"))`)
     .join('\n');
 
   // Build read-write path rules from policy
   const readWriteRules = options.readWritePaths
-    .map(p => `(allow file-read* file-write* (subpath "${escapePath(p)}"))`)
+    .map((p) => `(allow file-read* file-write* (subpath "${escapePath(p)}"))`)
     .join('\n');
 
   // Get Node.js execution paths dynamically
@@ -142,8 +146,8 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
   }
 
   const nodePathRules = executionPaths
-    .filter(p => p) // Remove empty strings
-    .map(p => `  (subpath "${escapePath(p)}")`)
+    .filter((p) => p) // Remove empty strings
+    .map((p) => `  (subpath "${escapePath(p)}")`)
     .join('\n');
 
   // Note: Seatbelt doesn't have a direct "deny subpath" after allowing parent.
@@ -309,7 +313,10 @@ export class SeatbeltSandbox implements SandboxImplementation {
   async execute(command: string, options: SandboxOptions): Promise<SandboxExecutionResult> {
     // Generate profile
     const profile = generateSeatbeltProfile(options);
-    const profilePath = join(tmpdir(), `rundown-sandbox-${String(Date.now())}-${Math.random().toString(36).slice(2)}.sb`);
+    const profilePath = join(
+      tmpdir(),
+      `rundown-sandbox-${String(Date.now())}-${Math.random().toString(36).slice(2)}.sb`,
+    );
 
     try {
       // Write profile to temp file
@@ -338,7 +345,7 @@ export class SeatbeltSandbox implements SandboxImplementation {
   private executeWithProfile(
     command: string,
     profilePath: string,
-    cwd: string
+    cwd: string,
   ): Promise<SandboxExecutionResult> {
     return new Promise((resolve) => {
       // Enhance PATH to include node_modules/.bin for local package binaries
@@ -347,15 +354,11 @@ export class SeatbeltSandbox implements SandboxImplementation {
         PATH: buildEnhancedPath(cwd),
       };
 
-      const child = spawn(
-        '/usr/bin/sandbox-exec',
-        ['-f', profilePath, '/bin/sh', '-c', command],
-        {
-          cwd,
-          stdio: 'inherit',
-          env: enhancedEnv,
-        }
-      );
+      const child = spawn('/usr/bin/sandbox-exec', ['-f', profilePath, '/bin/sh', '-c', command], {
+        cwd,
+        stdio: 'inherit',
+        env: enhancedEnv,
+      });
 
       child.on('close', (code) => {
         // Exit code 1 with sandbox-exec can mean sandbox violation

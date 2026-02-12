@@ -162,5 +162,29 @@ describe('Command Parser', () => {
 
       expect(result).toEqual([]);
     });
+
+    it('should extract commands from backtick substitution', () => {
+      const result = extractAllExecutables('echo `id`');
+      expect(result).toContain('echo');
+      expect(result).toContain('id');
+    });
+
+    it('should extract commands from $(...) substitution', () => {
+      const result = extractAllExecutables('echo $(id)');
+      expect(result).toContain('echo');
+      expect(result).toContain('id');
+    });
+
+    it('should handle nested substitutions', () => {
+      const result = extractAllExecutables('echo $(echo $(id))');
+      expect(result).toContain('echo');
+      expect(result).toContain('id');
+    });
+
+    it('should respect recursion depth limit', () => {
+      // Start at a depth that exceeds the limit
+      const result = extractAllExecutables('echo $(id)', 6);
+      expect(result).toEqual([]);
+    });
   });
 });

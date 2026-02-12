@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { discoverVariables, parseVarFlag, mergeVariables, loadVariablesFromFile, collectVariables, extractVarsFromMarkdown, getBuiltinVariables } from '../../src/services/variable-discovery.js';
+import {
+  discoverVariables,
+  parseVarFlag,
+  mergeVariables,
+  loadVariablesFromFile,
+  collectVariables,
+  extractVarsFromMarkdown,
+  getBuiltinVariables,
+} from '../../src/services/variable-discovery.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -172,10 +180,7 @@ describe('loadVariablesFromFile', () => {
 
   it('should load and parse valid YAML file', async () => {
     const filePath = path.join(tmpDir, 'vars.yaml');
-    await fs.writeFile(
-      filePath,
-      'test_command: npm test\nlint_command: npm run lint\nport: 3000'
-    );
+    await fs.writeFile(filePath, 'test_command: npm test\nlint_command: npm run lint\nport: 3000');
 
     const result = await loadVariablesFromFile(filePath);
 
@@ -196,10 +201,7 @@ describe('loadVariablesFromFile', () => {
 
   it('should return empty object for malformed YAML', async () => {
     const filePath = path.join(tmpDir, 'malformed.yaml');
-    await fs.writeFile(
-      filePath,
-      'invalid: yaml: content:\n  - missing\n  proper: indentation'
-    );
+    await fs.writeFile(filePath, 'invalid: yaml: content:\n  - missing\n  proper: indentation');
 
     const result = await loadVariablesFromFile(filePath);
 
@@ -237,10 +239,7 @@ describe('loadVariablesFromFile', () => {
 
   it('should convert non-string values to strings (numbers)', async () => {
     const filePath = path.join(tmpDir, 'numbers.yaml');
-    await fs.writeFile(
-      filePath,
-      'port: 3000\nmax_connections: 100\npi: 3.14'
-    );
+    await fs.writeFile(filePath, 'port: 3000\nmax_connections: 100\npi: 3.14');
 
     const result = await loadVariablesFromFile(filePath);
 
@@ -253,10 +252,7 @@ describe('loadVariablesFromFile', () => {
 
   it('should convert non-string values to strings (booleans)', async () => {
     const filePath = path.join(tmpDir, 'booleans.yaml');
-    await fs.writeFile(
-      filePath,
-      'debug: true\nenabled: false'
-    );
+    await fs.writeFile(filePath, 'debug: true\nenabled: false');
 
     const result = await loadVariablesFromFile(filePath);
 
@@ -268,10 +264,7 @@ describe('loadVariablesFromFile', () => {
 
   it('should convert mixed value types to strings', async () => {
     const filePath = path.join(tmpDir, 'mixed.yaml');
-    await fs.writeFile(
-      filePath,
-      'name: my-app\nport: 8080\ndebug: true\nversion: 1.2.3'
-    );
+    await fs.writeFile(filePath, 'name: my-app\nport: 8080\ndebug: true\nversion: 1.2.3');
 
     const result = await loadVariablesFromFile(filePath);
 
@@ -300,7 +293,7 @@ describe('discoverVariables', () => {
     await fs.mkdir(rundownDir, { recursive: true });
     await fs.writeFile(
       path.join(rundownDir, 'config.yaml'),
-      'test_command: npm test\nlint_command: npm run lint'
+      'test_command: npm test\nlint_command: npm run lint',
     );
 
     const result = await discoverVariables(tmpDir);
@@ -339,10 +332,7 @@ describe('discoverVariables', () => {
     const parentDir = tmpDir;
     const parentRundownDir = path.join(parentDir, '.rundown');
     await fs.mkdir(parentRundownDir, { recursive: true });
-    await fs.writeFile(
-      path.join(parentRundownDir, 'config.yaml'),
-      'should_not_find: this value'
-    );
+    await fs.writeFile(path.join(parentRundownDir, 'config.yaml'), 'should_not_find: this value');
 
     // Create repo subdirectory with .git (marks git root)
     const repoDir = path.join(parentDir, 'repo');
@@ -390,7 +380,7 @@ describe('collectVariables', () => {
       {
         var: ['key1=value1', 'key2=value2'],
       },
-      tmpDir
+      tmpDir,
     );
 
     // User variables
@@ -410,7 +400,7 @@ describe('collectVariables', () => {
       {
         varFile: varFilePath,
       },
-      tmpDir
+      tmpDir,
     );
 
     // File variables
@@ -427,7 +417,7 @@ describe('collectVariables', () => {
     await fs.mkdir(rundownDir, { recursive: true });
     await fs.writeFile(
       path.join(rundownDir, 'config.yaml'),
-      'discovered_key1: discovered_value1\ndiscovered_key2: discovered_value2'
+      'discovered_key1: discovered_value1\ndiscovered_key2: discovered_value2',
     );
 
     const result = await collectVariables({}, tmpDir);
@@ -447,7 +437,7 @@ describe('collectVariables', () => {
     await fs.mkdir(rundownDir, { recursive: true });
     await fs.writeFile(
       path.join(rundownDir, 'config.yaml'),
-      'shared: from_discovered\nkey_discovered: value_discovered'
+      'shared: from_discovered\nkey_discovered: value_discovered',
     );
 
     // Setup var file
@@ -459,7 +449,7 @@ describe('collectVariables', () => {
         varFile: varFilePath,
         var: ['shared=from_flag', 'key_flag=value_flag'],
       },
-      tmpDir
+      tmpDir,
     );
 
     // Verify precedence: flags > file > discovered
@@ -478,7 +468,7 @@ describe('collectVariables', () => {
       {
         var: ['WorkPath=custom-path', 'Date=2000-01-01'],
       },
-      tmpDir
+      tmpDir,
     );
 
     expect(result.WorkPath).toBe('custom-path');
@@ -494,7 +484,7 @@ describe('collectVariables', () => {
       {
         varFile: varFilePath,
       },
-      tmpDir
+      tmpDir,
     );
 
     expect(result.WorkPath).toBe('from-file');
@@ -506,7 +496,7 @@ describe('collectVariables', () => {
     await fs.mkdir(rundownDir, { recursive: true });
     await fs.writeFile(
       path.join(rundownDir, 'config.yaml'),
-      'WorkPath: discovered-path\nYear: 1999'
+      'WorkPath: discovered-path\nYear: 1999',
     );
 
     const result = await collectVariables({}, tmpDir);
@@ -520,14 +510,18 @@ describe('collectVariables', () => {
       {
         var: ['valid=value', 'invalid-without-equals', 'also-invalid-key=value'],
       },
-      tmpDir
+      tmpDir,
     );
 
     expect(result.valid).toBe('value');
 
     expect(warnSpy).toHaveBeenCalledTimes(2);
-    expect(warnSpy).toHaveBeenCalledWith('Warning: Ignoring invalid --var flag: invalid-without-equals');
-    expect(warnSpy).toHaveBeenCalledWith('Warning: Ignoring invalid --var flag: also-invalid-key=value');
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Warning: Ignoring invalid --var flag: invalid-without-equals',
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Warning: Ignoring invalid --var flag: also-invalid-key=value',
+    );
   });
 
   it('should handle relative path for --var-file', async () => {
@@ -538,7 +532,7 @@ describe('collectVariables', () => {
       {
         varFile: 'relative-vars.yaml',
       },
-      tmpDir
+      tmpDir,
     );
 
     expect(result.rel_key).toBe('rel_value');
@@ -552,7 +546,7 @@ describe('collectVariables', () => {
       {
         varFile: absolutePath,
       },
-      tmpDir
+      tmpDir,
     );
 
     expect(result.abs_key).toBe('abs_value');
@@ -563,7 +557,7 @@ describe('collectVariables', () => {
       {
         frontmatterVars: { fm_key: 'fm_value', custom: 'from_frontmatter' },
       },
-      tmpDir
+      tmpDir,
     );
 
     expect(result.fm_key).toBe('fm_value');
@@ -579,7 +573,7 @@ describe('collectVariables', () => {
       {
         frontmatterVars: { Date: '2020-01-01', WorkPath: 'fm-work' },
       },
-      tmpDir
+      tmpDir,
     );
 
     expect(result.Date).toBe('2020-01-01');
@@ -589,16 +583,13 @@ describe('collectVariables', () => {
   it('should allow discovered config to override frontmatter vars', async () => {
     const rundownDir = path.join(tmpDir, '.rundown');
     await fs.mkdir(rundownDir, { recursive: true });
-    await fs.writeFile(
-      path.join(rundownDir, 'config.yaml'),
-      'shared: from_discovered'
-    );
+    await fs.writeFile(path.join(rundownDir, 'config.yaml'), 'shared: from_discovered');
 
     const result = await collectVariables(
       {
         frontmatterVars: { shared: 'from_frontmatter' },
       },
-      tmpDir
+      tmpDir,
     );
 
     expect(result.shared).toBe('from_discovered');
@@ -610,7 +601,7 @@ describe('collectVariables', () => {
     await fs.mkdir(rundownDir, { recursive: true });
     await fs.writeFile(
       path.join(rundownDir, 'config.yaml'),
-      'shared: from_discovered\nkey_discovered: value_discovered'
+      'shared: from_discovered\nkey_discovered: value_discovered',
     );
 
     // Setup var file
@@ -623,7 +614,7 @@ describe('collectVariables', () => {
         varFile: varFilePath,
         var: ['shared=from_flag', 'key_flag=value_flag'],
       },
-      tmpDir
+      tmpDir,
     );
 
     // Verify precedence: flags > file > discovered > frontmatter > builtins
@@ -770,8 +761,12 @@ vars:
       _valid: 'value4',
     });
 
-    expect(warnSpy).toHaveBeenCalledWith('Warning: Ignoring frontmatter var with invalid key: invalid-key');
-    expect(warnSpy).toHaveBeenCalledWith('Warning: Ignoring frontmatter var with invalid key: 123invalid');
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Warning: Ignoring frontmatter var with invalid key: invalid-key',
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Warning: Ignoring frontmatter var with invalid key: 123invalid',
+    );
 
     warnSpy.mockRestore();
   });
@@ -795,7 +790,9 @@ vars:
       simple: 'value',
     });
 
-    expect(warnSpy).toHaveBeenCalledWith('Warning: Ignoring frontmatter var "complex" with complex value');
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Warning: Ignoring frontmatter var "complex" with complex value',
+    );
 
     warnSpy.mockRestore();
   });

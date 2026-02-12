@@ -5,12 +5,12 @@ import { z } from 'zod';
  * Runbook frontmatter metadata
  */
 export interface RunbookFrontmatter {
-  name: string;           // Required: runbook identifier
-  description?: string;   // Optional: for listing
-  version?: string;       // Optional: semantic version
-  author?: string;        // Optional
-  tags?: string[];        // Optional: categorization
-  vars?: Record<string, string | number | boolean>;  // Optional: default template variables
+  name: string; // Required: runbook identifier
+  description?: string; // Optional: for listing
+  version?: string; // Optional: semantic version
+  author?: string; // Optional
+  tags?: string[]; // Optional: categorization
+  vars?: Record<string, string | number | boolean>; // Optional: default template variables
   [key: string]: unknown; // Allow unknown fields
 }
 
@@ -18,17 +18,19 @@ export interface RunbookFrontmatter {
  * Zod schema for validating runbook frontmatter.
  * Uses .passthrough() to allow unknown fields like 'skill' to be preserved.
  */
-export const RunbookFrontmatterSchema = z.object({
-  name: z
-    .string()
-    .min(1, 'Name is required')
-    .regex(/^[a-z0-9-]+$/i, 'Name must contain only alphanumeric characters and hyphens'),
-  description: z.string().optional(),
-  version: z.string().optional(),
-  author: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  vars: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-}).passthrough();
+export const RunbookFrontmatterSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, 'Name is required')
+      .regex(/^[a-z0-9-]+$/i, 'Name must contain only alphanumeric characters and hyphens'),
+    description: z.string().optional(),
+    version: z.string().optional(),
+    author: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    vars: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  })
+  .passthrough();
 
 /**
  * Type derived from Zod schema

@@ -35,7 +35,7 @@ export function rundown(args: string[], cwd: string): string {
   const options: ExecFileSyncOptions = {
     cwd,
     stdio: 'pipe',
-    encoding: 'utf-8'
+    encoding: 'utf-8',
   };
   return execFileSyncImpl('node', [cliPath, ...args], options) as string;
 }

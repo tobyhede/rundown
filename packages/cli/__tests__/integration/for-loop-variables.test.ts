@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, createRunbook, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  createRunbook,
+  runCli,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 
@@ -18,15 +23,19 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     const content = createRunbook({
       name: 'FOR Vars Test',
       title: 'FOR Vars',
-      steps: [{
-        title: 'Process items',
-        for: { variable: 'item', start: 1, end: 3 },
-        pass: 'CONTINUE',
-        substeps: [{
-          title: 'Handle item {{item}} index {{Index}}',
-          command: 'rd echo item={{item}} index={{Index}}',
-        }],
-      }],
+      steps: [
+        {
+          title: 'Process items',
+          for: { variable: 'item', start: 1, end: 3 },
+          pass: 'CONTINUE',
+          substeps: [
+            {
+              title: 'Handle item {{item}} index {{Index}}',
+              command: 'rd echo item={{item}} index={{Index}}',
+            },
+          ],
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'for-vars.runbook.md'), content);
 
@@ -36,18 +45,18 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     // Parse JSON events from output
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     // Find step_entered events — JSON output uses lowercase snake_case types
     // (STEP_ENTERED → step_entered via json-renderer.ts toSnakeCase)
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
 
     // Find command_started events
     const commandStartedEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'command_started'
+      (e: Record<string, unknown>) => e.type === 'command_started',
     );
 
     // Guard: ensure we found the expected number of events before indexing
@@ -89,14 +98,14 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
     const commandStartedEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'command_started'
+      (e: Record<string, unknown>) => e.type === 'command_started',
     );
 
     expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(2);
@@ -141,14 +150,14 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
     const commandStartedEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'command_started'
+      (e: Record<string, unknown>) => e.type === 'command_started',
     );
 
     // Should have substep 1.1, 1.2, and step 2
@@ -172,15 +181,19 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     const content = createRunbook({
       name: 'Step Var FOR',
       title: 'Step Var FOR',
-      steps: [{
-        title: 'Loop step',
-        for: { variable: 'i', start: 1, end: 2 },
-        pass: 'CONTINUE',
-        substeps: [{
-          title: 'Iteration {{Index}} of step {{Step}}',
-          command: 'rd echo step={{Step}} index={{Index}}',
-        }],
-      }],
+      steps: [
+        {
+          title: 'Loop step',
+          for: { variable: 'i', start: 1, end: 2 },
+          pass: 'CONTINUE',
+          substeps: [
+            {
+              title: 'Iteration {{Index}} of step {{Step}}',
+              command: 'rd echo step={{Step}} index={{Index}}',
+            },
+          ],
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'step-var-for.runbook.md'), content);
 
@@ -189,14 +202,14 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
     const commandStartedEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'command_started'
+      (e: Record<string, unknown>) => e.type === 'command_started',
     );
 
     expect(stepEnteredEvents).toHaveLength(2);
@@ -216,15 +229,19 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     const content = createRunbook({
       name: 'FOR Bootstrap',
       title: 'FOR Bootstrap',
-      steps: [{
-        title: 'First step is FOR',
-        for: { variable: 'i', start: 1, end: 2 },
-        pass: 'CONTINUE',
-        substeps: [{
-          title: 'Process iteration {{i}}',
-          command: 'rd echo iteration={{i}}',
-        }],
-      }],
+      steps: [
+        {
+          title: 'First step is FOR',
+          for: { variable: 'i', start: 1, end: 2 },
+          pass: 'CONTINUE',
+          substeps: [
+            {
+              title: 'Process iteration {{i}}',
+              command: 'rd echo iteration={{i}}',
+            },
+          ],
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'for-bootstrap.runbook.md'), content);
 
@@ -233,12 +250,12 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     // JSON output uses lowercase snake_case types
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
 
     // Guard: ensure we found at least the first iteration
@@ -253,10 +270,12 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     const content = createRunbook({
       name: 'Index Outside FOR',
       title: 'Index Outside',
-      steps: [{
-        title: 'Step with Index reference {{Index}}',
-        command: 'rd echo value={{Index}}',
-      }],
+      steps: [
+        {
+          title: 'Step with Index reference {{Index}}',
+          command: 'rd echo value={{Index}}',
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'index-outside-for.runbook.md'), content);
 
@@ -265,11 +284,11 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
 
     expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(1);
@@ -299,7 +318,7 @@ rd echo setup
 \`\`\`bash
 rd echo step={{Step}}
 \`\`\`
-`
+`,
     );
 
     const result = runCli('run --json step-named.runbook.md', workspace);
@@ -307,14 +326,14 @@ rd echo step={{Step}}
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
     const commandStartedEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'command_started'
+      (e: Record<string, unknown>) => e.type === 'command_started',
     );
 
     // Find the ErrorHandler step event (second step_entered)
@@ -327,18 +346,22 @@ rd echo step={{Step}}
     const content = createRunbook({
       name: 'FOR Prompt Test',
       title: 'FOR Prompt',
-      steps: [{
-        title: 'Process items',
-        for: { variable: 'item', start: 1, end: 2 },
-        pass: 'CONTINUE',
-        substeps: [{
-          title: 'Handle item {{item}}',
+      steps: [
+        {
+          title: 'Process items',
+          for: { variable: 'item', start: 1, end: 2 },
           pass: 'CONTINUE',
-          fail: 'STOP',
-          content: 'Process item number {{item}} carefully.',
-          command: 'rd echo item={{item}}',
-        }],
-      }],
+          substeps: [
+            {
+              title: 'Handle item {{item}}',
+              pass: 'CONTINUE',
+              fail: 'STOP',
+              content: 'Process item number {{item}} carefully.',
+              command: 'rd echo item={{item}}',
+            },
+          ],
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'for-prompt.runbook.md'), content);
 
@@ -347,11 +370,11 @@ rd echo step={{Step}}
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
 
     expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(1);
@@ -364,15 +387,19 @@ rd echo step={{Step}}
       name: 'FOR Var Bounds',
       title: 'FOR Var Bounds',
       vars: { Max: 3 },
-      steps: [{
-        title: 'Process',
-        for: { variable: 'item', start: 1, end: '{{Max}}' },
-        pass: 'CONTINUE',
-        substeps: [{
-          title: 'Iteration {{Index}}',
-          command: 'rd echo iter={{Index}}',
-        }],
-      }],
+      steps: [
+        {
+          title: 'Process',
+          for: { variable: 'item', start: 1, end: '{{Max}}' },
+          pass: 'CONTINUE',
+          substeps: [
+            {
+              title: 'Iteration {{Index}}',
+              command: 'rd echo iter={{Index}}',
+            },
+          ],
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'for-var-bounds.runbook.md'), content);
 
@@ -381,11 +408,11 @@ rd echo step={{Step}}
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
 
     // Phase 1 should expand {{Max}} to 3 before FOR clause parsing
@@ -399,15 +426,17 @@ rd echo step={{Step}}
     const content = createRunbook({
       name: 'FOR Multi Substep',
       title: 'FOR Multi Substep',
-      steps: [{
-        title: 'Process',
-        for: { variable: 'item', start: 1, end: 2 },
-        pass: 'CONTINUE',
-        substeps: [
-          { title: 'Fetch item {{item}}', command: 'rd echo fetch={{item}}' },
-          { title: 'Store item {{item}}', command: 'rd echo store={{item}}' },
-        ],
-      }],
+      steps: [
+        {
+          title: 'Process',
+          for: { variable: 'item', start: 1, end: 2 },
+          pass: 'CONTINUE',
+          substeps: [
+            { title: 'Fetch item {{item}}', command: 'rd echo fetch={{item}}' },
+            { title: 'Store item {{item}}', command: 'rd echo store={{item}}' },
+          ],
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'for-multi-sub.runbook.md'), content);
 
@@ -416,11 +445,11 @@ rd echo step={{Step}}
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
 
     // 2 iterations × 2 substeps = 4 step_entered events
@@ -439,15 +468,19 @@ rd echo step={{Step}}
     const content = createRunbook({
       name: 'FOR Single Iter',
       title: 'FOR Single Iteration',
-      steps: [{
-        title: 'Single',
-        for: { variable: 'item', start: 1, end: 1 },
-        pass: 'CONTINUE',
-        substeps: [{
-          title: 'Only iteration {{item}}',
-          command: 'rd echo item={{item}}',
-        }],
-      }],
+      steps: [
+        {
+          title: 'Single',
+          for: { variable: 'item', start: 1, end: 1 },
+          pass: 'CONTINUE',
+          substeps: [
+            {
+              title: 'Only iteration {{item}}',
+              command: 'rd echo item={{item}}',
+            },
+          ],
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'for-single-iter.runbook.md'), content);
 
@@ -456,11 +489,11 @@ rd echo step={{Step}}
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
 
     // Exactly 1 iteration
@@ -476,10 +509,12 @@ rd echo step={{Step}}
     const content = createRunbook({
       name: 'Item Outside FOR',
       title: 'Item Outside',
-      steps: [{
-        title: 'Step with item reference {{item}}',
-        command: 'rd echo value={{item}}',
-      }],
+      steps: [
+        {
+          title: 'Step with item reference {{item}}',
+          command: 'rd echo value={{item}}',
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'item-outside-for.runbook.md'), content);
 
@@ -488,11 +523,11 @@ rd echo step={{Step}}
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
 
     expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(1);
@@ -501,7 +536,7 @@ rd echo step={{Step}}
 
     // Command should also preserve {{item}} as literal
     const commandEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'command_started'
+      (e: Record<string, unknown>) => e.type === 'command_started',
     );
     expect(commandEvents.length).toBeGreaterThanOrEqual(1);
     expect(commandEvents[0].command).toContain('{{item}}');
@@ -516,10 +551,12 @@ rd echo step={{Step}}
           title: 'Loop step',
           for: { variable: 'item', start: 1, end: 2 },
           pass: 'CONTINUE',
-          substeps: [{
-            title: 'Process item {{item}}',
-            command: 'rd echo item={{item}}',
-          }],
+          substeps: [
+            {
+              title: 'Process item {{item}}',
+              command: 'rd echo item={{item}}',
+            },
+          ],
         },
         {
           title: 'After loop uses {{item}}',
@@ -534,11 +571,11 @@ rd echo step={{Step}}
 
     const events = result.stdout
       .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line));
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
 
     const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered'
+      (e: Record<string, unknown>) => e.type === 'step_entered',
     );
 
     // 2 FOR iterations + step 2 = 3 step_entered events

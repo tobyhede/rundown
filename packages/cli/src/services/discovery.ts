@@ -74,7 +74,10 @@ export function getSearchPaths(cwd: string): SearchPath[] {
  * @param source - Source type for discovered runbooks
  * @returns Array of discovered runbooks with extracted metadata
  */
-export async function scanDirectory(dirPath: string, source: 'project' | 'plugin' | 'bundled'): Promise<DiscoveredRunbook[]> {
+export async function scanDirectory(
+  dirPath: string,
+  source: 'project' | 'plugin' | 'bundled',
+): Promise<DiscoveredRunbook[]> {
   const runbooks: DiscoveredRunbook[] = [];
 
   async function scanRecursive(currentPath: string): Promise<void> {
@@ -150,7 +153,10 @@ export async function discoverRunbooks(cwd: string): Promise<DiscoveredRunbook[]
  * @param name - Runbook name to search for
  * @returns The discovered runbook if found, or null if not found
  */
-export async function findRunbookByName(cwd: string, name: string): Promise<DiscoveredRunbook | null> {
+export async function findRunbookByName(
+  cwd: string,
+  name: string,
+): Promise<DiscoveredRunbook | null> {
   const searchPaths = getSearchPaths(cwd);
 
   for (const { path: dirPath, source } of searchPaths) {
@@ -177,7 +183,7 @@ export async function findRunbookByName(cwd: string, name: string): Promise<Disc
 export async function findRunbookByNameInSource(
   cwd: string,
   name: string,
-  targetSource: 'project' | 'plugin' | 'bundled'
+  targetSource: 'project' | 'plugin' | 'bundled',
 ): Promise<DiscoveredRunbook | null> {
   const searchPaths = getSearchPaths(cwd);
 

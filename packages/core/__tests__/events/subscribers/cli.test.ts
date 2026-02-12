@@ -16,7 +16,7 @@ describe('CLISubscriber', () => {
 
   const makeEvent = <T extends RunbookEventV1['type']>(
     type: T,
-    payload: Extract<RunbookEventV1, { type: T }>['payload']
+    payload: Extract<RunbookEventV1, { type: T }>['payload'],
   ): Extract<RunbookEventV1, { type: T }> =>
     ({
       v: '1',
@@ -34,7 +34,7 @@ describe('CLISubscriber', () => {
         title: 'Test',
         prompted: false,
         statePath: '.claude/rundown/runs/wf-test.json',
-      })
+      }),
     );
     const output = writer.getOutput();
     expect(output).toContain('File:');
@@ -51,8 +51,8 @@ describe('CLISubscriber', () => {
         description: 'Test step',
         hasCommand: true,
         isSubstep: false,
-          prompted: true,
-      })
+        prompted: true,
+      }),
     );
     const output = writer.getOutput();
     expect(output).toContain('Test step');
@@ -65,7 +65,7 @@ describe('CLISubscriber', () => {
         from: { current: '1', total: 5 },
         to: { current: '2', total: 5 },
         result: true,
-      })
+      }),
     );
     const output = writer.getOutput();
 
@@ -86,7 +86,7 @@ describe('CLISubscriber', () => {
       makeEvent('RUNBOOK_COMPLETED', {
         message: 'All done!',
         finalPosition: { current: '5', total: 5 },
-      })
+      }),
     );
     const output = writer.getOutput();
     expect(output).toContain('Runbook:');
@@ -99,7 +99,7 @@ describe('CLISubscriber', () => {
         command: 'rm -rf /',
         reason: 'Dangerous command',
         position: { current: '1', total: 1 },
-      })
+      }),
     );
     const output = writer.getOutput();
     expect(output).toContain('Policy Denied');
@@ -111,7 +111,7 @@ describe('CLISubscriber', () => {
         position: { current: '3', total: 5 },
         reason: 'fail_transition',
         message: 'Step failed',
-      })
+      }),
     );
     const output = writer.getOutput();
     expect(output).toContain('Runbook:');
@@ -123,7 +123,7 @@ describe('CLISubscriber', () => {
       makeEvent('ERROR_OCCURRED', {
         message: 'Something went wrong',
         code: 'ERR_TEST',
-      })
+      }),
     );
     const output = writer.getOutput();
     expect(output).toContain('Error:');

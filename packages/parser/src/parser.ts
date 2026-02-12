@@ -1,24 +1,9 @@
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { visit } from 'unist-util-visit';
 import type { Node } from 'unist';
-import type {
-  Code,
-  Heading,
-  ListItem,
-  Paragraph,
-  PhrasingContent
-} from 'mdast';
-import {
-  type Step,
-  type Substep,
-  type Runbook,
-  type Command,
-  type ForClause
-} from './ast.js';
-import {
-  type ParsedConditional,
-  RunbookSyntaxError
-} from './types.js';
+import type { Code, Heading, ListItem, Paragraph, PhrasingContent } from 'mdast';
+import { type Step, type Substep, type Runbook, type Command, type ForClause } from './ast.js';
+import { type ParsedConditional, RunbookSyntaxError } from './types.js';
 import {
   extractStepHeader,
   extractSubstepHeader,
@@ -29,7 +14,7 @@ import {
   isPromptCodeBlock,
   escapeForShellSingleQuote,
   validateNEXTUsage,
-  parseForClause
+  parseForClause,
 } from './helpers.js';
 import { validateRunbook } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
@@ -58,7 +43,9 @@ function extractText(node: PhrasingContent | Heading | Paragraph | ListItem): st
     return `\`${value}\``;
   }
   if ('children' in node && Array.isArray(node.children)) {
-    return node.children.map((child) => extractText(child as PhrasingContent | Heading | Paragraph | ListItem)).join('');
+    return node.children
+      .map((child) => extractText(child as PhrasingContent | Heading | Paragraph | ListItem))
+      .join('');
   }
   return '';
 }
@@ -136,14 +123,18 @@ export interface ParseOptions {
  *   or other specification violations
  * @see parseRunbook for simplified parsing returning only steps
  */
-export function parseRunbookDocument(markdown: string, filename?: string, options?: ParseOptions): Runbook {
+export function parseRunbookDocument(
+  markdown: string,
+  filename?: string,
+  options?: ParseOptions,
+): Runbook {
   const { frontmatter, content } = extractFrontmatter(markdown);
   const tree = fromMarkdown(content);
 
   const steps: Step[] = [];
   let title: string | undefined;
   let preamble = '';
-  
+
   let currentStep: StepBuilder | null = null;
   let pendingConditionals: ParsedConditional[] = [];
   let implicitText = '';
@@ -164,7 +155,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       if (ps.content.trim()) {
         const contentWithoutRunbooks = ps.content
           .split('\n')
-          .filter(line => !line.trim().startsWith('-') || !line.includes('.runbook.md'))
+          .filter((line) => !line.trim().startsWith('-') || !line.includes('.runbook.md'))
           .join('\n')
           .trim();
         if (contentWithoutRunbooks) {
@@ -180,7 +171,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
         prompt: promptText.trim() || undefined,
         transitions: transitions ?? undefined,
         workflows: runbooks.length > 0 ? runbooks : undefined,
-        line: ps.line
+        line: ps.line,
       };
       currentStep.substeps.push(substep);
       currentStep.pendingSubstep = undefined;
@@ -193,7 +184,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       const looksLikeStep = /^\d+[.:\-)\s]/.test(headingText);
       if (looksLikeStep) {
         throw new RunbookSyntaxError(
-          `H1 headers (# ...) cannot be used as step headers. Use H2 (## ${headingText}) instead.`
+          `H1 headers (# ...) cannot be used as step headers. Use H2 (## ${headingText}) instead.`,
         );
       }
       title ??= headingText;
@@ -201,7 +192,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
 
     if (isHeading(node) && node.depth >= 4) {
       throw new RunbookSyntaxError(
-        `H4+ headings are not allowed in runbooks. Found heading at depth ${String(node.depth)}. Use ## for steps and ### for substeps only.`
+        `H4+ headings are not allowed in runbooks. Found heading at depth ${String(node.depth)}. Use ## for steps and ### for substeps only.`,
       );
     }
 
@@ -228,7 +219,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
           substeps: [],
           content: '',
           line: node.position?.start.line,
-          hasSeenForClause: false
+          hasSeenForClause: false,
         };
       }
     }
@@ -250,16 +241,14 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       if (parsed) {
         if (parsed.stepRef !== currentStep.name) {
           throw new RunbookSyntaxError(
-            `Substep ${headingText} does not belong to step ${currentStep.name}`
+            `Substep ${headingText} does not belong to step ${currentStep.name}`,
           );
         }
 
         const duplicateId = currentStep.substeps.find((s) => s.id === parsed.id);
         if (duplicateId) {
           const stepLabel = currentStep.name;
-          throw new RunbookSyntaxError(
-            `Duplicate substep ID '${parsed.id}' in step ${stepLabel}`
-          );
+          throw new RunbookSyntaxError(`Duplicate substep ID '${parsed.id}' in step ${stepLabel}`);
         }
 
         currentStep.pendingSubstep = {
@@ -273,7 +262,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
           hasSeenTransitions: false,
           hasSeenPromptText: false,
           pendingConditionals: [],
-          line: node.position?.start.line
+          line: node.position?.start.line,
         };
       }
     }
@@ -288,14 +277,14 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
         // bash/sh/shell → direct command
         cmd = {
           code: codeNode.value.trim(),
-          lang: codeNode.lang?.split(/\s+/)[0]
+          lang: codeNode.lang?.split(/\s+/)[0],
         };
       } else if (isPromptCodeBlock(codeNode.lang)) {
         // prompt → rd prompt command (outputs with fences)
         const escaped = escapeForShellSingleQuote(codeNode.value.trim());
         cmd = {
           code: `rd prompt '${escaped}'`,
-          lang: 'prompt'
+          lang: 'prompt',
         };
       }
       // Other code blocks (json, etc.) are ignored - not valid in runbooks
@@ -304,7 +293,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
         if (currentStep.pendingSubstep) {
           if (currentStep.pendingSubstep.command) {
             throw new RunbookSyntaxError(
-              `Multiple code blocks per substep not allowed in substep ${currentStep.pendingSubstep.id}`
+              `Multiple code blocks per substep not allowed in substep ${currentStep.pendingSubstep.id}`,
             );
           }
           currentStep.pendingSubstep.command = cmd;
@@ -313,7 +302,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
           if (currentStep.command) {
             const stepLabel = currentStep.name;
             throw new RunbookSyntaxError(
-              `Multiple code blocks per step not allowed in Step ${stepLabel}.`
+              `Multiple code blocks per step not allowed in Step ${stepLabel}.`,
             );
           }
           currentStep.command = cmd;
@@ -340,11 +329,16 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
           if (conditional) {
             if (currentStep.pendingSubstep) {
               // Reject transitions after prompt text or content (header-adjacent requirement)
-              if (currentStep.pendingSubstep.hasSeenPromptText || currentStep.pendingSubstep.hasSeenContent) {
+              if (
+                currentStep.pendingSubstep.hasSeenPromptText ||
+                currentStep.pendingSubstep.hasSeenContent
+              ) {
                 const stepLabel = currentStep.name;
-                const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+                const lineNum = node.position?.start.line
+                  ? ` (line ${String(node.position.start.line)})`
+                  : '';
                 throw new RunbookSyntaxError(
-                  `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`
+                  `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`,
                 );
               }
               currentStep.pendingSubstep.pendingConditionals.push(conditional);
@@ -353,9 +347,11 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
               // Reject transitions after prompt text or content (header-adjacent requirement)
               if (currentStep.hasSeenPromptText || currentStep.hasSeenContent) {
                 const stepLabel = currentStep.name;
-                const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+                const lineNum = node.position?.start.line
+                  ? ` (line ${String(node.position.start.line)})`
+                  : '';
                 throw new RunbookSyntaxError(
-                  `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`
+                  `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`,
                 );
               }
               pendingConditionals.push(conditional);
@@ -369,9 +365,11 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
               if (currentStep.pendingSubstep.hasSeenContent) {
                 const stepLabel = currentStep.name;
                 // E17-R2: Include line number in error for better DX
-                const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+                const lineNum = node.position?.start.line
+                  ? ` (line ${String(node.position.start.line)})`
+                  : '';
                 throw new RunbookSyntaxError(
-                  `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`
+                  `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`,
                 );
               }
               currentStep.pendingSubstep.promptText += line.trim() + '\n';
@@ -380,9 +378,11 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
               if (currentStep.hasSeenContent) {
                 const stepLabel = currentStep.name;
                 // E17-R2: Include line number in error for better DX
-                const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+                const lineNum = node.position?.start.line
+                  ? ` (line ${String(node.position.start.line)})`
+                  : '';
                 throw new RunbookSyntaxError(
-                  `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`
+                  `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`,
                 );
               }
               implicitText += line.trim() + '\n';
@@ -401,7 +401,9 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
       const listItemNode = node as ListItem;
       const firstParagraph = listItemNode.children.find((c) => c.type === 'paragraph');
       if (firstParagraph) {
-        const text = extractText(firstParagraph as PhrasingContent | Heading | Paragraph | ListItem);
+        const text = extractText(
+          firstParagraph as PhrasingContent | Heading | Paragraph | ListItem,
+        );
 
         // Check for FOR clause BEFORE conditionals
         const forClause = parseForClause(text);
@@ -410,18 +412,18 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
           // Enforce: only one FOR per step
           if (currentStep.hasSeenForClause) {
             throw new RunbookSyntaxError(
-              `Step "${currentStep.name}" has multiple FOR clauses; only one is allowed`
+              `Step "${currentStep.name}" has multiple FOR clauses; only one is allowed`,
             );
           }
           // Enforce ordering: FOR must appear before transitions and content
           if (currentStep.hasSeenTransitions) {
             throw new RunbookSyntaxError(
-              `Step "${currentStep.name}": FOR clause must appear before transitions`
+              `Step "${currentStep.name}": FOR clause must appear before transitions`,
             );
           }
           if (currentStep.hasSeenContent || currentStep.hasSeenPromptText) {
             throw new RunbookSyntaxError(
-              `Step "${currentStep.name}": FOR clause must appear before content`
+              `Step "${currentStep.name}": FOR clause must appear before content`,
             );
           }
           currentStep.forClause = forClause;
@@ -432,7 +434,7 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
         // If FOR text appears in a substep context, that's an error
         if (forClause && currentStep.pendingSubstep) {
           throw new RunbookSyntaxError(
-            `FOR is only valid on steps (H2), not substeps (H3) (found on "${currentStep.name}.${currentStep.pendingSubstep.id}")`
+            `FOR is only valid on steps (H2), not substeps (H3) (found on "${currentStep.name}.${currentStep.pendingSubstep.id}")`,
           );
         }
 
@@ -440,11 +442,16 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
         if (conditional) {
           if (currentStep.pendingSubstep) {
             // Reject transitions after prompt text or content (header-adjacent requirement)
-            if (currentStep.pendingSubstep.hasSeenPromptText || currentStep.pendingSubstep.hasSeenContent) {
+            if (
+              currentStep.pendingSubstep.hasSeenPromptText ||
+              currentStep.pendingSubstep.hasSeenContent
+            ) {
               const stepLabel = currentStep.name;
-              const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+              const lineNum = node.position?.start.line
+                ? ` (line ${String(node.position.start.line)})`
+                : '';
               throw new RunbookSyntaxError(
-                `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`
+                `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`,
               );
             }
             currentStep.pendingSubstep.pendingConditionals.push(conditional);
@@ -453,9 +460,11 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
             // Reject transitions after prompt text or content (header-adjacent requirement)
             if (currentStep.hasSeenPromptText || currentStep.hasSeenContent) {
               const stepLabel = currentStep.name;
-              const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+              const lineNum = node.position?.start.line
+                ? ` (line ${String(node.position.start.line)})`
+                : '';
               throw new RunbookSyntaxError(
-                `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`
+                `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`,
               );
             }
             pendingConditionals.push(conditional);
@@ -468,9 +477,11 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
           if (currentStep.pendingSubstep.hasSeenTransitions && !isRunbookRef) {
             const stepLabel = currentStep.name;
             // E17-R2: Include line number in error for better DX
-            const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+            const lineNum = node.position?.start.line
+              ? ` (line ${String(node.position.start.line)})`
+              : '';
             throw new RunbookSyntaxError(
-              `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`
+              `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`,
             );
           }
           // Only add content after validation passes
@@ -485,9 +496,11 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
           if (currentStep.hasSeenContent && !isRunbookRef) {
             const stepLabel = currentStep.name;
             // E17-R2: Include line number in error for better DX
-            const lineNum = node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+            const lineNum = node.position?.start.line
+              ? ` (line ${String(node.position.start.line)})`
+              : '';
             throw new RunbookSyntaxError(
-              `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`
+              `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`,
             );
           }
           // Only add content after validation passes
@@ -526,14 +539,14 @@ export function parseRunbookDocument(markdown: string, filename?: string, option
     version: frontmatter?.version,
     author: frontmatter?.author,
     tags: frontmatter?.tags,
-    steps
+    steps,
   };
 }
 
 function finalizeStep(
   step: StepBuilder,
   pendingConditionals: ParsedConditional[],
-  implicitText: string
+  implicitText: string,
 ): Step {
   // Build single prompt string
   let promptText = step.promptText;
@@ -556,6 +569,6 @@ function finalizeStep(
     transitions: transitions ?? undefined,
     substeps: step.substeps.length > 0 ? step.substeps : undefined,
     workflows: runbooks.length > 0 ? runbooks : undefined,
-    line: step.line
+    line: step.line,
   };
 }

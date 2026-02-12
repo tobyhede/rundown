@@ -10,7 +10,7 @@ import {
   type Substep,
   type SubstepState,
   type Step,
-  type Runbook
+  type Runbook,
 } from './types.js';
 import type { StepId } from './step-id.js';
 import { RunbookStateSchema } from '../schemas.js';
@@ -27,8 +27,8 @@ function generateId(): string {
 }
 
 interface SessionData {
-  stacks: Partial<Record<string, string[]>>;  // agentId → [wf1, wf2, ...]
-  defaultStack: string[];                     // main agent stack (no agentId)
+  stacks: Partial<Record<string, string[]>>; // agentId → [wf1, wf2, ...]
+  defaultStack: string[]; // main agent stack (no agentId)
   stashedRunbookId?: string;
 }
 
@@ -39,6 +39,8 @@ interface CreateOptions {
   readonly parentStepId?: StepId;
   readonly prompted?: boolean;
   readonly runbookSrc?: string;
+  /** Optional record of template variable replacements to populate placeholders at run time. */
+  readonly templateVars?: Record<string, string>;
 }
 
 /**
@@ -77,10 +79,14 @@ export class RunbookStateManager {
    *
    * @param runbookFile - Path to the runbook source file
    * @param runbook - The parsed runbook definition
-   * @param options - Optional configuration including agentId, parent runbook info, and prompted flag
+   * @param options - Configuration including agentId, parent runbook info, prompted flag, and templateVars for template variable replacements
    * @returns The newly created RunbookState
    */
-  async create(runbookFile: string, runbook: Runbook, options: CreateOptions): Promise<RunbookState> {
+  async create(
+    runbookFile: string,
+    runbook: Runbook,
+    options: CreateOptions,
+  ): Promise<RunbookState> {
     const id = generateId();
     const now = new Date().toISOString();
 
@@ -105,7 +111,8 @@ export class RunbookStateManager {
       startedAt: now,
       updatedAt: now,
       prompted: options.prompted,
-      runbookSrc: options.runbookSrc
+      runbookSrc: options.runbookSrc,
+      templateVars: options.templateVars,
     };
 
     await this.save(state);
@@ -148,7 +155,9 @@ export class RunbookStateManager {
 
       const result = RunbookStateSchema.safeParse(parsed);
       if (!result.success) return null;
-      return result.data;
+      // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
+      // The schema guarantees GOTO `at` matches TEMPLATE_VAR_PATTERN; cast to the stricter TS type.
+      return result.data as RunbookState;
     } catch (e) {
       // Re-throw legacy snapshot errors
       if (e instanceof Error && e.message.includes('dynamic-step snapshots')) {
@@ -190,13 +199,15 @@ export class RunbookStateManager {
 
         snapshot.context = {
           ...ctx,
-          forStack: [{
-            stepId,
-            iteration: ctx.forIteration,
-            start: ctx.forStart ?? 1,
-            end: ctx.forEnd ?? ctx.forIteration,
-            variable: ctx.forVariable,
-          }],
+          forStack: [
+            {
+              stepId,
+              iteration: ctx.forIteration,
+              start: ctx.forStart ?? 1,
+              end: ctx.forEnd ?? ctx.forIteration,
+              variable: ctx.forVariable,
+            },
+          ],
           forIteration: undefined,
           forStart: undefined,
           forEnd: undefined,
@@ -211,7 +222,7 @@ export class RunbookStateManager {
 
     const actor = createActor(machine, {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      snapshot
+      snapshot,
     });
     actor.start();
     return actor;
@@ -229,7 +240,7 @@ export class RunbookStateManager {
     await fs.mkdir(this.stateDir, { recursive: true });
     const updated: RunbookState = {
       ...state,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
     const content = JSON.stringify(updated, null, 2);
     await fs.writeFile(this.statePath(state.id), content, { mode: 0o600 }); // Owner read/write only
@@ -248,7 +259,7 @@ export class RunbookStateManager {
    */
   async update(
     id: string,
-    updates: Partial<Omit<RunbookState, 'id' | 'startedAt'>>
+    updates: Partial<Omit<RunbookState, 'id' | 'startedAt'>>,
   ): Promise<RunbookState> {
     const existing = await this.load(id);
     if (!existing) {
@@ -259,7 +270,7 @@ export class RunbookStateManager {
       ...existing,
       ...updates,
       variables: { ...existing.variables, ...(updates.variables ?? {}) },
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
 
     await this.save(updated);
@@ -310,22 +321,27 @@ export class RunbookStateManager {
     // If the runbook is in a final state, don't try to parse a step number.
     // Just update the snapshot and variables, preserving the last step number.
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        const variables = (snapshot.context?.variables ?? {}) as Record<string, boolean | number | string>;
-        return await this.update(id, {
-          variables,
-          snapshot,
-          // Clear FOR loop state on completion
-          forStack: undefined,
-          iterationResults: undefined,
-        });
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const variables = (snapshot.context?.variables ?? {}) as Record<
+        string,
+        boolean | number | string
+      >;
+      return await this.update(id, {
+        variables,
+        snapshot,
+        // Clear FOR loop state on completion
+        forStack: undefined,
+        iterationResults: undefined,
+      });
     }
 
     // Parse step name from XState state value
     const primaryMatch = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
     const legacyMatch = !primaryMatch ? /^step_([^_]+)(?:_([^_]+))?$/.exec(stateValue) : null;
     if (legacyMatch) {
-      console.warn('Deprecated state-ID format "step_…" detected. Please restart execution to migrate to "step::…" format.');
+      console.warn(
+        'Deprecated state-ID format "step_…" detected. Please restart execution to migrate to "step::…" format.',
+      );
     }
     const match = primaryMatch ?? legacyMatch;
     const stepName = match ? match[1] : steps[0].name;
@@ -337,12 +353,15 @@ export class RunbookStateManager {
     }
 
     // Find step by name (unified lookup)
-    const step = steps.find(s => s.name === stepName) ?? steps[0];
+    const step = steps.find((s) => s.name === stepName) ?? steps[0];
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const retryCount = snapshot.context?.retryCount as number;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const variables = (snapshot.context?.variables ?? {}) as Record<string, boolean | number | string>;
+    const variables = (snapshot.context?.variables ?? {}) as Record<
+      string,
+      boolean | number | string
+    >;
 
     // FOR loop context
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -353,7 +372,7 @@ export class RunbookStateManager {
     const lastAction = snapshot.context?.lastAction as RunbookState['lastAction'];
 
     return await this.update(id, {
-      step: stepName,           // string
+      step: stepName, // string
       substep,
       stepName: step.description,
       retryCount,
@@ -361,14 +380,14 @@ export class RunbookStateManager {
       snapshot,
       // Filter implicit ForContext entries — don't persist synthetic loop state
       forStack: (() => {
-        const realForStack = forStack?.filter(fc => !fc.implicit);
+        const realForStack = forStack?.filter((fc) => !fc.implicit);
         return realForStack?.length ? realForStack : undefined;
       })(),
       // Only clear iterationResults when all stack entries were implicit.
       // When forStack is empty after explicit FOR exit, iterationResults
       // must be preserved for parent-step aggregation.
       iterationResults: (() => {
-        const hasOnlyImplicit = forStack?.length ? forStack.every(fc => fc.implicit) : false;
+        const hasOnlyImplicit = forStack?.length ? forStack.every((fc) => fc.implicit) : false;
         return hasOnlyImplicit ? undefined : iterationResults;
       })(),
       lastAction,
@@ -411,7 +430,6 @@ export class RunbookStateManager {
     const topId = stack[stack.length - 1];
     return topId ? await this.load(topId) : null;
   }
-
 
   /**
    * Push a runbook onto an agent's runbook stack.
@@ -507,7 +525,7 @@ export class RunbookStateManager {
     if (!state) throw new Error(`Runbook ${id} not found`);
 
     await this.update(id, {
-      pendingSteps: [...state.pendingSteps, pending]
+      pendingSteps: [...state.pendingSteps, pending],
     });
   }
 
@@ -543,14 +561,14 @@ export class RunbookStateManager {
 
     const binding: AgentBinding = {
       stepId,
-      status: 'running'
+      status: 'running',
     };
 
     await this.update(id, {
       agentBindings: {
         ...state.agentBindings,
-        [agentId]: binding
-      }
+        [agentId]: binding,
+      },
     });
   }
 
@@ -580,7 +598,7 @@ export class RunbookStateManager {
   async updateAgentBinding(
     id: string,
     agentId: string,
-    updates: Partial<Pick<AgentBinding, 'status' | 'result' | 'childRunbookId'>>
+    updates: Partial<Pick<AgentBinding, 'status' | 'result' | 'childRunbookId'>>,
   ): Promise<void> {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);
@@ -592,8 +610,8 @@ export class RunbookStateManager {
     await this.update(id, {
       agentBindings: {
         ...state.agentBindings,
-        [agentId]: { ...existing, ...updates }
-      }
+        [agentId]: { ...existing, ...updates },
+      },
     });
   }
 
@@ -726,11 +744,11 @@ export class RunbookStateManager {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);
 
-    const substepStates: SubstepState[] = substeps.map(s => ({
+    const substepStates: SubstepState[] = substeps.map((s) => ({
       id: s.id,
       status: 'pending',
       agentId: undefined,
-      result: undefined
+      result: undefined,
     }));
 
     await this.update(id, { substepStates });
@@ -751,10 +769,8 @@ export class RunbookStateManager {
     if (!state) throw new Error(`Runbook ${runbookId} not found`);
 
     const substepStates = state.substepStates ?? [];
-    const updated = substepStates.map(s =>
-      s.id === substepId
-        ? { ...s, status: 'running' as const, agentId }
-        : s
+    const updated = substepStates.map((s) =>
+      s.id === substepId ? { ...s, status: 'running' as const, agentId } : s,
     );
 
     await this.update(runbookId, { substepStates: updated });
@@ -773,16 +789,14 @@ export class RunbookStateManager {
   async completeSubstep(
     runbookId: string,
     substepId: string,
-    result: 'pass' | 'fail'
+    result: 'pass' | 'fail',
   ): Promise<void> {
     const state = await this.load(runbookId);
     if (!state) throw new Error(`Runbook ${runbookId} not found`);
 
     const substepStates = state.substepStates ?? [];
-    const updated = substepStates.map(s =>
-      s.id === substepId
-        ? { ...s, status: 'done' as const, result }
-        : s
+    const updated = substepStates.map((s) =>
+      s.id === substepId ? { ...s, status: 'done' as const, result } : s,
     );
 
     await this.update(runbookId, { substepStates: updated });

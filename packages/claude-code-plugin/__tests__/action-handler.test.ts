@@ -5,13 +5,13 @@ import type { GateResult, RundownPluginConfig } from '../src/shared/index.js';
 const mockConfig: RundownPluginConfig = {
   hooks: {},
   gates: {
-    'next-gate': { command: 'echo "next"', on_pass: 'CONTINUE' }
-  }
+    'next-gate': { command: 'echo "next"', on_pass: 'CONTINUE' },
+  },
 };
 
 const mockInput = {
   hook_event_name: 'PostToolUse',
-  cwd: '/test'
+  cwd: '/test',
 };
 
 describe('Action Handler', () => {

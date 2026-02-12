@@ -28,31 +28,34 @@ export function registerCompleteCommand(program: Command): void {
     .option('--agent <agentId>', 'Complete runbook in agent-specific stack')
     .option('--json', 'Output as JSON for programmatic use')
     .action(async (message: string | undefined, options: { agent?: string; json?: boolean }) => {
-      await withErrorHandling(async () => {
-        const output = new OutputEmitter({ json: options.json });
-        const cwd = getCwd();
-        const manager = new RunbookStateManager(cwd);
-        const state = await manager.getActive(options.agent);
+      await withErrorHandling(
+        async () => {
+          const output = new OutputEmitter({ json: options.json });
+          const cwd = getCwd();
+          const manager = new RunbookStateManager(cwd);
+          const state = await manager.getActive(options.agent);
 
-        if (!state) {
-          output.noActiveRunbook('complete');
+          if (!state) {
+            output.noActiveRunbook('complete');
+            output.flush();
+            return;
+          }
+
+          // Emit metadata
+          output.metadata(buildMetadata(state));
+
+          const steps = getRunbookFromState(state, cwd);
+          await manager.update(state.id, {
+            step: steps[steps.length - 1].name,
+            variables: { ...state.variables, completed: true },
+          });
+          await manager.popRunbook(options.agent);
+
+          // Emit completion
+          output.complete(message ?? 'Runbook completed successfully');
           output.flush();
-          return;
-        }
-
-        // Emit metadata
-        output.metadata(buildMetadata(state));
-
-        const steps = getRunbookFromState(state, cwd);
-        await manager.update(state.id, {
-          step: steps[steps.length - 1].name,
-          variables: { ...state.variables, completed: true }
-        });
-        await manager.popRunbook(options.agent);
-
-        // Emit completion
-        output.complete(message ?? 'Runbook completed successfully');
-        output.flush();
-      }, { json: options.json });
+        },
+        { json: options.json },
+      );
     });
 }

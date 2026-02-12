@@ -35,12 +35,7 @@ describe('isNumberedStepName', () => {
 
 describe('countNumberedSteps', () => {
   it('counts numbered steps only', () => {
-    const steps = [
-      { name: '1' },
-      { name: '2' },
-      { name: '3' },
-      { name: 'RECOVER' },
-    ];
+    const steps = [{ name: '1' }, { name: '2' }, { name: '3' }, { name: 'RECOVER' }];
     expect(countNumberedSteps(steps)).toBe(3);
   });
 
@@ -56,10 +51,7 @@ describe('countNumberedSteps', () => {
   });
 
   it('returns 0 for only named steps', () => {
-    const steps = [
-      { name: 'SETUP' },
-      { name: 'CLEANUP' },
-    ];
+    const steps = [{ name: 'SETUP' }, { name: 'CLEANUP' }];
     expect(countNumberedSteps(steps)).toBe(0);
   });
 
@@ -68,10 +60,7 @@ describe('countNumberedSteps', () => {
   });
 
   it('handles readonly arrays', () => {
-    const steps = [
-      { name: '1' },
-      { name: '2' },
-    ] as const;
+    const steps = [{ name: '1' }, { name: '2' }] as const;
     expect(countNumberedSteps(steps)).toBe(2);
   });
 });

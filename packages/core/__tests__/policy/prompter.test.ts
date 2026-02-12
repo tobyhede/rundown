@@ -8,11 +8,9 @@ jest.unstable_mockModule('@inquirer/prompts', () => ({
 
 // Dynamic import after mocking
 const { select, confirm } = await import('@inquirer/prompts');
-const {
-  PolicyPrompter,
-  createNonInteractivePrompter,
-  createAutoYesPrompter,
-} = await import('../../src/policy/prompter.js');
+const { PolicyPrompter, createNonInteractivePrompter, createAutoYesPrompter } = await import(
+  '../../src/policy/prompter.js'
+);
 const { PolicyEvaluator } = await import('../../src/policy/evaluator.js');
 
 describe('PolicyPrompter', () => {
@@ -21,7 +19,9 @@ describe('PolicyPrompter', () => {
   const mockConfirm = confirm as jest.MockedFunction<typeof confirm>;
 
   beforeEach(() => {
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => { /* noop */ });
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {
+      /* noop */
+    });
     mockSelect.mockReset();
     mockConfirm.mockReset();
   });
@@ -254,9 +254,7 @@ describe('PolicyPrompter', () => {
       const result = await prompter.confirmDangerous('Delete database');
 
       expect(result).toBe(true);
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Dangerous operation')
-      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Dangerous operation'));
     });
 
     it('shows details if provided', async () => {
@@ -284,9 +282,7 @@ describe('PolicyPrompter', () => {
 
       await prompter.requestPermission('run', 'ls -la');
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('command execution')
-      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('command execution'));
     });
 
     it('displays correct label for read permission', async () => {
@@ -295,9 +291,7 @@ describe('PolicyPrompter', () => {
 
       await prompter.requestPermission('read', '/etc/passwd');
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('file read')
-      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('file read'));
     });
 
     it('displays correct label for write permission', async () => {
@@ -306,9 +300,7 @@ describe('PolicyPrompter', () => {
 
       await prompter.requestPermission('write', '/tmp/output.txt');
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('file write')
-      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('file write'));
     });
 
     it('displays correct label for env permission', async () => {
@@ -318,7 +310,7 @@ describe('PolicyPrompter', () => {
       await prompter.requestPermission('env', 'SECRET_KEY');
 
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('environment variable access')
+        expect.stringContaining('environment variable access'),
       );
     });
 
@@ -328,9 +320,7 @@ describe('PolicyPrompter', () => {
 
       await prompter.requestPermission('run', 'docker build .');
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Command:')
-      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Command:'));
     });
 
     it('formats path subject correctly for read', async () => {
@@ -339,9 +329,7 @@ describe('PolicyPrompter', () => {
 
       await prompter.requestPermission('read', '/path/to/file');
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('(read)')
-      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('(read)'));
     });
 
     it('formats path subject correctly for write', async () => {
@@ -350,9 +338,7 @@ describe('PolicyPrompter', () => {
 
       await prompter.requestPermission('write', '/path/to/file');
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('(write)')
-      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('(write)'));
     });
 
     it('formats env subject correctly', async () => {
@@ -361,9 +347,7 @@ describe('PolicyPrompter', () => {
 
       await prompter.requestPermission('env', 'MY_VAR');
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Variable:')
-      );
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Variable:'));
     });
 
     it('displays reason if provided', async () => {

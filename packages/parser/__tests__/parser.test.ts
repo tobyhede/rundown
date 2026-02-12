@@ -44,7 +44,7 @@ Do work.
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps![0].workflows).toEqual([
       'runbook-a.runbook.md',
-      'runbook-b.runbook.md'
+      'runbook-b.runbook.md',
     ]);
   });
 });
@@ -65,10 +65,7 @@ describe('parseRunbook with substep runbooks', () => {
 
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].workflows).toEqual([
-      'review.runbook.md',
-      'security.runbook.md'
-    ]);
+    expect(steps[0].substeps![0].workflows).toEqual(['review.runbook.md', 'security.runbook.md']);
   });
 });
 
@@ -117,9 +114,9 @@ Please look at this example.
     // prompt blocks become rd prompt commands
     expect(steps[0].command).toEqual({
       code: "rd prompt 'Please look at this example.'",
-      lang: 'prompt'
+      lang: 'prompt',
     });
-    expect(steps[0].prompt).toBeUndefined();  // No prompt text from prompt blocks
+    expect(steps[0].prompt).toBeUndefined(); // No prompt text from prompt blocks
   });
 
   it('treats other tags as passive prose', () => {
@@ -148,9 +145,9 @@ npm run example --flag value
     // prompt block becomes command, text before it becomes prompt
     expect(steps[0].command).toEqual({
       code: "rd prompt 'npm run example --flag value'",
-      lang: 'prompt'
+      lang: 'prompt',
     });
-    expect(steps[0].prompt).toBe('Show this to agent.');  // Text BEFORE code block
+    expect(steps[0].prompt).toBe('Show this to agent.'); // Text BEFORE code block
   });
 
   // Test escaping of single quotes in prompt blocks
@@ -163,7 +160,7 @@ echo 'hello world'
     const steps = parseRunbook(md);
     expect(steps[0].command).toEqual({
       code: "rd prompt 'echo '\\''hello world'\\'''",
-      lang: 'prompt'
+      lang: 'prompt',
     });
   });
 
@@ -181,7 +178,7 @@ npm run build
     const steps = parseRunbook(md);
     expect(steps[0].command).toEqual({
       code: 'npm run build',
-      lang: 'bash'
+      lang: 'bash',
     });
     // No need to check prompted - field doesn't exist anymore
   });
@@ -241,7 +238,7 @@ Do something.
     expect(steps[0].transitions?.pass).toEqual({
       kind: 'pass',
       retry: 0,
-      action: { type: 'GOTO', target: { step: '2', substep: '1' } }
+      action: { type: 'GOTO', target: { step: '2', substep: '1' } },
     });
   });
 
@@ -259,7 +256,6 @@ Do something.
 `;
     expect(() => parseRunbook(markdown)).toThrow(/substep does not exist/i);
   });
-
 });
 
 describe('substep with prompts', () => {
@@ -294,10 +290,26 @@ Do work.
 More work.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', retry: 0, action: { type: 'CONTINUE' } });
-    expect(steps[0].substeps![0].transitions?.fail).toEqual({ kind: 'fail', retry: 0, action: { type: 'STOP', message: 'BLOCKED' } });
-    expect(steps[0].substeps![1].transitions?.pass).toEqual({ kind: 'pass', retry: 0, action: { type: 'COMPLETE' } });
-    expect(steps[0].substeps![1].transitions?.fail).toEqual({ kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1', substep: '1' } } });
+    expect(steps[0].substeps![0].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'CONTINUE' },
+    });
+    expect(steps[0].substeps![0].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'STOP', message: 'BLOCKED' },
+    });
+    expect(steps[0].substeps![1].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'COMPLETE' },
+    });
+    expect(steps[0].substeps![1].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'GOTO', target: { step: '1', substep: '1' } },
+    });
   });
 
   it('single substep gets transitions not step', () => {
@@ -310,8 +322,16 @@ More work.
 Do work.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps![0].transitions?.pass).toEqual({ kind: 'pass', retry: 0, action: { type: 'CONTINUE' } });
-    expect(steps[0].substeps![0].transitions?.fail).toEqual({ kind: 'fail', retry: 0, action: { type: 'STOP' } });
+    expect(steps[0].substeps![0].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'CONTINUE' },
+    });
+    expect(steps[0].substeps![0].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'STOP' },
+    });
   });
 });
 
@@ -331,7 +351,7 @@ describe('substep GOTO validation', () => {
     expect(steps[0].substeps![0].transitions?.fail).toEqual({
       kind: 'fail',
       retry: 0,
-      action: { type: 'GOTO', target: { step: '1', substep: '2' } }
+      action: { type: 'GOTO', target: { step: '1', substep: '2' } },
     });
   });
 
@@ -589,7 +609,9 @@ This is prompt text that appears first.
 
 - PASS: CONTINUE
 - FAIL: STOP`;
-      expect(() => parseRunbook(md)).toThrow(/Transitions must appear immediately after the step header/);
+      expect(() => parseRunbook(md)).toThrow(
+        /Transitions must appear immediately after the step header/,
+      );
     });
 
     it('rejects transitions after content in step', () => {
@@ -601,7 +623,9 @@ npm test
 
 - PASS: CONTINUE
 - FAIL: STOP`;
-      expect(() => parseRunbook(md)).toThrow(/Transitions must appear immediately after the step header/);
+      expect(() => parseRunbook(md)).toThrow(
+        /Transitions must appear immediately after the step header/,
+      );
     });
 
     it('rejects transitions after prompt text in substep', () => {
@@ -612,7 +636,9 @@ This is prompt text.
 
 - PASS: CONTINUE
 - FAIL: STOP`;
-      expect(() => parseRunbook(md)).toThrow(/Transitions must appear immediately after the substep header/);
+      expect(() => parseRunbook(md)).toThrow(
+        /Transitions must appear immediately after the substep header/,
+      );
     });
 
     it('rejects transitions after content in substep', () => {
@@ -625,7 +651,9 @@ npm test
 
 - PASS: CONTINUE
 - FAIL: STOP`;
-      expect(() => parseRunbook(md)).toThrow(/Transitions must appear immediately after the substep header/);
+      expect(() => parseRunbook(md)).toThrow(
+        /Transitions must appear immediately after the substep header/,
+      );
     });
   });
 
@@ -639,7 +667,9 @@ npm test
 - setup.runbook.md
 
 This text appears after runbooks - invalid.`;
-      expect(() => parseRunbook(md)).toThrow(/Prompt text must appear before code blocks or runbooks/);
+      expect(() => parseRunbook(md)).toThrow(
+        /Prompt text must appear before code blocks or runbooks/,
+      );
     });
   });
 
@@ -681,7 +711,9 @@ npm test
 
 - PASS: CONTINUE
 - FAIL: STOP`;
-      expect(() => parseRunbook(md)).toThrow(/Transitions must appear immediately after the step header/);
+      expect(() => parseRunbook(md)).toThrow(
+        /Transitions must appear immediately after the step header/,
+      );
     });
   });
 
@@ -706,7 +738,9 @@ npm test
 - FAIL: STOP
 
 - some other list item (not a runbook)`;
-      expect(() => parseRunbook(md)).toThrow(/Prompt text must appear before code blocks or runbooks/);
+      expect(() => parseRunbook(md)).toThrow(
+        /Prompt text must appear before code blocks or runbooks/,
+      );
     });
 
     it('rejects list items after content in step', () => {
@@ -717,7 +751,9 @@ npm test
 \`\`\`
 
 - some list item that is not a transition`;
-      expect(() => parseRunbook(md)).toThrow(/Prompt text must appear before code blocks, substeps, or runbooks/);
+      expect(() => parseRunbook(md)).toThrow(
+        /Prompt text must appear before code blocks, substeps, or runbooks/,
+      );
     });
   });
 });

@@ -28,7 +28,9 @@ export interface CliResult {
  */
 export async function runCli(args: string[]): Promise<CliResult> {
   try {
-    const { stdout } = await execFileAsync('npx', ['--no', 'rundown', ...args, '--json'], { timeout: 30000 });
+    const { stdout } = await execFileAsync('npx', ['--no', 'rundown', ...args, '--json'], {
+      timeout: 30000,
+    });
 
     // Check if stdout has content and try to parse it
     if (stdout.trim()) {
@@ -52,7 +54,9 @@ export async function runCli(args: string[]): Promise<CliResult> {
         try {
           const data = JSON.parse(execError.stdout) as { error?: string };
           return { success: false, error: data.error ?? 'Command failed', data };
-        } catch { /* not JSON */ }
+        } catch {
+          /* not JSON */
+        }
       }
 
       // Try stderr (withErrorHandling writes JSON errors here)
@@ -60,7 +64,9 @@ export async function runCli(args: string[]): Promise<CliResult> {
         try {
           const data = JSON.parse(execError.stderr) as { error?: string };
           return { success: false, error: data.error ?? 'Command failed', data };
-        } catch { /* not JSON */ }
+        } catch {
+          /* not JSON */
+        }
       }
 
       // Fall back to raw stderr/stdout as error message

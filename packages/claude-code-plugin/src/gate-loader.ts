@@ -7,7 +7,7 @@ import {
   type GateResult,
   type GateConfig,
   resolvePluginPath,
-  loadConfigFile
+  loadConfigFile,
 } from './shared/index.js';
 import * as builtinGates from './gates/index.js';
 
@@ -46,7 +46,7 @@ function asExecError(error: unknown): ExecError {
       signal: typeof err.signal === 'string' ? err.signal : undefined,
       code: typeof err.code === 'number' ? err.code : undefined,
       stdout: typeof err.stdout === 'string' ? err.stdout : '',
-      stderr: typeof err.stderr === 'string' ? err.stderr : ''
+      stderr: typeof err.stderr === 'string' ? err.stderr : '',
     };
   }
   return {
@@ -56,7 +56,7 @@ function asExecError(error: unknown): ExecError {
     signal: undefined,
     code: 1,
     stdout: '',
-    stderr: ''
+    stderr: '',
   };
 }
 
@@ -76,13 +76,13 @@ function asExecError(error: unknown): ExecError {
 export async function executeShellCommand(
   command: string,
   cwd: string,
-  timeoutMs = 30000
+  timeoutMs = 30000,
 ): Promise<ShellResult> {
   try {
     const { stdout, stderr } = await execAsync(command, { cwd, timeout: timeoutMs });
     return {
       exitCode: 0,
-      output: stdout + stderr
+      output: stdout + stderr,
     };
   } catch (error: unknown) {
     // Type guard - safely access error properties
@@ -92,13 +92,13 @@ export async function executeShellCommand(
     if (err.killed && err.signal === 'SIGTERM') {
       return {
         exitCode: 124, // Standard timeout exit code
-        output: `Command timed out after ${String(timeoutMs)}ms`
+        output: `Command timed out after ${String(timeoutMs)}ms`,
       };
     }
 
     return {
       exitCode: err.code ?? 1,
-      output: (err.stdout ?? '') + (err.stderr ?? '')
+      output: (err.stdout ?? '') + (err.stderr ?? ''),
     };
   }
 }
@@ -146,7 +146,7 @@ export async function executeGate(
   gateName: string,
   gateConfig: GateConfig,
   input: HookInput,
-  pluginStack: string[] = []
+  pluginStack: string[] = [],
 ): Promise<{ passed: boolean; result: GateResult }> {
   // Handle plugin gate reference
   if (gateConfig.plugin && gateConfig.gate) {
@@ -154,20 +154,20 @@ export async function executeGate(
     const gateRef = `${gateConfig.plugin}:${gateConfig.gate}`;
     if (pluginStack.includes(gateRef)) {
       throw new Error(
-        `Circular gate reference detected: ${pluginStack.join(' -> ')} -> ${gateRef}`
+        `Circular gate reference detected: ${pluginStack.join(' -> ')} -> ${gateRef}`,
       );
     }
 
     // Depth limit to prevent infinite recursion
     if (pluginStack.length >= MAX_PLUGIN_DEPTH) {
       throw new Error(
-        `Maximum plugin gate depth (${String(MAX_PLUGIN_DEPTH)}) exceeded: ${pluginStack.join(' -> ')} -> ${gateRef}`
+        `Maximum plugin gate depth (${String(MAX_PLUGIN_DEPTH)}) exceeded: ${pluginStack.join(' -> ')} -> ${gateRef}`,
       );
     }
 
     const { gateConfig: pluginGateConfig, pluginRoot } = await loadPluginGate(
       gateConfig.plugin,
-      gateConfig.gate
+      gateConfig.gate,
     );
 
     // Recursively execute the plugin's gate with updated stack
@@ -181,8 +181,8 @@ export async function executeGate(
       return {
         passed,
         result: {
-          additionalContext: shellResult.output
-        }
+          additionalContext: shellResult.output,
+        },
       };
     } else if (pluginGateConfig.plugin && pluginGateConfig.gate) {
       // Plugin gate references another plugin gate - recurse
@@ -200,8 +200,8 @@ export async function executeGate(
     return {
       passed,
       result: {
-        additionalContext: shellResult.output
-      }
+        additionalContext: shellResult.output,
+      },
     };
   } else {
     // Built-in TypeScript gate
@@ -210,7 +210,7 @@ export async function executeGate(
 
     return {
       passed,
-      result
+      result,
     };
   }
 }
@@ -236,7 +236,7 @@ export interface PluginGateResult {
  */
 export async function loadPluginGate(
   pluginName: string,
-  gateName: string
+  gateName: string,
 ): Promise<PluginGateResult> {
   const pluginRoot = resolvePluginPath(pluginName);
   const gatesPath = path.join(pluginRoot, 'rundown-plugin.json');
@@ -250,7 +250,7 @@ export async function loadPluginGate(
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime guard validating external config structure
   if (!pluginConfig.gates || typeof pluginConfig.gates !== 'object') {
     throw new Error(
-      `Invalid rundown-plugin.json structure in plugin '${pluginName}': missing or invalid 'gates' object`
+      `Invalid rundown-plugin.json structure in plugin '${pluginName}': missing or invalid 'gates' object`,
     );
   }
 

@@ -13,7 +13,7 @@ export function execute(input: HookInput): GateResult {
   if (result.violation) {
     return {
       decision: 'block',
-      reason: result.violation
+      reason: result.violation,
     };
   }
 

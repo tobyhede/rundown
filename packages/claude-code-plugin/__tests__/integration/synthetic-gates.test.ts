@@ -17,8 +17,8 @@ describe('synthetic event gates integration', () => {
       path.join(testDir, 'rundown-plugin.json'),
       JSON.stringify({
         gates: { 'on-command-start': {} },
-        hooks: { SlashCommandStart: { gates: ['on-command-start'] } }
-      })
+        hooks: { SlashCommandStart: { gates: ['on-command-start'] } },
+      }),
     );
   }
 
@@ -33,7 +33,7 @@ describe('synthetic event gates integration', () => {
       `---
 runbook: ${runbook}
 ---
-# Test Command`
+# Test Command`,
     );
   }
 
@@ -56,7 +56,7 @@ runbook: ${runbook}
     const input: HookInput = {
       hook_event_name: 'SlashCommandStart',
       command: 'rundown:write-plan',
-      cwd: testDir
+      cwd: testDir,
     };
 
     const result = await dispatch(input);
@@ -70,7 +70,7 @@ runbook: ${runbook}
     const input: HookInput = {
       hook_event_name: 'SlashCommandStart',
       command: 'test-cmd',
-      cwd: testDir
+      cwd: testDir,
     };
 
     // Gate executes - runbook not found results in error output (not a block)
@@ -88,7 +88,7 @@ runbook: ${runbook}
     const input: HookInput = {
       hook_event_name: 'SlashCommandStart',
       command: 'test-cmd',
-      cwd: testDir
+      cwd: testDir,
     };
 
     const result = await dispatch(input);
@@ -107,13 +107,13 @@ runbook: ${runbook}
     fs.mkdirSync(contextDir, { recursive: true });
     fs.writeFileSync(
       path.join(contextDir, 'test-cmd-start.md'),
-      '## INJECTED CONTEXT\nThis should appear first.'
+      '## INJECTED CONTEXT\nThis should appear first.',
     );
 
     const input: HookInput = {
       hook_event_name: 'SlashCommandStart',
       command: 'test-cmd',
-      cwd: testDir
+      cwd: testDir,
     };
 
     const result = await dispatch(input);
@@ -133,7 +133,7 @@ runbook: ${runbook}
     const input: HookInput = {
       hook_event_name: 'SkillStart',
       skill: 'rundown:verify',
-      cwd: testDir
+      cwd: testDir,
     };
 
     // Should not throw - gate handles gracefully when skill not found
@@ -147,7 +147,7 @@ runbook: ${runbook}
     const input: HookInput = {
       hook_event_name: 'SubagentStart',
       agent_id: 'test-agent-123',
-      cwd: testDir
+      cwd: testDir,
     };
 
     // Should not throw - gate handles gracefully when no runbook active
@@ -160,7 +160,7 @@ runbook: ${runbook}
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       agent_id: 'test-agent-123',
-      cwd: testDir
+      cwd: testDir,
     };
 
     // Should not throw - gate handles gracefully

@@ -2,7 +2,12 @@
 // Security tests for path traversal prevention
 
 import { resolvePluginPath, validateConfig } from '../../src/shared/config.js';
-import { isPathInside, safeJoin, sanitizePathSegment, shellEscape } from '../../src/shared/utils.js';
+import {
+  isPathInside,
+  safeJoin,
+  sanitizePathSegment,
+  shellEscape,
+} from '../../src/shared/utils.js';
 import { discoverContextFile } from '../../src/context.js';
 import { execute as executeSkillStart } from '../../src/gates/on-skill-start.js';
 import { createMockConfig, createMockHookInput } from '../helpers/test-utils.js';
@@ -46,12 +51,16 @@ describe('Path Jail Security', () => {
     describe('safeJoin', () => {
       it('joins paths inside base', () => {
         expect(safeJoin('/base', 'file.txt')).toBe(path.join('/base', 'file.txt'));
-        expect(safeJoin('/base', 'subdir', 'file.txt')).toBe(path.join('/base', 'subdir', 'file.txt'));
+        expect(safeJoin('/base', 'subdir', 'file.txt')).toBe(
+          path.join('/base', 'subdir', 'file.txt'),
+        );
       });
 
       it('throws for path traversal', () => {
         expect(() => safeJoin('/base', '../outside.txt')).toThrow(/security violation/i);
-        expect(() => safeJoin('/base', 'subdir', '../../outside.txt')).toThrow(/security violation/i);
+        expect(() => safeJoin('/base', 'subdir', '../../outside.txt')).toThrow(
+          /security violation/i,
+        );
       });
     });
 
@@ -97,14 +106,18 @@ describe('Path Jail Security', () => {
       '../',
       '..\\',
       'foo/bar/../../../etc',
-      'valid/./../../etc'
+      'valid/./../../etc',
     ];
 
     MALICIOUS_PATHS.forEach((maliciousPath) => {
       it(`blocks path traversal attempt: ${maliciousPath}`, () => {
         // resolvePluginPath validates plugin names, not paths
         // Path traversal in plugin names is blocked
-        if (maliciousPath.includes('/') || maliciousPath.includes('\\') || maliciousPath.includes('..')) {
+        if (
+          maliciousPath.includes('/') ||
+          maliciousPath.includes('\\') ||
+          maliciousPath.includes('..')
+        ) {
           expect(() => resolvePluginPath(maliciousPath)).toThrow(/path separators|invalid/i);
         }
       });
@@ -146,44 +159,50 @@ describe('Path Jail Security', () => {
       const config = createMockConfig({
         hooks: {
           PostToolUse: {
-            gates: ['existing-gate', 'non-existent-gate']
-          }
+            gates: ['existing-gate', 'non-existent-gate'],
+          },
         },
         gates: {
-          'existing-gate': { command: 'echo ok' }
-        }
+          'existing-gate': { command: 'echo ok' },
+        },
       });
 
-      expect(() => { validateConfig(config); }).toThrow(/undefined gate.*non-existent-gate/i);
+      expect(() => {
+        validateConfig(config);
+      }).toThrow(/undefined gate.*non-existent-gate/i);
     });
 
     it('validates gate action references', () => {
       const config = createMockConfig({
         hooks: {
           PostToolUse: {
-            gates: ['test-gate']
-          }
+            gates: ['test-gate'],
+          },
         },
         gates: {
           'test-gate': {
             command: 'echo ok',
-            on_pass: 'non-existent-gate' // Invalid gate reference
-          }
-        }
+            on_pass: 'non-existent-gate', // Invalid gate reference
+          },
+        },
       });
 
-      expect(() => { validateConfig(config); }).toThrow(/not CONTINUE\/BLOCK\/STOP or valid gate/i);
+      expect(() => {
+        validateConfig(config);
+      }).toThrow(/not CONTINUE\/BLOCK\/STOP or valid gate/i);
     });
 
     it('rejects unknown hook event names', () => {
       const config = {
         hooks: {
-          UnknownEvent: { gates: [] }
+          UnknownEvent: { gates: [] },
         },
-        gates: {}
+        gates: {},
       };
 
-      expect(() => { validateConfig(config); }).toThrow(/Unknown hook event: UnknownEvent/i);
+      expect(() => {
+        validateConfig(config);
+      }).toThrow(/Unknown hook event: UnknownEvent/i);
     });
   });
 
@@ -192,43 +211,49 @@ describe('Path Jail Security', () => {
       const config = createMockConfig({
         hooks: {},
         gates: {
-          'incomplete': {
-            plugin: 'other-plugin'
+          incomplete: {
+            plugin: 'other-plugin',
             // Missing 'gate' field
-          }
-        }
+          },
+        },
       });
 
-      expect(() => { validateConfig(config); }).toThrow(/has 'plugin' but missing 'gate'/i);
+      expect(() => {
+        validateConfig(config);
+      }).toThrow(/has 'plugin' but missing 'gate'/i);
     });
 
     it('rejects gate with gate name but no plugin', () => {
       const config = createMockConfig({
         hooks: {},
         gates: {
-          'incomplete': {
-            gate: 'some-gate'
+          incomplete: {
+            gate: 'some-gate',
             // Missing 'plugin' field
-          }
-        }
+          },
+        },
       });
 
-      expect(() => { validateConfig(config); }).toThrow(/has 'gate' but missing 'plugin'/i);
+      expect(() => {
+        validateConfig(config);
+      }).toThrow(/has 'gate' but missing 'plugin'/i);
     });
 
     it('rejects gate with both command and plugin/gate', () => {
       const config = createMockConfig({
         hooks: {},
         gates: {
-          'conflicting': {
+          conflicting: {
             command: 'echo test',
             plugin: 'other-plugin',
-            gate: 'some-gate'
-          }
-        }
+            gate: 'some-gate',
+          },
+        },
       });
 
-      expect(() => { validateConfig(config); }).toThrow(/cannot have both 'command' and 'plugin\/gate'/i);
+      expect(() => {
+        validateConfig(config);
+      }).toThrow(/cannot have both 'command' and 'plugin\/gate'/i);
     });
   });
 
@@ -237,36 +262,40 @@ describe('Path Jail Security', () => {
       const config = createMockConfig({
         hooks: {
           PostToolUse: {
-            gates: ['pattern-gate']
-          }
+            gates: ['pattern-gate'],
+          },
         },
         gates: {
           'pattern-gate': {
             command: 'echo test',
-            file_patterns: ['valid', 123 as unknown as string]
-          }
-        }
+            file_patterns: ['valid', 123 as unknown as string],
+          },
+        },
       });
 
-      expect(() => { validateConfig(config); }).toThrow(/expected string/i);
+      expect(() => {
+        validateConfig(config);
+      }).toThrow(/expected string/i);
     });
 
     it('accepts valid glob patterns', () => {
       const config = createMockConfig({
         hooks: {
           PostToolUse: {
-            gates: ['pattern-gate']
-          }
+            gates: ['pattern-gate'],
+          },
         },
         gates: {
           'pattern-gate': {
             command: 'echo test',
-            file_patterns: ['packages/**', 'src/**/*.ts', '*.json']
-          }
-        }
+            file_patterns: ['packages/**', 'src/**/*.ts', '*.json'],
+          },
+        },
       });
 
-      expect(() => { validateConfig(config); }).not.toThrow();
+      expect(() => {
+        validateConfig(config);
+      }).not.toThrow();
     });
   });
 
@@ -278,26 +307,28 @@ describe('Path Jail Security', () => {
         '`rm -rf /`',
         '${process.env.SECRET}',
         'a; rm -rf /',
-        'a && cat /etc/passwd'
+        'a && cat /etc/passwd',
       ];
 
       for (const pattern of dangerousPatterns) {
         const config = createMockConfig({
           hooks: {
             PostToolUse: {
-              gates: ['test-gate']
-            }
+              gates: ['test-gate'],
+            },
           },
           gates: {
             'test-gate': {
               command: 'echo test',
-              file_patterns: [pattern]
-            }
-          }
+              file_patterns: [pattern],
+            },
+          },
         });
 
         // Should not throw - patterns are strings, not evaluated
-        expect(() => { validateConfig(config); }).not.toThrow();
+        expect(() => {
+          validateConfig(config);
+        }).not.toThrow();
       }
     });
   });
@@ -367,7 +398,7 @@ describe('Path Jail Integration', () => {
     it('prevents skill-name-based path traversal', async () => {
       const input = createMockHookInput('SkillStart', {
         cwd: testDir,
-        skill: 'evil:../../../etc/passwd'
+        skill: 'evil:../../../etc/passwd',
       });
 
       // Should not crash and should not access outside paths

@@ -128,7 +128,7 @@ export async function checkSandboxAvailability(): Promise<SandboxAvailability> {
  */
 export async function executeWithSandbox(
   command: string,
-  options: SandboxOptions
+  options: SandboxOptions,
 ): Promise<SandboxExecutionResult> {
   const impl = await getSandboxImplementation();
 

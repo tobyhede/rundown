@@ -28,10 +28,7 @@ describe('Policy Loader - package.json', () => {
       version: '1.0.0',
       rundown: rundownConfig,
     };
-    fs.writeFileSync(
-      path.join(tempDir, 'package.json'),
-      JSON.stringify(packageJson, null, 2)
-    );
+    fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify(packageJson, null, 2));
   };
 
   describe('loadPolicy', () => {
@@ -108,7 +105,9 @@ describe('Policy Loader - YAML files', () => {
 
   describe('loadPolicy', () => {
     it('should load policy from .rundownrc.yaml', async () => {
-      writeYamlConfig('.rundownrc.yaml', `
+      writeYamlConfig(
+        '.rundownrc.yaml',
+        `
 version: 1
 default:
   mode: deny
@@ -116,7 +115,8 @@ default:
     allow:
       - git
       - npm
-`);
+`,
+      );
 
       const result = await loadPolicy({ cwd: tempDir });
 
@@ -126,11 +126,14 @@ default:
     });
 
     it('should load policy from .rundownrc.yml', async () => {
-      writeYamlConfig('.rundownrc.yml', `
+      writeYamlConfig(
+        '.rundownrc.yml',
+        `
 version: 1
 default:
   mode: prompted
-`);
+`,
+      );
 
       const result = await loadPolicy({ cwd: tempDir });
 
@@ -139,11 +142,14 @@ default:
     });
 
     it('should load policy from .rundownrc (no extension)', async () => {
-      writeYamlConfig('.rundownrc', `
+      writeYamlConfig(
+        '.rundownrc',
+        `
 version: 1
 default:
   mode: execute
-`);
+`,
+      );
 
       const result = await loadPolicy({ cwd: tempDir });
 
@@ -154,11 +160,14 @@ default:
 
   describe('loadPolicySync', () => {
     it('should load policy from .rundownrc.yaml', () => {
-      writeYamlConfig('.rundownrc.yaml', `
+      writeYamlConfig(
+        '.rundownrc.yaml',
+        `
 version: 1
 default:
   mode: deny
-`);
+`,
+      );
 
       const result = loadPolicySync({ cwd: tempDir });
 
@@ -169,11 +178,14 @@ default:
 
   describe('loadPolicyFromFile', () => {
     it('should load policy from YAML file by path', async () => {
-      writeYamlConfig('custom-policy.yaml', `
+      writeYamlConfig(
+        'custom-policy.yaml',
+        `
 version: 1
 default:
   mode: deny
-`);
+`,
+      );
 
       const result = await loadPolicyFromFile(path.join(tempDir, 'custom-policy.yaml'));
 
@@ -182,11 +194,14 @@ default:
     });
 
     it('should load policy from YML file by path', async () => {
-      writeYamlConfig('custom-policy.yml', `
+      writeYamlConfig(
+        'custom-policy.yml',
+        `
 version: 1
 default:
   mode: execute
-`);
+`,
+      );
 
       const result = await loadPolicyFromFile(path.join(tempDir, 'custom-policy.yml'));
 
@@ -197,11 +212,14 @@ default:
 
   describe('loadPolicyFromFileSync', () => {
     it('should load policy from YAML file by path', () => {
-      writeYamlConfig('custom-policy.yaml', `
+      writeYamlConfig(
+        'custom-policy.yaml',
+        `
 version: 1
 default:
   mode: prompted
-`);
+`,
+      );
 
       const result = loadPolicyFromFileSync(path.join(tempDir, 'custom-policy.yaml'));
 
@@ -227,10 +245,7 @@ describe('Policy Loader - JSON files', () => {
       version: 1,
       default: { mode: 'deny' },
     };
-    fs.writeFileSync(
-      path.join(tempDir, '.rundownrc.json'),
-      JSON.stringify(config, null, 2)
-    );
+    fs.writeFileSync(path.join(tempDir, '.rundownrc.json'), JSON.stringify(config, null, 2));
 
     const result = await loadPolicy({ cwd: tempDir });
 
@@ -243,10 +258,7 @@ describe('Policy Loader - JSON files', () => {
       version: 1,
       default: { mode: 'execute' },
     };
-    fs.writeFileSync(
-      path.join(tempDir, 'policy.json'),
-      JSON.stringify(config, null, 2)
-    );
+    fs.writeFileSync(path.join(tempDir, 'policy.json'), JSON.stringify(config, null, 2));
 
     const result = await loadPolicyFromFile(path.join(tempDir, 'policy.json'));
 
@@ -268,15 +280,15 @@ describe('Policy Loader - error paths', () => {
 
   describe('file not found', () => {
     it('should throw when file does not exist (async)', async () => {
-      await expect(
-        loadPolicyFromFile(path.join(tempDir, 'nonexistent.yaml'))
-      ).rejects.toThrow('Policy config file not found');
+      await expect(loadPolicyFromFile(path.join(tempDir, 'nonexistent.yaml'))).rejects.toThrow(
+        'Policy config file not found',
+      );
     });
 
     it('should throw when file does not exist (sync)', () => {
-      expect(() =>
-        loadPolicyFromFileSync(path.join(tempDir, 'nonexistent.yaml'))
-      ).toThrow('Policy config file not found');
+      expect(() => loadPolicyFromFileSync(path.join(tempDir, 'nonexistent.yaml'))).toThrow(
+        'Policy config file not found',
+      );
     });
   });
 
@@ -284,23 +296,23 @@ describe('Policy Loader - error paths', () => {
     it('should throw when package.json has no rundown field (async)', async () => {
       fs.writeFileSync(
         path.join(tempDir, 'package.json'),
-        JSON.stringify({ name: 'test', version: '1.0.0' })
+        JSON.stringify({ name: 'test', version: '1.0.0' }),
       );
 
-      await expect(
-        loadPolicyFromFile(path.join(tempDir, 'package.json'))
-      ).rejects.toThrow('No "rundown" field found in package.json');
+      await expect(loadPolicyFromFile(path.join(tempDir, 'package.json'))).rejects.toThrow(
+        'No "rundown" field found in package.json',
+      );
     });
 
     it('should throw when package.json has no rundown field (sync)', () => {
       fs.writeFileSync(
         path.join(tempDir, 'package.json'),
-        JSON.stringify({ name: 'test', version: '1.0.0' })
+        JSON.stringify({ name: 'test', version: '1.0.0' }),
       );
 
-      expect(() =>
-        loadPolicyFromFileSync(path.join(tempDir, 'package.json'))
-      ).toThrow('No "rundown" field found in package.json');
+      expect(() => loadPolicyFromFileSync(path.join(tempDir, 'package.json'))).toThrow(
+        'No "rundown" field found in package.json',
+      );
     });
   });
 
@@ -308,7 +320,7 @@ describe('Policy Loader - error paths', () => {
     it('should use defaults on invalid config when useDefaults is true', async () => {
       fs.writeFileSync(
         path.join(tempDir, '.rundownrc.yaml'),
-        'version: 1\ndefault:\n  mode: invalid-mode'
+        'version: 1\ndefault:\n  mode: invalid-mode',
       );
 
       const result = await loadPolicy({ cwd: tempDir, useDefaults: true });
@@ -321,18 +333,16 @@ describe('Policy Loader - error paths', () => {
     it('should throw on invalid config when useDefaults is false', async () => {
       fs.writeFileSync(
         path.join(tempDir, '.rundownrc.yaml'),
-        'version: 1\ndefault:\n  mode: invalid-mode'
+        'version: 1\ndefault:\n  mode: invalid-mode',
       );
 
-      await expect(
-        loadPolicy({ cwd: tempDir, useDefaults: false })
-      ).rejects.toThrow();
+      await expect(loadPolicy({ cwd: tempDir, useDefaults: false })).rejects.toThrow();
     });
 
     it('should use defaults on invalid config (sync)', () => {
       fs.writeFileSync(
         path.join(tempDir, '.rundownrc.yaml'),
-        'version: 1\ndefault:\n  mode: invalid-mode'
+        'version: 1\ndefault:\n  mode: invalid-mode',
       );
 
       const result = loadPolicySync({ cwd: tempDir, useDefaults: true });
@@ -346,17 +356,17 @@ describe('Policy Loader - error paths', () => {
     it('should throw on unsupported file extension (async)', async () => {
       fs.writeFileSync(path.join(tempDir, 'policy.txt'), 'version: 1');
 
-      await expect(
-        loadPolicyFromFile(path.join(tempDir, 'policy.txt'))
-      ).rejects.toThrow('Unsupported config file extension');
+      await expect(loadPolicyFromFile(path.join(tempDir, 'policy.txt'))).rejects.toThrow(
+        'Unsupported config file extension',
+      );
     });
 
     it('should throw on unsupported file extension (sync)', () => {
       fs.writeFileSync(path.join(tempDir, 'policy.txt'), 'version: 1');
 
-      expect(() =>
-        loadPolicyFromFileSync(path.join(tempDir, 'policy.txt'))
-      ).toThrow('Unsupported config file extension');
+      expect(() => loadPolicyFromFileSync(path.join(tempDir, 'policy.txt'))).toThrow(
+        'Unsupported config file extension',
+      );
     });
   });
 
@@ -369,9 +379,9 @@ describe('Policy Loader - error paths', () => {
     });
 
     it('should throw when no config found and useDefaults is false', async () => {
-      await expect(
-        loadPolicy({ cwd: tempDir, useDefaults: false })
-      ).rejects.toThrow('No policy configuration found');
+      await expect(loadPolicy({ cwd: tempDir, useDefaults: false })).rejects.toThrow(
+        'No policy configuration found',
+      );
     });
 
     it('should use defaults when no config found (sync)', () => {
@@ -381,18 +391,15 @@ describe('Policy Loader - error paths', () => {
     });
 
     it('should throw when no config found (sync) and useDefaults is false', () => {
-      expect(() =>
-        loadPolicySync({ cwd: tempDir, useDefaults: false })
-      ).toThrow('No policy configuration found');
+      expect(() => loadPolicySync({ cwd: tempDir, useDefaults: false })).toThrow(
+        'No policy configuration found',
+      );
     });
   });
 
   describe('explicit configPath option', () => {
     it('should load from explicit configPath (async)', async () => {
-      fs.writeFileSync(
-        path.join(tempDir, 'explicit.yaml'),
-        'version: 1\ndefault:\n  mode: deny'
-      );
+      fs.writeFileSync(path.join(tempDir, 'explicit.yaml'), 'version: 1\ndefault:\n  mode: deny');
 
       const result = await loadPolicy({
         configPath: path.join(tempDir, 'explicit.yaml'),
@@ -405,7 +412,7 @@ describe('Policy Loader - error paths', () => {
     it('should load from explicit configPath (sync)', () => {
       fs.writeFileSync(
         path.join(tempDir, 'explicit.yaml'),
-        'version: 1\ndefault:\n  mode: execute'
+        'version: 1\ndefault:\n  mode: execute',
       );
 
       const result = loadPolicySync({

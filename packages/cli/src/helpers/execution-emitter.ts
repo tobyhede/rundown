@@ -7,10 +7,7 @@
  * @module helpers/execution-emitter
  */
 
-import {
-  ExecutionEventEmitter,
-  type RunbookState,
-} from '@rundown-org/core';
+import { ExecutionEventEmitter, type RunbookState } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
 /**
@@ -32,12 +29,12 @@ import type { OutputEmitter } from '../services/output-emitter.js';
  */
 export function createBridgedEmitter(
   runbookState: RunbookState,
-  output: OutputEmitter
+  output: OutputEmitter,
 ): ExecutionEventEmitter {
-  const emitter = new ExecutionEventEmitter(
-    runbookState.id,
-    { name: runbookState.runbook, path: runbookState.runbookPath }
-  );
+  const emitter = new ExecutionEventEmitter(runbookState.id, {
+    name: runbookState.runbook,
+    path: runbookState.runbookPath,
+  });
 
   // Bridge execution events to the unified output system
   emitter.subscribe((event) => {

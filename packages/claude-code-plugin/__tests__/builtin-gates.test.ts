@@ -16,7 +16,7 @@ describe('Built-in Gates', () => {
     test('logs plugin path when available', async () => {
       const input: HookInput = {
         hook_event_name: 'SessionStart',
-        cwd: '/test'
+        cwd: '/test',
       };
 
       const result = await executeBuiltinGate('plugin-path', input);
@@ -28,7 +28,7 @@ describe('Built-in Gates', () => {
       const input: HookInput = {
         hook_event_name: 'SubagentStop',
         cwd: '/test',
-        agent_name: 'test-agent'
+        agent_name: 'test-agent',
       };
 
       const result = await executeBuiltinGate('plugin-path', input);

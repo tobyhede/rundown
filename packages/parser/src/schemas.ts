@@ -58,7 +58,7 @@ export const StepNameSchema = z.string().refine(
     }
     return NAMED_IDENTIFIER_PATTERN.test(s) && !isReservedWord(s);
   },
-  { message: 'Step name must be a positive integer or valid identifier' }
+  { message: 'Step name must be a positive integer or valid identifier' },
 );
 
 /**
@@ -66,31 +66,32 @@ export const StepNameSchema = z.string().refine(
  * step is always a string: "1", "ErrorHandler", or "NEXT" for forward reference
  * qualifier is optional: only present for GOTO NEXT <target>
  */
-export const StepIdSchema = z.object({
-  step: z.union([
-    z.literal('NEXT'),
-    StepNameSchema,
-  ]),
-  substep: z.string().optional(),
-  qualifier: z.object({
-    step: StepNameSchema,
+export const StepIdSchema = z
+  .object({
+    step: z.union([z.literal('NEXT'), StepNameSchema]),
     substep: z.string().optional(),
-  }).optional(),
-  at: z.union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)]).optional(),
-}).refine(
-  (data) => {
-    // NEXT without qualifier cannot have substep
-    if (data.step === 'NEXT' && !data.qualifier && data.substep) {
-      return false;
-    }
-    // NEXT with qualifier cannot have its own substep
-    if (data.step === 'NEXT' && data.qualifier && data.substep) {
-      return false;
-    }
-    return true;
-  },
-  { message: 'Invalid NEXT target structure' }
-);
+    qualifier: z
+      .object({
+        step: StepNameSchema,
+        substep: z.string().optional(),
+      })
+      .optional(),
+    at: z.union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)]).optional(),
+  })
+  .refine(
+    (data) => {
+      // NEXT without qualifier cannot have substep
+      if (data.step === 'NEXT' && !data.qualifier && data.substep) {
+        return false;
+      }
+      // NEXT with qualifier cannot have its own substep
+      if (data.step === 'NEXT' && data.qualifier && data.substep) {
+        return false;
+      }
+      return true;
+    },
+    { message: 'Invalid NEXT target structure' },
+  );
 
 /**
  * StepId type derived from schema
@@ -157,7 +158,7 @@ export const SubstepSchema = z.object({
   agentType: z.string().optional(),
   workflows: z.array(z.string()).readonly().optional(),
   command: CommandSchema.optional(),
-  prompt: z.string().min(1).optional(),  // .min(1) prevents empty strings
+  prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
   transitions: TransitionsSchema.optional(),
   line: z.number().optional(),
 });
@@ -166,11 +167,11 @@ export const SubstepSchema = z.object({
  * Zod schema for Step
  */
 export const StepSchema = z.object({
-  name: StepNameSchema,                  // REQUIRED: "1", "ErrorHandler"
+  name: StepNameSchema, // REQUIRED: "1", "ErrorHandler"
   forClause: ForClauseSchema.optional(),
   description: z.string(),
   command: CommandSchema.optional(),
-  prompt: z.string().min(1).optional(),  // .min(1) prevents empty strings
+  prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
   transitions: TransitionsSchema.optional(),
   substeps: z.array(SubstepSchema).readonly().optional(),
   workflows: z.array(z.string()).readonly().optional(),

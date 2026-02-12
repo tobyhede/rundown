@@ -8,11 +8,7 @@ import {
   type ActionBlockData,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
-import {
-  getStepRetryMax,
-  buildMetadata,
-  formatActionForDisplay,
-} from '../services/execution.js';
+import { getStepRetryMax, buildMetadata, formatActionForDisplay } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
@@ -118,7 +114,7 @@ export function registerStatusCommand(program: Command): void {
 
         // Case 3: Active runbook
         const steps = getRunbookFromState(state, cwd);
-        const currentStepIndex = steps.findIndex(s => s.name === state.step);
+        const currentStepIndex = steps.findIndex((s) => s.name === state.step);
         const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
         const totalSteps = countNumberedSteps(steps);
         const displayStep = state.step;
@@ -129,7 +125,11 @@ export function registerStatusCommand(program: Command): void {
         let actionBlockData: ActionBlockData | undefined;
         if (state.lastAction) {
           const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
-          const actionStr = formatActionForDisplay(state.lastAction, state.retryCount, retryMaxForAction);
+          const actionStr = formatActionForDisplay(
+            state.lastAction,
+            state.retryCount,
+            retryMaxForAction,
+          );
           actionBlockData = { action: actionStr };
           if (state.lastResult) {
             actionBlockData.result = state.lastResult === 'pass';
@@ -155,19 +155,23 @@ export function registerStatusCommand(program: Command): void {
             },
           }),
           lastAction: actionBlockData,
-          pending: state.pendingSteps.length > 0
-            ? state.pendingSteps.map((p) => stepIdToString(p.stepId))
-            : undefined,
-          agents: Object.keys(state.agentBindings).length > 0
-            ? Object.entries(state.agentBindings).reduce<Record<string, { step: string; status: string; result?: string }>>((acc, [agentId, binding]) => {
-              acc[agentId] = {
-                step: stepIdToString(binding.stepId),
-                status: binding.status,
-                result: binding.result
-              };
-              return acc;
-            }, {})
-            : undefined
+          pending:
+            state.pendingSteps.length > 0
+              ? state.pendingSteps.map((p) => stepIdToString(p.stepId))
+              : undefined,
+          agents:
+            Object.keys(state.agentBindings).length > 0
+              ? Object.entries(state.agentBindings).reduce<
+                  Record<string, { step: string; status: string; result?: string }>
+                >((acc, [agentId, binding]) => {
+                  acc[agentId] = {
+                    step: stepIdToString(binding.stepId),
+                    status: binding.status,
+                    result: binding.result,
+                  };
+                  return acc;
+                }, {})
+              : undefined,
         };
 
         output.detail(statusData, 'status');

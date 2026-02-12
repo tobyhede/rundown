@@ -266,23 +266,23 @@ describe('start command', () => {
       const childId = agentStack[0];
 
       const allStates = await Promise.all(
-        stateFiles.map(file => readRunbookState(workspace, file.replace('.json', '')))
+        stateFiles.map((file) => readRunbookState(workspace, file.replace('.json', ''))),
       );
-      const parentState = allStates.find(state => {
+      const parentState = allStates.find((state) => {
         const bindings = state?.agentBindings;
         // bindings is either defined or undefined, not null
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        return Object.values((bindings as Record<string, unknown>) || {})
-          .some((binding: unknown) =>
+        return Object.values((bindings as Record<string, unknown>) || {}).some(
+          (binding: unknown) =>
             typeof binding === 'object' &&
             binding !== null &&
             'childRunbookId' in binding &&
-            (binding as Record<string, unknown>).childRunbookId === childId
-          );
+            (binding as Record<string, unknown>).childRunbookId === childId,
+        );
       });
 
       expect(parentState).toBeTruthy();
-      const agentBindings = (parentState!.agentBindings) as Record<string, unknown>;
+      const agentBindings = parentState!.agentBindings as Record<string, unknown>;
       const agentBinding = agentBindings['test-agent-123'];
       expect((agentBinding as Record<string, unknown>).childRunbookId).toBe(childId);
     });

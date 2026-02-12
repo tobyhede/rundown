@@ -37,21 +37,15 @@ describe('output formatter', () => {
     });
 
     it('formats position with substep', () => {
-      expect(formatPosition({ current: '2', total: 5, substep: '1' })).toBe(
-        '2.1/5'
-      );
+      expect(formatPosition({ current: '2', total: 5, substep: '1' })).toBe('2.1/5');
     });
-
-
 
     it('formats named step without total', () => {
       expect(formatPosition({ current: 'RECOVER', total: 6 })).toBe('RECOVER');
     });
 
     it('formats named step with substep without total', () => {
-      expect(formatPosition({ current: 'RECOVER', total: 6, substep: '1' })).toBe(
-        'RECOVER.1'
-      );
+      expect(formatPosition({ current: 'RECOVER', total: 6, substep: '1' })).toBe('RECOVER.1');
     });
   });
 
@@ -102,7 +96,7 @@ describe('output formatter', () => {
           file: 'runbooks/build.md',
           state: '.claude/rundown/runs/wf-123.json',
         },
-        writer
+        writer,
       );
       expect(writer.getLines()).toEqual([
         'File:     runbooks/build.md',
@@ -117,7 +111,7 @@ describe('output formatter', () => {
           state: '.claude/rundown/runs/wf-123.json',
           prompted: true,
         },
-        writer
+        writer,
       );
       expect(writer.getOutput()).toContain('Prompt:   Yes');
     });
@@ -129,7 +123,7 @@ describe('output formatter', () => {
           state: '.claude/rundown/runs/wf-123.json',
           prompted: false,
         },
-        writer
+        writer,
       );
       expect(writer.getOutput()).not.toContain('Prompt:   Yes');
       expect(writer.getOutput()).not.toContain('Prompt:   No');
@@ -149,13 +143,9 @@ describe('output formatter', () => {
           from: { current: '1', total: 5 },
           result: true,
         },
-        writer
+        writer,
       );
-      expect(writer.getLines()).toEqual([
-        'Action:   CONTINUE',
-        'From:     1',
-        'Result:   PASS',
-      ]);
+      expect(writer.getLines()).toEqual(['Action:   CONTINUE', 'From:     1', 'Result:   PASS']);
     });
 
     it('prints action with from but no result (goto command)', () => {
@@ -164,7 +154,7 @@ describe('output formatter', () => {
           action: 'GOTO 3',
           from: { current: '1', total: 5 },
         },
-        writer
+        writer,
       );
       expect(writer.getLines()).toEqual(['Action:   GOTO 3', 'From:     1']);
     });
@@ -176,7 +166,7 @@ describe('output formatter', () => {
           from: { current: '2', total: 5 },
           result: false,
         },
-        writer
+        writer,
       );
       expect(writer.getOutput()).toContain('Action:   RETRY (1/3)');
     });
@@ -189,7 +179,7 @@ describe('output formatter', () => {
           command: 'npm run deploy:check',
           result: false,
         },
-        writer
+        writer,
       );
       expect(writer.getLines()).toEqual([
         'Action:   RETRY (1/1)',
@@ -208,7 +198,7 @@ describe('output formatter', () => {
           result: true,
           at: { current: '2', total: 5 },
         },
-        writer
+        writer,
       );
       expect(writer.getLines()).toEqual([
         'Action:   CONTINUE',
@@ -225,7 +215,7 @@ describe('output formatter', () => {
       const step: Step = {
         name: '1',
         description: 'First step',
-          prompt: 'Do something.',
+        prompt: 'Do something.',
         command: { code: 'npm test' },
       };
       printStepBlock({ current: '1', total: 3 }, step, undefined, writer);
@@ -238,8 +228,6 @@ describe('output formatter', () => {
       // Command is now shown via printCommandExec, not in step block
       expect(output).not.toContain('```');
     });
-
-
   });
 
   describe('printCommandExec', () => {
@@ -321,7 +309,14 @@ describe('output formatter', () => {
     });
 
     it('prints entry with title', () => {
-      printRunbookListEntry('wf-456', 'stopped', '3/10', 'runbooks/deploy.md', 'Deploy Production', writer);
+      printRunbookListEntry(
+        'wf-456',
+        'stopped',
+        '3/10',
+        'runbooks/deploy.md',
+        'Deploy Production',
+        writer,
+      );
       const output = writer.getOutput();
       expect(output).toContain('wf-456');
       expect(output).toContain('stopped');

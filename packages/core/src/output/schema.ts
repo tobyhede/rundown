@@ -22,55 +22,44 @@ export {
   CLIErrorCodes,
   ErrorCodeSchema,
   type CLIErrorCode,
-
   // Shared schemas
   PositionSchema,
   RunbookContextSchema,
   ErrorDetailsSchema,
-
   // Base response schemas
   BaseResponseSchema,
   SuccessResponseSchema,
   ErrorResponseSchema,
-
   // Action schemas
   ActionResponseSchema,
   StatusResponseSchema,
-
   // List schemas
   ActiveRunbookEntrySchema,
   AvailableRunbookEntrySchema,
   ActiveRunbookListSchema,
   AvailableRunbooksListSchema,
-
   // Check schemas
   CheckValidationErrorSchema,
   RunbookStatsSchema,
   CheckResponseSchema,
-
   // Scenario schemas
   ScenarioEntrySchema,
   ScenarioDetailSchema,
   ScenarioListSchema,
   ScenarioRunResponseSchema,
   ScenarioErrorResponseSchema,
-
   // Echo schema
   EchoResponseSchema,
-
   // Prune schema (same format as ls output)
   PruneResponseSchema,
-
   // Stash/Pop schemas
   StashResponseSchema,
   PopResponseSchema,
-
   // Execution schemas
   ExecutionSummarySchema,
   StepQueuedResponseSchema,
   AgentBoundResponseSchema,
   RunCommandResponseSchema,
-
   // Derived TypeScript types
   type Position,
   type RunbookContext,
@@ -119,9 +108,7 @@ import type {
  * @param response - The response to check
  * @returns True if the response is an ErrorResponse
  */
-export function isErrorResponse(
-  response: CLIResponse | ErrorResponse
-): response is ErrorResponse {
+export function isErrorResponse(response: CLIResponse | ErrorResponse): response is ErrorResponse {
   return 'result' in response && !response.result && 'error' in response;
 }
 
@@ -134,9 +121,7 @@ export function isErrorResponse(
  * @param response - The response to check
  * @returns True if the response is an ActionResponse
  */
-export function isActionResponse(
-  response: CLIResponse
-): response is ActionResponse {
+export function isActionResponse(response: CLIResponse): response is ActionResponse {
   return (
     'result' in response &&
     typeof response.result === 'boolean' &&
@@ -153,9 +138,7 @@ export function isActionResponse(
  * @param response - The response to check
  * @returns True if the response is a StatusResponse
  */
-export function isStatusResponse(
-  response: unknown
-): response is StatusResponse {
+export function isStatusResponse(response: unknown): response is StatusResponse {
   return (
     typeof response === 'object' &&
     response !== null &&
@@ -170,9 +153,7 @@ export function isStatusResponse(
  * @param response - The response to check
  * @returns True if the response is a CheckResponse
  */
-export function isCheckResponse(
-  response: unknown
-): response is CheckResponse {
+export function isCheckResponse(response: unknown): response is CheckResponse {
   return (
     typeof response === 'object' &&
     response !== null &&

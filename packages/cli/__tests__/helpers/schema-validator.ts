@@ -84,10 +84,7 @@ export interface ValidationResult {
  * @param data - Data to validate
  * @returns Validation result with error details
  */
-export function validateSchema<T>(
-  schema: z.ZodSchema<T>,
-  data: unknown
-): ValidationResult {
+export function validateSchema<T>(schema: z.ZodSchema<T>, data: unknown): ValidationResult {
   const result = schema.safeParse(data);
   if (result.success) {
     return { valid: true, errors: [] };
@@ -110,13 +107,13 @@ export function validateSchema<T>(
 export function assertValidSchema<T>(
   schema: z.ZodSchema<T>,
   data: unknown,
-  context?: string
+  context?: string,
 ): asserts data is T {
   const result = validateSchema(schema, data);
   if (!result.valid) {
     const prefix = context ? `${context}: ` : '';
     throw new Error(
-      `${prefix}Schema validation failed:\n${result.errors.join('\n')}\n\nActual data:\n${JSON.stringify(data, null, 2)}`
+      `${prefix}Schema validation failed:\n${result.errors.join('\n')}\n\nActual data:\n${JSON.stringify(data, null, 2)}`,
     );
   }
 }
@@ -266,7 +263,7 @@ export function validateAgentBoundOutput(data: unknown): ValidationResult {
  */
 export function toMatchSchema<T>(
   received: unknown,
-  schema: z.ZodSchema<T>
+  schema: z.ZodSchema<T>,
 ): { pass: boolean; message: () => string } {
   const result = validateSchema(schema, received);
   if (result.valid) {

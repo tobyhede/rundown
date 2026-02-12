@@ -25,7 +25,7 @@ describe('context helpers', () => {
     it('returns path when file exists', async () => {
       const filePath = path.join(tempDir, 'test.md');
       await fs.writeFile(filePath, 'content');
-      
+
       const result = await findRunbookFile(tempDir, 'test.md');
       expect(result).toBe(filePath);
     });

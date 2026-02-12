@@ -22,7 +22,6 @@ function getErrorContext(step: Step, substepId?: string): string {
   return substepId ? `${step.name}.${substepId}` : step.name;
 }
 
-
 /**
  * Validates a parsed runbook against Rundown specification rules.
  *
@@ -40,9 +39,11 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
   const errors: ValidationError[] = [];
 
   if (steps.length === 0) {
-    return [{
-      message: "Runbook must contain at least one step (heading starting with '##')"
-    }];
+    return [
+      {
+        message: "Runbook must contain at least one step (heading starting with '##')",
+      },
+    ];
   }
 
   // Schema validation for each step
@@ -51,17 +52,16 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
     if (!result.success) {
       errors.push({
         line: step.line,
-        message: `Step ${step.name} failed schema validation: ${result.error.issues.map(i => i.message).join(', ')}`
+        message: `Step ${step.name} failed schema validation: ${result.error.issues.map((i) => i.message).join(', ')}`,
       });
     }
   }
-
 
   // Conformance Rule 3: Sequencing
   // Only numeric steps must be sequential; named steps can appear anywhere
   if (steps.length > 0) {
     // Filter out named steps for sequencing check
-    const numericSteps = steps.filter(s => /^\d+$/.test(s.name));
+    const numericSteps = steps.filter((s) => /^\d+$/.test(s.name));
     if (numericSteps.length > 0) {
       // Check that numeric steps are sequential (ignoring named steps)
       let expectedNum = 1;
@@ -71,7 +71,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
           if (stepNum !== expectedNum) {
             errors.push({
               line: step.line,
-              message: `Numeric steps must be sequential. Expected step ${String(expectedNum)}, found step ${String(stepNum)}.`
+              message: `Numeric steps must be sequential. Expected step ${String(expectedNum)}, found step ${String(stepNum)}.`,
             });
           }
           expectedNum++;
@@ -83,15 +83,15 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
   for (const step of steps) {
     // Conformance Rule 4: Exclusivity (Step level)
     // A step can optionally have a prompt, plus EXACTLY ONE OF: command, substeps, or runbooks.
-    const hasCommand = (step.command !== undefined);
-    const hasSubsteps = (step.substeps !== undefined && step.substeps.length > 0);
-    const hasRunbooks = (step.workflows !== undefined && step.workflows.length > 0);
+    const hasCommand = step.command !== undefined;
+    const hasSubsteps = step.substeps !== undefined && step.substeps.length > 0;
+    const hasRunbooks = step.workflows !== undefined && step.workflows.length > 0;
 
     const contentCount = [hasCommand, hasSubsteps, hasRunbooks].filter(Boolean).length;
     if (contentCount > 1) {
       errors.push({
         line: step.line,
-        message: `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps, Runbook List}.`
+        message: `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps, Runbook List}.`,
       });
     }
 
@@ -101,22 +101,28 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
       if (!hasSubsteps) {
         errors.push({
           line: step.line,
-          message: `FOR step "${step.name}" must have at least one substep`
+          message: `FOR step "${step.name}" must have at least one substep`,
         });
       }
 
       // Parent FOR step must not use NEXT/BREAK in its own transitions
       if (step.transitions) {
-        if (step.transitions.pass.action.type === 'NEXT' || step.transitions.pass.action.type === 'BREAK') {
+        if (
+          step.transitions.pass.action.type === 'NEXT' ||
+          step.transitions.pass.action.type === 'BREAK'
+        ) {
           errors.push({
             line: step.line,
-            message: `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`
+            message: `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
           });
         }
-        if (step.transitions.fail.action.type === 'NEXT' || step.transitions.fail.action.type === 'BREAK') {
+        if (
+          step.transitions.fail.action.type === 'NEXT' ||
+          step.transitions.fail.action.type === 'BREAK'
+        ) {
           errors.push({
             line: step.line,
-            message: `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`
+            message: `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
           });
         }
       }
@@ -129,13 +135,13 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
 
     if (step.substeps) {
       for (const substep of step.substeps) {
-        const sHasCommand = (substep.command !== undefined);
-        const sHasRunbooks = (substep.workflows !== undefined && substep.workflows.length > 0);
+        const sHasCommand = substep.command !== undefined;
+        const sHasRunbooks = substep.workflows !== undefined && substep.workflows.length > 0;
 
         if (sHasCommand && sHasRunbooks) {
           errors.push({
             line: step.line,
-            message: `Substep ${step.name}.${substep.id}: Violates Exclusivity Rule. A substep must have either a Body or a Runbook List, but not both.`
+            message: `Substep ${step.name}.${substep.id}: Violates Exclusivity Rule. A substep must have either a Body or a Runbook List, but not both.`,
           });
         }
 
@@ -165,7 +171,7 @@ function validateGotoAtTarget(
   targetStepObj: Step,
   targetStep: string,
   currentStepObj: Step,
-  errors: ValidationError[]
+  errors: ValidationError[],
 ): boolean {
   if ('at' in action.target && action.target.at !== undefined) {
     if (!targetStepObj.forClause) {
@@ -199,14 +205,14 @@ export function validateAction(
   currentSubstepId: string | undefined,
   steps: readonly Step[],
   currentStepObj: Step,
-  errors: ValidationError[]
+  errors: ValidationError[],
 ): void {
   const result = ActionSchema.safeParse(action);
   if (!result.success) {
     const context = getErrorContext(currentStepObj, currentSubstepId);
     errors.push({
       line: currentStepObj.line,
-      message: `Step ${context}: Action validation failed: ${result.error.issues.map(i => i.message).join(', ')}`
+      message: `Step ${context}: Action validation failed: ${result.error.issues.map((i) => i.message).join(', ')}`,
     });
     return;
   }
@@ -217,7 +223,7 @@ export function validateAction(
     if (!currentSubstepId) {
       errors.push({
         line: currentStepObj.line,
-        message: `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`
+        message: `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`,
       });
       return;
     }
@@ -225,7 +231,7 @@ export function validateAction(
     if (!currentStepObj.forClause) {
       errors.push({
         line: currentStepObj.line,
-        message: `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`
+        message: `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`,
       });
     }
     return;
@@ -237,12 +243,12 @@ export function validateAction(
 
     // Handle named step target (not numeric strings - those are handled below)
     if (typeof targetStep === 'string' && !/^\d+$/.test(targetStep)) {
-      const namedStep = steps.find(s => s.name === targetStep);
+      const namedStep = steps.find((s) => s.name === targetStep);
       if (!namedStep) {
         const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`
+          message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`,
         });
         return;
       }
@@ -254,17 +260,17 @@ export function validateAction(
           const context = getErrorContext(currentStepObj, currentSubstepId);
           errors.push({
             line: currentStepObj.line,
-            message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`
+            message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`,
           });
           return;
         }
 
-        const substepExists = namedStep.substeps.some(s => s.id === targetSubstep);
+        const substepExists = namedStep.substeps.some((s) => s.id === targetSubstep);
         if (!substepExists) {
           const context = getErrorContext(currentStepObj, currentSubstepId);
           errors.push({
             line: currentStepObj.line,
-            message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`
+            message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`,
           });
           return;
         }
@@ -275,13 +281,13 @@ export function validateAction(
     // At this point, targetStep is a numeric string (e.g., "1", "2")
     // We've already handled named steps above
     // Look up by name, not array index (named steps can appear anywhere)
-    const targetStepObj = steps.find(s => s.name === targetStep);
+    const targetStepObj = steps.find((s) => s.name === targetStep);
 
     if (!targetStepObj) {
       const context = getErrorContext(currentStepObj, currentSubstepId);
       errors.push({
         line: currentStepObj.line,
-        message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`
+        message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`,
       });
       return;
     }
@@ -293,17 +299,17 @@ export function validateAction(
         const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`
+          message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`,
         });
         return;
       }
 
-      const substepExists = targetStepObj.substeps.some(s => s.id === targetSubstep);
+      const substepExists = targetStepObj.substeps.some((s) => s.id === targetSubstep);
       if (!substepExists) {
         const context = getErrorContext(currentStepObj, currentSubstepId);
         errors.push({
           line: currentStepObj.line,
-          message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`
+          message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`,
         });
         return;
       }
@@ -311,11 +317,15 @@ export function validateAction(
 
     // Self-loop detection: compare step names, not numeric values
     // AT-qualified GOTOs change iteration, so they're not true self-loops
-    if (targetStep === currentStepObj.name && targetSubstep === currentSubstepId && action.target.at === undefined) {
+    if (
+      targetStep === currentStepObj.name &&
+      targetSubstep === currentSubstepId &&
+      action.target.at === undefined
+    ) {
       const context = getErrorContext(currentStepObj, currentSubstepId);
       errors.push({
         line: currentStepObj.line,
-        message: `Step ${context}: GOTO self creates infinite loop (use RETRY instead)`
+        message: `Step ${context}: GOTO self creates infinite loop (use RETRY instead)`,
       });
       return;
     }

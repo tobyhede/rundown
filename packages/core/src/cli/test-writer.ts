@@ -42,9 +42,7 @@ export class TestWriter implements OutputWriter {
   }
 
   writeJson(data: unknown, pretty = true): void {
-    const json = pretty
-      ? JSON.stringify(data, null, 2)
-      : JSON.stringify(data);
+    const json = pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data);
     this.writeLine(json);
   }
 
@@ -56,9 +54,7 @@ export class TestWriter implements OutputWriter {
    * @param stream - Filter by stream (optional)
    */
   getOutput(stream?: OutputStream): string {
-    const filtered = stream
-      ? this.output.filter((o) => o.stream === stream)
-      : this.output;
+    const filtered = stream ? this.output.filter((o) => o.stream === stream) : this.output;
     return filtered.map((o) => o.text).join('');
   }
 

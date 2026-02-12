@@ -2,7 +2,12 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { executeCommandWithPolicy } from '../src/runbook/executor.js';
-import { PolicyEvaluator, DEFAULT_POLICY, extractAllExecutables, extractBacktickCommands } from '../src/policy/index.js';
+import {
+  PolicyEvaluator,
+  DEFAULT_POLICY,
+  extractAllExecutables,
+  extractBacktickCommands,
+} from '../src/policy/index.js';
 import { isSandboxAvailable, checkSandboxAvailability } from '../src/sandbox/index.js';
 
 describe('Security Policy Gaps', () => {
@@ -35,20 +40,20 @@ describe('Security Policy Gaps', () => {
           mode: 'deny' as const,
           run: {
             allow: ['cat'],
-            deny: []
+            deny: [],
           },
           read: {
             allow: [],
-            deny: ['**/secret.txt']
+            deny: ['**/secret.txt'],
           },
           write: { allow: [], deny: [] },
-          env: { allow: [], deny: [] }
-        }
+          env: { allow: [], deny: [] },
+        },
       };
 
       const evaluator = new PolicyEvaluator(policy, {
         repoRoot: tmpDir,
-        tmpDir: tmpDir
+        tmpDir: tmpDir,
       });
 
       const result = await executeCommandWithPolicy(`cat ${secretFile}`, tmpDir, {
@@ -78,20 +83,20 @@ describe('Security Policy Gaps', () => {
           mode: 'deny' as const,
           run: {
             allow: ['echo', 'tee'],
-            deny: []
+            deny: [],
           },
           read: { allow: [], deny: [] },
           write: {
             allow: [],
-            deny: ['**/output.txt']
+            deny: ['**/output.txt'],
           },
-          env: { allow: [], deny: [] }
-        }
+          env: { allow: [], deny: [] },
+        },
       };
 
       const evaluator = new PolicyEvaluator(policy, {
         repoRoot: tmpDir,
-        tmpDir: tmpDir
+        tmpDir: tmpDir,
       });
 
       const result = await executeCommandWithPolicy(`echo data | tee ${outputFile}`, tmpDir, {
@@ -111,21 +116,21 @@ describe('Security Policy Gaps', () => {
           mode: 'deny' as const,
           run: {
             allow: ['cat'],
-            deny: []
+            deny: [],
           },
           read: {
             allow: [],
-            deny: ['**/secret.txt']
+            deny: ['**/secret.txt'],
           },
           write: { allow: [], deny: [] },
           // Must allow PATH for commands to work
-          env: { allow: ['PATH', 'HOME', 'USER', 'TERM'], deny: [] }
-        }
+          env: { allow: ['PATH', 'HOME', 'USER', 'TERM'], deny: [] },
+        },
       };
 
       const evaluator = new PolicyEvaluator(policy, {
         repoRoot: tmpDir,
-        tmpDir: tmpDir
+        tmpDir: tmpDir,
       });
 
       // With sandbox disabled, file access is NOT enforced
@@ -154,8 +159,8 @@ describe('Security Policy Gaps', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           // Must allow PATH for commands to work
-          env: { allow: ['PATH', 'HOME', 'USER', 'TERM'], deny: [] }
-        }
+          env: { allow: ['PATH', 'HOME', 'USER', 'TERM'], deny: [] },
+        },
       };
 
       const evaluator = new PolicyEvaluator(policy, { repoRoot: tmpDir });
@@ -190,12 +195,12 @@ describe('Security Policy Gaps', () => {
           mode: 'deny' as const,
           run: {
             allow: ['echo'],
-            deny: ['id']
+            deny: ['id'],
           },
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
-          env: { allow: [], deny: [] }
-        }
+          env: { allow: [], deny: [] },
+        },
       };
 
       const evaluator = new PolicyEvaluator(policy, { repoRoot: tmpDir });
@@ -236,12 +241,12 @@ describe('Security Policy Gaps', () => {
           mode: 'deny' as const,
           run: {
             allow: ['echo'],
-            deny: ['id']
+            deny: ['id'],
           },
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
-          env: { allow: [], deny: [] }
-        }
+          env: { allow: [], deny: [] },
+        },
       };
 
       const evaluator = new PolicyEvaluator(policy, { repoRoot: tmpDir });

@@ -205,7 +205,7 @@ export class LandlockSandbox implements SandboxImplementation {
    */
   private executeWithLandrun(
     command: string,
-    options: SandboxOptions
+    options: SandboxOptions,
   ): Promise<SandboxExecutionResult> {
     return new Promise((resolve) => {
       // Build landrun arguments

@@ -66,7 +66,7 @@ describe('fail command', () => {
       // After blocking, the runbook is saved but no longer active
       // Retrieve from all states
       const states = await getAllStates(workspace);
-      const state = states.find(s => s.runbook === 'runbooks/simple.runbook.md');
+      const state = states.find((s) => s.runbook === 'runbooks/simple.runbook.md');
       expect(state?.variables.stopped).toBe(true);
     });
   });
@@ -201,7 +201,7 @@ rd echo --result pass
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
-      expect((output!.action as string)).toMatch(/^RETRY/);
+      expect(output!.action as string).toMatch(/^RETRY/);
       expect(output!.result).toBe(false);
 
       // Validate against schema
@@ -235,7 +235,7 @@ rd echo --result pass
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
-      expect((output!.action as string)).toMatch(/^GOTO/);
+      expect(output!.action as string).toMatch(/^GOTO/);
       expect(output!.result).toBe(false);
 
       // Validate against schema

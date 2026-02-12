@@ -1,14 +1,7 @@
 import { spawn } from 'child_process';
 import * as path from 'path';
-import {
-  type PolicyEvaluator,
-  type PolicyPrompter,
-  type PolicyDecision,
-} from '../policy/index.js';
-import {
-  executeWithSandbox,
-  isSandboxAvailable,
-} from '../sandbox/index.js';
+import { type PolicyEvaluator, type PolicyPrompter, type PolicyDecision } from '../policy/index.js';
+import { executeWithSandbox, isSandboxAvailable } from '../sandbox/index.js';
 import { policyToSandboxOptions } from '../sandbox/policy-mapper.js';
 
 /**
@@ -90,14 +83,14 @@ export function executeCommand(command: string, cwd: string): Promise<ExecutionR
     child.on('close', (code) => {
       resolve({
         success: code === 0,
-        exitCode: code ?? 1
+        exitCode: code ?? 1,
       });
     });
 
     child.on('error', () => {
       resolve({
         success: false,
-        exitCode: 1
+        exitCode: 1,
       });
     });
   });
@@ -148,7 +141,7 @@ export const POLICY_DENIED_EXIT_CODE = 126;
 export async function executeCommandWithPolicy(
   command: string,
   cwd: string,
-  options: PolicyExecutionOptions = {}
+  options: PolicyExecutionOptions = {},
 ): Promise<ExecutionResult> {
   const { evaluator, prompter, env, sandbox = true, sandboxStrict = false } = options;
 
@@ -217,7 +210,8 @@ export async function executeCommandWithPolicy(
       return {
         success: false,
         exitCode: POLICY_DENIED_EXIT_CODE,
-        denialReason: 'Sandbox unavailable and --sandbox-strict set. File policies cannot be enforced.',
+        denialReason:
+          'Sandbox unavailable and --sandbox-strict set. File policies cannot be enforced.',
         policyDenied: true,
         sandboxed: false,
       };
@@ -246,7 +240,7 @@ export async function executeCommandWithPolicy(
 export function executeCommandWithEnv(
   command: string,
   cwd: string,
-  env: Record<string, string>
+  env: Record<string, string>,
 ): Promise<ExecutionResult> {
   return new Promise((resolve) => {
     const binPath = path.join(cwd, 'node_modules', '.bin');
@@ -272,14 +266,14 @@ export function executeCommandWithEnv(
     child.on('close', (code) => {
       resolve({
         success: code === 0,
-        exitCode: code ?? 1
+        exitCode: code ?? 1,
       });
     });
 
     child.on('error', () => {
       resolve({
         success: false,
-        exitCode: 1
+        exitCode: 1,
       });
     });
   });

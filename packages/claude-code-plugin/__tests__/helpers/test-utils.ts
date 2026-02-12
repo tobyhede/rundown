@@ -74,13 +74,13 @@ export function runCli(args: string | string[], cwd: string): CliResult {
  */
 export function createMockHookInput(
   eventName: string,
-  overrides: Partial<Omit<HookInput, 'hook_event_name' | 'cwd'>> & { cwd?: string } = {}
+  overrides: Partial<Omit<HookInput, 'hook_event_name' | 'cwd'>> & { cwd?: string } = {},
 ): HookInput {
   const { cwd = '/test/project', ...rest } = overrides;
 
   const base: HookInput = {
     hook_event_name: eventName,
-    cwd
+    cwd,
   };
 
   // Add event-specific defaults
@@ -90,7 +90,7 @@ export function createMockHookInput(
         ...base,
         tool_name: 'Edit',
         file_path: '/test/project/src/file.ts',
-        ...rest
+        ...rest,
       };
 
     case 'PreToolUse':
@@ -98,7 +98,7 @@ export function createMockHookInput(
         ...base,
         tool_name: 'Skill',
         tool_input: { skill: 'test-skill' },
-        ...rest
+        ...rest,
       };
 
     case 'SubagentStart':
@@ -107,7 +107,7 @@ export function createMockHookInput(
         agent_id: 'test-agent-123',
         agent_name: 'test-namespace:test-agent',
         subagent_type: 'test-agent',
-        ...rest
+        ...rest,
       };
 
     case 'SubagentStop':
@@ -116,14 +116,14 @@ export function createMockHookInput(
         agent_id: 'test-agent-123',
         agent_name: 'test-namespace:test-agent',
         output: 'STATUS: PASS\nAgent completed successfully.',
-        ...rest
+        ...rest,
       };
 
     case 'UserPromptSubmit':
       return {
         ...base,
         user_message: 'test user message',
-        ...rest
+        ...rest,
       };
 
     case 'SkillStart':
@@ -131,7 +131,7 @@ export function createMockHookInput(
         ...base,
         skill: 'test-skill',
         tool_use_id: 'tool-123',
-        ...rest
+        ...rest,
       };
 
     case 'SkillEnd':
@@ -139,7 +139,7 @@ export function createMockHookInput(
         ...base,
         skill: 'test-skill',
         tool_use_id: 'tool-123',
-        ...rest
+        ...rest,
       };
 
     default:
@@ -154,23 +154,23 @@ export function createMockHookInput(
  * @returns Complete RundownPluginConfig object
  */
 export function createMockConfig(
-  overrides: Partial<RundownPluginConfig> = {}
+  overrides: Partial<RundownPluginConfig> = {},
 ): RundownPluginConfig {
   return {
     hooks: {
       PostToolUse: {
         enabled_tools: ['Edit', 'Write'],
-        gates: ['test-gate']
+        gates: ['test-gate'],
       },
-      ...overrides.hooks
+      ...overrides.hooks,
     },
     gates: {
       'test-gate': {
         command: 'echo "test gate"',
-        on_pass: 'CONTINUE'
+        on_pass: 'CONTINUE',
       },
-      ...overrides.gates
-    }
+      ...overrides.gates,
+    },
   };
 }
 
@@ -180,9 +180,7 @@ export function createMockConfig(
  * @param overrides - Partial session state to override defaults
  * @returns Complete SessionState object
  */
-export function createMockSessionState(
-  overrides: Partial<SessionState> = {}
-): SessionState {
+export function createMockSessionState(overrides: Partial<SessionState> = {}): SessionState {
   const now = new Date();
   return {
     session_id: now.toISOString().replace(/[:.]/g, '-').substring(0, 19),
@@ -192,7 +190,7 @@ export function createMockSessionState(
     edited_files: [],
     file_extensions: [],
     metadata: {},
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -213,7 +211,7 @@ export async function createTempTestDir(prefix = 'rundown-test-'): Promise<{
     path: tempPath,
     cleanup: async () => {
       await fs.rm(tempPath, { recursive: true, force: true });
-    }
+    },
   };
 }
 
@@ -223,14 +221,8 @@ export async function createTempTestDir(prefix = 'rundown-test-'): Promise<{
  * @param dir - Directory to write the config file
  * @param config - Config object to write
  */
-export async function writeTestConfig(
-  dir: string,
-  config: RundownPluginConfig
-): Promise<void> {
-  await fs.writeFile(
-    path.join(dir, 'rundown-plugin.json'),
-    JSON.stringify(config, null, 2)
-  );
+export async function writeTestConfig(dir: string, config: RundownPluginConfig): Promise<void> {
+  await fs.writeFile(path.join(dir, 'rundown-plugin.json'), JSON.stringify(config, null, 2));
 }
 
 /**
@@ -241,7 +233,7 @@ export async function writeTestConfig(
  * @returns Object with result and duration
  */
 export async function measureExecutionTime<T>(
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
 ): Promise<{ result: T; durationMs: number }> {
   const start = performance.now();
   const result = await fn();
@@ -256,9 +248,7 @@ export async function measureExecutionTime<T>(
  * @param fn - Sync function to measure
  * @returns Object with result and duration
  */
-export function measureExecutionTimeSync<T>(
-  fn: () => T
-): { result: T; durationMs: number } {
+export function measureExecutionTimeSync<T>(fn: () => T): { result: T; durationMs: number } {
   const start = performance.now();
   const result = fn();
   const durationMs = performance.now() - start;
@@ -283,7 +273,10 @@ export function createMockExecSync(output: string): jest.Mock<() => string> {
  * @param error - Error to throw (can include stderr)
  * @returns Mock execSync function that throws
  */
-export function createMockExecSyncError(error: { message: string; stderr?: string }): jest.Mock<() => never> {
+export function createMockExecSyncError(error: {
+  message: string;
+  stderr?: string;
+}): jest.Mock<() => never> {
   const err = new Error(error.message) as Error & { stderr?: Buffer };
   if (error.stderr) {
     err.stderr = Buffer.from(error.stderr);
@@ -307,7 +300,10 @@ export function sleep(ms: number): Promise<void> {
  * Assert that a value is defined (not null or undefined).
  * TypeScript type narrowing helper.
  */
-export function assertDefined<T>(value: T | null | undefined, message = 'Expected value to be defined'): asserts value is T {
+export function assertDefined<T>(
+  value: T | null | undefined,
+  message = 'Expected value to be defined',
+): asserts value is T {
   if (value === null || value === undefined) {
     throw new Error(message);
   }

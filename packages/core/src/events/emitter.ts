@@ -40,7 +40,7 @@ export class ExecutionEventEmitter {
    */
   constructor(
     private readonly runbookId: string,
-    private readonly runbook: RunbookRef
+    private readonly runbook: RunbookRef,
   ) {}
 
   /**
@@ -57,10 +57,7 @@ export class ExecutionEventEmitter {
    * @param payload - Event-specific payload (type-inferred)
    * @template T - Event type literal
    */
-  emit<T extends RunbookEventV1['type']>(
-    type: T,
-    payload: PayloadFor<T>
-  ): void {
+  emit<T extends RunbookEventV1['type']>(type: T, payload: PayloadFor<T>): void {
     this.seq++;
 
     // Build event using type-safe helper to satisfy discriminated union.
@@ -90,7 +87,7 @@ export class ExecutionEventEmitter {
    */
   private buildEvent<T extends RunbookEventV1['type']>(
     type: T,
-    payload: PayloadFor<T>
+    payload: PayloadFor<T>,
   ): RunbookEventV1 {
     // This function separates the event construction from the generic emit() method.
     // By using a type assertion here instead of in emit(), we achieve better
@@ -127,10 +124,7 @@ export class ExecutionEventEmitter {
    * @param payload - Payload to validate
    * @throws {Error} If payload is missing required fields for the event type
    */
-  private validatePayload<T extends RunbookEventV1['type']>(
-    type: T,
-    payload: PayloadFor<T>
-  ): void {
+  private validatePayload<T extends RunbookEventV1['type']>(type: T, payload: PayloadFor<T>): void {
     // Define required fields for each event type
     const requiredFields: Record<RunbookEventV1['type'], string[]> = {
       RUNBOOK_STARTED: ['prompted', 'statePath'],
@@ -150,12 +144,12 @@ export class ExecutionEventEmitter {
     const required = requiredFields[type];
     const payloadObj = payload as unknown as Record<string, unknown>;
     const missing = required.filter(
-      (field) => !(field in payloadObj) || payloadObj[field] === undefined
+      (field) => !(field in payloadObj) || payloadObj[field] === undefined,
     );
 
     if (missing.length > 0) {
       throw new Error(
-        `Invalid payload for ${type}: missing required fields: ${missing.join(', ')}`
+        `Invalid payload for ${type}: missing required fields: ${missing.join(', ')}`,
       );
     }
   }

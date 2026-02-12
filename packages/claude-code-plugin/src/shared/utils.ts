@@ -42,7 +42,9 @@ export function isPathInside(base: string, target: string): boolean {
 export function safeJoin(base: string, ...segments: string[]): string {
   const joined = path.join(base, ...segments);
   if (!isPathInside(base, joined) && joined !== base) {
-    throw new Error(`Security violation: path traversal detected attempting to access ${joined} outside of ${base}`);
+    throw new Error(
+      `Security violation: path traversal detected attempting to access ${joined} outside of ${base}`,
+    );
   }
   return joined;
 }
@@ -64,5 +66,3 @@ export function sanitizePathSegment(segment: string): string {
 export function shellEscape(str: string): string {
   return str.replace(/(["`\\$])/g, '\\$1');
 }
-
-

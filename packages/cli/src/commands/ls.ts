@@ -1,9 +1,7 @@
 // packages/cli/src/commands/ls.ts
 
 import type { Command } from 'commander';
-import {
-  RunbookStateManager,
-} from '@rundown-org/core';
+import { RunbookStateManager } from '@rundown-org/core';
 import { discoverRunbooks } from '../services/discovery.js';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -28,35 +26,38 @@ export function registerLsCommand(program: Command): void {
 
         // MODE 1: List available runbooks (--all)
         if (options.all) {
-            let runbooks = await discoverRunbooks(cwd);
+          let runbooks = await discoverRunbooks(cwd);
 
-            // Filter by tags
-            if (options.tags) {
-              const filterTags = options.tags.split(',').map((t) => t.trim().toLowerCase());
-              runbooks = runbooks.filter((w) =>
-                w.tags?.some((tag) => filterTags.includes(tag.toLowerCase()))
-              );
-            }
+          // Filter by tags
+          if (options.tags) {
+            const filterTags = options.tags.split(',').map((t) => t.trim().toLowerCase());
+            runbooks = runbooks.filter((w) =>
+              w.tags?.some((tag) => filterTags.includes(tag.toLowerCase())),
+            );
+          }
 
-            // Use list() for both modes - JSONRenderer outputs raw arrays for list-only events
-            output.list(runbooks, [
+          // Use list() for both modes - JSONRenderer outputs raw arrays for list-only events
+          output.list(
+            runbooks,
+            [
               {
                 header: 'NAME',
-                key: 'name'
+                key: 'name',
               },
               {
                 header: 'SOURCE',
-                key: 'source'
+                key: 'source',
               },
               {
                 header: 'DESCRIPTION',
-                key: (w) => w.description ?? ''
+                key: (w) => w.description ?? '',
               },
               {
                 header: 'TAGS',
-                key: (w) => w.tags?.join(', ') ?? ''
+                key: (w) => w.tags?.join(', ') ?? '',
               },
-            ], {
+            ],
+            {
               emptyMessage: 'No runbooks found.',
               jsonMapper: (w) => ({
                 name: w.name,
@@ -65,9 +66,10 @@ export function registerLsCommand(program: Command): void {
                 tags: w.tags,
                 path: w.path,
               }),
-            });
-            output.flush();
-            return;
+            },
+          );
+          output.flush();
+          return;
         }
 
         // MODE 2: List active runbooks (default)
@@ -91,29 +93,33 @@ export function registerLsCommand(program: Command): void {
               _step: displayStep,
               _total: totalSteps,
             };
-          })
+          }),
         );
 
         // Use list() for both modes - JSONRenderer outputs raw arrays for list-only events
-        output.list(enrichedStates, [
-          { header: 'ID', key: (s) => s.id.slice(0, 8) },
-          { header: 'STATUS', key: (s) => s._status },
-          { header: 'STEP', key: (s) => s._displayStep },
-          { header: 'RUNBOOK', key: 'runbook' },
-          { header: 'TITLE', key: (s) => s.title ?? '' },
-        ], {
-          emptyMessage: 'No active runbooks.\nRun "rundown ls --all" to see available runbooks.',
-          jsonMapper: (s) => {
-            // Include status, step, total per CLI-OUTPUT-SPEC
-            const { _status, _displayStep: _, _step, _total, ...original } = s;
-            return {
-              ...original,
-              status: _status,
-              step: _step,
-              total: _total,
-            };
+        output.list(
+          enrichedStates,
+          [
+            { header: 'ID', key: (s) => s.id.slice(0, 8) },
+            { header: 'STATUS', key: (s) => s._status },
+            { header: 'STEP', key: (s) => s._displayStep },
+            { header: 'RUNBOOK', key: 'runbook' },
+            { header: 'TITLE', key: (s) => s.title ?? '' },
+          ],
+          {
+            emptyMessage: 'No active runbooks.\nRun "rundown ls --all" to see available runbooks.',
+            jsonMapper: (s) => {
+              // Include status, step, total per CLI-OUTPUT-SPEC
+              const { _status, _displayStep: _, _step, _total, ...original } = s;
+              return {
+                ...original,
+                status: _status,
+                step: _step,
+                total: _total,
+              };
+            },
           },
-        });
+        );
         output.flush();
       });
     });

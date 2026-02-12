@@ -15,7 +15,7 @@ const ALL_SYNTHETIC_EVENT_TYPES: SyntheticEventName[] = [
   'SlashCommandStart',
   'SlashCommandEnd',
   'SubagentStart',
-  'SubagentEnd'
+  'SubagentEnd',
 ];
 
 /**
@@ -25,16 +25,16 @@ const SYNTHETIC_EVENT_TRIGGERS: Record<SyntheticEventName, () => HookInput> = {
   SkillStart: () =>
     createMockHookInput('PreToolUse', {
       tool_name: 'Skill',
-      tool_input: { skill: 'test-skill' }
+      tool_input: { skill: 'test-skill' },
     }),
   SkillEnd: () =>
     createMockHookInput('PostToolUse', {
       tool_name: 'Skill',
-      tool_input: { skill: 'test-skill' }
+      tool_input: { skill: 'test-skill' },
     }),
   SlashCommandStart: () =>
     createMockHookInput('UserPromptSubmit', {
-      user_message: '/test-command'
+      user_message: '/test-command',
     }),
   SlashCommandEnd: () => createMockHookInput('Stop'),
   SubagentStart: () =>
@@ -42,15 +42,15 @@ const SYNTHETIC_EVENT_TRIGGERS: Record<SyntheticEventName, () => HookInput> = {
       tool_name: 'Task',
       tool_input: {
         description: '1.1 - Test task',
-        subagent_type: 'test-agent'
+        subagent_type: 'test-agent',
       },
-      tool_use_id: 'tool-123'
+      tool_use_id: 'tool-123',
     }),
   SubagentEnd: () =>
     createMockHookInput('SubagentStop', {
       agent_id: 'agent-123',
-      output: 'STATUS: PASS'
-    })
+      output: 'STATUS: PASS',
+    }),
 };
 
 describe('Synthetic Event Registry Coverage', () => {
@@ -70,7 +70,7 @@ describe('Synthetic Event Registry Coverage', () => {
         'UserPromptSubmit',
         'Stop',
         'SessionStart',
-        'SessionEnd'
+        'SessionEnd',
       ];
 
       for (const event of nonSyntheticEvents) {
@@ -120,7 +120,7 @@ describe('Synthetic Event Registry Coverage', () => {
       it('extracts skill name from tool_input', () => {
         const input = createMockHookInput('PreToolUse', {
           tool_name: 'Skill',
-          tool_input: { skill: 'namespace:skill-name' }
+          tool_input: { skill: 'namespace:skill-name' },
         });
 
         const events = detectSyntheticEvents(input);
@@ -133,7 +133,7 @@ describe('Synthetic Event Registry Coverage', () => {
       it('requires Skill tool name', () => {
         const input = createMockHookInput('PreToolUse', {
           tool_name: 'Edit',
-          tool_input: { skill: 'should-not-match' }
+          tool_input: { skill: 'should-not-match' },
         });
 
         const events = detectSyntheticEvents(input);
@@ -145,7 +145,7 @@ describe('Synthetic Event Registry Coverage', () => {
       it('extracts skill name from tool_input', () => {
         const input = createMockHookInput('PostToolUse', {
           tool_name: 'Skill',
-          tool_input: { skill: 'test:skill' }
+          tool_input: { skill: 'test:skill' },
         });
 
         const events = detectSyntheticEvents(input);
@@ -159,7 +159,7 @@ describe('Synthetic Event Registry Coverage', () => {
     describe('SlashCommandStart detection', () => {
       it('extracts command name from user message', () => {
         const input = createMockHookInput('UserPromptSubmit', {
-          user_message: '/execute run all tests'
+          user_message: '/execute run all tests',
         });
 
         const events = detectSyntheticEvents(input);
@@ -171,7 +171,7 @@ describe('Synthetic Event Registry Coverage', () => {
 
       it('handles commands with namespace', () => {
         const input = createMockHookInput('UserPromptSubmit', {
-          user_message: '/cipherpowers:commit message here'
+          user_message: '/cipherpowers:commit message here',
         });
 
         const events = detectSyntheticEvents(input);
@@ -183,7 +183,7 @@ describe('Synthetic Event Registry Coverage', () => {
 
       it('does not detect non-command messages', () => {
         const input = createMockHookInput('UserPromptSubmit', {
-          user_message: 'This is a regular message'
+          user_message: 'This is a regular message',
         });
 
         const events = detectSyntheticEvents(input);
@@ -206,9 +206,9 @@ describe('Synthetic Event Registry Coverage', () => {
           tool_name: 'Task',
           tool_input: {
             description: '1.2 - Implement the feature',
-            subagent_type: 'code-agent'
+            subagent_type: 'code-agent',
           },
-          tool_use_id: 'tool-abc'
+          tool_use_id: 'tool-abc',
         });
 
         const events = detectSyntheticEvents(input);
@@ -224,8 +224,8 @@ describe('Synthetic Event Registry Coverage', () => {
         const input = createMockHookInput('PostToolUse', {
           tool_name: 'Step',
           tool_input: {
-            description: '3 - Simple step'
-          }
+            description: '3 - Simple step',
+          },
         });
 
         const events = detectSyntheticEvents(input);
@@ -239,13 +239,13 @@ describe('Synthetic Event Registry Coverage', () => {
           { desc: '1.1 - Substep', expected: '1.1' },
           { desc: '12.5 - Decimal substep', expected: '12.5' },
           { desc: '1– En dash step', expected: '1' },
-          { desc: '1— Em dash step', expected: '1' }
+          { desc: '1— Em dash step', expected: '1' },
         ];
 
         for (const { desc, expected } of formats) {
           const input = createMockHookInput('PostToolUse', {
             tool_name: 'Task',
-            tool_input: { description: desc }
+            tool_input: { description: desc },
           });
 
           const events = detectSyntheticEvents(input);
@@ -258,9 +258,9 @@ describe('Synthetic Event Registry Coverage', () => {
         const input = createMockHookInput('PostToolUse', {
           tool_name: 'Task',
           tool_input: {
-            description: 'Just a regular description without step ID'
+            description: 'Just a regular description without step ID',
           },
-          step_id: 'fallback-step-id'
+          step_id: 'fallback-step-id',
         });
 
         const events = detectSyntheticEvents(input);
@@ -278,7 +278,7 @@ describe('Synthetic Event Registry Coverage', () => {
         createMockHookInput('PostToolUse', { tool_name: 'Edit' }),
         createMockHookInput('PostToolUse', { tool_name: 'Write' }),
         createMockHookInput('SubagentStart'),
-        createMockHookInput('SubagentStop')
+        createMockHookInput('SubagentStop'),
       ];
 
       for (const input of unrelatedInputs) {
@@ -289,7 +289,7 @@ describe('Synthetic Event Registry Coverage', () => {
           (e) =>
             e.syntheticEvent === 'SkillStart' ||
             e.syntheticEvent === 'SkillEnd' ||
-            e.syntheticEvent === 'SlashCommandStart'
+            e.syntheticEvent === 'SlashCommandStart',
         );
         expect(unexpectedEvents).toHaveLength(0);
       }

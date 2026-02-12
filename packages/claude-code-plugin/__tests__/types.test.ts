@@ -5,7 +5,7 @@ describe('Types', () => {
   test('HookInput has required fields', () => {
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
-      cwd: '/test/path'
+      cwd: '/test/path',
     };
     expect(input.hook_event_name).toBe('PostToolUse');
     expect(input.cwd).toBe('/test/path');
@@ -16,7 +16,7 @@ describe('Types', () => {
       hook_event_name: 'PostToolUse',
       cwd: '/test/path',
       tool_name: 'Edit',
-      file_path: '/test/file.ts'
+      file_path: '/test/file.ts',
     };
     expect(input.tool_name).toBe('Edit');
     expect(input.file_path).toBe('/test/file.ts');
@@ -29,7 +29,7 @@ describe('Types', () => {
 
   test('GateResult can have additionalContext', () => {
     const result: GateResult = {
-      additionalContext: 'Test context'
+      additionalContext: 'Test context',
     };
     expect(result.additionalContext).toBe('Test context');
   });
@@ -37,7 +37,7 @@ describe('Types', () => {
   test('GateResult can have block decision', () => {
     const result: GateResult = {
       decision: 'block',
-      reason: 'Test reason'
+      reason: 'Test reason',
     };
     expect(result.decision).toBe('block');
     expect(result.reason).toBe('Test reason');
@@ -48,7 +48,7 @@ describe('GateConfig Type', () => {
   test('accepts plugin gate reference', () => {
     const config: GateConfig = {
       plugin: 'cipherpowers',
-      gate: 'plan-compliance'
+      gate: 'plan-compliance',
     };
     expect(config.plugin).toBe('cipherpowers');
     expect(config.gate).toBe('plan-compliance');
@@ -56,7 +56,7 @@ describe('GateConfig Type', () => {
 
   test('accepts local command gate', () => {
     const config: GateConfig = {
-      command: 'npm run lint'
+      command: 'npm run lint',
     };
     expect(config.command).toBe('npm run lint');
   });
@@ -65,7 +65,7 @@ describe('GateConfig Type', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['packages/cts/**', 'src/**/*.ts'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
 
     expect(config.file_patterns).toEqual(['packages/cts/**', 'src/**/*.ts']);
@@ -74,7 +74,7 @@ describe('GateConfig Type', () => {
   test('allows file_patterns to be undefined', () => {
     const config: GateConfig = {
       command: 'echo test',
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
 
     expect(config.file_patterns).toBeUndefined();
@@ -86,7 +86,7 @@ describe('HookInput subagent fields', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStart',
       cwd: '/test',
-      agent_id: 'agent-abc-123'
+      agent_id: 'agent-abc-123',
     };
     expect(input.agent_id).toBe('agent-abc-123');
   });
@@ -98,8 +98,8 @@ describe('HookInput subagent fields', () => {
       tool_name: 'Step',
       tool_input: {
         description: '3.1 - Review code',
-        subagent_type: 'code-review-agent'
-      }
+        subagent_type: 'code-review-agent',
+      },
     };
     expect(input.tool_input?.description).toBe('3.1 - Review code');
   });

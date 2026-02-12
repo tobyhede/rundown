@@ -5,31 +5,49 @@ describe('validator strict rules', () => {
   const mockStep = (overrides: Partial<Step>): Step => ({
     name: '1',
     description: 'Test',
-    ...overrides
+    ...overrides,
   });
 
   describe('GOTO rules', () => {
     it('rejects GOTO self (step level)', () => {
-      const steps = [mockStep({
-        name: '1',
-        transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
-      })];
+      const steps = [
+        mockStep({
+          name: '1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } },
+          },
+        }),
+      ];
       const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
-      expect(errors.some(e => e.message.includes('GOTO self creates infinite loop'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('GOTO self creates infinite loop'))).toBe(true);
     });
 
     it('rejects GOTO self (substep level)', () => {
-      const steps = [mockStep({
-        name: '1',
-        substeps: [{
-          id: '1', description: 'S1',
-          transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1', substep: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
-        }]
-      })];
+      const steps = [
+        mockStep({
+          name: '1',
+          substeps: [
+            {
+              id: '1',
+              description: 'S1',
+              transitions: {
+                all: true,
+                pass: {
+                  kind: 'pass',
+                  action: { type: 'GOTO', target: { step: '1', substep: '1' } },
+                },
+                fail: { kind: 'fail', action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
       const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
-      expect(errors.some(e => e.message.includes('GOTO self creates infinite loop'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('GOTO self creates infinite loop'))).toBe(true);
     });
 
     it('rejects GOTO to named step with non-existent substep', () => {
@@ -39,70 +57,80 @@ describe('validator strict rules', () => {
           description: 'First',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: 'NonExistent' } } },
+            pass: {
+              kind: 'pass',
+              action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: 'NonExistent' } },
+            },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
         },
         {
           name: 'ErrorHandler',
           description: 'Handler',
-          substeps: [
-            { id: '1', description: 'Sub1' }
-          ]
+          substeps: [{ id: '1', description: 'Sub1' }],
         },
       ];
       const errors = validateRunbook(steps as any[]);
       expect(errors.length).toBeGreaterThan(0);
       expect(errors[0].message).toContain('NonExistent');
     });
-
   });
-
 
   describe('Exclusivity rules', () => {
     it('accepts H2 step with both prompt and runbooks', () => {
-      const steps = [mockStep({
-        number: '1',
-        prompt: 'P',
-        runbooks: ['w.runbook.md']
-      })];
+      const steps = [
+        mockStep({
+          number: '1',
+          prompt: 'P',
+          runbooks: ['w.runbook.md'],
+        }),
+      ];
       const errors = validateRunbook(steps);
-      expect(errors.filter(e => e.message.includes('Violates Exclusivity Rule'))).toHaveLength(0);
+      expect(errors.filter((e) => e.message.includes('Violates Exclusivity Rule'))).toHaveLength(0);
     });
 
     it('accepts H2 step with both prompt and substeps', () => {
-      const steps = [mockStep({
-        number: '1',
-        prompt: 'P',
-        substeps: [{ id: '1', description: 'S' }]
-      })];
+      const steps = [
+        mockStep({
+          number: '1',
+          prompt: 'P',
+          substeps: [{ id: '1', description: 'S' }],
+        }),
+      ];
       const errors = validateRunbook(steps);
-      expect(errors.filter(e => e.message.includes('Violates Exclusivity Rule'))).toHaveLength(0);
+      expect(errors.filter((e) => e.message.includes('Violates Exclusivity Rule'))).toHaveLength(0);
     });
 
     it('rejects H2 step with both command and substeps', () => {
-      const steps = [mockStep({
-        number: '1',
-        command: { code: 'echo', language: 'bash' },
-        substeps: [{ id: '1', description: 'S' }]
-      })];
+      const steps = [
+        mockStep({
+          number: '1',
+          command: { code: 'echo', language: 'bash' },
+          substeps: [{ id: '1', description: 'S' }],
+        }),
+      ];
       const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
-      expect(errors.some(e => e.message.includes('Violates Exclusivity Rule'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('Violates Exclusivity Rule'))).toBe(true);
     });
 
     it('rejects H3 substep with both body and runbooks', () => {
-      const steps = [mockStep({
-        number: '1',
-        substeps: [{
-          id: '1', description: 'S',
-          command: { code: 'echo', language: 'bash' },
-          workflows: ['w.runbook.md']
-        }]
-      })];
+      const steps = [
+        mockStep({
+          number: '1',
+          substeps: [
+            {
+              id: '1',
+              description: 'S',
+              command: { code: 'echo', language: 'bash' },
+              workflows: ['w.runbook.md'],
+            },
+          ],
+        }),
+      ];
       const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
-      expect(errors.some(e => e.message.includes('Violates Exclusivity Rule'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('Violates Exclusivity Rule'))).toBe(true);
     });
   });
 
@@ -114,24 +142,30 @@ describe('validator strict rules', () => {
           prompt: 'P',
           command: { code: 'echo', language: 'bash' },
           substeps: [{ id: '1', description: 'S' }],
-          transitions: { all: true, pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } }, fail: { kind: 'fail', action: { type: 'STOP' } } }
-        })
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } },
+          },
+        }),
       ];
       const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(1);
     });
 
     it('includes line numbers in validation errors', () => {
-      const steps = [mockStep({
-        line: 42,
-        number: '1',
-        prompt: 'P',
-        command: { code: 'echo', language: 'bash' },
-        substeps: [{ id: '1', description: 'S' }]
-      })];
+      const steps = [
+        mockStep({
+          line: 42,
+          number: '1',
+          prompt: 'P',
+          command: { code: 'echo', language: 'bash' },
+          substeps: [{ id: '1', description: 'S' }],
+        }),
+      ];
       const errors = validateRunbook(steps);
       expect(errors.length).toBeGreaterThan(0);
-      const errorWithLine = errors.find(e => e.line === 42);
+      const errorWithLine = errors.find((e) => e.line === 42);
       expect(errorWithLine).toBeDefined();
     });
   });
@@ -192,7 +226,10 @@ describe('validator strict rules', () => {
           ],
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1', substep: 'Cleanup' } } },
+            pass: {
+              kind: 'pass',
+              action: { type: 'GOTO', target: { step: '1', substep: 'Cleanup' } },
+            },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
         },
@@ -201,7 +238,6 @@ describe('validator strict rules', () => {
       expect(errors).toHaveLength(0);
     });
   });
-
 
   describe('empty runbook', () => {
     it('rejects empty steps array', () => {
@@ -218,22 +254,24 @@ describe('validator strict rules', () => {
         mockStep({ name: '3', description: 'Third (skipping 2)' }),
       ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('must be sequential'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('must be sequential'))).toBe(true);
     });
   });
 
   describe('GOTO to non-existent step', () => {
     it('rejects GOTO to non-existent numeric step', () => {
-      const steps = [mockStep({
-        name: '1',
-        transitions: {
-          all: true,
-          pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '99' } } },
-          fail: { kind: 'fail', action: { type: 'STOP' } }
-        }
-      })];
+      const steps = [
+        mockStep({
+          name: '1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '99' } } },
+            fail: { kind: 'fail', action: { type: 'STOP' } },
+          },
+        }),
+      ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('does not exist'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('does not exist'))).toBe(true);
     });
   });
 
@@ -245,13 +283,13 @@ describe('validator strict rules', () => {
           transitions: {
             all: true,
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
-          }
+            fail: { kind: 'fail', action: { type: 'STOP' } },
+          },
         }),
-        mockStep({ name: '2', description: 'No substeps' })
+        mockStep({ name: '2', description: 'No substeps' }),
       ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('has no substeps'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('has no substeps'))).toBe(true);
     });
 
     it('rejects GOTO to named step substep when step has no substeps', () => {
@@ -260,114 +298,145 @@ describe('validator strict rules', () => {
           name: '1',
           transitions: {
             all: true,
-            pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: '1' } } },
-            fail: { kind: 'fail', action: { type: 'STOP' } }
-          }
+            pass: {
+              kind: 'pass',
+              action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: '1' } },
+            },
+            fail: { kind: 'fail', action: { type: 'STOP' } },
+          },
         }),
-        mockStep({ name: 'ErrorHandler', description: 'No substeps' })
+        mockStep({ name: 'ErrorHandler', description: 'No substeps' }),
       ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('has no substeps'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('has no substeps'))).toBe(true);
     });
   });
 
   describe('FOR validation', () => {
     it('rejects FOR step without substeps', () => {
-      const steps: Step[] = [{
-        name: '1',
-        description: 'Step with FOR but no substeps',
-        forClause: { start: 1, end: 10 },
-      }];
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step with FOR but no substeps',
+          forClause: { start: 1, end: 10 },
+        },
+      ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('must have at least one substep'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('must have at least one substep'))).toBe(true);
     });
 
     it('accepts FOR step with substeps', () => {
-      const steps: Step[] = [{
-        name: '1',
-        description: 'Step with FOR and substeps',
-        forClause: { start: 1, end: 10 },
-        substeps: [{
-          id: '1',
-          description: 'Substep',
-        }],
-      }];
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step with FOR and substeps',
+          forClause: { start: 1, end: 10 },
+          substeps: [
+            {
+              id: '1',
+              description: 'Substep',
+            },
+          ],
+        },
+      ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('must have at least one substep'))).toBe(false);
+      expect(errors.some((e) => e.message.includes('must have at least one substep'))).toBe(false);
     });
 
     it('rejects NEXT outside FOR substep context', () => {
-      const steps: Step[] = [{
-        name: '1',
-        description: 'Non-FOR step',
-        substeps: [{
-          id: '1',
-          description: 'Substep with NEXT',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
-        }],
-      }];
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Non-FOR step',
+          substeps: [
+            {
+              id: '1',
+              description: 'Substep with NEXT',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+              },
+            },
+          ],
+        },
+      ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('NEXT is only valid within substeps of a FOR step'))).toBe(true);
+      expect(
+        errors.some((e) => e.message.includes('NEXT is only valid within substeps of a FOR step')),
+      ).toBe(true);
     });
 
     it('rejects BREAK outside FOR substep context', () => {
-      const steps: Step[] = [{
-        name: '1',
-        description: 'Non-FOR step',
-        substeps: [{
-          id: '1',
-          description: 'Substep with BREAK',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'BREAK' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
-        }],
-      }];
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Non-FOR step',
+          substeps: [
+            {
+              id: '1',
+              description: 'Substep with BREAK',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'BREAK' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+              },
+            },
+          ],
+        },
+      ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('BREAK is only valid within substeps of a FOR step'))).toBe(true);
+      expect(
+        errors.some((e) => e.message.includes('BREAK is only valid within substeps of a FOR step')),
+      ).toBe(true);
     });
 
     it('accepts NEXT in substep of FOR step', () => {
-      const steps: Step[] = [{
-        name: '1',
-        description: 'FOR step',
-        forClause: { start: 1, end: 10 },
-        substeps: [{
-          id: '1',
-          description: 'Substep',
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'FOR step',
+          forClause: { start: 1, end: 10 },
+          substeps: [
+            {
+              id: '1',
+              description: 'Substep',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+              },
+            },
+          ],
+        },
+      ];
+      const errors = validateRunbook(steps);
+      expect(errors.some((e) => e.message.includes('NEXT is only valid'))).toBe(false);
+    });
+
+    it('rejects NEXT on parent FOR step itself', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'FOR step with NEXT on itself',
+          forClause: { start: 1, end: 10 },
           transitions: {
             all: true,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
-        }],
-      }];
-      const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('NEXT is only valid'))).toBe(false);
-    });
-
-    it('rejects NEXT on parent FOR step itself', () => {
-      const steps: Step[] = [{
-        name: '1',
-        description: 'FOR step with NEXT on itself',
-        forClause: { start: 1, end: 10 },
-        transitions: {
-          all: true,
-          pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
-          fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          substeps: [
+            {
+              id: '1',
+              description: 'Substep',
+            },
+          ],
         },
-        substeps: [{
-          id: '1',
-          description: 'Substep',
-        }],
-      }];
+      ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('cannot appear on the FOR step itself'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('cannot appear on the FOR step itself'))).toBe(
+        true,
+      );
     });
 
     it('accepts AT-qualified GOTO to self (not a true self-loop)', () => {
@@ -376,19 +445,25 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'FOR step that GOTOs itself with AT',
           forClause: { start: 1, end: 5 },
-          substeps: [{
-            id: '1',
-            description: 'Substep',
-            transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: '1', at: 1 } } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          substeps: [
+            {
+              id: '1',
+              description: 'Substep',
+              transitions: {
+                all: true,
+                pass: {
+                  kind: 'pass' as const,
+                  retry: 0,
+                  action: { type: 'GOTO' as const, target: { step: '1', at: 1 } },
+                },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+              },
             },
-          }],
+          ],
         },
       ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('GOTO self creates infinite loop'))).toBe(false);
+      expect(errors.some((e) => e.message.includes('GOTO self creates infinite loop'))).toBe(false);
     });
 
     it('rejects non-AT GOTO to self (existing behavior preserved)', () => {
@@ -397,19 +472,25 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'FOR step that GOTOs itself without AT',
           forClause: { start: 1, end: 5 },
-          substeps: [{
-            id: '1',
-            description: 'Substep',
-            transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: '1', substep: '1' } } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          substeps: [
+            {
+              id: '1',
+              description: 'Substep',
+              transitions: {
+                all: true,
+                pass: {
+                  kind: 'pass' as const,
+                  retry: 0,
+                  action: { type: 'GOTO' as const, target: { step: '1', substep: '1' } },
+                },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+              },
             },
-          }],
+          ],
         },
       ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('GOTO self creates infinite loop'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('GOTO self creates infinite loop'))).toBe(true);
     });
 
     it('rejects GOTO AT targeting non-FOR step', () => {
@@ -419,7 +500,11 @@ describe('validator strict rules', () => {
           description: 'Source step',
           transitions: {
             all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: '2', at: 3 } } },
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '2', at: 3 } },
+            },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
         },
@@ -429,7 +514,11 @@ describe('validator strict rules', () => {
         },
       ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('GOTO AT is only valid when the target step has a FOR clause'))).toBe(true);
+      expect(
+        errors.some((e) =>
+          e.message.includes('GOTO AT is only valid when the target step has a FOR clause'),
+        ),
+      ).toBe(true);
     });
 
     it('accepts GOTO AT targeting FOR step', () => {
@@ -439,7 +528,11 @@ describe('validator strict rules', () => {
           description: 'Source step',
           transitions: {
             all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'GOTO' as const, target: { step: '2', at: 1 } } },
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '2', at: 1 } },
+            },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
         },
@@ -447,14 +540,16 @@ describe('validator strict rules', () => {
           name: '2',
           description: 'FOR target step',
           forClause: { start: 1, end: 10 },
-          substeps: [{
-            id: '1',
-            description: 'Substep',
-          }],
+          substeps: [
+            {
+              id: '1',
+              description: 'Substep',
+            },
+          ],
         },
       ];
       const errors = validateRunbook(steps);
-      expect(errors.some(e => e.message.includes('GOTO AT is only valid'))).toBe(false);
+      expect(errors.some((e) => e.message.includes('GOTO AT is only valid'))).toBe(false);
     });
   });
 });

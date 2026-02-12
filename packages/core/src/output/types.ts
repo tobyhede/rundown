@@ -66,7 +66,16 @@ export interface ListOutput<T = unknown, U = T> extends BaseOutputEvent {
 export interface DetailOutput extends BaseOutputEvent {
   type: 'detail';
   /** The format/template to use for text rendering */
-  format: 'metadata' | 'step' | 'scenario' | 'scenario_result' | 'status' | 'echo' | 'prompt' | 'check' | 'custom';
+  format:
+    | 'metadata'
+    | 'step'
+    | 'scenario'
+    | 'scenario_result'
+    | 'status'
+    | 'echo'
+    | 'prompt'
+    | 'check'
+    | 'custom';
   /** Structured data for the detail view */
   data: Record<string, unknown>;
 }
@@ -185,7 +194,6 @@ export interface NoActiveRunbookOutput extends BaseOutputEvent {
   /** Error code for programmatic handling */
   code?: string;
 }
-
 
 /**
  * Event for bridging execution events to the output system.

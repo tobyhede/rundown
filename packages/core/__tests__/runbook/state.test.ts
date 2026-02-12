@@ -8,14 +8,16 @@ import { type Step, type Runbook } from '../../src/runbook/types.js';
 describe('RunbookStateManager', () => {
   let testDir: string;
   let manager: RunbookStateManager;
-  const mockSteps: Step[] = [{
-    name: '1',
-    description: 'Initial step'
-  }];
+  const mockSteps: Step[] = [
+    {
+      name: '1',
+      description: 'Initial step',
+    },
+  ];
   const mockRunbook: Runbook = {
     title: 'Test Runbook',
     description: 'A test',
-    steps: mockSteps
+    steps: mockSteps,
   };
 
   beforeEach(async () => {
@@ -29,7 +31,9 @@ describe('RunbookStateManager', () => {
 
   describe('getChildRunbookResult', () => {
     it('should return pass when child has completed=true', async () => {
-      const child = await manager.create('child.runbook.md', mockRunbook, { runbookPath: 'child.runbook.md' });
+      const child = await manager.create('child.runbook.md', mockRunbook, {
+        runbookPath: 'child.runbook.md',
+      });
       await manager.update(child.id, { variables: { completed: true } });
 
       const result = await manager.getChildRunbookResult(child.id);
@@ -37,7 +41,9 @@ describe('RunbookStateManager', () => {
     });
 
     it('should return fail when child has stopped=true', async () => {
-      const child = await manager.create('child.runbook.md', mockRunbook, { runbookPath: 'child.runbook.md' });
+      const child = await manager.create('child.runbook.md', mockRunbook, {
+        runbookPath: 'child.runbook.md',
+      });
       await manager.update(child.id, { variables: { stopped: true } });
 
       const result = await manager.getChildRunbookResult(child.id);
@@ -45,7 +51,9 @@ describe('RunbookStateManager', () => {
     });
 
     it('should return null when child is still active', async () => {
-      const child = await manager.create('child.runbook.md', mockRunbook, { runbookPath: 'child.runbook.md' });
+      const child = await manager.create('child.runbook.md', mockRunbook, {
+        runbookPath: 'child.runbook.md',
+      });
       await manager.pushRunbook(child.id);
 
       const result = await manager.getChildRunbookResult(child.id);
@@ -58,7 +66,9 @@ describe('RunbookStateManager', () => {
     });
 
     it('should return null when child is stashed', async () => {
-      const child = await manager.create('child.runbook.md', mockRunbook, { runbookPath: 'child.runbook.md' });
+      const child = await manager.create('child.runbook.md', mockRunbook, {
+        runbookPath: 'child.runbook.md',
+      });
       await manager.pushRunbook(child.id);
       await manager.stash();
 
@@ -71,10 +81,12 @@ describe('RunbookStateManager', () => {
     it('initializes substepStates when step has static substeps', async () => {
       const substeps = [
         { id: '1', description: 'First reviewer', prompts: [] },
-        { id: '2', description: 'Second reviewer', prompts: [] }
+        { id: '2', description: 'Second reviewer', prompts: [] },
       ];
 
-      const state = await manager.create('test.runbook.md', mockRunbook, { runbookPath: 'test.runbook.md' });
+      const state = await manager.create('test.runbook.md', mockRunbook, {
+        runbookPath: 'test.runbook.md',
+      });
       await manager.initializeSubsteps(state.id, substeps);
 
       const updated = await manager.load(state.id);
@@ -83,16 +95,18 @@ describe('RunbookStateManager', () => {
         id: '1',
         status: 'pending',
         agentId: undefined,
-        result: undefined
+        result: undefined,
       });
     });
   });
 
   describe('RunbookStateManager substep lifecycle', () => {
     it('binds agent to substep', async () => {
-      const state = await manager.create('test.runbook.md', mockRunbook, { runbookPath: 'test.runbook.md' });
+      const state = await manager.create('test.runbook.md', mockRunbook, {
+        runbookPath: 'test.runbook.md',
+      });
       await manager.update(state.id, {
-        substepStates: [{ id: '1', status: 'pending' }]
+        substepStates: [{ id: '1', status: 'pending' }],
       });
 
       await manager.bindSubstepAgent(state.id, '1', 'agent-123');
@@ -102,14 +116,16 @@ describe('RunbookStateManager', () => {
         id: '1',
         status: 'running',
         agentId: 'agent-123',
-        result: undefined
+        result: undefined,
       });
     });
 
     it('completes substep with result', async () => {
-      const state = await manager.create('test.runbook.md', mockRunbook, { runbookPath: 'test.runbook.md' });
+      const state = await manager.create('test.runbook.md', mockRunbook, {
+        runbookPath: 'test.runbook.md',
+      });
       await manager.update(state.id, {
-        substepStates: [{ id: '1', status: 'running', agentId: 'agent-123' }]
+        substepStates: [{ id: '1', status: 'running', agentId: 'agent-123' }],
       });
 
       await manager.completeSubstep(state.id, '1', 'pass');
@@ -119,7 +135,7 @@ describe('RunbookStateManager', () => {
         id: '1',
         status: 'done',
         agentId: 'agent-123',
-        result: 'pass'
+        result: 'pass',
       });
     });
   });
@@ -130,8 +146,8 @@ describe('RunbookStateManager', () => {
       const actor = {
         getPersistedSnapshot: () => ({
           value: 'step::1::2',
-          context: { variables: {}, retryCount: 0, substep: '2' }
-        })
+          context: { variables: {}, retryCount: 0, substep: '2' },
+        }),
       };
 
       const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
@@ -144,14 +160,14 @@ describe('RunbookStateManager', () => {
       const actor = {
         getPersistedSnapshot: () => ({
           value: 'step::3',
-          context: { variables: {}, retryCount: 0 }
-        })
+          context: { variables: {}, retryCount: 0 },
+        }),
       };
 
       const steps: Step[] = [
         ...mockSteps,
         { name: '2', description: 'S2' },
-        { name: '3', description: 'S3' }
+        { name: '3', description: 'S3' },
       ];
 
       const updated = await manager.updateFromActor(state.id, actor as any, steps);
@@ -167,7 +183,10 @@ describe('RunbookStateManager', () => {
     });
 
     it('accepts prompted option', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md', prompted: true });
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        prompted: true,
+      });
       expect(state.prompted).toBe(true);
     });
   });
@@ -320,7 +339,7 @@ describe('RunbookStateManager', () => {
       const binding = await manager.getAgentBinding(state.id, 'agent-abc');
       expect(binding).toEqual({
         stepId: { step: '1' },
-        status: 'running'
+        status: 'running',
       });
     });
 
@@ -338,7 +357,7 @@ describe('RunbookStateManager', () => {
 
       await manager.updateAgentBinding(state.id, 'agent-def', {
         status: 'done',
-        result: 'pass'
+        result: 'pass',
       });
 
       const binding = await manager.getAgentBinding(state.id, 'agent-def');
@@ -350,14 +369,14 @@ describe('RunbookStateManager', () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       await expect(
-        manager.updateAgentBinding(state.id, 'missing-agent', { status: 'done' })
+        manager.updateAgentBinding(state.id, 'missing-agent', { status: 'done' }),
       ).rejects.toThrow('No binding for agent');
     });
 
     it('bindAgent throws for missing runbook', async () => {
-      await expect(
-        manager.bindAgent('nonexistent-id', 'agent', { step: '1' })
-      ).rejects.toThrow('not found');
+      await expect(manager.bindAgent('nonexistent-id', 'agent', { step: '1' })).rejects.toThrow(
+        'not found',
+      );
     });
   });
 
@@ -393,7 +412,7 @@ describe('RunbookStateManager', () => {
 
     it('pushPendingStep throws for missing runbook', async () => {
       await expect(
-        manager.pushPendingStep('nonexistent', { stepId: { step: '1' } })
+        manager.pushPendingStep('nonexistent', { stepId: { step: '1' } }),
       ).rejects.toThrow('not found');
     });
   });
@@ -445,9 +464,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('update throws for missing runbook', async () => {
-      await expect(
-        manager.update('nonexistent', { step: '2' })
-      ).rejects.toThrow('not found');
+      await expect(manager.update('nonexistent', { step: '2' })).rejects.toThrow('not found');
     });
   });
 
@@ -455,7 +472,7 @@ describe('RunbookStateManager', () => {
     it('returns true when parent has prompted flag', async () => {
       const parent = await manager.create('parent.md', mockRunbook, {
         runbookPath: 'parent.md',
-        prompted: true
+        prompted: true,
       });
 
       const result = await manager.isParentPrompted(parent.id);
@@ -526,17 +543,23 @@ describe('RunbookStateManager', () => {
 
       // Update with forStack
       const updated = await manager.update(state.id, {
-        forStack: [{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' }],
-        iterationResults: ['pass', 'pass']
+        forStack: [
+          { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+        ],
+        iterationResults: ['pass', 'pass'],
       });
 
       // Verify forStack is set
-      expect(updated.forStack).toEqual([{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' }]);
+      expect(updated.forStack).toEqual([
+        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+      ]);
       expect(updated.iterationResults).toEqual(['pass', 'pass']);
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
-      expect(loaded?.forStack).toEqual([{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' }]);
+      expect(loaded?.forStack).toEqual([
+        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+      ]);
       expect(loaded?.iterationResults).toEqual(['pass', 'pass']);
     });
 
@@ -551,14 +574,16 @@ describe('RunbookStateManager', () => {
             retryCount: 0,
             forStack: [{ stepId: '1', iteration: 1, start: 1, end: 3, variable: 'item' }],
             iterationResults: ['pass'],
-            lastAction: { type: 'START' }
-          }
-        })
+            lastAction: { type: 'START' },
+          },
+        }),
       };
 
       const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
 
-      expect(updated.forStack).toEqual([{ stepId: '1', iteration: 1, start: 1, end: 3, variable: 'item' }]);
+      expect(updated.forStack).toEqual([
+        { stepId: '1', iteration: 1, start: 1, end: 3, variable: 'item' },
+      ]);
       expect(updated.iterationResults).toEqual(['pass']);
       expect(updated.lastAction).toEqual({ type: 'START' });
     });
@@ -568,8 +593,10 @@ describe('RunbookStateManager', () => {
 
       // First, set forStack
       await manager.update(state.id, {
-        forStack: [{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item' }],
-        iterationResults: ['pass', 'pass']
+        forStack: [
+          { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+        ],
+        iterationResults: ['pass', 'pass'],
       });
 
       // Now simulate completion via updateFromActor
@@ -578,9 +605,9 @@ describe('RunbookStateManager', () => {
           value: 'COMPLETE',
           context: {
             variables: { completed: true },
-            retryCount: 0
-          }
-        })
+            retryCount: 0,
+          },
+        }),
       };
 
       const completed = await manager.updateFromActor(state.id, completeActor as any, mockSteps);
@@ -610,8 +637,8 @@ describe('RunbookStateManager', () => {
           forEnd: 3,
           forVariable: 'item',
           // Remove forStack to simulate old state
-          forStack: undefined
-        }
+          forStack: undefined,
+        },
       };
 
       // Save this old snapshot
@@ -626,13 +653,15 @@ describe('RunbookStateManager', () => {
       const context = snapshot2.context;
 
       // Should have forStack, not flat fields
-      expect(context.forStack).toEqual([{
-        stepId: '1',
-        iteration: 2,
-        start: 1,
-        end: 3,
-        variable: 'item'
-      }]);
+      expect(context.forStack).toEqual([
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'item',
+        },
+      ]);
       expect(context.forIteration).toBeUndefined();
       expect(context.forStart).toBeUndefined();
       expect(context.forEnd).toBeUndefined();
@@ -652,8 +681,8 @@ describe('RunbookStateManager', () => {
             retryCount: 0,
             variables: {},
             lastAction: { type: 'START' },
-          }
-        })
+          },
+        }),
       };
 
       const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
@@ -671,8 +700,8 @@ describe('RunbookStateManager', () => {
             retryCount: 0,
             variables: {},
             lastAction: { type: 'CONTINUE' },
-          }
-        })
+          },
+        }),
       };
 
       const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
@@ -690,8 +719,8 @@ describe('RunbookStateManager', () => {
             retryCount: 0,
             variables: {},
             lastAction: { type: 'CONTINUE' },
-          }
-        })
+          },
+        }),
       };
 
       const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
@@ -710,14 +739,11 @@ describe('RunbookStateManager', () => {
             retryCount: 0,
             variables: {},
             lastAction: { type: 'CONTINUE' },
-          }
-        })
+          },
+        }),
       };
 
-      const steps: Step[] = [
-        ...mockSteps,
-        { name: '2', description: 'After loop' }
-      ];
+      const steps: Step[] = [...mockSteps, { name: '2', description: 'After loop' }];
 
       const updated = await manager.updateFromActor(state.id, actor as any, steps);
       expect(updated.forStack).toBeUndefined(); // empty stack not persisted
@@ -735,7 +761,7 @@ describe('RunbookStateManager', () => {
       const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
       const legacyState = {
         ...state,
-        lastAction: { type: 'GOTO_NEXT' }
+        lastAction: { type: 'GOTO_NEXT' },
       };
       await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
 
@@ -752,7 +778,7 @@ describe('RunbookStateManager', () => {
       const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
       const legacyState = {
         ...state,
-        instance: 2
+        instance: 2,
       };
       await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
 
@@ -769,7 +795,7 @@ describe('RunbookStateManager', () => {
       const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
       const legacyState = {
         ...state,
-        lastAction: { type: 'GOTO_NEXT' }
+        lastAction: { type: 'GOTO_NEXT' },
       };
       await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
 

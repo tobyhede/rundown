@@ -119,13 +119,19 @@ describe('SeatbeltSandbox', () => {
     it('executes command successfully', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
-      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => { callback(0); });
+            process.nextTick(() => {
+              callback(0);
+            });
           }
           return mockChild;
         }),
@@ -145,13 +151,19 @@ describe('SeatbeltSandbox', () => {
     it('handles non-zero exit code', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
-      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => { callback(1); });
+            process.nextTick(() => {
+              callback(1);
+            });
           }
           return mockChild;
         }),
@@ -169,13 +181,19 @@ describe('SeatbeltSandbox', () => {
     it('handles null exit code', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
-      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | null | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => { callback(null); });
+            process.nextTick(() => {
+              callback(null);
+            });
           }
           return mockChild;
         }),
@@ -193,13 +211,19 @@ describe('SeatbeltSandbox', () => {
     it('handles process error event', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
-      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'error') {
-            process.nextTick(() => { callback(new Error('spawn failed')); });
+            process.nextTick(() => {
+              callback(new Error('spawn failed'));
+            });
           }
           return mockChild;
         }),
@@ -219,7 +243,9 @@ describe('SeatbeltSandbox', () => {
     it('cleans up profile file even when unlinkSync throws', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
       (unlinkSync as jest.Mock).mockImplementation(() => {
         throw new Error('unlink failed');
       });
@@ -227,7 +253,9 @@ describe('SeatbeltSandbox', () => {
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => { callback(0); });
+            process.nextTick(() => {
+              callback(0);
+            });
           }
           return mockChild;
         }),
@@ -245,13 +273,19 @@ describe('SeatbeltSandbox', () => {
     it('generates profile with escaped paths', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
-      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => { callback(0); });
+            process.nextTick(() => {
+              callback(0);
+            });
           }
           return mockChild;
         }),
@@ -273,20 +307,26 @@ describe('SeatbeltSandbox', () => {
       expect(writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('.sb'),
         expect.stringContaining('\\"'),
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
     it('spawns sandbox-exec with correct arguments', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
-      (writeFileSync as jest.Mock).mockImplementation(() => { /* noop */ });
-      (unlinkSync as jest.Mock).mockImplementation(() => { /* noop */ });
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
 
       const mockChild = {
         on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
           if (event === 'close') {
-            process.nextTick(() => { callback(0); });
+            process.nextTick(() => {
+              callback(0);
+            });
           }
           return mockChild;
         }),
@@ -298,11 +338,17 @@ describe('SeatbeltSandbox', () => {
 
       expect(spawn).toHaveBeenCalledWith(
         '/usr/bin/sandbox-exec',
-        expect.arrayContaining(['-f', expect.stringContaining('.sb'), '/bin/sh', '-c', 'echo test']),
+        expect.arrayContaining([
+          '-f',
+          expect.stringContaining('.sb'),
+          '/bin/sh',
+          '-c',
+          'echo test',
+        ]),
         expect.objectContaining({
           cwd: '/test/cwd',
           stdio: 'inherit',
-        })
+        }),
       );
     });
   });

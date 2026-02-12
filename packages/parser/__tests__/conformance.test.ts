@@ -14,11 +14,11 @@ const PATTERNS_DIR = path.resolve(FIXTURES_DIR, '../../../../runbooks/patterns')
 function getFilesRecursively(dir: string): string[] {
   let results: string[] = [];
   const list = fs.readdirSync(dir);
-  
+
   for (const file of list) {
     const filePath = path.join(dir, file);
     const stat = fs.statSync(filePath);
-    
+
     if (stat.isDirectory()) {
       results = results.concat(getFilesRecursively(filePath));
     } else if (file.endsWith('.runbook.md')) {
@@ -41,7 +41,7 @@ describe('Rundown Conformance (Fixture Driven)', () => {
 
   describe('Invalid Runbooks', () => {
     const invalidDir = path.join(FIXTURES_DIR, 'invalid');
-    const files = fs.readdirSync(invalidDir).filter(f => f.endsWith('.runbook.md'));
+    const files = fs.readdirSync(invalidDir).filter((f) => f.endsWith('.runbook.md'));
 
     it.each(files)('should reject invalid runbook: %s', (file) => {
       const content = fs.readFileSync(path.join(invalidDir, file), 'utf8');

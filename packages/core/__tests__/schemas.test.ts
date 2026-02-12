@@ -1,5 +1,11 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseHookInput, RunbookStateSchema, StepIdSchema, ActionSchema, TransitionsSchema } from '../src/schemas.js';
+import {
+  parseHookInput,
+  RunbookStateSchema,
+  StepIdSchema,
+  ActionSchema,
+  TransitionsSchema,
+} from '../src/schemas.js';
 
 /**
  * Creates a valid runbook state object for testing.
@@ -18,7 +24,7 @@ const createValidState = (overrides: Record<string, unknown> = {}) => ({
   agentBindings: {},
   startedAt: '2025-01-01T00:00:00Z',
   updatedAt: '2025-01-01T00:00:00Z',
-  ...overrides
+  ...overrides,
 });
 
 describe('parseHookInput', () => {
@@ -27,7 +33,7 @@ describe('parseHookInput', () => {
       hook_event_name: 'PostToolUse',
       cwd: '/project',
       tool_name: 'Edit',
-      file_path: '/project/src/file.ts'
+      file_path: '/project/src/file.ts',
     });
 
     const result = parseHookInput(input);
@@ -43,7 +49,7 @@ describe('parseHookInput', () => {
     const input = JSON.stringify({
       hook_event_name: 'UserPromptSubmit',
       cwd: '/project',
-      user_message: 'fix the bug'
+      user_message: 'fix the bug',
     });
 
     const result = parseHookInput(input);
@@ -111,21 +117,21 @@ describe('RunbookStateSchema - step name validation', () => {
 describe('RunbookStateSchema - StepId validation', () => {
   it('accepts valid StepId object', () => {
     const result = RunbookStateSchema.safeParse(
-      createValidState({ pendingSteps: [{ stepId: { step: '1' } }] })
+      createValidState({ pendingSteps: [{ stepId: { step: '1' } }] }),
     );
     expect(result.success).toBe(true);
   });
 
   it('accepts StepId with substep', () => {
     const result = RunbookStateSchema.safeParse(
-      createValidState({ pendingSteps: [{ stepId: { step: '1', substep: '1' } }] })
+      createValidState({ pendingSteps: [{ stepId: { step: '1', substep: '1' } }] }),
     );
     expect(result.success).toBe(true);
   });
 
   it('rejects StepId without step field', () => {
     const result = RunbookStateSchema.safeParse(
-      createValidState({ pendingSteps: [{ substep: '1' }] })
+      createValidState({ pendingSteps: [{ substep: '1' }] }),
     );
     expect(result.success).toBe(false);
   });
@@ -176,11 +182,13 @@ describe('Action schema-derived type', () => {
   });
 
   it('rejects RETRY as an action (retry is now a transition property)', () => {
-    expect(() => ActionSchema.parse({
-      type: 'RETRY',
-      max: 3,
-      then: { type: 'STOP', message: 'Failed after retries' }
-    })).toThrow();
+    expect(() =>
+      ActionSchema.parse({
+        type: 'RETRY',
+        max: 3,
+        then: { type: 'STOP', message: 'Failed after retries' },
+      }),
+    ).toThrow();
   });
 
   it('accepts NEXT action for loop control', () => {
@@ -223,7 +231,7 @@ describe('Transitions schema-derived type', () => {
     const parsed = TransitionsSchema.parse({
       all: true,
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-      fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } }
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     });
     expect(parsed.all).toBe(true);
     expect(parsed.pass.action.type).toBe('CONTINUE');
@@ -236,7 +244,7 @@ describe('Transitions schema-derived type', () => {
     const parsed = TransitionsSchema.parse({
       all: false,
       pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
-      fail: { kind: 'fail', retry: 2, action: { type: 'STOP' } }
+      fail: { kind: 'fail', retry: 2, action: { type: 'STOP' } },
     });
     expect(parsed.all).toBe(false);
     expect(parsed.pass.retry).toBe(0);
@@ -247,7 +255,7 @@ describe('Transitions schema-derived type', () => {
     const parsed = TransitionsSchema.parse({
       all: true,
       pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
-      fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'Failed' } }
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'Failed' } },
     });
     expect(parsed.pass.action.type).toBe('GOTO');
     expect(parsed.pass.retry).toBe(0);
@@ -261,7 +269,7 @@ describe('RunbookStateSchema migration', () => {
       forIteration: 2,
       forStart: 1,
       forEnd: 3,
-      forVariable: 'item'
+      forVariable: 'item',
     });
 
     // Parse with RunbookStateSchema
@@ -270,13 +278,16 @@ describe('RunbookStateSchema migration', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       // Verify forStack is created
-      expect(result.data.forStack).toEqual([{
-        stepId: '1',
-        iteration: 2,
-        start: 1,
-        end: 3,
-        variable: 'item'
-      }]);
+      expect(result.data.forStack).toEqual([
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'item',
+          implicit: false,
+        },
+      ]);
       // Verify flat fields are stripped
       expect(result.data).not.toHaveProperty('forIteration');
       expect(result.data).not.toHaveProperty('forStart');
@@ -288,7 +299,7 @@ describe('RunbookStateSchema migration', () => {
   it('passes through new forStack format unchanged', () => {
     // Create state with forStack already set
     const newState = createValidState({
-      forStack: [{ stepId: '2', iteration: 3, start: 1, end: 5, variable: 'x' }]
+      forStack: [{ stepId: '2', iteration: 3, start: 1, end: 5, variable: 'x' }],
     });
 
     // Parse with RunbookStateSchema
@@ -297,13 +308,16 @@ describe('RunbookStateSchema migration', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       // Verify forStack is preserved
-      expect(result.data.forStack).toEqual([{
-        stepId: '2',
-        iteration: 3,
-        start: 1,
-        end: 5,
-        variable: 'x'
-      }]);
+      expect(result.data.forStack).toEqual([
+        {
+          stepId: '2',
+          iteration: 3,
+          start: 1,
+          end: 5,
+          variable: 'x',
+          implicit: false,
+        },
+      ]);
     }
   });
 
@@ -327,13 +341,15 @@ describe('RunbookStateSchema migration', () => {
 
   it('accepts forStack with implicit field', () => {
     const state = createValidState({
-      forStack: [{
-        stepId: '1',
-        iteration: 1,
-        start: 1,
-        end: 1,
-        implicit: true,
-      }],
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 1,
+          implicit: true,
+        },
+      ],
     });
     const result = RunbookStateSchema.safeParse(state);
     expect(result.success).toBe(true);

@@ -6,13 +6,8 @@
  * underlying logic without spawning a child process.
  */
 
-import {
-  type ExecutionResult,
-} from '@rundown-org/core';
-import {
-  executeEchoLogic,
-  toExecutionResult,
-} from '../helpers/echo-command.js';
+import { type ExecutionResult } from '@rundown-org/core';
+import { executeEchoLogic, toExecutionResult } from '../helpers/echo-command.js';
 
 /**
  * Check if a command is an rd/rundown command that can be handled internally.
@@ -32,8 +27,12 @@ import {
  */
 export function isInternalRdCommand(command: string): boolean {
   const trimmed = command.trim();
-  return trimmed.startsWith('rd ') || trimmed.startsWith('rundown ') ||
-         trimmed === 'rd' || trimmed === 'rundown';
+  return (
+    trimmed.startsWith('rd ') ||
+    trimmed.startsWith('rundown ') ||
+    trimmed === 'rd' ||
+    trimmed === 'rundown'
+  );
 }
 
 /**
@@ -170,7 +169,7 @@ async function executeEchoInternal(args: string[], cwd: string): Promise<Executi
  */
 export async function executeRdCommandInternal(
   command: string,
-  cwd: string
+  cwd: string,
 ): Promise<ExecutionResult | null> {
   const { subcommand, args } = parseRdCommand(command);
 

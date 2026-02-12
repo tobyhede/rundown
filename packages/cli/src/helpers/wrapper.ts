@@ -1,9 +1,4 @@
-import {
-  isNodeError,
-  getErrorMessage,
-  RundownError,
-  Errors,
-} from '@rundown-org/core';
+import { isNodeError, getErrorMessage, RundownError, Errors } from '@rundown-org/core';
 import { RunbookSyntaxError } from '@rundown-org/parser';
 
 /**
@@ -59,7 +54,7 @@ function toRundownError(error: unknown): RundownError {
  */
 export async function withErrorHandling(
   fn: () => Promise<void>,
-  options: ErrorHandlingOptions = {}
+  options: ErrorHandlingOptions = {},
 ): Promise<void> {
   try {
     await fn();

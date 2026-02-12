@@ -12,7 +12,7 @@ describe('Schema Property Tests', () => {
       'SubagentStart',
       'UserPromptSubmit',
       'Stop',
-      'Shutdown'
+      'Shutdown',
     );
 
     // Generator for valid tool names
@@ -24,11 +24,11 @@ describe('Schema Property Tests', () => {
         {
           description: fc.option(fc.string({ maxLength: 500 }), { nil: undefined }),
           subagent_type: fc.option(fc.string({ maxLength: 100 }), { nil: undefined }),
-          prompt: fc.option(fc.string({ maxLength: 1000 }), { nil: undefined })
+          prompt: fc.option(fc.string({ maxLength: 1000 }), { nil: undefined }),
         },
-        { requiredKeys: [] }
+        { requiredKeys: [] },
       ),
-      { nil: undefined }
+      { nil: undefined },
     );
 
     // Generator for valid HookInput (PostToolUse variant)
@@ -38,13 +38,13 @@ describe('Schema Property Tests', () => {
       tool_name: toolNameArb,
       tool_input: toolInputArb,
       tool_output: fc.option(fc.string({ maxLength: 1000 }), { nil: undefined }),
-      file_path: fc.option(fc.string({ maxLength: 200 }), { nil: undefined })
+      file_path: fc.option(fc.string({ maxLength: 200 }), { nil: undefined }),
     });
 
     // Generator for minimal HookInput
     const minimalInputArb = fc.record({
       hook_event_name: hookEventArb,
-      cwd: fc.string({ minLength: 1, maxLength: 200 }).filter((s) => !s.includes('\0'))
+      cwd: fc.string({ minLength: 1, maxLength: 200 }).filter((s) => !s.includes('\0')),
     });
 
     it('accepts all valid PostToolUse inputs', () => {
@@ -53,7 +53,7 @@ describe('Schema Property Tests', () => {
           const result = HookInputSchema.safeParse(input);
           expect(result.success).toBe(true);
         }),
-        { numRuns: 200 }
+        { numRuns: 200 },
       );
     });
 
@@ -63,14 +63,14 @@ describe('Schema Property Tests', () => {
           const result = HookInputSchema.safeParse(input);
           expect(result.success).toBe(true);
         }),
-        { numRuns: 100 }
+        { numRuns: 100 },
       );
     });
 
     it('rejects inputs missing required fields', () => {
       // Missing hook_event_name
       const missingEventArb = fc.record({
-        cwd: fc.string({ minLength: 1, maxLength: 100 })
+        cwd: fc.string({ minLength: 1, maxLength: 100 }),
       });
 
       fc.assert(
@@ -78,12 +78,12 @@ describe('Schema Property Tests', () => {
           const result = HookInputSchema.safeParse(input);
           expect(result.success).toBe(false);
         }),
-        { numRuns: 50 }
+        { numRuns: 50 },
       );
 
       // Missing cwd
       const missingCwdArb = fc.record({
-        hook_event_name: hookEventArb
+        hook_event_name: hookEventArb,
       });
 
       fc.assert(
@@ -91,7 +91,7 @@ describe('Schema Property Tests', () => {
           const result = HookInputSchema.safeParse(input);
           expect(result.success).toBe(false);
         }),
-        { numRuns: 50 }
+        { numRuns: 50 },
       );
     });
   });
@@ -102,7 +102,7 @@ describe('Schema Property Tests', () => {
         hook_event_name: fc.constantFrom('PostToolUse', 'UserPromptSubmit'),
         cwd: fc
           .string({ minLength: 1, maxLength: 100 })
-          .filter((s) => !s.includes('\0') && !s.includes('"'))
+          .filter((s) => !s.includes('\0') && !s.includes('"')),
       });
 
       fc.assert(
@@ -111,7 +111,7 @@ describe('Schema Property Tests', () => {
           const result = parseHookInput(json);
           expect(result.success).toBe(true);
         }),
-        { numRuns: 100 }
+        { numRuns: 100 },
       );
     });
 
@@ -129,7 +129,7 @@ describe('Schema Property Tests', () => {
           } catch {
             return true;
           }
-        })
+        }),
       );
 
       fc.assert(
@@ -140,7 +140,7 @@ describe('Schema Property Tests', () => {
             expect(result.error).toContain('Invalid JSON');
           }
         }),
-        { numRuns: 50 }
+        { numRuns: 50 },
       );
     });
   });

@@ -173,7 +173,9 @@ describe('start --prompted', () => {
       // Create runbook with prompt code block
       const runbooksDir = join(workspace.cwd, 'runbooks');
       await mkdir(runbooksDir, { recursive: true });
-      await writeFile(join(runbooksDir, 'with-prompt-block.runbook.md'), `# Prompt Block Test
+      await writeFile(
+        join(runbooksDir, 'with-prompt-block.runbook.md'),
+        `# Prompt Block Test
 
 ## 1. Step with prompt block
 - PASS: COMPLETE
@@ -183,7 +185,8 @@ Show this command to the agent.
 \`\`\`prompt
 npm run dangerous-command
 \`\`\`
-`);
+`,
+      );
 
       const result = runCli('run runbooks/with-prompt-block.runbook.md', workspace);
 

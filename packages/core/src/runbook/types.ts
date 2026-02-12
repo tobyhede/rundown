@@ -65,7 +65,12 @@ import { type StepId } from '@rundown-org/parser';
 export type LastAction =
   | { readonly type: 'START' }
   | { readonly type: 'CONTINUE' }
-  | { readonly type: 'GOTO'; readonly target: string; readonly substep?: string; readonly at?: number | string }
+  | {
+      readonly type: 'GOTO';
+      readonly target: string;
+      readonly substep?: string;
+      readonly at?: number | `{{${string}}}`;
+    }
   | { readonly type: 'COMPLETE' }
   | { readonly type: 'STOP' }
   | { readonly type: 'RETRY' }
@@ -78,7 +83,7 @@ export type LastAction =
  */
 export interface PendingStep {
   readonly stepId: StepId;
-  readonly runbook?: string;  // Child runbook file path (relative)
+  readonly runbook?: string; // Child runbook file path (relative)
 }
 
 /**
@@ -95,10 +100,10 @@ export type AgentResult = 'pass' | 'fail';
  * Runtime state of a substep within a step
  */
 export interface SubstepState {
-  readonly id: string;            // Matches Substep.id ("1", "2", or dynamic instance)
+  readonly id: string; // Matches Substep.id ("1", "2", or dynamic instance)
   readonly status: 'pending' | 'running' | 'done';
-  readonly agentId?: string;      // Agent bound to this substep
-  readonly result?: AgentResult;  // 'pass' | 'fail' when done
+  readonly agentId?: string; // Agent bound to this substep
+  readonly result?: AgentResult; // 'pass' | 'fail' when done
 }
 
 /**
@@ -137,7 +142,7 @@ export interface ForContext {
   /** Named loop variable (e.g., "batch") */
   readonly variable?: string;
   /** True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence. */
-  readonly implicit?: boolean;
+  readonly implicit: boolean;
 }
 
 /**
@@ -149,9 +154,9 @@ export interface RunbookState {
   readonly runbookPath: string; // repo-relative resolved file path
   readonly title?: string;
   readonly description?: string;
-  readonly step: string;           // "1" or "ErrorHandler"
+  readonly step: string; // "1" or "ErrorHandler"
   readonly substep?: string;
-  readonly stepName: string;       // Human-readable description
+  readonly stepName: string; // Human-readable description
   readonly retryCount: number;
   readonly variables: Record<string, boolean | number | string>;
   readonly steps: readonly StepState[];
@@ -186,6 +191,9 @@ export interface RunbookState {
 
   readonly snapshot?: unknown;
 
-  /** Runbook source content (rendered from template), frozen at run time */
+  /** Runbook source content (raw markdown with {{placeholders}}), frozen at run time */
   readonly runbookSrc?: string;
+
+  /** Template variables used for AST-level substitution, frozen at run time */
+  readonly templateVars?: Readonly<Record<string, string>>;
 }

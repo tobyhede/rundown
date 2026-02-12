@@ -100,12 +100,7 @@ export interface PolicyLoadOptions {
  * ```
  */
 export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<PolicyLoadResult> {
-  const {
-    cwd = process.cwd(),
-    configPath,
-    stopDir,
-    useDefaults = true,
-  } = options;
+  const { cwd = process.cwd(), configPath, stopDir, useDefaults = true } = options;
 
   const warnings: string[] = [];
 
@@ -130,9 +125,9 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
 
     if (result?.config !== undefined) {
       // Extract policy field if from package.json
-       
+
       const config: unknown = result.filepath.endsWith('package.json')
-        ? (result.config as { rundown?: unknown }).rundown ?? result.config
+        ? ((result.config as { rundown?: unknown }).rundown ?? result.config)
         : result.config;
 
       // Validate the configuration
@@ -149,7 +144,7 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
       // Validation failed - warn and use defaults
       warnings.push(`Invalid policy config at ${result.filepath}:`);
       if (parseResult.errors) {
-        warnings.push(...parseResult.errors.map(e => `  - ${e}`));
+        warnings.push(...parseResult.errors.map((e) => `  - ${e}`));
       }
 
       if (useDefaults) {
@@ -162,7 +157,9 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
         };
       }
 
-      throw new Error(`Invalid policy configuration: ${parseResult.errors?.join(', ') ?? 'unknown error'}`);
+      throw new Error(
+        `Invalid policy configuration: ${parseResult.errors?.join(', ') ?? 'unknown error'}`,
+      );
     }
   } catch (error) {
     // If search failed but we have defaults, use them
@@ -218,7 +215,6 @@ export async function loadPolicyFromFile(filepath: string): Promise<PolicyLoadRe
       }
     }
   } else if (ext === '.yaml' || ext === '.yml' || ext === '') {
-     
     config = yaml.load(content);
   } else if (ext === '.js' || ext === '.cjs' || ext === '.mjs') {
     // Dynamic import for JS configs
@@ -248,12 +244,7 @@ export async function loadPolicyFromFile(filepath: string): Promise<PolicyLoadRe
  * @returns Policy load result
  */
 export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResult {
-  const {
-    cwd = process.cwd(),
-    configPath,
-    stopDir,
-    useDefaults = true,
-  } = options;
+  const { cwd = process.cwd(), configPath, stopDir, useDefaults = true } = options;
 
   const warnings: string[] = [];
 
@@ -271,7 +262,7 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
       noExt: yamlLoader,
       '.mjs': () => {
         throw new Error(
-          'ES module config files (.mjs) require async loading. Use loadPolicy() instead of loadPolicySync().'
+          'ES module config files (.mjs) require async loading. Use loadPolicy() instead of loadPolicySync().',
         );
       },
     },
@@ -282,9 +273,8 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
     const result = explorer.search(cwd);
 
     if (result?.config !== undefined) {
-       
       const config: unknown = result.filepath.endsWith('package.json')
-        ? (result.config as { rundown?: unknown }).rundown ?? result.config
+        ? ((result.config as { rundown?: unknown }).rundown ?? result.config)
         : result.config;
 
       const parseResult = safeParsePolicyConfig(config);
@@ -299,7 +289,7 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
 
       warnings.push(`Invalid policy config at ${result.filepath}:`);
       if (parseResult.errors) {
-        warnings.push(...parseResult.errors.map(e => `  - ${e}`));
+        warnings.push(...parseResult.errors.map((e) => `  - ${e}`));
       }
 
       if (useDefaults) {
@@ -312,7 +302,9 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
         };
       }
 
-      throw new Error(`Invalid policy configuration: ${parseResult.errors?.join(', ') ?? 'unknown error'}`);
+      throw new Error(
+        `Invalid policy configuration: ${parseResult.errors?.join(', ') ?? 'unknown error'}`,
+      );
     }
   } catch (error) {
     if (useDefaults) {

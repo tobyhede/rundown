@@ -1,8 +1,4 @@
-import {
-  parsePolicy,
-  safeParsePolicyConfig,
-  DEFAULT_POLICY,
-} from '../../src/policy/schema.js';
+import { parsePolicy, safeParsePolicyConfig, DEFAULT_POLICY } from '../../src/policy/schema.js';
 
 describe('Policy Schema', () => {
   describe('parsePolicy', () => {

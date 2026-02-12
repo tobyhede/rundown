@@ -79,7 +79,10 @@ rd echo test
       };
 
       // Create runbook state
-      const state = await manager.create('test.runbook.md', runbook, { runbookPath: 'test.runbook.md', prompted: true });
+      const state = await manager.create('test.runbook.md', runbook, {
+        runbookPath: 'test.runbook.md',
+        prompted: true,
+      });
 
       // Push to make it active
       await manager.pushRunbook(state.id);
@@ -202,7 +205,9 @@ rd echo test
 
         await executeRdCommandInternal('rd echo npm install --save lodash', tempDir);
 
-        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('npm install --save lodash'));
+        expect(consoleSpy).toHaveBeenCalledWith(
+          expect.stringContaining('npm install --save lodash'),
+        );
       });
 
       it('works with rundown prefix', async () => {
@@ -221,7 +226,7 @@ rd echo test
         // First call with retry count 0 should use first result (fail)
         const result = await executeRdCommandInternal(
           'rd echo --result fail --result pass test',
-          tempDir
+          tempDir,
         );
 
         expect(result).not.toBeNull();

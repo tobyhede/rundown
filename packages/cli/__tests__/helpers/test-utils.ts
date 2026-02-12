@@ -46,7 +46,7 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
   await mkdir(projectRunbooksDir, { recursive: true });
   await mkdir(pluginRunbooksDir, { recursive: true });
   await mkdir(rootRunbooksDir, { recursive: true });
-  
+
   // Create node_modules/.bin with symlink to CLI
   // This ensures 'rd' command works in fixtures regardless of monorepo symlink state
   await mkdir(binDir, { recursive: true });
@@ -84,7 +84,7 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
 
   // Use workspace's node_modules/.bin which has symlinks to CLI
   const binPath = workspace.binPath();
-  
+
   // Plugin root for discovery tests
   const pluginDir = join(workspace.cwd, 'plugin');
 
@@ -131,7 +131,7 @@ export async function readSession(workspace: TestWorkspace): Promise<{
     const defaultStack = (session.defaultStack as string[] | undefined) ?? [];
 
     // Active runbook is the top of the default stack
-    const active = defaultStack.length > 0 ? defaultStack[defaultStack.length - 1] ?? null : null;
+    const active = defaultStack.length > 0 ? (defaultStack[defaultStack.length - 1] ?? null) : null;
 
     return {
       active,
@@ -159,7 +159,7 @@ export async function writeSession(
     stashed?: string | null;
     stacks?: Record<string, string[]>;
     defaultStack?: string[];
-  }
+  },
 ): Promise<void> {
   const sessionData: Record<string, unknown> = {};
 
@@ -200,7 +200,7 @@ export async function listRunbookStates(workspace: TestWorkspace): Promise<strin
  */
 export async function readRunbookState(
   workspace: TestWorkspace,
-  id: string
+  id: string,
 ): Promise<Record<string, unknown> | null> {
   try {
     const content = await readFile(join(workspace.statePath(), `${id}.json`), 'utf-8');
@@ -214,7 +214,7 @@ export async function readRunbookState(
  * Get the active runbook state.
  */
 export async function getActiveState(
-  workspace: TestWorkspace
+  workspace: TestWorkspace,
 ): Promise<Record<string, unknown> | null> {
   const session = await readSession(workspace);
   if (!session.active) return null;
@@ -227,7 +227,7 @@ export async function getActiveState(
  */
 export async function getAgentActiveState(
   workspace: TestWorkspace,
-  agentId: string
+  agentId: string,
 ): Promise<Record<string, unknown> | null> {
   const session = await readSession(workspace);
   const stack = session.stacks[agentId] ?? [];
@@ -239,9 +239,7 @@ export async function getAgentActiveState(
 /**
  * Get all runbook states.
  */
-export async function getAllStates(
-  workspace: TestWorkspace
-): Promise<Record<string, unknown>[]> {
+export async function getAllStates(workspace: TestWorkspace): Promise<Record<string, unknown>[]> {
   try {
     const files = await readdir(workspace.statePath());
     const states: Record<string, unknown>[] = [];
@@ -267,12 +265,11 @@ export async function getAllStates(
  */
 export async function writeConfig(
   workspace: TestWorkspace,
-  config: Record<string, unknown>
+  config: Record<string, unknown>,
 ): Promise<void> {
   const configPath = join(workspace.cwd, '.claude', 'rundown.json');
   await writeFile(configPath, JSON.stringify(config, null, 2));
 }
-
 
 /**
  * Helper to find action output from JSON output.
@@ -309,7 +306,6 @@ export function findActionOutput(stdout: string): Record<string, unknown> | null
   }
   return null;
 }
-
 
 /**
  * Configuration for a substep within a FOR loop or parent step.
@@ -355,6 +351,8 @@ export interface StepConfig {
   content?: string;
   /** FOR clause for loop steps */
   for?: ForClauseConfig;
+  /** Whether aggregation uses ALL (true/undefined) or ANY (false) for PASS; FAIL inverts */
+  all?: boolean;
   /** Substeps (H3 headers with qualified numbering) */
   substeps?: SubstepConfig[];
 }
@@ -423,8 +421,10 @@ export function createRunbook(options: CreateRunbookOptions): string {
 
     // Step-level transitions (use ALL/ANY qualifiers when step has substeps or FOR)
     const hasAggregation = step.for != null || step.substeps != null;
-    if (step.pass) lines.push(`- PASS${hasAggregation ? ' ALL' : ''}: ${step.pass}`);
-    if (step.fail) lines.push(`- FAIL${hasAggregation ? ' ANY' : ''}: ${step.fail}`);
+    const allQualifier = step.all !== false ? ' ALL' : ' ANY';
+    const anyQualifier = step.all !== false ? ' ANY' : ' ALL';
+    if (step.pass) lines.push(`- PASS${hasAggregation ? allQualifier : ''}: ${step.pass}`);
+    if (step.fail) lines.push(`- FAIL${hasAggregation ? anyQualifier : ''}: ${step.fail}`);
     lines.push('');
 
     if (step.substeps) {

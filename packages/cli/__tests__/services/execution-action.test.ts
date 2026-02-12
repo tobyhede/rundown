@@ -1,8 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import {
-  formatActionForDisplay,
-  extractLastAction,
-} from '../../src/services/execution.js';
+import { formatActionForDisplay, extractLastAction } from '../../src/services/execution.js';
 
 describe('execution action helpers', () => {
   describe('extractLastAction', () => {
@@ -43,16 +40,30 @@ describe('execution action helpers', () => {
     });
 
     it('extracts various action types', () => {
-      expect(extractLastAction({ context: { lastAction: { type: 'STOP' } } })).toEqual({ type: 'STOP' });
-      expect(extractLastAction({ context: { lastAction: { type: 'COMPLETE' } } })).toEqual({ type: 'COMPLETE' });
-      expect(extractLastAction({ context: { lastAction: { type: 'RETRY' } } })).toEqual({ type: 'RETRY' });
-      expect(extractLastAction({ context: { lastAction: { type: 'GOTO', target: 'ErrorHandler' } } })).toEqual({ type: 'GOTO', target: 'ErrorHandler' });
+      expect(extractLastAction({ context: { lastAction: { type: 'STOP' } } })).toEqual({
+        type: 'STOP',
+      });
+      expect(extractLastAction({ context: { lastAction: { type: 'COMPLETE' } } })).toEqual({
+        type: 'COMPLETE',
+      });
+      expect(extractLastAction({ context: { lastAction: { type: 'RETRY' } } })).toEqual({
+        type: 'RETRY',
+      });
+      expect(
+        extractLastAction({ context: { lastAction: { type: 'GOTO', target: 'ErrorHandler' } } }),
+      ).toEqual({ type: 'GOTO', target: 'ErrorHandler' });
     });
 
     it('rejects malformed lastAction shapes', () => {
       expect(extractLastAction({ context: { lastAction: { type: 'GOTO' } } })).toBeUndefined();
-      expect(extractLastAction({ context: { lastAction: { type: 'GOTO', target: 42 } } })).toBeUndefined();
-      expect(extractLastAction({ context: { lastAction: { type: 'GOTO', target: '3', at: { bad: true } } } })).toBeUndefined();
+      expect(
+        extractLastAction({ context: { lastAction: { type: 'GOTO', target: 42 } } }),
+      ).toBeUndefined();
+      expect(
+        extractLastAction({
+          context: { lastAction: { type: 'GOTO', target: '3', at: { bad: true } } },
+        }),
+      ).toBeUndefined();
       expect(extractLastAction({ context: { lastAction: { type: 'NOT_REAL' } } })).toBeUndefined();
     });
   });
@@ -91,7 +102,9 @@ describe('execution action helpers', () => {
 
     describe('GOTO formatting', () => {
       it('formats GOTO with named step', () => {
-        expect(formatActionForDisplay({ type: 'GOTO', target: 'ErrorHandler' }, 0, 3)).toBe('GOTO ErrorHandler');
+        expect(formatActionForDisplay({ type: 'GOTO', target: 'ErrorHandler' }, 0, 3)).toBe(
+          'GOTO ErrorHandler',
+        );
       });
 
       it('formats GOTO with numbered step', () => {
@@ -99,19 +112,27 @@ describe('execution action helpers', () => {
       });
 
       it('formats GOTO with substep', () => {
-        expect(formatActionForDisplay({ type: 'GOTO', target: '2', substep: '3' }, 0, 3)).toBe('GOTO 2.3');
+        expect(formatActionForDisplay({ type: 'GOTO', target: '2', substep: '3' }, 0, 3)).toBe(
+          'GOTO 2.3',
+        );
       });
 
       it('formats GOTO with AT qualifier', () => {
-        expect(formatActionForDisplay({ type: 'GOTO', target: '3', at: 2 }, 0, 3)).toBe('GOTO 3 AT 2');
+        expect(formatActionForDisplay({ type: 'GOTO', target: '3', at: 2 }, 0, 3)).toBe(
+          'GOTO 3 AT 2',
+        );
       });
 
       it('formats GOTO with substep and AT qualifier', () => {
-        expect(formatActionForDisplay({ type: 'GOTO', target: '3', substep: '1', at: 5 }, 0, 3)).toBe('GOTO 3.1 AT 5');
+        expect(
+          formatActionForDisplay({ type: 'GOTO', target: '3', substep: '1', at: 5 }, 0, 3),
+        ).toBe('GOTO 3.1 AT 5');
       });
 
       it('formats GOTO with template variable AT qualifier', () => {
-        expect(formatActionForDisplay({ type: 'GOTO', target: '3', at: '{{Index}}' }, 0, 3)).toBe('GOTO 3 AT {{Index}}');
+        expect(formatActionForDisplay({ type: 'GOTO', target: '3', at: '{{Index}}' }, 0, 3)).toBe(
+          'GOTO 3 AT {{Index}}',
+        );
       });
     });
 

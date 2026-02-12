@@ -7,7 +7,7 @@ describe('SubstepState type', () => {
       id: '1',
       status: 'pending',
       agentId: undefined,
-      result: undefined
+      result: undefined,
     };
 
     expect(subtaskState.id).toBe('1');
@@ -36,7 +36,7 @@ describe('GOTO action type', () => {
     // This test documents the expected shape after the refactor
     const gotoAction: Action = {
       type: 'GOTO',
-      target: { step: '2', substep: '1' }
+      target: { step: '2', substep: '1' },
     };
 
     // Type assertion - if this compiles, the type is correct
@@ -51,7 +51,7 @@ describe('GOTO action type', () => {
   it('allows GOTO without substep', () => {
     const gotoAction: Action = {
       type: 'GOTO',
-      target: { step: '3' }
+      target: { step: '3' },
     };
 
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- testing type narrowing
@@ -67,7 +67,7 @@ describe('Substep interface', () => {
     const substep: Substep = {
       id: '1',
       description: 'Test substep',
-      command: { code: 'npm test' }
+      command: { code: 'npm test' },
     };
     expect(substep.command?.code).toBe('npm test');
   });
@@ -76,7 +76,7 @@ describe('Substep interface', () => {
     const substep: Substep = {
       id: '1',
       description: 'Test substep',
-      prompt: 'Do the thing'
+      prompt: 'Do the thing',
     };
     expect(substep.prompt).toBe('Do the thing');
   });
@@ -88,8 +88,8 @@ describe('Substep interface', () => {
       transitions: {
         all: true,
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-        fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'BLOCKED' } }
-      }
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'BLOCKED' } },
+      },
     };
     expect(substep.transitions?.pass.action.type).toBe('CONTINUE');
   });

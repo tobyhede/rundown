@@ -80,7 +80,7 @@ export class CLISubscriber {
         throw new Error(`Unhandled event type: ${(_exhaustive as RunbookEventV1).type}`);
       }
     }
-  }
+  };
 
   private handleRunbookStarted(event: RunbookEventV1 & { type: 'RUNBOOK_STARTED' }): void {
     const { payload, runbook } = event;
@@ -102,14 +102,27 @@ export class CLISubscriber {
 
   private handleStepEntered(event: RunbookEventV1 & { type: 'STEP_ENTERED' }): void {
     const { payload } = event;
-    const { position, stepName, description, prompt, hasCommand, commandCode, commandLang, isSubstep, prompted } = payload;
+    const {
+      position,
+      stepName,
+      description,
+      prompt,
+      hasCommand,
+      commandCode,
+      commandLang,
+      isSubstep,
+      prompted,
+    } = payload;
 
     // Create minimal step/substep object for rendering
     // Include actual command code for prompted mode display
-    const command = hasCommand ? { code: commandCode ?? '', lang: commandLang ?? 'bash' } : undefined;
-    const item = (isSubstep
-      ? { id: stepName, description, prompt, command }
-      : { name: stepName, description, prompt, command }
+    const command = hasCommand
+      ? { code: commandCode ?? '', lang: commandLang ?? 'bash' }
+      : undefined;
+    const item = (
+      isSubstep
+        ? { id: stepName, description, prompt, command }
+        : { name: stepName, description, prompt, command }
     ) as Step | Substep;
 
     // Pass `prompted` flag to control command display

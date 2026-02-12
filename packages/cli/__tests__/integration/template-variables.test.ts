@@ -15,8 +15,8 @@ function parseNdjsonEvents(stdout: string): Record<string, unknown>[] {
   return stdout
     .trim()
     .split('\n')
-    .filter(line => line.startsWith('{'))
-    .map(line => JSON.parse(line) as Record<string, unknown>);
+    .filter((line) => line.startsWith('{'))
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 describe('Template Variables Integration', () => {
@@ -44,14 +44,14 @@ describe('Template Variables Integration', () => {
 
       const result = runCli(
         'run test.runbook.md --var-file vars.yaml --var message=from-flag --json',
-        workspace
+        workspace,
       );
 
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify the command used the correct variable value
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent.command).toBe('rd echo from-flag');
@@ -62,41 +62,35 @@ describe('Template Variables Integration', () => {
       await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: from-file');
       const result = runCli(
         'run test.runbook.md --var-file vars.yaml --var message= --json',
-        workspace
+        workspace,
       );
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify empty value was used
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      // Empty value renders as empty string (no trailing space after 'rd echo')
-      expect(commandStartedEvent.command).toBe('rd echo');
+      // Empty value is shell-escaped to '' (single-quoted empty string)
+      expect(commandStartedEvent.command).toBe("rd echo ''");
       expect(commandStartedEvent.command).not.toContain('from-file');
     });
 
     it('--var-file overrides auto-discovered config', async () => {
       // Create auto-discovered config
       await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
-      await writeFile(
-        join(workspace.cwd, '.rundown', 'config.yaml'),
-        'message: auto-discovered'
-      );
+      await writeFile(join(workspace.cwd, '.rundown', 'config.yaml'), 'message: auto-discovered');
 
       // Create explicit var file
       await writeFile(join(workspace.cwd, 'custom.yaml'), 'message: explicit');
 
-      const result = runCli(
-        'run test.runbook.md --var-file custom.yaml --json',
-        workspace
-      );
+      const result = runCli('run test.runbook.md --var-file custom.yaml --json', workspace);
 
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify explicit var file value was used
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent.command).toBe('rd echo explicit');
@@ -105,10 +99,7 @@ describe('Template Variables Integration', () => {
 
     it('uses auto-discovered config when no flags provided', async () => {
       await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
-      await writeFile(
-        join(workspace.cwd, '.rundown', 'config.yaml'),
-        'message: auto-discovered'
-      );
+      await writeFile(join(workspace.cwd, '.rundown', 'config.yaml'), 'message: auto-discovered');
 
       const result = runCli('run test.runbook.md --json', workspace);
 
@@ -116,7 +107,7 @@ describe('Template Variables Integration', () => {
 
       // Parse JSON events and verify auto-discovered value was used
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent.command).toBe('rd echo auto-discovered');
@@ -137,7 +128,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent.command).toBe('rd echo from-frontmatter');
@@ -151,15 +142,12 @@ describe('Template Variables Integration', () => {
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli(
-        'run test.runbook.md --var message=from-flag --json',
-        workspace
-      );
+      const result = runCli('run test.runbook.md --var message=from-flag --json', workspace);
 
       expect(result.exitCode).toBe(0);
 
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent.command).toBe('rd echo from-flag');
@@ -174,15 +162,12 @@ describe('Template Variables Integration', () => {
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
       await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: from-file');
 
-      const result = runCli(
-        'run test.runbook.md --var-file vars.yaml --json',
-        workspace
-      );
+      const result = runCli('run test.runbook.md --var-file vars.yaml --json', workspace);
 
       expect(result.exitCode).toBe(0);
 
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent.command).toBe('rd echo from-file');
@@ -198,17 +183,14 @@ describe('Template Variables Integration', () => {
 
       // Create auto-discovered config
       await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
-      await writeFile(
-        join(workspace.cwd, '.rundown', 'config.yaml'),
-        'message: from-config'
-      );
+      await writeFile(join(workspace.cwd, '.rundown', 'config.yaml'), 'message: from-config');
 
       const result = runCli('run test.runbook.md --json', workspace);
 
       expect(result.exitCode).toBe(0);
 
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent.command).toBe('rd echo from-config');
@@ -218,7 +200,9 @@ describe('Template Variables Integration', () => {
       const runbookContent = createRunbook({
         name: 'test-runbook',
         vars: { greeting: 'Hello', name: 'World', count: 42 },
-        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo "{{greeting}} {{name}} {{count}}"' }],
+        steps: [
+          { title: 'Echo', pass: 'COMPLETE', command: 'rd echo "{{greeting}} {{name}} {{count}}"' },
+        ],
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
@@ -227,7 +211,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent.command).toBe('rd echo "Hello World 42"');
@@ -237,19 +221,22 @@ describe('Template Variables Integration', () => {
       const runbookContent = createRunbook({
         name: 'test-runbook',
         vars: { greeting: 'Hello', count: 42 },
-        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo "{{greeting}}, count is {{count}}"' }],
+        steps: [
+          {
+            title: 'Echo',
+            pass: 'COMPLETE',
+            command: 'rd echo "{{greeting}}, count is {{count}}"',
+          },
+        ],
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli(
-        'run test.runbook.md --var greeting=Hi --json',
-        workspace
-      );
+      const result = runCli('run test.runbook.md --var greeting=Hi --json', workspace);
 
       expect(result.exitCode).toBe(0);
 
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
       // greeting overridden to "Hi", count stays at frontmatter default "42"
@@ -274,7 +261,7 @@ describe('Template Variables Integration', () => {
 
       // Verify the command was expanded with the frontmatter default variable
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent!.command).toBe('rd echo DefaultTask');
     });
@@ -293,13 +280,12 @@ describe('Template Variables Integration', () => {
 
       // Parse JSON events and verify undefined variable was preserved
       const events = parseNdjsonEvents(result.stdout);
-      const commandStartedEvent = events.find(e => e.type === 'command_started');
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent.command).toBe('rd echo "{{undefined_var}}"');
     });
   });
-
 
   describe('resume with frozen runbookSrc', () => {
     it('should use stored runbookSrc in pass command', async () => {
@@ -324,7 +310,10 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse NDJSON output - the last line contains the final state
-      const lines = result.stdout.trim().split('\n').filter(line => line.trim());
+      const lines = result.stdout
+        .trim()
+        .split('\n')
+        .filter((line) => line.trim());
       const output = JSON.parse(lines[lines.length - 1]);
       expect(output.result).toBe(true);
       expect(output.action).toBe('CONTINUE');
@@ -336,7 +325,12 @@ describe('Template Variables Integration', () => {
       const runbookContent = createRunbook({
         title: 'Test Runbook',
         steps: [
-          { title: 'First Step', pass: 'CONTINUE', fail: 'RETRY 1', command: 'rd echo {{message}}' },
+          {
+            title: 'First Step',
+            pass: 'CONTINUE',
+            fail: 'RETRY 1',
+            command: 'rd echo {{message}}',
+          },
           { title: 'Second Step', pass: 'COMPLETE', command: 'rd echo done' },
         ],
       });
@@ -350,7 +344,10 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse NDJSON output - the last line contains the final state
-      const lines = result.stdout.trim().split('\n').filter(line => line.trim());
+      const lines = result.stdout
+        .trim()
+        .split('\n')
+        .filter((line) => line.trim());
       const output = JSON.parse(lines[lines.length - 1]);
       expect(output.result).toBe(false);
       expect(output.action).toContain('RETRY');
@@ -376,7 +373,10 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse NDJSON output - the last line contains the final state
-      const lines = result.stdout.trim().split('\n').filter(line => line.trim());
+      const lines = result.stdout
+        .trim()
+        .split('\n')
+        .filter((line) => line.trim());
       const output = JSON.parse(lines[lines.length - 1]);
       expect(output.result).toBe(true);
       expect(output.action).toContain('GOTO');
@@ -528,7 +528,9 @@ describe('Template Variables Integration', () => {
 
       const childRunbook = createRunbook({
         title: 'Child Runbook',
-        steps: [{ title: 'Execute task', pass: 'COMPLETE', command: 'rd echo "Task: {{task_name}}"' }],
+        steps: [
+          { title: 'Execute task', pass: 'COMPLETE', command: 'rd echo "Task: {{task_name}}"' },
+        ],
       });
 
       const runbooksDir = join(workspace.cwd, 'runbooks');
@@ -562,7 +564,13 @@ describe('Template Variables Integration', () => {
 
       const childRunbook = createRunbook({
         title: 'Child Runbook',
-        steps: [{ title: 'Execute task', pass: 'COMPLETE', command: 'rd echo "Project: {{project_name}}, Task: {{task_name}}"' }],
+        steps: [
+          {
+            title: 'Execute task',
+            pass: 'COMPLETE',
+            command: 'rd echo "Project: {{project_name}}, Task: {{task_name}}"',
+          },
+        ],
       });
 
       const runbooksDir = join(workspace.cwd, 'runbooks');
@@ -579,7 +587,10 @@ describe('Template Variables Integration', () => {
       // Bind agent with additional task-specific variable
       // Variables must be explicitly passed to child runbooks via --var flags
       // when binding agents. There is no automatic inheritance from parent context.
-      const result = runCli('run --agent test-agent --var task_name=BuildTask --var project_name=MyProject', workspace);
+      const result = runCli(
+        'run --agent test-agent --var task_name=BuildTask --var project_name=MyProject',
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       // Complete the child task

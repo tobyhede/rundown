@@ -27,7 +27,7 @@ export interface RunbookSearchConfig {
 export function findRunbookByFrontmatter(
   rawName: string,
   cwd: string,
-  config: RunbookSearchConfig
+  config: RunbookSearchConfig,
 ): string | undefined {
   const colonIndex = rawName.indexOf(':');
   const name = sanitizePathSegment(colonIndex >= 0 ? rawName.substring(colonIndex + 1) : rawName);

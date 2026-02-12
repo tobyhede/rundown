@@ -24,10 +24,10 @@ describe('Plugin Gate Composition Integration', () => {
         gates: {
           'plan-compliance': {
             command: 'echo "plan-compliance check passed"',
-            on_fail: 'BLOCK'
-          }
-        }
-      })
+            on_fail: 'BLOCK',
+          },
+        },
+      }),
     );
 
     // Create mock rundown plugin (current plugin)
@@ -35,7 +35,7 @@ describe('Plugin Gate Composition Integration', () => {
     await fs.mkdir(rundownDir, { recursive: true });
     await fs.writeFile(
       path.join(rundownDir, 'rundown-plugin.json'),
-      JSON.stringify({ hooks: {}, gates: {} })
+      JSON.stringify({ hooks: {}, gates: {} }),
     );
 
     // Create test project directory
@@ -49,19 +49,19 @@ describe('Plugin Gate Composition Integration', () => {
       JSON.stringify({
         hooks: {
           SubagentStop: {
-            gates: ['plan-compliance', 'check']
-          }
+            gates: ['plan-compliance', 'check'],
+          },
         },
         gates: {
           'plan-compliance': {
             plugin: 'cipherpowers',
-            gate: 'plan-compliance'
+            gate: 'plan-compliance',
           },
           check: {
-            command: 'echo "project check passed"'
-          }
-        }
-      })
+            command: 'echo "project check passed"',
+          },
+        },
+      }),
     );
 
     // Set CLAUDE_PLUGIN_ROOT
@@ -79,7 +79,7 @@ describe('Plugin Gate Composition Integration', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: projectDir,
-      agent_name: 'test-agent'
+      agent_name: 'test-agent',
     };
 
     const result = await dispatch(input);
@@ -103,16 +103,16 @@ describe('Plugin Gate Composition Integration', () => {
         gates: {
           'plan-compliance': {
             command: 'exit 1',
-            on_fail: 'BLOCK'
-          }
-        }
-      })
+            on_fail: 'BLOCK',
+          },
+        },
+      }),
     );
 
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: projectDir,
-      agent_name: 'test-agent'
+      agent_name: 'test-agent',
     };
 
     const result = await dispatch(input);
@@ -136,10 +136,10 @@ describe('Plugin Gate Composition Integration', () => {
         gates: {
           gateA: {
             plugin: 'pluginB',
-            gate: 'gateB'
-          }
-        }
-      })
+            gate: 'gateB',
+          },
+        },
+      }),
     );
 
     // PluginB has gate that references pluginA (circular)
@@ -150,10 +150,10 @@ describe('Plugin Gate Composition Integration', () => {
         gates: {
           gateB: {
             plugin: 'pluginA',
-            gate: 'gateA'
-          }
-        }
-      })
+            gate: 'gateA',
+          },
+        },
+      }),
     );
 
     // Project config references pluginA gate
@@ -163,22 +163,22 @@ describe('Plugin Gate Composition Integration', () => {
       JSON.stringify({
         hooks: {
           SubagentStop: {
-            gates: ['test-circular']
-          }
+            gates: ['test-circular'],
+          },
         },
         gates: {
           'test-circular': {
             plugin: 'pluginA',
-            gate: 'gateA'
-          }
-        }
-      })
+            gate: 'gateA',
+          },
+        },
+      }),
     );
 
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: projectDir,
-      agent_name: 'test-agent'
+      agent_name: 'test-agent',
     };
 
     // Should error or handle gracefully (not infinite loop)
@@ -196,14 +196,14 @@ describe('Plugin Gate Composition Integration', () => {
         hooks: {},
         gates: {
           gate1: {
-            command: 'echo "gate1"'
+            command: 'echo "gate1"',
           },
           gate2: {
             plugin: 'selfref',
-            gate: 'gate1'
-          }
-        }
-      })
+            gate: 'gate1',
+          },
+        },
+      }),
     );
 
     // Project references the self-referencing gate
@@ -213,22 +213,22 @@ describe('Plugin Gate Composition Integration', () => {
       JSON.stringify({
         hooks: {
           SubagentStop: {
-            gates: ['test-self']
-          }
+            gates: ['test-self'],
+          },
         },
         gates: {
           'test-self': {
             plugin: 'selfref',
-            gate: 'gate2'
-          }
-        }
-      })
+            gate: 'gate2',
+          },
+        },
+      }),
     );
 
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: projectDir,
-      agent_name: 'test-agent'
+      agent_name: 'test-agent',
     };
 
     // Should work - self-reference to a different gate is valid

@@ -12,7 +12,7 @@ describe('JSONSubscriber', () => {
   const makeEvent = <T extends RunbookEventV1['type']>(
     type: T,
     payload: Extract<RunbookEventV1, { type: T }>['payload'],
-    seq = 1
+    seq = 1,
   ): Extract<RunbookEventV1, { type: T }> =>
     ({
       v: '1',
@@ -25,34 +25,58 @@ describe('JSONSubscriber', () => {
     }) as Extract<RunbookEventV1, { type: T }>;
 
   it('collects events', () => {
-    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
     subscriber.handle(
-      makeEvent('STEP_TRANSITIONED', {
-        action: 'CONTINUE',
-        from: { current: '1', total: 2 },
-        to: { current: '2', total: 2 },
-        result: true,
-      }, 2)
+      makeEvent(
+        'RUNBOOK_STARTED',
+        { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' },
+        1,
+      ),
+    );
+    subscriber.handle(
+      makeEvent(
+        'STEP_TRANSITIONED',
+        {
+          action: 'CONTINUE',
+          from: { current: '1', total: 2 },
+          to: { current: '2', total: 2 },
+          result: true,
+        },
+        2,
+      ),
     );
 
     expect(subscriber.getEvents()).toHaveLength(2);
   });
 
   it('builds execution summary for complete runbook', () => {
-    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
     subscriber.handle(
-      makeEvent('COMMAND_COMPLETED', {
-        command: 'echo test',
-        success: true,
-        exitCode: 0,
-        position: { current: '1', total: 1 },
-      }, 2)
+      makeEvent(
+        'RUNBOOK_STARTED',
+        { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' },
+        1,
+      ),
     );
     subscriber.handle(
-      makeEvent('RUNBOOK_COMPLETED', {
-        finalPosition: { current: '1', total: 1 },
-        message: 'Done',
-      }, 3)
+      makeEvent(
+        'COMMAND_COMPLETED',
+        {
+          command: 'echo test',
+          success: true,
+          exitCode: 0,
+          position: { current: '1', total: 1 },
+        },
+        2,
+      ),
+    );
+    subscriber.handle(
+      makeEvent(
+        'RUNBOOK_COMPLETED',
+        {
+          finalPosition: { current: '1', total: 1 },
+          message: 'Done',
+        },
+        3,
+      ),
     );
 
     const summary = subscriber.getSummary();
@@ -63,13 +87,23 @@ describe('JSONSubscriber', () => {
   });
 
   it('builds execution summary for stopped runbook', () => {
-    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
     subscriber.handle(
-      makeEvent('RUNBOOK_STOPPED', {
-        position: { current: '1', total: 1 },
-        message: 'Failed',
-        reason: 'fail_transition',
-      }, 2)
+      makeEvent(
+        'RUNBOOK_STARTED',
+        { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' },
+        1,
+      ),
+    );
+    subscriber.handle(
+      makeEvent(
+        'RUNBOOK_STOPPED',
+        {
+          position: { current: '1', total: 1 },
+          message: 'Failed',
+          reason: 'fail_transition',
+        },
+        2,
+      ),
     );
 
     const summary = subscriber.getSummary();
@@ -78,19 +112,34 @@ describe('JSONSubscriber', () => {
   });
 
   it('clears collected events', () => {
-    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }));
+    subscriber.handle(
+      makeEvent('RUNBOOK_STARTED', {
+        prompted: false,
+        statePath: '.claude/rundown/runs/wf-test.json',
+      }),
+    );
     subscriber.clear();
     expect(subscriber.getEvents()).toHaveLength(0);
   });
 
   it('collects ERROR_OCCURRED events', () => {
-    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
     subscriber.handle(
-      makeEvent('ERROR_OCCURRED', {
-        message: 'Command timed out',
-        code: 'TIMEOUT',
-        position: { current: '1', total: 2 },
-      }, 2)
+      makeEvent(
+        'RUNBOOK_STARTED',
+        { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' },
+        1,
+      ),
+    );
+    subscriber.handle(
+      makeEvent(
+        'ERROR_OCCURRED',
+        {
+          message: 'Command timed out',
+          code: 'TIMEOUT',
+          position: { current: '1', total: 2 },
+        },
+        2,
+      ),
     );
 
     const errors = subscriber.getEventsByType('ERROR_OCCURRED');
@@ -100,11 +149,21 @@ describe('JSONSubscriber', () => {
   });
 
   it('builds summary for empty runbook (no steps executed)', () => {
-    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
     subscriber.handle(
-      makeEvent('RUNBOOK_COMPLETED', {
-        finalPosition: { current: '0', total: 0 },
-      }, 2)
+      makeEvent(
+        'RUNBOOK_STARTED',
+        { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' },
+        1,
+      ),
+    );
+    subscriber.handle(
+      makeEvent(
+        'RUNBOOK_COMPLETED',
+        {
+          finalPosition: { current: '0', total: 0 },
+        },
+        2,
+      ),
     );
 
     const summary = subscriber.getSummary();
@@ -116,35 +175,57 @@ describe('JSONSubscriber', () => {
   });
 
   it('counts multiple commands with mixed success/failure', () => {
-    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
     subscriber.handle(
-      makeEvent('COMMAND_COMPLETED', {
-        command: 'echo 1',
-        success: true,
-        exitCode: 0,
-        position: { current: '1', total: 3 },
-      }, 2)
+      makeEvent(
+        'RUNBOOK_STARTED',
+        { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' },
+        1,
+      ),
     );
     subscriber.handle(
-      makeEvent('COMMAND_COMPLETED', {
-        command: 'false',
-        success: false,
-        exitCode: 1,
-        position: { current: '2', total: 3 },
-      }, 3)
+      makeEvent(
+        'COMMAND_COMPLETED',
+        {
+          command: 'echo 1',
+          success: true,
+          exitCode: 0,
+          position: { current: '1', total: 3 },
+        },
+        2,
+      ),
     );
     subscriber.handle(
-      makeEvent('COMMAND_COMPLETED', {
-        command: 'echo 2',
-        success: true,
-        exitCode: 0,
-        position: { current: '3', total: 3 },
-      }, 4)
+      makeEvent(
+        'COMMAND_COMPLETED',
+        {
+          command: 'false',
+          success: false,
+          exitCode: 1,
+          position: { current: '2', total: 3 },
+        },
+        3,
+      ),
     );
     subscriber.handle(
-      makeEvent('RUNBOOK_COMPLETED', {
-        finalPosition: { current: '3', total: 3 },
-      }, 5)
+      makeEvent(
+        'COMMAND_COMPLETED',
+        {
+          command: 'echo 2',
+          success: true,
+          exitCode: 0,
+          position: { current: '3', total: 3 },
+        },
+        4,
+      ),
+    );
+    subscriber.handle(
+      makeEvent(
+        'RUNBOOK_COMPLETED',
+        {
+          finalPosition: { current: '3', total: 3 },
+        },
+        5,
+      ),
     );
 
     const summary = subscriber.getSummary();
@@ -153,14 +234,24 @@ describe('JSONSubscriber', () => {
   });
 
   it('returns running status before terminal event', () => {
-    subscriber.handle(makeEvent('RUNBOOK_STARTED', { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' }, 1));
     subscriber.handle(
-      makeEvent('COMMAND_COMPLETED', {
-        command: 'echo test',
-        success: true,
-        exitCode: 0,
-        position: { current: '1', total: 2 },
-      }, 2)
+      makeEvent(
+        'RUNBOOK_STARTED',
+        { prompted: false, statePath: '.claude/rundown/runs/wf-test.json' },
+        1,
+      ),
+    );
+    subscriber.handle(
+      makeEvent(
+        'COMMAND_COMPLETED',
+        {
+          command: 'echo test',
+          success: true,
+          exitCode: 0,
+          position: { current: '1', total: 2 },
+        },
+        2,
+      ),
     );
 
     const summary = subscriber.getSummary();

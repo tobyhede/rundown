@@ -4,13 +4,13 @@ import {
   shouldProcessHook,
   dispatch,
   gateMatchesKeywords,
-  gateMatchesFilePattern
+  gateMatchesFilePattern,
 } from '../src/dispatcher.js';
 import {
   validateFilePatterns,
   type HookInput,
   type HookConfig,
-  type GateConfig
+  type GateConfig,
 } from '../src/shared/index.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -21,11 +21,11 @@ describe('Dispatcher - Event Filtering', () => {
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       cwd: '/test',
-      tool_name: 'Edit'
+      tool_name: 'Edit',
     };
 
     const hookConfig: HookConfig = {
-      enabled_tools: ['Edit', 'Write']
+      enabled_tools: ['Edit', 'Write'],
     };
 
     expect(shouldProcessHook(input, hookConfig)).toBe(true);
@@ -35,11 +35,11 @@ describe('Dispatcher - Event Filtering', () => {
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       cwd: '/test',
-      tool_name: 'Read'
+      tool_name: 'Read',
     };
 
     const hookConfig: HookConfig = {
-      enabled_tools: ['Edit', 'Write']
+      enabled_tools: ['Edit', 'Write'],
     };
 
     expect(shouldProcessHook(input, hookConfig)).toBe(false);
@@ -49,11 +49,11 @@ describe('Dispatcher - Event Filtering', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: '/test',
-      agent_name: 'test-namespace:test-agent'
+      agent_name: 'test-namespace:test-agent',
     };
 
     const hookConfig: HookConfig = {
-      enabled_agents: ['test-namespace:test-agent']
+      enabled_agents: ['test-namespace:test-agent'],
     };
 
     expect(shouldProcessHook(input, hookConfig)).toBe(true);
@@ -63,11 +63,11 @@ describe('Dispatcher - Event Filtering', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: '/test',
-      agent_name: 'other-agent'
+      agent_name: 'other-agent',
     };
 
     const hookConfig: HookConfig = {
-      enabled_agents: ['test-namespace:test-agent']
+      enabled_agents: ['test-namespace:test-agent'],
     };
 
     expect(shouldProcessHook(input, hookConfig)).toBe(false);
@@ -77,11 +77,11 @@ describe('Dispatcher - Event Filtering', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: '/test',
-      subagent_name: 'test-namespace:test-agent'
+      subagent_name: 'test-namespace:test-agent',
     };
 
     const hookConfig: HookConfig = {
-      enabled_agents: ['test-namespace:test-agent']
+      enabled_agents: ['test-namespace:test-agent'],
     };
 
     expect(shouldProcessHook(input, hookConfig)).toBe(true);
@@ -90,7 +90,7 @@ describe('Dispatcher - Event Filtering', () => {
   test('UserPromptSubmit always returns true', () => {
     const input: HookInput = {
       hook_event_name: 'UserPromptSubmit',
-      cwd: '/test'
+      cwd: '/test',
     };
 
     const hookConfig: HookConfig = {};
@@ -102,7 +102,7 @@ describe('Dispatcher - Event Filtering', () => {
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       cwd: '/test',
-      tool_name: 'Edit'
+      tool_name: 'Edit',
     };
 
     const hookConfig: HookConfig = {};
@@ -129,30 +129,30 @@ describe('Dispatcher - Gate Chaining', () => {
     const gatesConfig = {
       hooks: {
         PostToolUse: {
-          gates: ['gate-a']
-        }
+          gates: ['gate-a'],
+        },
       },
       gates: {
         'gate-a': {
           command: 'echo "gate-a passed"',
-          on_pass: 'gate-b' // Chain to gate-b on pass
+          on_pass: 'gate-b', // Chain to gate-b on pass
         },
         'gate-b': {
           command: 'echo "gate-b passed"',
-          on_pass: 'CONTINUE'
-        }
-      }
+          on_pass: 'CONTINUE',
+        },
+      },
     };
 
     await fs.writeFile(
       path.join(testDir, 'rundown-plugin.json'),
-      JSON.stringify(gatesConfig, null, 2)
+      JSON.stringify(gatesConfig, null, 2),
     );
 
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       cwd: testDir,
-      tool_name: 'Edit'
+      tool_name: 'Edit',
     };
 
     const result = await dispatch(input);
@@ -168,30 +168,30 @@ describe('Dispatcher - Gate Chaining', () => {
     const gatesConfig = {
       hooks: {
         PostToolUse: {
-          gates: ['gate-a']
-        }
+          gates: ['gate-a'],
+        },
       },
       gates: {
         'gate-a': {
           command: 'echo "gate-a"',
-          on_pass: 'gate-b'
+          on_pass: 'gate-b',
         },
         'gate-b': {
           command: 'echo "gate-b"',
-          on_pass: 'gate-a' // Circular chain back to gate-a
-        }
-      }
+          on_pass: 'gate-a', // Circular chain back to gate-a
+        },
+      },
     };
 
     await fs.writeFile(
       path.join(testDir, 'rundown-plugin.json'),
-      JSON.stringify(gatesConfig, null, 2)
+      JSON.stringify(gatesConfig, null, 2),
     );
 
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       cwd: testDir,
-      tool_name: 'Edit'
+      tool_name: 'Edit',
     };
 
     const result = await dispatch(input);
@@ -207,7 +207,7 @@ describe('validateFilePatterns', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['packages/cts/**', 'src/**/*.ts', '*.json'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     expect(() => {
       validateFilePatterns(config);
@@ -218,7 +218,7 @@ describe('validateFilePatterns', () => {
     const config = {
       command: 'echo test',
       file_patterns: ['valid', 123, 'also-valid'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     } as GateConfig;
     expect(() => {
       validateFilePatterns(config);
@@ -228,7 +228,7 @@ describe('validateFilePatterns', () => {
   it('should skip validation when no patterns specified', () => {
     const config: GateConfig = {
       command: 'echo test',
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     expect(() => {
       validateFilePatterns(config);
@@ -239,7 +239,7 @@ describe('validateFilePatterns', () => {
 describe('Keyword Matching', () => {
   test('no keywords - gate always runs', () => {
     const gateConfig: GateConfig = {
-      command: 'npm test'
+      command: 'npm test',
     };
 
     expect(gateMatchesKeywords(gateConfig, 'hello world')).toBe(true);
@@ -250,7 +250,7 @@ describe('Keyword Matching', () => {
   test('empty keywords array - gate always runs', () => {
     const gateConfig: GateConfig = {
       command: 'npm test',
-      keywords: []
+      keywords: [],
     };
 
     expect(gateMatchesKeywords(gateConfig, 'hello world')).toBe(true);
@@ -260,7 +260,7 @@ describe('Keyword Matching', () => {
   test('no user message with keywords - gate does not run', () => {
     const gateConfig: GateConfig = {
       command: 'npm test',
-      keywords: ['test', 'testing']
+      keywords: ['test', 'testing'],
     };
 
     expect(gateMatchesKeywords(gateConfig, undefined)).toBe(false);
@@ -270,7 +270,7 @@ describe('Keyword Matching', () => {
   test('keyword match - case insensitive', () => {
     const gateConfig: GateConfig = {
       command: 'npm test',
-      keywords: ['test']
+      keywords: ['test'],
     };
 
     expect(gateMatchesKeywords(gateConfig, 'run the TEST')).toBe(true);
@@ -281,7 +281,7 @@ describe('Keyword Matching', () => {
   test('multiple keywords - any matches', () => {
     const gateConfig: GateConfig = {
       command: 'npm test',
-      keywords: ['test', 'testing', 'spec', 'verify']
+      keywords: ['test', 'testing', 'spec', 'verify'],
     };
 
     expect(gateMatchesKeywords(gateConfig, 'run the tests')).toBe(true);
@@ -293,7 +293,7 @@ describe('Keyword Matching', () => {
   test('no keyword match - gate does not run', () => {
     const gateConfig: GateConfig = {
       command: 'npm test',
-      keywords: ['test', 'testing']
+      keywords: ['test', 'testing'],
     };
 
     expect(gateMatchesKeywords(gateConfig, 'hello world')).toBe(false);
@@ -303,7 +303,7 @@ describe('Keyword Matching', () => {
   test('substring matching - partial word matches', () => {
     const gateConfig: GateConfig = {
       command: 'npm test',
-      keywords: ['test']
+      keywords: ['test'],
     };
 
     // Intentional substring matching (not word-boundary)
@@ -332,7 +332,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['src/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const result = await gateMatchesFilePattern(config, undefined, cwd);
     expect(result).toBe(false);
@@ -342,7 +342,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['packages/cts/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/packages/cts/src/index.ts';
     const result = await gateMatchesFilePattern(config, filePath, cwd);
@@ -353,7 +353,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['packages/cts/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/packages/other/src/index.ts';
     const result = await gateMatchesFilePattern(config, filePath, cwd);
@@ -364,7 +364,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['packages/cts/**', 'packages/shared/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/packages/shared/utils.ts';
     const result = await gateMatchesFilePattern(config, filePath, cwd);
@@ -375,7 +375,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['src/**/*.ts'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/src/deeply/nested/dir/file.ts';
     const result = await gateMatchesFilePattern(config, filePath, cwd);
@@ -386,7 +386,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['*.json'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/package.json';
     const result = await gateMatchesFilePattern(config, filePath, cwd);
@@ -397,7 +397,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['*.json'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/src/config.json';
     const result = await gateMatchesFilePattern(config, filePath, cwd);
@@ -408,7 +408,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['packages/cts/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const absolutePath = '/Users/test/project/packages/cts/index.ts';
     const result = await gateMatchesFilePattern(config, absolutePath, cwd);
@@ -419,7 +419,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['.config/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/.config/settings.json';
     const result = await gateMatchesFilePattern(config, filePath, cwd);
@@ -431,7 +431,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['packages/cts/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const relativePath = 'packages/cts/index.ts'; // Already relative
     const result = await gateMatchesFilePattern(config, relativePath, cwd);
@@ -443,7 +443,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['**/*.ts'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const result = await gateMatchesFilePattern(config, '', cwd);
     expect(result).toBe(false);
@@ -454,7 +454,7 @@ describe('gateMatchesFilePattern', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['../parent/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/../parent/file.ts';
     const result = await gateMatchesFilePattern(config, filePath, cwd);
@@ -482,33 +482,36 @@ describe('File pattern filtering integration', () => {
         'cts:test': {
           command: 'echo "cts test"',
           file_patterns: ['packages/cts/**'],
-          on_pass: 'CONTINUE'
+          on_pass: 'CONTINUE',
         },
         'shared:test': {
           command: 'echo "shared test"',
           file_patterns: ['packages/shared/**', 'lib/common/**'],
-          on_pass: 'CONTINUE'
+          on_pass: 'CONTINUE',
         },
         'no-pattern': {
           command: 'echo "no pattern"',
-          on_pass: 'CONTINUE'
-        }
+          on_pass: 'CONTINUE',
+        },
       },
       hooks: {
         PostToolUse: {
           enabled_tools: ['Edit', 'Write'],
-          gates: ['cts:test', 'shared:test', 'no-pattern']
-        }
-      }
+          gates: ['cts:test', 'shared:test', 'no-pattern'],
+        },
+      },
     };
 
-    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(mockConfig, null, 2));
+    await fs.writeFile(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify(mockConfig, null, 2),
+    );
 
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       cwd: testDir,
       tool_name: 'Edit',
-      file_path: path.join(testDir, 'packages/cts/src/index.ts')
+      file_path: path.join(testDir, 'packages/cts/src/index.ts'),
     };
 
     const result = await dispatch(input);
@@ -524,33 +527,36 @@ describe('File pattern filtering integration', () => {
         'cts:test': {
           command: 'echo "cts test"',
           file_patterns: ['packages/cts/**'],
-          on_pass: 'CONTINUE'
+          on_pass: 'CONTINUE',
         },
         'shared:test': {
           command: 'echo "shared test"',
           file_patterns: ['packages/shared/**', 'lib/common/**'],
-          on_pass: 'CONTINUE'
+          on_pass: 'CONTINUE',
         },
         'no-pattern': {
           command: 'echo "no pattern"',
-          on_pass: 'CONTINUE'
-        }
+          on_pass: 'CONTINUE',
+        },
       },
       hooks: {
         PostToolUse: {
           enabled_tools: ['Edit', 'Write'],
-          gates: ['cts:test', 'shared:test', 'no-pattern']
-        }
-      }
+          gates: ['cts:test', 'shared:test', 'no-pattern'],
+        },
+      },
     };
 
-    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(mockConfig, null, 2));
+    await fs.writeFile(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify(mockConfig, null, 2),
+    );
 
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       cwd: testDir,
       tool_name: 'Edit',
-      file_path: path.join(testDir, 'packages/other/src/index.ts')
+      file_path: path.join(testDir, 'packages/other/src/index.ts'),
     };
 
     const result = await dispatch(input);
@@ -566,33 +572,36 @@ describe('File pattern filtering integration', () => {
         'cts:test': {
           command: 'echo "cts test"',
           file_patterns: ['packages/cts/**'],
-          on_pass: 'CONTINUE'
+          on_pass: 'CONTINUE',
         },
         'shared:test': {
           command: 'echo "shared test"',
           file_patterns: ['packages/shared/**', 'lib/common/**'],
-          on_pass: 'CONTINUE'
+          on_pass: 'CONTINUE',
         },
         'no-pattern': {
           command: 'echo "no pattern"',
-          on_pass: 'CONTINUE'
-        }
+          on_pass: 'CONTINUE',
+        },
       },
       hooks: {
         PostToolUse: {
           enabled_tools: ['Edit', 'Write'],
-          gates: ['cts:test', 'shared:test', 'no-pattern']
-        }
-      }
+          gates: ['cts:test', 'shared:test', 'no-pattern'],
+        },
+      },
     };
 
-    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(mockConfig, null, 2));
+    await fs.writeFile(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify(mockConfig, null, 2),
+    );
 
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       cwd: testDir,
       tool_name: 'Edit',
-      file_path: path.join(testDir, 'lib/common/utils.ts')
+      file_path: path.join(testDir, 'lib/common/utils.ts'),
     };
 
     const result = await dispatch(input);
@@ -608,22 +617,25 @@ describe('File pattern filtering integration', () => {
         'test-gate': {
           command: 'echo "test gate"',
           file_patterns: ['packages/cts/**'],
-          on_pass: 'CONTINUE'
-        }
+          on_pass: 'CONTINUE',
+        },
       },
       hooks: {
         UserPromptSubmit: {
-          gates: ['test-gate']
-        }
-      }
+          gates: ['test-gate'],
+        },
+      },
     };
 
-    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(mockConfig, null, 2));
+    await fs.writeFile(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify(mockConfig, null, 2),
+    );
 
     const input: HookInput = {
       hook_event_name: 'UserPromptSubmit',
       cwd: testDir,
-      user_message: 'test message'
+      user_message: 'test message',
     };
 
     const result = await dispatch(input);
@@ -639,41 +651,41 @@ describe('File pattern filtering integration', () => {
         'gate-a': {
           command: 'echo "gate-a output"',
           file_patterns: ['packages/a/**'],
-          on_pass: 'CONTINUE'
+          on_pass: 'CONTINUE',
         },
         'gate-b': {
           command: 'echo "gate-b output"',
           file_patterns: ['packages/b/**'],
-          on_pass: 'CONTINUE'
+          on_pass: 'CONTINUE',
         },
         'gate-c': {
           command: 'echo "gate-c output"',
           file_patterns: ['packages/c/**'],
-          on_pass: 'CONTINUE'
+          on_pass: 'CONTINUE',
         },
         'gate-all': {
           command: 'echo "gate-all output"',
-          on_pass: 'CONTINUE'
-        }
+          on_pass: 'CONTINUE',
+        },
       },
       hooks: {
         PostToolUse: {
           enabled_tools: ['Edit'],
-          gates: ['gate-a', 'gate-b', 'gate-c', 'gate-all']
-        }
-      }
+          gates: ['gate-a', 'gate-b', 'gate-c', 'gate-all'],
+        },
+      },
     };
 
     await fs.writeFile(
       path.join(testDir, 'rundown-plugin.json'),
-      JSON.stringify(multiGateConfig, null, 2)
+      JSON.stringify(multiGateConfig, null, 2),
     );
 
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
       cwd: testDir,
       tool_name: 'Edit',
-      file_path: path.join(testDir, 'packages/b/index.ts')
+      file_path: path.join(testDir, 'packages/b/index.ts'),
     };
 
     const result = await dispatch(input);
@@ -712,7 +724,7 @@ describe('gateMatchesFilePattern - debug logging', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['packages/cts/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/packages/cts/src/index.ts';
 
@@ -724,7 +736,7 @@ describe('gateMatchesFilePattern - debug logging', () => {
     expect(mockDebugCalls[0].data).toMatchObject({
       relativePath: 'packages/cts/src/index.ts',
       pattern: 'packages/cts/**',
-      absolutePath: filePath
+      absolutePath: filePath,
     });
   });
 
@@ -732,7 +744,7 @@ describe('gateMatchesFilePattern - debug logging', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['packages/cts/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/packages/other/src/index.ts';
 
@@ -746,7 +758,7 @@ describe('gateMatchesFilePattern - debug logging', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['packages/cts/**', 'packages/shared/**'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/packages/shared/utils.ts';
 
@@ -760,7 +772,7 @@ describe('gateMatchesFilePattern - debug logging', () => {
   it('should not log when no patterns specified', async () => {
     const config: GateConfig = {
       command: 'echo test',
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/test/project/src/index.ts';
 
@@ -774,7 +786,7 @@ describe('gateMatchesFilePattern - debug logging', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['**/*.ts'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
 
     const result = await gateMatchesFilePattern(config, undefined, cwd);
@@ -787,7 +799,7 @@ describe('gateMatchesFilePattern - debug logging', () => {
     const config: GateConfig = {
       command: 'echo test',
       file_patterns: ['**/*.ts'],
-      on_pass: 'CONTINUE'
+      on_pass: 'CONTINUE',
     };
     const filePath = '/Users/outside/file.ts';
 
@@ -798,7 +810,7 @@ describe('gateMatchesFilePattern - debug logging', () => {
     expect(mockDebugCalls[0].message).toBe('File outside project root - gate skipped');
     expect(mockDebugCalls[0].data).toMatchObject({
       absolutePath: filePath,
-      cwd
+      cwd,
     });
   });
 });

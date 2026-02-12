@@ -21,7 +21,7 @@ export function trackStepDispatch(input: HookInput): StepDispatchResult {
 
     if (!description.trim()) {
       return {
-        violation: 'Step description cannot be empty'
+        violation: 'Step description cannot be empty',
       };
     }
 

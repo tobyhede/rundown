@@ -21,7 +21,7 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
   warn: 2,
-  error: 3
+  error: 3,
 };
 
 /**
@@ -116,7 +116,7 @@ function createEntry(level: LogLevel, message: string, data?: Record<string, unk
     ts: new Date().toISOString(),
     level,
     message,
-    ...data
+    ...data,
   };
 }
 
@@ -192,7 +192,7 @@ export const logger = {
       ts: new Date().toISOString(),
       level,
       event,
-      ...data
+      ...data,
     }),
 
   /**
@@ -205,5 +205,5 @@ export const logger = {
    * Get the log directory path (for mise tasks).
    * @returns The absolute path to the log directory
    */
-  getLogDir
+  getLogDir,
 };

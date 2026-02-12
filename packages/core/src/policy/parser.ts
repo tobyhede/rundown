@@ -188,25 +188,24 @@ export function extractPrimaryExecutable(command: string): string | null {
  * Get all unique executable names from a command string.
  *
  * @param command - The shell command string to parse
+ * @param depth - Internal recursion depth to prevent infinite loops (max 5)
  * @returns Array of unique executable names
- *
- * @example
- * ```typescript
- * extractAllExecutables('npm test && npm run build')
- * // => ['npm']
- *
- * extractAllExecutables('git fetch && npm install')
- * // => ['git', 'npm']
- * ```
  */
-export function extractAllExecutables(command: string): string[] {
+export function extractAllExecutables(command: string, depth = 0): string[] {
+  if (depth > 5) {
+    return [];
+  }
+
   const commands = extractCommands(command);
-  const executables = commands.map(c => c.executable);
+  const executables = commands.map((c) => c.executable);
 
-  // Also extract commands from backticks
-  const backtickExecutables = extractBacktickCommands(command);
+  // Also extract commands from backticks and $(...) substitution
+  const substitutedExecutables = [
+    ...extractBacktickCommands(command, depth + 1),
+    ...extractDollarSubstitutions(command, depth + 1),
+  ];
 
-  return [...new Set([...executables, ...backtickExecutables])];
+  return [...new Set([...executables, ...substitutedExecutables])];
 }
 
 /**
@@ -217,40 +216,51 @@ export function extractAllExecutables(command: string): string[] {
  * checked against the policy.
  *
  * @param command - The shell command string to scan for backticks
+ * @param depth - Current recursion depth
  * @returns Array of executable names found inside backticks
- *
- * @example
- * ```typescript
- * extractBacktickCommands('echo `id`')
- * // => ['id']
- *
- * extractBacktickCommands('echo `whoami` `hostname`')
- * // => ['whoami', 'hostname']
- * ```
  */
-export function extractBacktickCommands(command: string): string[] {
-  const backtickRegex = /`([^`]+)`/g;
+export function extractBacktickCommands(command: string, depth = 0): string[] {
+  const backtickRegex = /`(.+?)`/g;
+  return extractRecursiveMatches(command, backtickRegex, depth);
+}
+
+/**
+ * Extract commands hidden in $(...) command substitution.
+ *
+ * $(...) is the modern shell command substitution syntax.
+ * This function extracts the commands inside $(...) so they can be
+ * checked against the policy.
+ *
+ * @param command - The shell command string to scan for $(...)
+ * @param depth - Current recursion depth
+ * @returns Array of executable names found inside $(...)
+ */
+export function extractDollarSubstitutions(command: string, depth = 0): string[] {
+  // Greedy regex for $(...) to handle nesting by capturing outermost first
+  const dollarRegex = /\$\((.*)\)/g;
+  return extractRecursiveMatches(command, dollarRegex, depth);
+}
+
+/**
+ * Helper to extract and recursively parse commands from regex matches.
+ *
+ * @param command - Command string to scan
+ * @param regex - Regex with one capturing group for the nested command
+ * @param depth - Current recursion depth
+ * @returns Array of executable names
+ */
+function extractRecursiveMatches(command: string, regex: RegExp, depth: number): string[] {
   const executables: string[] = [];
   let match;
 
-  while ((match = backtickRegex.exec(command)) !== null) {
-    // Recursively extract executables from the backtick content
-    const backtickContent = match[1];
-    const nestedExecutables = extractAllExecutablesInternal(backtickContent);
+  // Reset regex index for safety if it has the global flag
+  if (regex.global) regex.lastIndex = 0;
+
+  while ((match = regex.exec(command)) !== null) {
+    const nestedContent = match[1];
+    const nestedExecutables = extractAllExecutables(nestedContent, depth);
     executables.push(...nestedExecutables);
   }
 
   return executables;
-}
-
-/**
- * Internal helper to extract executables without recursing into backticks.
- * Used to avoid infinite recursion in extractAllExecutables.
- *
- * @param command - The shell command string to parse
- * @returns Array of unique executable names
- */
-function extractAllExecutablesInternal(command: string): string[] {
-  const commands = extractCommands(command);
-  return commands.map(c => c.executable);
 }

@@ -41,7 +41,7 @@ export function registerStopCommand(program: Command): void {
           output.stopped(message ?? 'Runbook stopped');
           output.flush();
         },
-        { json: options.json }
+        { json: options.json },
       );
     });
 }

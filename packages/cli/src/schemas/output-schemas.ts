@@ -16,12 +16,10 @@ import { z } from 'zod';
 export {
   // Error codes
   ErrorCodeSchema,
-
   // Shared schemas
   PositionSchema,
   RunbookContextSchema,
   ErrorDetailsSchema,
-
   // Response schemas
   ErrorResponseSchema,
   ActionResponseSchema,
@@ -30,27 +28,22 @@ export {
   EchoResponseSchema,
   StashResponseSchema,
   PopResponseSchema,
-
   // List schemas
   ActiveRunbookEntrySchema,
   AvailableRunbookEntrySchema,
   ActiveRunbookListSchema,
   AvailableRunbooksListSchema,
-
   // Check schemas
   CheckValidationErrorSchema,
   RunbookStatsSchema,
-
   // Scenario schemas
   ScenarioEntrySchema,
   ScenarioDetailSchema,
   ScenarioListSchema,
   ScenarioRunResponseSchema,
   ScenarioErrorResponseSchema,
-
   // Prune schema (same format as ls output)
   PruneResponseSchema,
-
   // Execution schemas
   ExecutionSummarySchema,
   StepQueuedResponseSchema,
@@ -67,9 +60,11 @@ export {
  *
  * Simple output wrapper for prompt command (CLI-only, not in core).
  */
-export const PromptResponseSchema = z.object({
-  output: z.string().describe('Prompt output text'),
-}).describe('Response from the prompt command');
+export const PromptResponseSchema = z
+  .object({
+    output: z.string().describe('Prompt output text'),
+  })
+  .describe('Response from the prompt command');
 
 /**
  * Runbook schema - unified schema for ls output with status field.
@@ -77,14 +72,16 @@ export const PromptResponseSchema = z.object({
  * This is a CLI-specific variant that includes status field for display.
  * Maps to ActiveRunbookEntrySchema from core but with status required.
  */
-export const RunbookSchema = z.object({
-  id: z.string().describe('Unique state file identifier'),
-  runbook: z.string().describe('Runbook filename'),
-  status: z.string().describe('Runbook status (active, stashed, completed, stale, or orphaned)'),
-  step: z.string().optional().describe('Current step number'),
-  total: z.number().optional().describe('Total number of steps'),
-  title: z.string().optional().describe('Runbook title from metadata'),
-}).describe('Runbook state entry');
+export const RunbookSchema = z
+  .object({
+    id: z.string().describe('Unique state file identifier'),
+    runbook: z.string().describe('Runbook filename'),
+    status: z.string().describe('Runbook status (active, stashed, completed, stale, or orphaned)'),
+    step: z.string().optional().describe('Current step number'),
+    total: z.number().optional().describe('Total number of steps'),
+    title: z.string().optional().describe('Runbook title from metadata'),
+  })
+  .describe('Runbook state entry');
 
 /**
  * List of runbooks (ls output with status).
@@ -142,7 +139,15 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
   check: CheckResponseSchema,
   echo: EchoResponseSchema,
   prompt: PromptResponseSchema,
-  run: z.union([ExecutionSummarySchema, z.object({ action: z.literal('step_queued'), stepId: z.string(), runbook: z.string().optional() }), z.object({ action: z.literal('agent_bound'), agent: z.string(), stepId: z.string() })]),
+  run: z.union([
+    ExecutionSummarySchema,
+    z.object({
+      action: z.literal('step_queued'),
+      stepId: z.string(),
+      runbook: z.string().optional(),
+    }),
+    z.object({ action: z.literal('agent_bound'), agent: z.string(), stepId: z.string() }),
+  ]),
   ls: z.union([RunbookListSchema, AvailableRunbooksListSchema]),
   prune: RunbookListSchema,
   'scenario ls': ScenarioListSchema,

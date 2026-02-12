@@ -10,7 +10,7 @@ describe('extractDisplayCommand', () => {
 
   it('extracts command from rd echo with --result flag', () => {
     expect(extractDisplayCommand('rd echo --result fail npm run deploy:check')).toBe(
-      'npm run deploy:check'
+      'npm run deploy:check',
     );
   });
 
@@ -19,15 +19,13 @@ describe('extractDisplayCommand', () => {
   });
 
   it('extracts command from rundown echo', () => {
-    expect(extractDisplayCommand('rundown echo --result pass npm run build')).toBe(
-      'npm run build'
-    );
+    expect(extractDisplayCommand('rundown echo --result pass npm run build')).toBe('npm run build');
   });
 
   it('handles multiple --result flags', () => {
-    expect(
-      extractDisplayCommand('rd echo --result fail --result pass npm run deploy:check')
-    ).toBe('npm run deploy:check');
+    expect(extractDisplayCommand('rd echo --result fail --result pass npm run deploy:check')).toBe(
+      'npm run deploy:check',
+    );
   });
 
   it('handles mixed -r and --result flags', () => {
@@ -36,7 +34,7 @@ describe('extractDisplayCommand', () => {
 
   it('handles command with special characters', () => {
     expect(extractDisplayCommand('rd echo --result pass npm run "test:e2e"')).toBe(
-      'npm run "test:e2e"'
+      'npm run "test:e2e"',
     );
   });
 

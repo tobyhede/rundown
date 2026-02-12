@@ -51,18 +51,20 @@ export const CLIErrorCodes = {
 /**
  * Zod schema for error codes.
  */
-export const ErrorCodeSchema = z.enum([
-  'NO_ACTIVE_RUNBOOK',
-  'RUNBOOK_NOT_FOUND',
-  'STEP_NOT_FOUND',
-  'INVALID_SYNTAX',
-  'VALIDATION_ERROR',
-  'NO_STASHED_RUNBOOK',
-  'AGENT_BINDING_ERROR',
-  'SCENARIO_NOT_FOUND',
-  'FILE_ERROR',
-  'UNKNOWN_ERROR',
-]).describe('Error code identifying the type of error that occurred');
+export const ErrorCodeSchema = z
+  .enum([
+    'NO_ACTIVE_RUNBOOK',
+    'RUNBOOK_NOT_FOUND',
+    'STEP_NOT_FOUND',
+    'INVALID_SYNTAX',
+    'VALIDATION_ERROR',
+    'NO_STASHED_RUNBOOK',
+    'AGENT_BINDING_ERROR',
+    'SCENARIO_NOT_FOUND',
+    'FILE_ERROR',
+    'UNKNOWN_ERROR',
+  ])
+  .describe('Error code identifying the type of error that occurred');
 
 /**
  * Union type of all valid CLI error codes.
@@ -76,26 +78,30 @@ export type CLIErrorCode = (typeof CLIErrorCodes)[keyof typeof CLIErrorCodes];
 /**
  * Position within a runbook.
  */
-export const PositionSchema = z.object({
-  /** Current step identifier (e.g., "1", "2", "ErrorHandler") */
-  current: z.string().describe('Current step number or identifier'),
-  /** Total number of steps */
-  total: z.number().describe('Total number of steps'),
-  /** Current substep identifier if applicable */
-  substep: z.string().optional().describe('Optional substep identifier'),
-}).describe('Current position within the runbook execution');
+export const PositionSchema = z
+  .object({
+    /** Current step identifier (e.g., "1", "2", "ErrorHandler") */
+    current: z.string().describe('Current step number or identifier'),
+    /** Total number of steps */
+    total: z.number().describe('Total number of steps'),
+    /** Current substep identifier if applicable */
+    substep: z.string().optional().describe('Optional substep identifier'),
+  })
+  .describe('Current position within the runbook execution');
 
 /**
  * Runbook context information included in responses.
  */
-export const RunbookContextSchema = z.object({
-  /** Runbook filename (relative path) */
-  file: z.string().describe('Path to the runbook file'),
-  /** State file path */
-  state: z.string().describe('Current runbook state or status'),
-  /** Whether runbook is in prompted mode (waiting for user input) */
-  prompted: z.boolean().optional().describe('Whether the runbook is awaiting user input'),
-}).describe('Context information about the active runbook');
+export const RunbookContextSchema = z
+  .object({
+    /** Runbook filename (relative path) */
+    file: z.string().describe('Path to the runbook file'),
+    /** State file path */
+    state: z.string().describe('Current runbook state or status'),
+    /** Whether runbook is in prompted mode (waiting for user input) */
+    prompted: z.boolean().optional().describe('Whether the runbook is awaiting user input'),
+  })
+  .describe('Context information about the active runbook');
 
 /**
  * Actionable error details.
@@ -263,42 +269,53 @@ export const StatusResponseSchema = z
 /**
  * Active runbook entry in ls output.
  */
-export const ActiveRunbookEntrySchema = z.object({
-  /** Unique runbook instance ID */
-  id: z.string().describe('Unique state file identifier'),
-  /** Runbook filename */
-  runbook: z.string().describe('Runbook filename'),
-  /** Current step display (e.g., "1/5", "Step") */
-  step: z.string().optional().describe('Current step number'),
-  /** Status of the runbook */
-  status: z.string().optional().describe('Runbook status (active, stashed, completed, stale, or orphaned)'),
-  /** Total number of steps */
-  total: z.number().optional().describe('Total number of steps'),
-  /** Runbook title from metadata */
-  title: z.string().optional().describe('Runbook title from metadata'),
-}).describe('Active runbook state entry');
+export const ActiveRunbookEntrySchema = z
+  .object({
+    /** Unique runbook instance ID */
+    id: z.string().describe('Unique state file identifier'),
+    /** Runbook filename */
+    runbook: z.string().describe('Runbook filename'),
+    /** Current step display (e.g., "1/5", "Step") */
+    step: z.string().optional().describe('Current step number'),
+    /** Status of the runbook */
+    status: z
+      .string()
+      .optional()
+      .describe('Runbook status (active, stashed, completed, stale, or orphaned)'),
+    /** Total number of steps */
+    total: z.number().optional().describe('Total number of steps'),
+    /** Runbook title from metadata */
+    title: z.string().optional().describe('Runbook title from metadata'),
+  })
+  .describe('Active runbook state entry');
 
 /**
  * Available runbook entry in ls --all output.
  */
-export const AvailableRunbookEntrySchema = z.object({
-  /** Runbook name from frontmatter */
-  name: z.string().describe('Runbook name from metadata or filename'),
-  /** Runbook description */
-  description: z.string().optional().describe('Runbook description from metadata'),
-  /** Path to runbook file */
-  path: z.string().describe('File path to the runbook'),
-}).describe('Available runbook file entry');
+export const AvailableRunbookEntrySchema = z
+  .object({
+    /** Runbook name from frontmatter */
+    name: z.string().describe('Runbook name from metadata or filename'),
+    /** Runbook description */
+    description: z.string().optional().describe('Runbook description from metadata'),
+    /** Path to runbook file */
+    path: z.string().describe('File path to the runbook'),
+  })
+  .describe('Available runbook file entry');
 
 /**
  * List of active runbooks.
  */
-export const ActiveRunbookListSchema = z.array(ActiveRunbookEntrySchema).describe('List of active runbook state entries');
+export const ActiveRunbookListSchema = z
+  .array(ActiveRunbookEntrySchema)
+  .describe('List of active runbook state entries');
 
 /**
  * List of available runbooks.
  */
-export const AvailableRunbooksListSchema = z.array(AvailableRunbookEntrySchema).describe('List of available runbook files');
+export const AvailableRunbooksListSchema = z
+  .array(AvailableRunbookEntrySchema)
+  .describe('List of available runbook files');
 
 // ============================================================================
 // Check Command Schemas
@@ -307,34 +324,40 @@ export const AvailableRunbooksListSchema = z.array(AvailableRunbookEntrySchema).
 /**
  * Syntax error from runbook validation (check command).
  */
-export const CheckValidationErrorSchema = z.object({
-  /** Human-readable error message */
-  message: z.string().describe('Error message'),
-  /** Line number where error occurred (if applicable) */
-  line: z.number().optional().describe('Line number where error occurred'),
-}).describe('Validation error entry');
+export const CheckValidationErrorSchema = z
+  .object({
+    /** Human-readable error message */
+    message: z.string().describe('Error message'),
+    /** Line number where error occurred (if applicable) */
+    line: z.number().optional().describe('Line number where error occurred'),
+  })
+  .describe('Validation error entry');
 
 /**
  * Runbook statistics from validation.
  */
-export const RunbookStatsSchema = z.object({
-  /** Total number of steps */
-  steps: z.number().describe('Total number of steps'),
-  /** Total number of substeps */
-  substeps: z.number().describe('Total number of substeps'),
-}).describe('Runbook statistics');
+export const RunbookStatsSchema = z
+  .object({
+    /** Total number of steps */
+    steps: z.number().describe('Total number of steps'),
+    /** Total number of substeps */
+    substeps: z.number().describe('Total number of substeps'),
+  })
+  .describe('Runbook statistics');
 
 /**
  * Check response schema.
  */
-export const CheckResponseSchema = z.object({
-  /** Whether the runbook is valid */
-  valid: z.boolean().describe('Whether the runbook is valid'),
-  /** List of validation errors (empty if valid) */
-  errors: z.array(CheckValidationErrorSchema).describe('List of validation errors'),
-  /** Runbook statistics (only present when valid) */
-  stats: RunbookStatsSchema.optional().describe('Runbook statistics'),
-}).describe('Response from the check command');
+export const CheckResponseSchema = z
+  .object({
+    /** Whether the runbook is valid */
+    valid: z.boolean().describe('Whether the runbook is valid'),
+    /** List of validation errors (empty if valid) */
+    errors: z.array(CheckValidationErrorSchema).describe('List of validation errors'),
+    /** Runbook statistics (only present when valid) */
+    stats: RunbookStatsSchema.optional().describe('Runbook statistics'),
+  })
+  .describe('Response from the check command');
 
 // ============================================================================
 // Scenario Command Schemas
@@ -343,16 +366,18 @@ export const CheckResponseSchema = z.object({
 /**
  * Scenario entry in scenario ls output.
  */
-export const ScenarioEntrySchema = z.object({
-  /** Scenario name */
-  name: z.string().describe('Scenario name'),
-  /** Expected result (e.g., "COMPLETE", "STOPPED") */
-  expected: z.string().describe('Expected scenario outcome'),
-  /** Scenario description */
-  description: z.string().optional().describe('Scenario description'),
-  /** Tags as comma-separated string */
-  tags: z.string().optional().describe('Comma-separated scenario tags'),
-}).describe('Scenario definition');
+export const ScenarioEntrySchema = z
+  .object({
+    /** Scenario name */
+    name: z.string().describe('Scenario name'),
+    /** Expected result (e.g., "COMPLETE", "STOPPED") */
+    expected: z.string().describe('Expected scenario outcome'),
+    /** Scenario description */
+    description: z.string().optional().describe('Scenario description'),
+    /** Tags as comma-separated string */
+    tags: z.string().optional().describe('Comma-separated scenario tags'),
+  })
+  .describe('Scenario definition');
 
 /**
  * Detailed scenario information from scenario show.
@@ -365,32 +390,38 @@ export const ScenarioDetailSchema = ScenarioEntrySchema.extend({
 /**
  * Scenario list.
  */
-export const ScenarioListSchema = z.array(ScenarioEntrySchema).describe('List of scenarios in a runbook');
+export const ScenarioListSchema = z
+  .array(ScenarioEntrySchema)
+  .describe('List of scenarios in a runbook');
 
 /**
  * Scenario run result.
  */
-export const ScenarioRunResponseSchema = z.object({
-  /** Whether the scenario passed */
-  result: z.boolean().describe('Whether the scenario passed'),
-  /** Scenario name */
-  scenario: z.string().describe('Scenario name'),
-  /** Expected outcome */
-  expected: z.string().describe('Expected outcome'),
-  /** Actual outcome */
-  actual: z.string().describe('Actual outcome'),
-  /** Detailed message */
-  message: z.string().optional().describe('Additional status message'),
-}).describe('Response from scenario run command');
+export const ScenarioRunResponseSchema = z
+  .object({
+    /** Whether the scenario passed */
+    result: z.boolean().describe('Whether the scenario passed'),
+    /** Scenario name */
+    scenario: z.string().describe('Scenario name'),
+    /** Expected outcome */
+    expected: z.string().describe('Expected outcome'),
+    /** Actual outcome */
+    actual: z.string().describe('Actual outcome'),
+    /** Detailed message */
+    message: z.string().optional().describe('Additional status message'),
+  })
+  .describe('Response from scenario run command');
 
 /**
  * Scenario error response.
  */
-export const ScenarioErrorResponseSchema = z.object({
-  error: z.literal(true).describe('Always true for error responses'),
-  message: z.string().describe('Error message'),
-  available: z.array(z.string()).optional().describe('Available scenarios'),
-}).describe('Scenario error response');
+export const ScenarioErrorResponseSchema = z
+  .object({
+    error: z.literal(true).describe('Always true for error responses'),
+    message: z.string().describe('Error message'),
+    available: z.array(z.string()).optional().describe('Available scenarios'),
+  })
+  .describe('Scenario error response');
 
 // ============================================================================
 // Echo Command Schema
@@ -399,16 +430,18 @@ export const ScenarioErrorResponseSchema = z.object({
 /**
  * Echo response schema.
  */
-export const EchoResponseSchema = z.object({
-  /** Whether the operation succeeded */
-  result: z.boolean().describe('Whether the echo command succeeded'),
-  /** The echoed output */
-  output: z.string().optional().describe('Echoed output text'),
-  /** Error message if failed */
-  error: z.string().optional().describe('Error message if command failed'),
-  /** Exit code */
-  exitCode: z.number().optional().describe('Exit code of the echo command'),
-}).describe('Response from the echo command');
+export const EchoResponseSchema = z
+  .object({
+    /** Whether the operation succeeded */
+    result: z.boolean().describe('Whether the echo command succeeded'),
+    /** The echoed output */
+    output: z.string().optional().describe('Echoed output text'),
+    /** Error message if failed */
+    error: z.string().optional().describe('Error message if command failed'),
+    /** Exit code */
+    exitCode: z.number().optional().describe('Exit code of the echo command'),
+  })
+  .describe('Response from the echo command');
 
 // ============================================================================
 // Prune Command Schema
@@ -420,7 +453,9 @@ export const EchoResponseSchema = z.object({
  * Uses the same format as `ls` command - an array of ActiveRunbookEntry objects
  * representing the runbook states that were (or would be) pruned.
  */
-export const PruneResponseSchema = ActiveRunbookListSchema.describe('List of runbook states that were/would be pruned');
+export const PruneResponseSchema = ActiveRunbookListSchema.describe(
+  'List of runbook states that were/would be pruned',
+);
 
 // ============================================================================
 // Stash/Pop Command Schemas
@@ -504,29 +539,31 @@ export const ExecutionSummarySchema = z
 /**
  * Step queued response schema (run --step output).
  */
-export const StepQueuedResponseSchema = z.object({
-  action: z.literal('step_queued').describe('Action type for step queue'),
-  stepId: z.string().describe('Step identifier that was queued'),
-  runbook: z.string().optional().describe('Runbook filename'),
-}).describe('Response when a step is queued for execution');
+export const StepQueuedResponseSchema = z
+  .object({
+    action: z.literal('step_queued').describe('Action type for step queue'),
+    stepId: z.string().describe('Step identifier that was queued'),
+    runbook: z.string().optional().describe('Runbook filename'),
+  })
+  .describe('Response when a step is queued for execution');
 
 /**
  * Agent bound response schema (run --agent output).
  */
-export const AgentBoundResponseSchema = z.object({
-  action: z.literal('agent_bound').describe('Action type for agent binding'),
-  agent: z.string().describe('Agent identifier that was bound'),
-  stepId: z.string().describe('Step identifier the agent is bound to'),
-}).describe('Response when an agent is bound to a step');
+export const AgentBoundResponseSchema = z
+  .object({
+    action: z.literal('agent_bound').describe('Action type for agent binding'),
+    agent: z.string().describe('Agent identifier that was bound'),
+    stepId: z.string().describe('Step identifier the agent is bound to'),
+  })
+  .describe('Response when an agent is bound to a step');
 
 /**
  * Combined run command response schema.
  */
-export const RunCommandResponseSchema = z.union([
-  ExecutionSummarySchema,
-  StepQueuedResponseSchema,
-  AgentBoundResponseSchema,
-]).describe('Response from the run command');
+export const RunCommandResponseSchema = z
+  .union([ExecutionSummarySchema, StepQueuedResponseSchema, AgentBoundResponseSchema])
+  .describe('Response from the run command');
 
 // ============================================================================
 // Derived TypeScript Types
@@ -619,7 +656,4 @@ export type CLIResponse =
   | EchoResponse;
 
 /** Union of list outputs */
-export type CLIListResponse =
-  | ListResponse
-  | ScenarioEntry[]
-  | PruneResponse;
+export type CLIListResponse = ListResponse | ScenarioEntry[] | PruneResponse;

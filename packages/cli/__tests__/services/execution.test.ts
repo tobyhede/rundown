@@ -105,14 +105,14 @@ describe('execution service', () => {
 
     it('returns Index and named variable from forStack', () => {
       const vars = buildStepVariables('1', '1', [
-        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'batch' }
+        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'batch' },
       ]);
       expect(vars).toMatchObject({ Step: '1.1', Index: '2', batch: '2' });
     });
 
     it('omits Index for implicit ForContext', () => {
       const vars = buildStepVariables('1', '1', [
-        { stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }
+        { stepId: '1', iteration: 1, start: 1, end: 1, implicit: true },
       ]);
       expect(vars).toEqual({ Step: '1.1' });
       expect(vars).not.toHaveProperty('Index');

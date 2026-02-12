@@ -1,5 +1,11 @@
 import { describe, it, expect } from '@jest/globals';
-import { TransitionsSchema, TransitionObjectSchema, StepIdSchema, ForClauseSchema, ActionSchema } from '../src/schemas.js';
+import {
+  TransitionsSchema,
+  TransitionObjectSchema,
+  StepIdSchema,
+  ForClauseSchema,
+  ActionSchema,
+} from '../src/schemas.js';
 
 describe('TransitionsSchema with kind', () => {
   it('should validate transitions with kind', () => {
@@ -169,11 +175,13 @@ describe('StepIdSchema with named steps', () => {
   });
 
   it('rejects NEXT with both qualifier AND substep', () => {
-    expect(StepIdSchema.safeParse({
-      step: 'NEXT',
-      qualifier: { step: 'Cleanup' },
-      substep: '1'
-    }).success).toBe(false);
+    expect(
+      StepIdSchema.safeParse({
+        step: 'NEXT',
+        qualifier: { step: 'Cleanup' },
+        substep: '1',
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects invalid identifier (starts with digit)', () => {
@@ -252,7 +260,9 @@ describe('ForClauseSchema', () => {
   });
 
   it('rejects template variable end', () => {
-    expect(ForClauseSchema.safeParse({ variable: 'item', start: 1, end: '{{MaxItems}}' }).success).toBe(false);
+    expect(
+      ForClauseSchema.safeParse({ variable: 'item', start: 1, end: '{{MaxItems}}' }).success,
+    ).toBe(false);
   });
 
   it('rejects template variable start', () => {
@@ -280,11 +290,15 @@ describe('ForClauseSchema', () => {
   });
 
   it('rejects invalid variable name (starts with digit)', () => {
-    expect(ForClauseSchema.safeParse({ variable: '1batch', start: 1, end: 10 }).success).toBe(false);
+    expect(ForClauseSchema.safeParse({ variable: '1batch', start: 1, end: 10 }).success).toBe(
+      false,
+    );
   });
 
   it('rejects invalid variable name (contains hyphen)', () => {
-    expect(ForClauseSchema.safeParse({ variable: 'my-var', start: 1, end: 10 }).success).toBe(false);
+    expect(ForClauseSchema.safeParse({ variable: 'my-var', start: 1, end: 10 }).success).toBe(
+      false,
+    );
   });
 
   it('rejects invalid template variable format', () => {
@@ -302,7 +316,6 @@ describe('ForClauseSchema', () => {
   it('allows start equal to end (single iteration)', () => {
     expect(ForClauseSchema.safeParse({ start: 5, end: 5 }).success).toBe(true);
   });
-
 });
 
 describe('ActionSchema with NEXT and BREAK', () => {
