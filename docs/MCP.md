@@ -152,7 +152,7 @@ The server delegates all operations to the CLI with `--json` flag for machine-re
 | `pass` | Mark step passed | - | `agent` |
 | `fail` | Mark step failed | - | `agent` |
 | `goto` | Jump to step | `step` | - |
-| `complete` | Force early completion | - | `message`, `agentId` |
+| `complete` | Force early completion | - | `message` |
 | `stop` | Stop runbook | - | `message` |
 
 > **Note:** The CLI `stash` and `pop` commands are not exposed via MCP. These commands manage local session state which is typically not needed in MCP agent workflows.
@@ -429,7 +429,6 @@ Force early completion of a runbook (runbooks auto-complete on final step).
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `message` | string | No | Completion message |
-| `agentId` | string | No | Agent ID for completing runbook in agent-specific stack |
 
 **Example:**
 ```json
@@ -449,7 +448,7 @@ Force early completion of a runbook (runbooks auto-complete on final step).
 }
 ```
 
-**CLI Equivalent:** `rundown complete [<message>] [--agent <agentId>] --json`
+**CLI Equivalent:** `rundown complete [<message>] --json`
 
 ---
 

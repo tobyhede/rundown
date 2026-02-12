@@ -128,14 +128,14 @@ A runbook defines substeps, each delegated to a typed subagent. The parent agent
 **Example:**
 ```markdown
 ## 2. Review changes
+- PASS ALL: CONTINUE
+- FAIL ANY: GOTO 4
+
 ### 2.1 Code review (code-review-agent)
 Review the implementation for correctness and style.
 
 ### 2.2 Test review (test-agent)
 Verify test coverage and assertions.
-
-- PASS ALL: CONTINUE
-- FAIL ANY: GOTO 4
 ```
 
 **Command sequence:**
@@ -164,7 +164,7 @@ Multiple independent agents are dispatched in parallel, their results collected 
 
 | Phase | Description |
 |-------|-------------|
-| **Dispatch** | Launch N agents with `Step(subagent_type="...")` |
+| **Dispatch** | Launch N agents with `Step(subagent_type="...")` (`Task` is accepted as an alias for `Step` for backward compatibility) |
 | **Execute** | Each agent works independently, writes findings to `.work/` |
 | **Collate** | Main agent reads all findings, categorises as Common (N/N agreement) vs Exclusive |
 | **Cross-check** | Optional: dispatch agent to validate exclusive findings |
@@ -289,11 +289,11 @@ When substeps involve agents, transition rules use aggregate conditions:
 
 ```markdown
 ## 2. Review
-### 2.1 First reviewer (code-review-agent)
-### 2.2 Second reviewer (code-agent)
-
 - PASS ALL: CONTINUE
 - FAIL ANY: GOTO 4
+
+### 2.1 First reviewer (code-review-agent)
+### 2.2 Second reviewer (code-agent)
 ```
 
 | Condition | Meaning |

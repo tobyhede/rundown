@@ -6,7 +6,7 @@
 
 | Type | Format | Detection |
 |------|--------|-----------|
-| **Error** | `{ "error": "msg", "code": "CODE" }` | `error` field exists |
+| **Error** | `{ "result": false, "error": "msg", "code": "CODE" }` | `error` field exists |
 | **Workflow** | `{ "result": bool, "action": "...", ... }` | `result` field exists |
 | **List** | `[...]` | `Array.isArray()` |
 
@@ -14,7 +14,7 @@
 
 - **Lists**: Raw arrays `[...]` (no wrapper object)
 - **Workflow commands**: Include `result` boolean (pass, fail, stop, complete, stash, pop)
-- **Errors**: `{ "error": "message", "code": "CODE" }` - no `result` field (redundant)
+- **Errors**: `{ "result": false, "error": "message", "code": "CODE" }` - include `result: false`
 - **Position**: `{ "current": string, "total": number|string }`
 - **Action field**: Shows transition (e.g., "CONTINUE", "GOTO 3", "RETRY"), not command name
 
@@ -67,9 +67,9 @@ def67890  stashed  2/5   onboarding.runbook.md      New Hire Setup
 
 **Text:**
 ```text
-NAME              DESCRIPTION                    TAGS
-deploy            Deploy to production           deploy, ci
-onboarding        New hire setup                 hr, setup
+NAME              SOURCE   DESCRIPTION                    TAGS
+deploy            project  Deploy to production           deploy, ci
+onboarding        plugin   New hire setup                 hr, setup
 ```
 
 **JSON:**
@@ -77,7 +77,7 @@ onboarding        New hire setup                 hr, setup
 [
   {
     "name": "deploy",
-    "source": "runbooks",
+    "source": "project",
     "description": "Deploy to production",
     "tags": ["deploy", "ci"],
     "path": ".claude/rundown/runbooks/deploy.runbook.md"
@@ -419,6 +419,7 @@ No stashed runbook to restore.
 **JSON:**
 ```json
 {
+  "result": false,
   "error": "No stashed runbook to restore",
   "code": "NO_STASHED_RUNBOOK"
 }
@@ -589,6 +590,7 @@ Available: success, failure
 **JSON:**
 ```json
 {
+  "result": false,
   "error": "Scenario \"unknown\" not found",
   "code": "SCENARIO_NOT_FOUND",
   "details": {
@@ -686,7 +688,7 @@ Hello world
 
 ## Error Output (all commands)
 
-Error responses use `error` and `code` fields. No `result` field (the presence of `error` indicates failure).
+Error responses include `result: false` along with `error` and `code` fields.
 
 ### No active runbook
 
@@ -698,6 +700,7 @@ No active runbook.
 **JSON:**
 ```json
 {
+  "result": false,
   "error": "No active runbook",
   "code": "NO_ACTIVE_RUNBOOK"
 }
@@ -713,6 +716,7 @@ Error: Runbook file not found: missing.runbook.md
 **JSON:**
 ```json
 {
+  "result": false,
   "error": "Runbook file not found: missing.runbook.md",
   "code": "RUNBOOK_NOT_FOUND"
 }
