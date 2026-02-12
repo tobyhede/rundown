@@ -51,9 +51,6 @@ RUN npm install -g \
     /tmp/tarballs/rundown-org-claude-code-plugin-*.tgz && \
     rm -rf /tmp/tarballs
 
-# Copy plugin source for structural verification
-COPY packages/claude-code-plugin/ /opt/rundown-plugin/
-
 USER testuser
 
 ENTRYPOINT ["docker-entrypoint.sh"]
