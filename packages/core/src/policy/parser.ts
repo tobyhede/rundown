@@ -220,7 +220,7 @@ export function extractAllExecutables(command: string, depth = 0): string[] {
  * @returns Array of executable names found inside backticks
  */
 export function extractBacktickCommands(command: string, depth = 0): string[] {
-  const backtickRegex = /`(.+)`/g;
+  const backtickRegex = /`(.+?)`/g;
   return extractRecursiveMatches(command, backtickRegex, depth);
 }
 
