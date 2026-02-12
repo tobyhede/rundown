@@ -66,7 +66,7 @@ if [[ "$OSTYPE" == darwin* ]]; then
   log "Attempting to extract Claude credentials from macOS Keychain..."
   CRED_JSON=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || true)
   if [ -n "$CRED_JSON" ]; then
-    echo "$CRED_JSON" > .claude-docker/credentials.json
+    printf '%s' "$CRED_JSON" > .claude-docker/credentials.json
     chmod 600 .claude-docker/credentials.json
     log "  Credentials extracted successfully."
   else
