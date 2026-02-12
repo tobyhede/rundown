@@ -47,11 +47,7 @@ fi
 hr
 log "Resolving plugin directory (mode=$MODE)..."
 
-if [ "$MODE" = "local" ]; then
-  PLUGIN_DIR="/opt/rundown-plugin"
-else
-  PLUGIN_DIR="$(npm root -g)/@rundown-org/claude-code-plugin"
-fi
+PLUGIN_DIR="$(npm root -g)/@rundown-org/claude-code-plugin"
 
 if [ -d "$PLUGIN_DIR" ]; then
   pass "Plugin directory exists: $PLUGIN_DIR"
