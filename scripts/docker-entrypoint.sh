@@ -129,25 +129,21 @@ else
   fail "Runbook execution"
 fi
 
-# ── 7. Claude Code integration (optional) ──────────────────────────────────
-
-hr
-if [ -f "$HOME/.claude/credentials.json" ]; then
-  log "Claude credentials detected — launching Claude Code with plugin..."
-  log "Plugin dir: $PLUGIN_DIR"
-  exec claude --plugin-dir "$PLUGIN_DIR"
-else
-  log "No Claude credentials found — skipping Claude Code integration test."
-  log "(Mount credentials to .claude-docker/ to enable this step)"
-fi
-
 # ── Summary ─────────────────────────────────────────────────────────────────
 
 hr
-if [ "$FAILURES" -eq 0 ]; then
-  log "ALL CHECKS PASSED"
-  exit 0
-else
+if [ "$FAILURES" -gt 0 ]; then
   log "FAILED: $FAILURES check(s) failed"
   exit 1
+fi
+
+log "ALL CHECKS PASSED"
+
+# ── 7. Claude Code integration (optional) ──────────────────────────────────
+
+if [ -f "$HOME/.claude/credentials.json" ]; then
+  hr
+  log "Claude credentials detected — launching Claude Code with plugin..."
+  log "Plugin dir: $PLUGIN_DIR"
+  exec claude --plugin-dir "$PLUGIN_DIR"
 fi
