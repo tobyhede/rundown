@@ -21,7 +21,9 @@
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "verify:claude": "./scripts/verify-install.sh local",
+    "verify:claude:npm": "./scripts/verify-install.sh npm"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,css}": "biome format --write --no-errors-on-unmatched"

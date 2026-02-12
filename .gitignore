@@ -9,3 +9,5 @@ coverage/
 .claude/settings.local.json
 .claude/rundown/runs/
 .claude/rundown/session.json
+.claude-docker/
+logs/
