@@ -22,7 +22,15 @@ FAILURES=0
 if [ "$MODE" = "npm" ]; then
   hr
   log "Installing from npm registry..."
+  set +e
   sudo npm install -g @rundown-org/cli @rundown-org/claude-code-plugin 2>&1 | tee -a "$LOG_FILE"
+  rc=${PIPESTATUS[0]}
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    fail "npm install exited with code $rc"
+  else
+    pass "npm install"
+  fi
 fi
 
 # ── 2. Verify CLI binaries ──────────────────────────────────────────────────
