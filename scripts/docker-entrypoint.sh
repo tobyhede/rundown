@@ -38,13 +38,21 @@ fi
 hr
 log "Verifying CLI binaries..."
 
-if rd --version 2>&1 | tee -a "$LOG_FILE"; then
+set +e
+rd --version 2>&1 | tee -a "$LOG_FILE"
+rc=${PIPESTATUS[0]}
+set -e
+if [ "$rc" -eq 0 ]; then
   pass "rd --version"
 else
   fail "rd --version"
 fi
 
-if rundown --version 2>&1 | tee -a "$LOG_FILE"; then
+set +e
+rundown --version 2>&1 | tee -a "$LOG_FILE"
+rc=${PIPESTATUS[0]}
+set -e
+if [ "$rc" -eq 0 ]; then
   pass "rundown --version"
 else
   fail "rundown --version"
@@ -127,7 +135,11 @@ pass "Test project created at $TEST_DIR"
 hr
 log "Executing verification runbook..."
 
-if rd run verify.runbook.md --non-interactive --allow-run rd 2>&1 | tee -a "$LOG_FILE"; then
+set +e
+rd run verify.runbook.md --non-interactive --allow-run rd 2>&1 | tee -a "$LOG_FILE"
+rc=${PIPESTATUS[0]}
+set -e
+if [ "$rc" -eq 0 ]; then
   pass "Runbook execution"
 else
   fail "Runbook execution"
