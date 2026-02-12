@@ -815,11 +815,11 @@ Main agent runs runbook, dispatches subagents for substeps.
 **Runbook structure:**
 ```markdown
 ## 2. Execute batch
-### 2.1 Process item
-  - task.runbook.md
-
 - PASS ALL: CONTINUE
 - FAIL ANY: GOTO 4
+
+### 2.1 Process item
+  - task.runbook.md
 ```
 
 **Command sequence:**
@@ -907,9 +907,9 @@ List commands (`rd ls`, `rd scenario ls`) use aligned tables following Linux CLI
 
 Example (`rd ls --all`):
 ```
-NAME           DESCRIPTION                    TAGS
-retry-success  Tests RETRY before exhaustion  retry, auto-exec
-simple         Basic two-step runbook
+NAME           SOURCE   DESCRIPTION                    TAGS
+retry-success  bundled  Tests RETRY before exhaustion  retry, auto-exec
+simple         project  Basic two-step runbook
 ```
 
 Example (`rd scenario ls`):

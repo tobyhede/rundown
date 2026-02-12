@@ -140,11 +140,17 @@ The `rd` command is an alias for `rundown`.
 | [@rundown-org/parser](packages/parser) | Markdown runbook parser |
 | [@rundown-org/core](packages/core) | Runbook state management and XState compilation |
 | [@rundown-org/cli](packages/cli) | Command-line interface |
+| [@rundown-org/mcp](packages/mcp) | MCP server for AI agent integration |
 | [@rundown-org/claude-code-plugin](packages/claude-code-plugin) | Claude Code plugin for runbook orchestration |
 
 ## Documentation
 
 - [SPEC.md](docs/SPEC.md) - Rundown format specification
+- [MCP.md](docs/MCP.md) - MCP server reference
+- [SECURITY.md](docs/SECURITY.md) - Security policy configuration
+- [RUNDOWN.md](docs/RUNDOWN.md) - Rundown internal architecture
+- [AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
+- [PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
 
 ## Contributing
 
