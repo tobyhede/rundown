@@ -63,12 +63,18 @@ fi
 hr
 log "Resolving plugin directory (mode=$MODE)..."
 
-PLUGIN_DIR="$(npm root -g)/@rundown-org/claude-code-plugin"
-
-if [ -d "$PLUGIN_DIR" ]; then
-  pass "Plugin directory exists: $PLUGIN_DIR"
+npm_root="$(npm root -g 2>/dev/null || true)"
+if [ -z "$npm_root" ]; then
+  fail "npm root -g lookup failed"
+  PLUGIN_DIR=""
 else
-  fail "Plugin directory not found: $PLUGIN_DIR"
+  PLUGIN_DIR="${npm_root}/@rundown-org/claude-code-plugin"
+
+  if [ -d "$PLUGIN_DIR" ]; then
+    pass "Plugin directory exists: $PLUGIN_DIR"
+  else
+    fail "Plugin directory not found: $PLUGIN_DIR"
+  fi
 fi
 
 # ── 4. Verify plugin structure ──────────────────────────────────────────────
@@ -76,33 +82,37 @@ fi
 hr
 log "Verifying plugin structure..."
 
-EXPECTED_FILES=(
-  ".claude-plugin/plugin.json"
-  "hooks.json"
-  "dist/cli.js"
-)
+if [ -n "$PLUGIN_DIR" ]; then
+  EXPECTED_FILES=(
+    ".claude-plugin/plugin.json"
+    "hooks.json"
+    "dist/cli.js"
+  )
 
-EXPECTED_DIRS=(
-  "commands"
-  "runbooks"
-  "skills"
-)
+  EXPECTED_DIRS=(
+    "commands"
+    "runbooks"
+    "skills"
+  )
 
-for f in "${EXPECTED_FILES[@]}"; do
-  if [ -f "$PLUGIN_DIR/$f" ]; then
-    pass "File: $f"
-  else
-    fail "Missing file: $f"
-  fi
-done
+  for f in "${EXPECTED_FILES[@]}"; do
+    if [ -f "$PLUGIN_DIR/$f" ]; then
+      pass "File: $f"
+    else
+      fail "Missing file: $f"
+    fi
+  done
 
-for d in "${EXPECTED_DIRS[@]}"; do
-  if [ -d "$PLUGIN_DIR/$d" ]; then
-    pass "Directory: $d"
-  else
-    fail "Missing directory: $d"
-  fi
-done
+  for d in "${EXPECTED_DIRS[@]}"; do
+    if [ -d "$PLUGIN_DIR/$d" ]; then
+      pass "Directory: $d"
+    else
+      fail "Missing directory: $d"
+    fi
+  done
+else
+  log "Skipping plugin structure checks (plugin directory unknown)"
+fi
 
 # ── 5. Create test project ─────────────────────────────────────────────────
 
@@ -112,7 +122,9 @@ log "Creating test project..."
 TEST_DIR="$HOME/test-project"
 mkdir -p "$TEST_DIR"
 cd "$TEST_DIR"
-git init --quiet
+git init --quiet --initial-branch=main
+git config user.name "rundown-verify"
+git config user.email "verify@rundown.local"
 
 cat > verify.runbook.md << 'RUNBOOK'
 ---
@@ -161,5 +173,5 @@ if [ -f "$HOME/.claude/credentials.json" ]; then
   hr
   log "Claude credentials detected — launching Claude Code with plugin..."
   log "Plugin dir: $PLUGIN_DIR"
-  exec claude --plugin-dir "$PLUGIN_DIR"
+  claude --plugin-dir "$PLUGIN_DIR" || true
 fi
