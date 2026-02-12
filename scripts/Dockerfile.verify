@@ -1,0 +1,72 @@
+# Dockerfile.verify — Multi-stage Docker verification for Rundown
+# Verifies CLI + plugin installation in a clean Linux container.
+#
+# Stages:
+#   base  — shared foundation (node, git, sudo, testuser, claude-code)
+#   local — install from packed tarballs (pre-publish verification)
+#   npm   — install from npm registry at runtime (post-publish verification)
+#
+# Build:
+#   docker build -f scripts/Dockerfile.verify --target local -t rundown-verify:local .
+#   docker build -f scripts/Dockerfile.verify --target npm   -t rundown-verify:npm .
+
+# ── Base stage ───────────────────────────────────────────────────────────────
+
+FROM node:22-slim AS base
+
+ARG SUDO_VERSION="1.9.13p3-1+deb12u1"
+ARG GIT_VERSION="1:2.39.5-0+deb12u2"
+ARG CA_CERTIFICATES_VERSION="20230311"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      sudo="${SUDO_VERSION}" \
+      git="${GIT_VERSION}" \
+      ca-certificates="${CA_CERTIFICATES_VERSION}" && \
+    rm -rf /var/lib/apt/lists/*
+
+# Claude Code blocks root — create non-root user
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Install Claude Code globally
+RUN npm install -g @anthropic-ai/claude-code@2
+
+# Copy entrypoint
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+USER testuser
+WORKDIR /home/testuser
+
+# ── Local stage (pre-publish) ────────────────────────────────────────────────
+
+FROM base AS local
+
+# Copy packed tarballs
+USER root
+COPY dist/rundown-org-parser-*.tgz /tmp/tarballs/
+COPY dist/rundown-org-core-*.tgz /tmp/tarballs/
+COPY dist/rundown-org-cli-*.tgz /tmp/tarballs/
+COPY dist/rundown-org-claude-code-plugin-*.tgz /tmp/tarballs/
+
+# Install packages globally from tarballs (dependencies declared in package.json)
+RUN npm install -g \
+    /tmp/tarballs/rundown-org-parser-*.tgz \
+    /tmp/tarballs/rundown-org-core-*.tgz \
+    /tmp/tarballs/rundown-org-cli-*.tgz \
+    /tmp/tarballs/rundown-org-claude-code-plugin-*.tgz && \
+    rm -rf /tmp/tarballs
+
+USER testuser
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["local"]
+
+# ── npm stage (post-publish) ─────────────────────────────────────────────────
+
+FROM base AS npm
+
+# npm packages are installed at runtime via entrypoint
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["npm"]

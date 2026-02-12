@@ -279,3 +279,4 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
 - [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
 - [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
+- [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
