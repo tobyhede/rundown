@@ -311,5 +311,22 @@ describe('execution service', () => {
       expect(vars.item).toBe('c');
       expect(vars.Index).toBe('3');
     });
+
+    it('clamps bootstrap array index when forClause.start exceeds array length', () => {
+      const sources: Readonly<Record<string, DataSource>> = {
+        items: { kind: 'array', items: ['a', 'b', 'c'] },
+      };
+      const forClause = {
+        start: 100,
+        end: 200,
+        variable: 'item',
+        source: 'items',
+      } as unknown as Step['forClause'];
+
+      const vars = buildStepVariables('1', '1', [], forClause, sources);
+      // Clamped to array length (3), matching compiler behavior
+      expect(vars.Index).toBe('3');
+      expect(vars.item).toBe('c');
+    });
   });
 });

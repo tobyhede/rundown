@@ -118,9 +118,10 @@ export function buildStepVariables(
     if (isSourced(forClause) && sources?.[forClause.source]) {
       const ds = sources[forClause.source];
       if (ds.kind === 'array') {
-        // Use forClause.start as Index (matches forStack.iteration semantics)
-        vars.Index = String(forClause.start);
-        vars[forClause.variable] = ds.items[forClause.start - 1] ?? '';
+        // Clamp start to match compiler behavior (compiler.ts buildForContext)
+        const clampedStart = Math.max(1, Math.min(forClause.start, ds.items.length));
+        vars.Index = String(clampedStart);
+        vars[forClause.variable] = ds.items[clampedStart - 1] ?? '';
       } else {
         // file sources: iteration starts at forClause.start, value resolved lazily by actor
         vars.Index = String(forClause.start);
