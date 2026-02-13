@@ -3607,7 +3607,7 @@ echo "processing"
       actor.stop();
     });
 
-    it.skip('rejects undefined source variable', () => {
+    it('rejects undefined source variable', () => {
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN {{ missing }}
@@ -3622,14 +3622,18 @@ echo "processing"
 `);
       // No sources entry for 'missing'
       const machine = compileRunbookToMachine(steps, { sources: {} });
-      let errorMessage = '';
-      try {
-        const actor = createActor(machine);
-        actor.start();
-      } catch (error) {
-        errorMessage = error instanceof Error ? error.message : String(error);
-      }
-      expect(errorMessage).toMatch(/Data source "missing" is not defined/);
+      const actor = createActor(machine);
+
+      // XState v5 surfaces entry action errors through the actor's error state
+      let capturedError: unknown;
+      actor.subscribe({
+        error: (err) => {
+          capturedError = err;
+        },
+      });
+      actor.start();
+      expect(capturedError).toBeDefined();
+      expect(String(capturedError)).toMatch(/Data source "missing" is not defined/);
     });
 
     it('handles empty array source (0 iterations)', () => {

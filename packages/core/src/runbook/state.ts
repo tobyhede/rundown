@@ -185,7 +185,7 @@ export class RunbookStateManager {
     const state = await this.load(id);
     if (!state) return null;
 
-    const machine = compileRunbookToMachine(steps);
+    const machine = compileRunbookToMachine(steps, { sources: state.sources });
 
     // Migrate old snapshot context: flat FOR fields → forStack
     // Snapshot migration deals with untyped persisted data — any is unavoidable

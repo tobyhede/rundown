@@ -330,11 +330,12 @@ function routeVariable(
   sources: Record<string, DataSource>,
   cwd: string,
 ): void {
-  // String with file: prefix → file source only
+  // String with file: prefix → file source only (not in vars)
   if (typeof value === 'string' && value.startsWith('file:')) {
     const rawPath = value.slice(5);
     const resolved = path.isAbsolute(rawPath) ? rawPath : path.join(cwd, rawPath);
     sources[key] = { kind: 'file', path: resolved, format: inferFileFormat(resolved) };
+    delete vars[key];
     return;
   }
 
@@ -357,12 +358,13 @@ function routeVariable(
     return;
   }
 
-  // Scalar → vars only
+  // Scalar → vars only (clear any stale source from lower-precedence layer)
   if (typeof value === 'object' && value !== null) {
     console.warn(`Warning: Ignoring variable "${key}" with complex value`);
     return;
   }
   vars[key] = String(value);
+  delete sources[key];
 }
 
 /**
