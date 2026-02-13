@@ -3907,7 +3907,7 @@ echo "processing"
       expect(MAX_FILE_ITERATIONS).toBe(10_000);
     });
 
-    it('bounds file source loops that have undefined end', () => {
+    it('stops file source loop when currentValue is undefined (no execution layer)', () => {
       const steps: Step[] = [
         {
           name: '1',
@@ -3943,11 +3943,67 @@ echo "processing"
       const ctx = actor.getSnapshot().context;
       expect(ctx.forStack.length).toBe(1);
       expect(ctx.forStack[0].end).toBeUndefined();
+      expect(ctx.forStack[0].currentValue).toBeUndefined();
 
+      // Without execution layer setting currentValue, loop exits on first PASS
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.forStack).toEqual([]);
 
       actor.stop();
+    });
+
+    it('file loop continues when currentValue IS set', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'File loop',
+          forClause: {
+            variable: 'line',
+            start: 1,
+            source: 'lines',
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Process {{line}}',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps, {
+        sources: {
+          lines: { kind: 'file', path: '/tmp/test.txt', format: 'text' },
+        },
+      });
+
+      // Start actor and inject currentValue via snapshot rehydration
+      const actor = createActor(machine);
+      actor.start();
+      const snap = actor.getSnapshot();
+      const ctx = snap.context;
+      actor.stop();
+
+      const persisted = {
+        ...snap,
+        context: { ...ctx, forStack: [{ ...ctx.forStack[0], currentValue: 'line-1' }] },
+      };
+
+      const actor2 = createActor(machine, { snapshot: persisted });
+      actor2.start();
+
+      // With currentValue set, loop-back guard passes and iteration advances
+      actor2.send({ type: 'PASS' });
+      expect(actor2.getSnapshot().context.forStack[0].iteration).toBe(2);
+
+      actor2.stop();
     });
 
     it('allows high-offset file loops to iterate (cap is on processed count)', () => {
@@ -3983,15 +4039,27 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      const ctx = actor.getSnapshot().context;
-      expect(ctx.forStack[0].start).toBe(20000);
-      expect(ctx.forStack[0].iteration).toBe(20000);
-
-      // Should still allow iteration since processed count is 0
-      actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(20001);
-
+      const snap = actor.getSnapshot();
+      expect(snap.context.forStack[0].start).toBe(20000);
+      expect(snap.context.forStack[0].iteration).toBe(20000);
       actor.stop();
+
+      // Inject currentValue to simulate execution layer — verifies cap is on processed count
+      const persisted = {
+        ...snap,
+        context: {
+          ...snap.context,
+          forStack: [{ ...snap.context.forStack[0], currentValue: 'line-data' }],
+        },
+      };
+      const actor2 = createActor(machine, { snapshot: persisted });
+      actor2.start();
+
+      // Should still allow iteration since processed count is 0 (not capped by absolute iteration)
+      actor2.send({ type: 'PASS' });
+      expect(actor2.getSnapshot().context.forStack[0].iteration).toBe(20001);
+
+      actor2.stop();
     });
   });
 

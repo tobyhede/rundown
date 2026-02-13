@@ -191,7 +191,13 @@ function nextIteration(fc: ForContext): number {
 
 /** Check whether the loop has more iterations remaining. */
 function hasMoreIterations(fc: ForContext): boolean {
-  if (fc.end === undefined) return fc.iteration - fc.start < MAX_FILE_ITERATIONS;
+  if (fc.end === undefined) {
+    // File sources: stop when execution layer hasn't provided a value
+    // (currentValue is set by the execution layer via FileProvider.next();
+    //  until that wiring exists, this prevents runaway empty iterations)
+    if (fc.source.kind === 'file' && fc.currentValue === undefined) return false;
+    return fc.iteration - fc.start < MAX_FILE_ITERATIONS;
+  }
   if (fc.end === 0) return false;
   return isDescending(fc) ? fc.iteration > fc.end : fc.iteration < fc.end;
 }
