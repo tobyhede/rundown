@@ -23,7 +23,9 @@ import {
   type ExecutionEventEmitter,
   type LastAction,
   type ForContext,
+  type DataSource,
 } from '@rundown-org/core';
+import { isSourced } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import {
   getPolicyEvaluator,
@@ -84,6 +86,7 @@ export function buildStepVariables(
   substepId: string | undefined,
   forStack?: readonly ForContext[],
   forClause?: Step['forClause'],
+  sources?: Readonly<Record<string, DataSource>>,
 ): StepVariables {
   const step = substepId ? `${stepId}.${substepId}` : stepId;
   const vars: StepVariables = { Step: step };
@@ -101,6 +104,7 @@ export function buildStepVariables(
             break;
           case 'array':
             // currentValue is set by the compiler during iteration advance
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             vars[top.variable] = top.currentValue ?? top.source.items[top.iteration - 1] ?? '';
             break;
           case 'file':
@@ -111,9 +115,23 @@ export function buildStepVariables(
     }
   } else if (forClause) {
     // Bootstrap: first iteration before actor has run
-    vars.Index = String(forClause.start);
-    if (forClause.variable) {
-      vars[forClause.variable] = String(forClause.start);
+    if (isSourced(forClause) && sources?.[forClause.source]) {
+      const ds = sources[forClause.source];
+      if (ds.kind === 'array') {
+        // Use forClause.start as Index (matches forStack.iteration semantics)
+        vars.Index = String(forClause.start);
+        vars[forClause.variable] = ds.items[forClause.start - 1] ?? '';
+      } else {
+        // file sources: iteration starts at forClause.start, value resolved lazily by actor
+        vars.Index = String(forClause.start);
+        vars[forClause.variable] = '';
+      }
+    } else {
+      // Numeric range (original behavior)
+      vars.Index = String(forClause.start);
+      if (forClause.variable) {
+        vars[forClause.variable] = String(forClause.start);
+      }
     }
   }
 
@@ -178,6 +196,7 @@ export async function runExecutionLoop(
       state.substep,
       state.forStack,
       currentStep.forClause,
+      state.sources,
     );
     const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
     const expandedPrompt = itemToRender.prompt

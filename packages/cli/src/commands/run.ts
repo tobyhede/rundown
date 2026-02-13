@@ -15,6 +15,7 @@ import {
   type RunbookState,
   type ExecutionEventEmitter,
 } from '@rundown-org/core';
+import { isSourced, type ForClause } from '@rundown-org/parser';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
@@ -41,6 +42,30 @@ function emitRunbookStarted(
     prompted,
     statePath: `.claude/rundown/runs/${runbookState.id}.json`,
   });
+}
+
+/**
+ * Validate that all sourced FOR clauses reference defined data sources.
+ *
+ * @param steps - Parsed runbook steps
+ * @param sources - Resolved data sources
+ * @throws Error if any step references an undefined source
+ */
+function validateSources(
+  steps: readonly { forClause?: ForClause }[],
+  sources: Readonly<Record<string, unknown>>,
+): void {
+  for (const step of steps) {
+    if (step.forClause && isSourced(step.forClause)) {
+      const name = step.forClause.source;
+      if (!sources[name]) {
+        throw new Error(
+          `FOR loop references undefined data source "{{${name}}}". ` +
+            `Define "${name}" in .rundown/config.yaml or pass --var-file with an array value.`,
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -155,6 +180,9 @@ export function registerRunCommand(program: Command): void {
 
             // Then substitute variables into parsed AST with context-aware escaping
             const runbook = substituteRunbookVariables(rawRunbook, mergedVariables);
+
+            // Validate sourced FOR clauses reference defined data sources
+            validateSources(runbook.steps, sources);
 
             if (runbook.steps.length === 0) {
               output.error('Runbook has no steps', 'VALIDATION_ERROR', {
@@ -271,6 +299,9 @@ export function registerRunCommand(program: Command): void {
                 path.basename(runbookPath),
               );
               const runbook = substituteRunbookVariables(rawRunbook, mergedVariables);
+
+              // Validate sourced FOR clauses reference defined data sources
+              validateSources(runbook.steps, childSources);
 
               if (runbook.steps.length === 0) {
                 output.error('Child runbook has no steps', 'VALIDATION_ERROR', {

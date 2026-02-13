@@ -30,7 +30,7 @@ describe('FileProvider', () => {
         results.push(item.value);
         item = await provider.next();
       }
-      await provider.close();
+      provider.close();
 
       expect(results).toEqual(['alpha', 'beta', 'gamma']);
     });
@@ -46,7 +46,7 @@ describe('FileProvider', () => {
         results.push(item.value);
         item = await provider.next();
       }
-      await provider.close();
+      provider.close();
 
       expect(results).toEqual(['host1', 'host2']);
     });
@@ -62,7 +62,7 @@ describe('FileProvider', () => {
         results.push(item.value);
         item = await provider.next();
       }
-      await provider.close();
+      provider.close();
 
       expect(results).toEqual(['a', 'b']);
     });
@@ -74,7 +74,7 @@ describe('FileProvider', () => {
       const provider = await createFileProvider(file, 'text');
       const item = await provider.next();
       expect(item.done).toBe(true);
-      await provider.close();
+      provider.close();
     });
   });
 
@@ -90,7 +90,7 @@ describe('FileProvider', () => {
         results.push(item.value);
         item = await provider.next();
       }
-      await provider.close();
+      provider.close();
 
       expect(results).toEqual(['{"host":"a"}', '{"host":"b"}']);
     });
@@ -105,7 +105,7 @@ describe('FileProvider', () => {
       const item = await provider.next();
       expect(item.done).toBe(false);
       expect(item.value).toBe('line3');
-      await provider.close();
+      provider.close();
     });
   });
 });

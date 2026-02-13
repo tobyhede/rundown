@@ -210,6 +210,7 @@ export class RunbookStateManager {
               start: ctx.forStart ?? 1,
               end: ctx.forEnd ?? ctx.forIteration,
               variable: ctx.forVariable,
+              source: { kind: 'range' as const },
             },
           ],
           forIteration: undefined,
@@ -351,7 +352,7 @@ export class RunbookStateManager {
     const stepName = match ? match[1] : steps[0].name;
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    let substep = snapshot.context.substep as string | undefined;
+    let substep = snapshot.context?.substep as string | undefined;
     if (!substep && match?.[2]) {
       substep = match[2];
     }

@@ -708,6 +708,7 @@ describe('RunbookStateManager', () => {
           start: 1,
           end: 3,
           variable: 'item',
+          source: { kind: 'range' },
         },
       ]);
       expect(context.forIteration).toBeUndefined();

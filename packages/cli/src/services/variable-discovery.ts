@@ -333,8 +333,14 @@ function routeVariable(
   // String with file: prefix → file source only (not in vars)
   if (typeof value === 'string' && value.startsWith('file:')) {
     const rawPath = value.slice(5);
-    const resolved = path.isAbsolute(rawPath) ? rawPath : path.join(cwd, rawPath);
+    const resolved = path.resolve(cwd, rawPath);
+    // Prevent path traversal outside the project directory
+    if (!resolved.startsWith(path.resolve(cwd))) {
+      console.warn(`Warning: Ignoring file source "${key}" — path escapes project directory`);
+      return;
+    }
     sources[key] = { kind: 'file', path: resolved, format: inferFileFormat(resolved) };
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- clearing stale cross-type entry
     delete vars[key];
     return;
   }
@@ -364,6 +370,7 @@ function routeVariable(
     return;
   }
   vars[key] = String(value);
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- clearing stale cross-type entry
   delete sources[key];
 }
 

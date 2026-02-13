@@ -16,7 +16,7 @@ const FINGERPRINT_BYTES = 64 * 1024;
  */
 export interface FileProvider {
   next(): Promise<{ value: string; done: boolean }>;
-  close(): Promise<void>;
+  close(): void;
 }
 
 /**
@@ -58,7 +58,7 @@ export async function createFileProvider(
 
   return {
     async next() {
-      while (true) {
+      for (;;) {
         const result = await iterator.next();
         if (result.done) return { value: '', done: true };
         const line = result.value.trim();
@@ -67,7 +67,7 @@ export async function createFileProvider(
         return { value: line, done: false };
       }
     },
-    async close() {
+    close() {
       rl.close();
       stream.destroy();
     },
@@ -108,7 +108,7 @@ export async function validateFileSnapshot(
 
   if (stat.size !== snapshot.size) {
     throw new Error(
-      `File drift detected: ${filePath} size changed (expected ${snapshot.size}, got ${stat.size})`,
+      `File drift detected: ${filePath} size changed (expected ${String(snapshot.size)}, got ${String(stat.size)})`,
     );
   }
 
