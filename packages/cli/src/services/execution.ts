@@ -103,9 +103,9 @@ export function buildStepVariables(
             vars[top.variable] = String(top.iteration);
             break;
           case 'array':
-            // currentValue is set by the compiler during iteration advance
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            vars[top.variable] = top.currentValue ?? top.source.items[top.iteration - 1] ?? '';
+            // currentValue is always set by the compiler during iteration advance.
+            // If it is missing for an array source, that is a compiler bug — surface it.
+            vars[top.variable] = top.currentValue ?? '';
             break;
           case 'file':
             vars[top.variable] = top.currentValue ?? '';

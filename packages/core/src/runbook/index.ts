@@ -2,7 +2,7 @@ export type * from './types.js';
 export * from './step-id.js';
 export * from './step-utils.js';
 export { RunbookStateManager } from './state.js';
-export { compileRunbookToMachine } from './compiler.js';
+export { compileRunbookToMachine, MAX_FILE_ITERATIONS } from './compiler.js';
 export {
   executeCommand,
   executeCommandWithPolicy,

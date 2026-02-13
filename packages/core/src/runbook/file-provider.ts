@@ -58,13 +58,19 @@ export async function createFileProvider(
 
   return {
     async next() {
-      for (;;) {
-        const result = await iterator.next();
-        if (result.done) return { value: '', done: true };
-        const line = result.value.trim();
-        // Skip empty lines for text format; jsonl keeps all non-empty
-        if (line.length === 0) continue;
-        return { value: line, done: false };
+      try {
+        for (;;) {
+          const result = await iterator.next();
+          if (result.done) return { value: '', done: true };
+          const line = result.value.trim();
+          // Skip empty lines for text format; jsonl keeps all non-empty
+          if (line.length === 0) continue;
+          return { value: line, done: false };
+        }
+      } catch (error) {
+        rl.close();
+        stream.destroy();
+        throw error;
       }
     },
     close() {

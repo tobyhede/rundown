@@ -166,7 +166,7 @@ export type ResolvedSource =
       readonly kind: 'file';
       readonly path: string;
       readonly format: FileFormat;
-      readonly snapshot: FileSnapshot;
+      readonly snapshot: FileSnapshot | null;
     };
 
 /**

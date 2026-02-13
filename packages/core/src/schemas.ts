@@ -157,12 +157,14 @@ const ResolvedSourceSchema = z.discriminatedUnion('kind', [
     kind: z.literal('file'),
     path: z.string(),
     format: z.enum(['text', 'jsonl']),
-    snapshot: z.object({
-      line: z.number().int().positive(),
-      size: z.number().nonnegative(),
-      mtimeMs: z.number().nonnegative(),
-      fingerprint: z.string().optional(),
-    }),
+    snapshot: z
+      .object({
+        line: z.number().int().positive(),
+        size: z.number().nonnegative(),
+        mtimeMs: z.number().nonnegative(),
+        fingerprint: z.string().optional(),
+      })
+      .nullable(),
   }),
 ]);
 

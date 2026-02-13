@@ -6,6 +6,15 @@ import { isSourced } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
 
 /**
+ * Safety limit for file-backed data sources with open iteration windows.
+ *
+ * When a FOR loop iterates over a file source without an explicit end bound,
+ * this constant prevents runaway iteration if the execution layer fails to
+ * signal completion.
+ */
+export const MAX_FILE_ITERATIONS = 10_000;
+
+/**
  * Context passed through the XState runbook state machine.
  *
  * Maintains runtime state that persists across transitions including
@@ -182,7 +191,7 @@ function nextIteration(fc: ForContext): number {
 
 /** Check whether the loop has more iterations remaining. */
 function hasMoreIterations(fc: ForContext): boolean {
-  if (fc.end === undefined) return true;
+  if (fc.end === undefined) return fc.iteration < MAX_FILE_ITERATIONS;
   if (fc.end === 0) return false;
   return isDescending(fc) ? fc.iteration > fc.end : fc.iteration < fc.end;
 }
@@ -254,7 +263,7 @@ function createForContext(
     switch (ds.kind) {
       case 'array': {
         source = { kind: 'array', items: ds.items };
-        start = Math.max(1, Math.min(forClause.start, ds.items.length + 1));
+        start = Math.max(1, Math.min(forClause.start, ds.items.length));
         const requestedEnd = forClause.end ?? ds.items.length;
         end = ds.items.length === 0 ? 0 : Math.max(1, Math.min(requestedEnd, ds.items.length));
         break;
@@ -268,7 +277,7 @@ function createForContext(
           kind: 'file',
           path: ds.path,
           format: ds.format,
-          snapshot: { line: 1, size: 0, mtimeMs: 0 },
+          snapshot: null,
         };
         start = forClause.start;
         end = forClause.end; // undefined for open windows
@@ -282,7 +291,7 @@ function createForContext(
   }
 
   const iteration = resolveAtValue(atValue, start);
-  const currentValue = source.kind === 'array' ? source.items[iteration - 1] : undefined;
+  const currentValue = source.kind === 'array' ? (source.items[iteration - 1] ?? '') : undefined;
   return {
     stepId: stepName,
     iteration,

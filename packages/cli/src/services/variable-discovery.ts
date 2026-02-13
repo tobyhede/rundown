@@ -198,15 +198,16 @@ export function extractVarsFromMarkdown(markdown: string): Record<string, string
 }
 
 /**
- * Discover variables from .rundown/config.yaml in the project.
+ * Find the .rundown/config.yaml file by walking upward from cwd.
  *
- * Searches upward from cwd for a .rundown directory containing config.yaml.
- * Stops at git root or filesystem root to prevent loading from unrelated directories.
+ * Searches upward from the given directory for a .rundown directory
+ * containing config.yaml. Stops at git root or filesystem root to
+ * prevent loading from unrelated parent directories.
  *
  * @param cwd - Starting directory for search
- * @returns Discovered variables, or empty object if not found
+ * @returns Absolute path to the config file, or null if not found
  */
-export async function discoverVariables(cwd: string): Promise<Record<string, string>> {
+export async function findConfigFile(cwd: string): Promise<string | null> {
   let dir = cwd;
   let parent = path.dirname(dir);
 
@@ -216,7 +217,7 @@ export async function discoverVariables(cwd: string): Promise<Record<string, str
 
     try {
       await fs.access(configPath);
-      return await loadVariablesFromFile(configPath);
+      return configPath;
     } catch {
       // File doesn't exist, continue searching
     }
@@ -226,7 +227,7 @@ export async function discoverVariables(cwd: string): Promise<Record<string, str
     try {
       await fs.access(gitPath);
       // Found git root, stop searching
-      return {};
+      return null;
     } catch {
       // Not git root, continue
     }
@@ -239,63 +240,27 @@ export async function discoverVariables(cwd: string): Promise<Record<string, str
   const configPath = path.join(dir, '.rundown', 'config.yaml');
   try {
     await fs.access(configPath);
-    return await loadVariablesFromFile(configPath);
+    return configPath;
   } catch {
-    return {};
+    return null;
   }
 }
 
 /**
- * Collect all variables from CLI options and auto-discovery.
+ * Discover variables from .rundown/config.yaml in the project.
  *
- * Precedence (highest to lowest):
- * 1. --var flags
- * 2. --var-file contents
- * 3. Auto-discovered .rundown/config.yaml
- * 4. Frontmatter vars
- * 5. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath)
+ * Searches upward from cwd for a .rundown directory containing config.yaml.
+ * Stops at git root or filesystem root to prevent loading from unrelated directories.
  *
- * @param options - CLI options containing varFile, var flags, and frontmatterVars
- * @param cwd - Current working directory
- * @returns Merged variables with proper precedence
+ * @param cwd - Starting directory for search
+ * @returns Discovered variables, or empty object if not found
  */
-export async function collectVariables(
-  options: { varFile?: string; var?: string[]; frontmatterVars?: Record<string, string> },
-  cwd: string,
-): Promise<Record<string, string>> {
-  // 1. Get built-in defaults (lowest precedence)
-  const builtins = getBuiltinVariables();
-
-  // 2. Frontmatter vars (second lowest)
-  const frontmatter = options.frontmatterVars ?? {};
-
-  // 3. Auto-discover from .rundown/config.yaml
-  const discovered = await discoverVariables(cwd);
-
-  // 4. Load from --var-file if provided
-  let fromFile: Record<string, string> = {};
-  if (options.varFile) {
-    const varFilePath = path.isAbsolute(options.varFile)
-      ? options.varFile
-      : path.join(cwd, options.varFile);
-    fromFile = await loadVariablesFromFile(varFilePath);
+export async function discoverVariables(cwd: string): Promise<Record<string, string>> {
+  const configPath = await findConfigFile(cwd);
+  if (configPath) {
+    return await loadVariablesFromFile(configPath);
   }
-
-  // 5. Parse --var flags (highest precedence)
-  const fromFlags: Record<string, string> = {};
-  if (options.var) {
-    for (const flag of options.var) {
-      const parsed = parseVarFlag(flag);
-      if (parsed) {
-        fromFlags[parsed.key] = parsed.value;
-      } else {
-        console.warn(`Warning: Ignoring invalid --var flag: ${flag}`);
-      }
-    }
-  }
-
-  // 6. Merge with precedence: builtins < frontmatter < discovered < fromFile < fromFlags
-  return mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
+  return {};
 }
 
 /**
@@ -384,42 +349,11 @@ function routeVariable(
  * @returns Discovered variables with raw types preserved, or empty object if not found
  */
 async function discoverRawVariables(cwd: string): Promise<Record<string, unknown>> {
-  let dir = cwd;
-  let parent = path.dirname(dir);
-
-  // Continue while we haven't reached filesystem root
-  while (parent !== dir) {
-    const configPath = path.join(dir, '.rundown', 'config.yaml');
-
-    try {
-      await fs.access(configPath);
-      return await loadVariablesFromFile(configPath, { normalize: false });
-    } catch {
-      // File doesn't exist, continue searching
-    }
-
-    // Check if we've reached git root
-    const gitPath = path.join(dir, '.git');
-    try {
-      await fs.access(gitPath);
-      // Found git root, stop searching
-      return {};
-    } catch {
-      // Not git root, continue
-    }
-
-    dir = parent;
-    parent = path.dirname(dir);
-  }
-
-  // Check the filesystem root as well
-  const configPath = path.join(dir, '.rundown', 'config.yaml');
-  try {
-    await fs.access(configPath);
+  const configPath = await findConfigFile(cwd);
+  if (configPath) {
     return await loadVariablesFromFile(configPath, { normalize: false });
-  } catch {
-    return {};
   }
+  return {};
 }
 
 /**

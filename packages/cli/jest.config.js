@@ -35,6 +35,7 @@ export default {
           forceConsistentCasingInFileNames: true,
           resolveJsonModule: true,
           isolatedModules: true,
+          importsNotUsedAsValues: 'remove',
         },
       },
     ],
