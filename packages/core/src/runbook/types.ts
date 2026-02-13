@@ -127,6 +127,48 @@ export interface StepState {
   readonly completedAt?: string;
 }
 
+/** File format for file-backed data sources */
+export type FileFormat = 'text' | 'jsonl';
+
+/** Data source binding passed from CLI/discovery into compiler/runtime */
+export type DataSource =
+  | { readonly kind: 'array'; readonly items: readonly string[] }
+  | { readonly kind: 'file'; readonly path: string; readonly format: FileFormat };
+
+/**
+ * Snapshot of file position and metadata for resumable iteration.
+ *
+ * Line is the unit of iteration, so line is the unit of resume.
+ */
+export interface FileSnapshot {
+  /** Next line to read (1-based) */
+  readonly line: number;
+  /** File size in bytes at snapshot time (drift detection) */
+  readonly size: number;
+  /** File modification time in ms at snapshot time (drift detection) */
+  readonly mtimeMs: number;
+  /** Optional SHA-256 fingerprint of first 64 KiB of file content for stronger drift detection */
+  readonly fingerprint?: string;
+}
+
+/**
+ * Resolved source for FOR loop iteration.
+ *
+ * Each variant determines how values are resolved at runtime:
+ * - `range`: value = String(position) — computed, stateless
+ * - `array`: value = items[position - 1] — direct index, items in memory
+ * - `file`: value from FileProvider — streamed, never materialized
+ */
+export type ResolvedSource =
+  | { readonly kind: 'range' }
+  | { readonly kind: 'array'; readonly items: readonly string[] }
+  | {
+      readonly kind: 'file';
+      readonly path: string;
+      readonly format: FileFormat;
+      readonly snapshot: FileSnapshot;
+    };
+
 /**
  * State for a single FOR loop level on the execution stack.
  */
@@ -137,12 +179,16 @@ export interface ForContext {
   readonly iteration: number;
   /** Start of the iteration range */
   readonly start: number;
-  /** End of the iteration range (inclusive) */
-  readonly end: number;
+  /** End of the iteration range (inclusive). Undefined only for open-window file sources. */
+  readonly end?: number;
   /** Named loop variable (e.g., "batch") */
   readonly variable?: string;
   /** True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence. */
   readonly implicit: boolean;
+  /** Resolved data source — always present. Determines value resolution strategy. */
+  readonly source: ResolvedSource;
+  /** Value at current position (set after first iteration for array/file sources) */
+  readonly currentValue?: string;
 }
 
 /**
@@ -196,4 +242,7 @@ export interface RunbookState {
 
   /** Template variables used for AST-level substitution, frozen at run time */
   readonly templateVars?: Readonly<Record<string, string>>;
+
+  /** Data source bindings for FOR loop iteration (arrays and file references) */
+  readonly sources?: Readonly<Record<string, DataSource>>;
 }

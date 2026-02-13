@@ -544,21 +544,45 @@ describe('RunbookStateManager', () => {
       // Update with forStack
       const updated = await manager.update(state.id, {
         forStack: [
-          { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 3,
+            variable: 'item',
+            implicit: false,
+            source: { kind: 'range' as const },
+          },
         ],
         iterationResults: ['pass', 'pass'],
       });
 
       // Verify forStack is set
       expect(updated.forStack).toEqual([
-        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'item',
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
       ]);
       expect(updated.iterationResults).toEqual(['pass', 'pass']);
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
       expect(loaded?.forStack).toEqual([
-        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'item',
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
       ]);
       expect(loaded?.iterationResults).toEqual(['pass', 'pass']);
     });
@@ -572,7 +596,16 @@ describe('RunbookStateManager', () => {
           context: {
             variables: { test: 'value' },
             retryCount: 0,
-            forStack: [{ stepId: '1', iteration: 1, start: 1, end: 3, variable: 'item' }],
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 1,
+                start: 1,
+                end: 3,
+                variable: 'item',
+                source: { kind: 'range' as const },
+              },
+            ],
             iterationResults: ['pass'],
             lastAction: { type: 'START' },
           },
@@ -582,7 +615,14 @@ describe('RunbookStateManager', () => {
       const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
 
       expect(updated.forStack).toEqual([
-        { stepId: '1', iteration: 1, start: 1, end: 3, variable: 'item' },
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          variable: 'item',
+          source: { kind: 'range' as const },
+        },
       ]);
       expect(updated.iterationResults).toEqual(['pass']);
       expect(updated.lastAction).toEqual({ type: 'START' });
@@ -594,7 +634,15 @@ describe('RunbookStateManager', () => {
       // First, set forStack
       await manager.update(state.id, {
         forStack: [
-          { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 3,
+            variable: 'item',
+            implicit: false,
+            source: { kind: 'range' as const },
+          },
         ],
         iterationResults: ['pass', 'pass'],
       });
@@ -676,7 +724,16 @@ describe('RunbookStateManager', () => {
         getPersistedSnapshot: () => ({
           value: 'step::1::1',
           context: {
-            forStack: [{ stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }],
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 1,
+                start: 1,
+                end: 1,
+                implicit: true,
+                source: { kind: 'range' as const },
+              },
+            ],
             iterationResults: [],
             retryCount: 0,
             variables: {},
@@ -695,7 +752,16 @@ describe('RunbookStateManager', () => {
         getPersistedSnapshot: () => ({
           value: 'step::1::1',
           context: {
-            forStack: [{ stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }],
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 1,
+                start: 1,
+                end: 1,
+                implicit: true,
+                source: { kind: 'range' as const },
+              },
+            ],
             iterationResults: ['pass'],
             retryCount: 0,
             variables: {},
@@ -714,7 +780,16 @@ describe('RunbookStateManager', () => {
         getPersistedSnapshot: () => ({
           value: 'step::1::1',
           context: {
-            forStack: [{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'batch' }],
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 2,
+                start: 1,
+                end: 3,
+                variable: 'batch',
+                source: { kind: 'range' as const },
+              },
+            ],
             iterationResults: ['pass'],
             retryCount: 0,
             variables: {},
