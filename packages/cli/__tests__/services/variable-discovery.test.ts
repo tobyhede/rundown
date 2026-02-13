@@ -860,5 +860,19 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ var: ['data=file:../escape.txt'] }, nested);
       expect(result.sources.data).toBeUndefined();
     });
+
+    it('accepts directory whose name starts with double-dot', async () => {
+      const dotDir = path.join(tmpDir, '..cache');
+      await fs.mkdir(dotDir, { recursive: true });
+      const file = path.join(dotDir, 'data.txt');
+      await fs.writeFile(file, 'ok\n');
+
+      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      expect(result.sources.data).toEqual({
+        kind: 'file',
+        path: file,
+        format: 'text',
+      });
+    });
   });
 });
