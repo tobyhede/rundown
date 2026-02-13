@@ -43,14 +43,18 @@ const FOR_CLAUSE_LINE = /^\s*-\s+FOR\s.+$/gm;
  *
  * @param markdown - Raw markdown containing potential FOR clause lines
  * @param variables - Template variables for substitution
+ * @param sourceKeys - Optional set of source variable names to preserve unexpanded
  * @returns Markdown with FOR clause lines expanded
  */
 export function expandForClauseVariables(
   markdown: string,
   variables: Record<string, string>,
+  sourceKeys?: ReadonlySet<string>,
 ): string {
   return markdown.replace(FOR_CLAUSE_LINE, (line) => {
     return line.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
+      // Don't expand source references — they're consumed by the parser as data source identifiers
+      if (sourceKeys?.has(name)) return match;
       return Object.hasOwn(variables, name) ? variables[name] : match;
     });
   });

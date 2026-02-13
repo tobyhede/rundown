@@ -6,7 +6,7 @@ import {
   getStepRetryMax,
   buildStepVariables,
 } from '../../src/services/execution.js';
-import type { Step } from '@rundown-org/core';
+import type { Step, ForContext } from '@rundown-org/core';
 
 describe('execution service', () => {
   describe('isRunbookComplete', () => {
@@ -105,7 +105,15 @@ describe('execution service', () => {
 
     it('returns Index and named variable from forStack', () => {
       const vars = buildStepVariables('1', '1', [
-        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'batch' },
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'batch',
+          implicit: false,
+          source: { kind: 'range' },
+        },
       ]);
       expect(vars).toMatchObject({ Step: '1.1', Index: '2', batch: '2' });
     });
@@ -121,6 +129,68 @@ describe('execution service', () => {
     it('falls back to forClause when forStack empty', () => {
       const vars = buildStepVariables('1', '1', [], { start: 1, end: 3 });
       expect(vars).toMatchObject({ Step: '1.1', Index: '1' });
+    });
+  });
+
+  describe('buildStepVariables with data sources', () => {
+    it('resolves array source value from currentValue', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'server',
+          implicit: false,
+          source: { kind: 'array', items: ['alpha', 'beta', 'gamma'] },
+          currentValue: 'beta',
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.server).toBe('beta');
+      expect(vars.Index).toBe('2');
+    });
+
+    it('resolves range source value as iteration number (unchanged behavior)', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 3,
+          start: 1,
+          end: 5,
+          variable: 'i',
+          implicit: false,
+          source: { kind: 'range' },
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.i).toBe('3');
+      expect(vars.Index).toBe('3');
+    });
+
+    it('resolves file source value from currentValue', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          variable: 'host',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/hosts.txt',
+            format: 'text' as const,
+            snapshot: { line: 1, size: 10, mtimeMs: 100 },
+          },
+          currentValue: 'web-server-01',
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.host).toBe('web-server-01');
+      expect(vars.Index).toBe('1');
     });
   });
 });

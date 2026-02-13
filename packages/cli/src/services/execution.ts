@@ -93,8 +93,20 @@ export function buildStepVariables(
     const top = forStack[forStack.length - 1];
     if (!top.implicit) {
       vars.Index = String(top.iteration);
+
       if (top.variable) {
-        vars[top.variable] = String(top.iteration);
+        switch (top.source.kind) {
+          case 'range':
+            vars[top.variable] = String(top.iteration);
+            break;
+          case 'array':
+            // currentValue is set by the compiler during iteration advance
+            vars[top.variable] = top.currentValue ?? top.source.items[top.iteration - 1] ?? '';
+            break;
+          case 'file':
+            vars[top.variable] = top.currentValue ?? '';
+            break;
+        }
       }
     }
   } else if (forClause) {

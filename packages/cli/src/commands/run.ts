@@ -21,7 +21,11 @@ import { runExecutionLoop } from '../services/execution.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import { collect } from './echo.js';
-import { collectVariables, extractVarsFromMarkdown } from '../services/variable-discovery.js';
+import {
+  collectVariables,
+  extractVarsFromMarkdown,
+  resolveVariables,
+} from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
   expandForClauseVariables,
@@ -138,13 +142,17 @@ export function registerRunCommand(program: Command): void {
             // Load raw markdown and collect variables
             const rawContent = await fs.readFile(filePath, 'utf8');
             const frontmatterVars = extractVarsFromMarkdown(rawContent);
-            const mergedVariables = await collectVariables(
+            const { vars: mergedVariables, sources } = await resolveVariables(
               { varFile: options.varFile, var: options.var, frontmatterVars },
               cwd,
             );
 
             // Pre-expand FOR clause bounds (parser needs numeric values)
-            const forExpandedContent = expandForClauseVariables(rawContent, mergedVariables);
+            const forExpandedContent = expandForClauseVariables(
+              rawContent,
+              mergedVariables,
+              new Set(Object.keys(sources)),
+            );
 
             // Parse markdown ({{variables}} in non-FOR contexts are literal text in mdast)
             const rawRunbook = parseRunbookDocument(forExpandedContent, path.basename(filePath));
@@ -167,6 +175,7 @@ export function registerRunCommand(program: Command): void {
               agentId: options.agent,
               runbookSrc: rawContent, // Store raw markdown (not expanded)
               templateVars: mergedVariables, // Store variables for resume re-application
+              sources,
             });
 
             await manager.pushRunbook(state.id, options.agent);
@@ -250,13 +259,17 @@ export function registerRunCommand(program: Command): void {
               // Load raw child markdown and collect variables
               const rawContent = await fs.readFile(runbookPath, 'utf8');
               const frontmatterVars = extractVarsFromMarkdown(rawContent);
-              const mergedVariables = await collectVariables(
+              const { vars: mergedVariables, sources: childSources } = await resolveVariables(
                 { varFile: options.varFile, var: options.var, frontmatterVars },
                 cwd,
               );
 
               // Pre-expand FOR clause bounds, then parse and substitute into AST
-              const forExpandedContent = expandForClauseVariables(rawContent, mergedVariables);
+              const forExpandedContent = expandForClauseVariables(
+                rawContent,
+                mergedVariables,
+                new Set(Object.keys(childSources)),
+              );
               const rawRunbook = parseRunbookDocument(
                 forExpandedContent,
                 path.basename(runbookPath),
@@ -284,6 +297,7 @@ export function registerRunCommand(program: Command): void {
                 prompted: parentPrompted,
                 runbookSrc: rawContent, // Store raw markdown
                 templateVars: mergedVariables, // Store variables for resume
+                sources: childSources,
               });
 
               await manager.updateAgentBinding(state.id, options.agent, {
