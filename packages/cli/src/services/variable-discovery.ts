@@ -145,6 +145,14 @@ export function mergeVariables(
  */
 export async function loadVariablesFromFile(
   filePath: string,
+  options: { normalize: false },
+): Promise<Record<string, unknown>>;
+export async function loadVariablesFromFile(
+  filePath: string,
+  options?: { normalize?: true },
+): Promise<Record<string, string>>;
+export async function loadVariablesFromFile(
+  filePath: string,
   options?: { normalize?: boolean },
 ): Promise<Record<string, unknown>> {
   try {
