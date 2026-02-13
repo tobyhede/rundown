@@ -822,4 +822,43 @@ describe('resolveVariables', () => {
       expect(result.sources.log).toBeUndefined();
     });
   });
+
+  describe('file source sandbox check', () => {
+    it('rejects sibling directory path (prefix bypass)', async () => {
+      // cwd=/repo should reject /repo2/data.txt
+      const cwd = path.join(tmpDir, 'repo');
+      await fs.mkdir(cwd, { recursive: true });
+
+      const siblingDir = path.join(tmpDir, 'repo2');
+      await fs.mkdir(siblingDir, { recursive: true });
+      const siblingFile = path.join(siblingDir, 'data.txt');
+      await fs.writeFile(siblingFile, 'evil\n');
+
+      const result = await resolveVariables({ var: [`data=file:${siblingFile}`] }, cwd);
+      // File source should be rejected — not in sources
+      expect(result.sources.data).toBeUndefined();
+    });
+
+    it('accepts file within subdirectory', async () => {
+      const sub = path.join(tmpDir, 'sub');
+      await fs.mkdir(sub, { recursive: true });
+      const file = path.join(sub, 'data.txt');
+      await fs.writeFile(file, 'ok\n');
+
+      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      expect(result.sources.data).toEqual({
+        kind: 'file',
+        path: file,
+        format: 'text',
+      });
+    });
+
+    it('rejects path traversal via ../', async () => {
+      const nested = path.join(tmpDir, 'project');
+      await fs.mkdir(nested, { recursive: true });
+
+      const result = await resolveVariables({ var: ['data=file:../escape.txt'] }, nested);
+      expect(result.sources.data).toBeUndefined();
+    });
+  });
 });

@@ -300,7 +300,8 @@ function routeVariable(
     const rawPath = value.slice(5);
     const resolved = path.resolve(cwd, rawPath);
     // Prevent path traversal outside the project directory
-    if (!resolved.startsWith(path.resolve(cwd))) {
+    const rel = path.relative(path.resolve(cwd), resolved);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
       console.warn(`Warning: Ignoring file source "${key}" — path escapes project directory`);
       return;
     }
