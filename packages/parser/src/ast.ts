@@ -11,19 +11,44 @@ export interface Command {
 }
 
 /**
- * FOR loop clause defining iteration range for a step.
+ * Numeric-range FOR window — values are computed positions.
  *
- * Parsed from `- FOR variable IN start TO end` bullet syntax.
- * When attached to a step, its substeps execute once per iteration.
+ * `FOR x IN 1 TO 10` or `FOR 5` — no data source reference.
  */
-export interface ForClause {
+export interface NumericWindow {
   /** Named loop variable (e.g., "batch"), undefined if unnamed */
   readonly variable?: string;
   /** Start of iteration range (positive integer) */
   readonly start: number;
-  /** End of iteration range (positive integer) */
+  /** End of iteration range (positive integer, always present for numeric) */
   readonly end: number;
+  /** Explicitly absent — discriminant for TypeScript narrowing */
+  readonly source?: never;
 }
+
+/**
+ * Data-source FOR window — values come from a named source.
+ *
+ * `FOR server IN {{ servers }}` or `FOR item IN 1 TO 10 OF {{ items }}`.
+ */
+export interface SourceWindow {
+  /** Named loop variable (required — data sources must name the binding) */
+  readonly variable: string;
+  /** Start of iteration range (positive integer, defaults to 1) */
+  readonly start: number;
+  /** End of iteration range (undefined = open, iterate all items) */
+  readonly end?: number;
+  /** Key in the sources map */
+  readonly source: string;
+}
+
+/**
+ * A FOR clause defines a window over a source.
+ *
+ * The window (start/end) selects positions. The source provides values.
+ * Discriminated by the `source` field: absent = numeric range, present = data source.
+ */
+export type ForClause = NumericWindow | SourceWindow;
 
 /**
  * A substep within a step (H3 header)

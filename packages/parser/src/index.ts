@@ -42,4 +42,11 @@ export type {
   RunbookFrontmatter,
   RunbookFrontmatterType,
 } from './frontmatter.js';
-export { hasPrompt, hasCommand, hasSubsteps, hasRunbooks, hasForClause } from './guards.js';
+export {
+  hasPrompt,
+  hasCommand,
+  hasSubsteps,
+  hasRunbooks,
+  hasForClause,
+  isSourced,
+} from './guards.js';
