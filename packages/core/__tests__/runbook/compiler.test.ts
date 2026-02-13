@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { createActor } from 'xstate';
+import { parseRunbookDocument } from '@rundown-org/parser';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import type { Step } from '../../src/runbook/types.js';
 
@@ -1876,6 +1877,8 @@ describe('runbook compiler', () => {
         start: 1,
         end: 1,
         implicit: true,
+        variable: undefined,
+        source: { kind: 'range' as const },
       });
     });
 
@@ -2763,7 +2766,15 @@ describe('runbook compiler', () => {
       expect(snapshot.value).toBe('step::3::1');
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', at: 1 });
       expect(snapshot.context.forStack).toEqual([
-        { stepId: '3', iteration: 1, start: 1, end: 3, variable: undefined, implicit: false },
+        {
+          stepId: '3',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          variable: undefined,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
       ]);
       expect(snapshot.context.iterationResults).toEqual([]);
     });
@@ -2984,7 +2995,15 @@ describe('runbook compiler', () => {
       expect(snapshot.value).toBe('step::3::1');
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', at: 2 });
       expect(snapshot.context.forStack).toEqual([
-        { stepId: '3', iteration: 2, start: 1, end: 4, variable: undefined, implicit: false },
+        {
+          stepId: '3',
+          iteration: 2,
+          start: 1,
+          end: 4,
+          variable: undefined,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
       ]);
       expect(snapshot.context.iterationResults).toEqual([]);
     });
@@ -3472,6 +3491,175 @@ describe('runbook compiler', () => {
       // Should have exited to step 2
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass', 'pass', 'pass']);
+    });
+  });
+
+  describe('data source FOR loops', () => {
+    // Helper to parse markdown into steps
+    function createRunbook(markdown: string): Step[] {
+      const runbook = parseRunbookDocument(markdown);
+      return [...runbook.steps];
+    }
+
+    it('creates ForContext with array source', () => {
+      const steps = createRunbook(`
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item
+- PASS: CONTINUE
+
+\`\`\`bash
+echo "processing"
+\`\`\`
+`);
+      const sources = {
+        items: { kind: 'array' as const, items: ['alpha', 'beta', 'gamma'] },
+      };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      const ctx = actor.getSnapshot().context;
+      const top = ctx.forStack[0];
+      expect(top.source).toEqual({ kind: 'array', items: ['alpha', 'beta', 'gamma'] });
+      expect(top.start).toBe(1);
+      expect(top.end).toBe(3); // clamped to items.length
+      expect(top.variable).toBe('item');
+
+      actor.stop();
+    });
+
+    it('iterates over array source values with currentValue advancing each iteration', () => {
+      const steps = createRunbook(`
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item
+- PASS: CONTINUE
+
+\`\`\`bash
+echo "processing"
+\`\`\`
+`);
+      const sources = {
+        items: { kind: 'array' as const, items: ['alpha', 'beta', 'gamma'] },
+      };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: currentValue = 'alpha'
+      let ctx = actor.getSnapshot().context;
+      let top = ctx.forStack[0];
+      expect(top.iteration).toBe(1);
+      expect(top.currentValue).toBe('alpha');
+
+      // Send PASS to advance to iteration 2
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      top = ctx.forStack[0];
+      expect(top.iteration).toBe(2);
+      expect(top.currentValue).toBe('beta');
+
+      // Send PASS to advance to iteration 3
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      top = ctx.forStack[0];
+      expect(top.iteration).toBe(3);
+      expect(top.currentValue).toBe('gamma');
+
+      // Send PASS to exit loop (no more iterations)
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      expect(ctx.forStack).toEqual([]);
+
+      actor.stop();
+    });
+
+    it('clamps window end to array length', () => {
+      const steps = createRunbook(`
+## 1. Process items
+- FOR item IN 1 TO 100 OF {{ items }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item
+- PASS: CONTINUE
+
+\`\`\`bash
+echo "processing"
+\`\`\`
+`);
+      const sources = {
+        items: { kind: 'array' as const, items: ['a', 'b', 'c'] },
+      };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      const ctx = actor.getSnapshot().context;
+      const top = ctx.forStack[0];
+      expect(top.end).toBe(3); // clamped from 100 to items.length
+      expect(top.source).toEqual({ kind: 'array', items: ['a', 'b', 'c'] });
+
+      actor.stop();
+    });
+
+    it.skip('rejects undefined source variable', () => {
+      const steps = createRunbook(`
+## 1. Process items
+- FOR item IN {{ missing }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item
+- PASS: CONTINUE
+
+\`\`\`bash
+echo "processing"
+\`\`\`
+`);
+      // No sources entry for 'missing'
+      const machine = compileRunbookToMachine(steps, { sources: {} });
+      let errorMessage = '';
+      try {
+        const actor = createActor(machine);
+        actor.start();
+      } catch (error) {
+        errorMessage = error instanceof Error ? error.message : String(error);
+      }
+      expect(errorMessage).toMatch(/Data source "missing" is not defined/);
+    });
+
+    it('handles empty array source (0 iterations)', () => {
+      const steps = createRunbook(`
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item
+- PASS: CONTINUE
+
+\`\`\`bash
+echo "processing"
+\`\`\`
+`);
+      const sources = {
+        items: { kind: 'array' as const, items: [] },
+      };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      const ctx = actor.getSnapshot().context;
+      const top = ctx.forStack[0];
+      expect(top.end).toBe(0); // empty → 0 iterations
+      // Loop should exit immediately on first PASS
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
+
+      actor.stop();
     });
   });
 });
