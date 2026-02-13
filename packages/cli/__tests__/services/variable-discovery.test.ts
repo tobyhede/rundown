@@ -7,6 +7,7 @@ import {
   collectVariables,
   extractVarsFromMarkdown,
   getBuiltinVariables,
+  resolveVariables,
 } from '../../src/services/variable-discovery.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -822,6 +823,140 @@ vars:
 
     expect(result).toEqual({
       key: 'value',
+    });
+  });
+});
+
+describe('resolveVariables', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resolve-var-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('scalar routing', () => {
+    it('routes --var scalar to vars only', async () => {
+      const result = await resolveVariables({ var: ['env=staging'] }, tmpDir);
+      expect(result.vars.env).toBe('staging');
+      expect(result.sources.env).toBeUndefined();
+    });
+  });
+
+  describe('file: prefix routing', () => {
+    it('routes --var file: to sources as file DataSource', async () => {
+      const file = path.join(tmpDir, 'servers.txt');
+      await fs.writeFile(file, 'host1\nhost2\n');
+
+      const result = await resolveVariables({ var: [`servers=file:${file}`] }, tmpDir);
+      expect(result.vars.servers).toBeUndefined();
+      expect(result.sources.servers).toEqual({
+        kind: 'file',
+        path: file,
+        format: 'text',
+      });
+    });
+
+    it('infers jsonl format from .jsonl extension', async () => {
+      const file = path.join(tmpDir, 'data.jsonl');
+      await fs.writeFile(file, '{"a":1}\n');
+
+      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      expect(result.sources.data).toEqual({
+        kind: 'file',
+        path: file,
+        format: 'jsonl',
+      });
+    });
+
+    it('resolves relative file: paths against cwd', async () => {
+      const file = path.join(tmpDir, 'hosts.txt');
+      await fs.writeFile(file, 'h1\n');
+
+      const result = await resolveVariables({ var: ['hosts=file:hosts.txt'] }, tmpDir);
+      expect(result.sources.hosts).toEqual({
+        kind: 'file',
+        path: file,
+        format: 'text',
+      });
+    });
+  });
+
+  describe('YAML array routing', () => {
+    it('routes YAML array to both vars (comma-joined) and sources (array)', async () => {
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'servers:\n  - alpha\n  - beta\n  - gamma\n');
+
+      const result = await resolveVariables({ varFile }, tmpDir);
+      expect(result.vars.servers).toBe('alpha, beta, gamma');
+      expect(result.sources.servers).toEqual({
+        kind: 'array',
+        items: ['alpha', 'beta', 'gamma'],
+      });
+    });
+  });
+
+  describe('YAML multiline string routing', () => {
+    it('routes YAML multiline string to both vars and sources', async () => {
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'log: |\n  line1\n  line2\n  line3\n');
+
+      const result = await resolveVariables({ varFile }, tmpDir);
+      expect(result.vars.log).toBe('line1\nline2\nline3');
+      expect(result.sources.log).toEqual({
+        kind: 'array',
+        items: ['line1', 'line2', 'line3'],
+      });
+    });
+  });
+
+  describe('YAML file: prefix routing', () => {
+    it('routes YAML file: value to sources only', async () => {
+      const dataFile = path.join(tmpDir, 'data.txt');
+      await fs.writeFile(dataFile, 'x\n');
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, `items: "file:${dataFile}"\n`);
+
+      const result = await resolveVariables({ varFile }, tmpDir);
+      expect(result.vars.items).toBeUndefined();
+      expect(result.sources.items).toEqual({
+        kind: 'file',
+        path: dataFile,
+        format: 'text',
+      });
+    });
+  });
+
+  describe('frontmatter routing', () => {
+    it('routes frontmatter array to both maps', async () => {
+      const result = await resolveVariables(
+        { frontmatterVars: { servers: ['a', 'b'] } as unknown as Record<string, string> },
+        tmpDir,
+      );
+      // This tests that resolveVariables handles raw (pre-normalization) frontmatter
+      expect(result.sources.servers).toEqual({ kind: 'array', items: ['a', 'b'] });
+    });
+  });
+
+  describe('precedence', () => {
+    it('flag sources override var-file sources', async () => {
+      const fileA = path.join(tmpDir, 'a.txt');
+      const fileB = path.join(tmpDir, 'b.txt');
+      await fs.writeFile(fileA, 'from-a\n');
+      await fs.writeFile(fileB, 'from-b\n');
+
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, `items: "file:${fileA}"\n`);
+
+      const result = await resolveVariables({ varFile, var: [`items=file:${fileB}`] }, tmpDir);
+      expect(result.sources.items).toEqual({
+        kind: 'file',
+        path: fileB,
+        format: 'text',
+      });
     });
   });
 });
