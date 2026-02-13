@@ -3949,6 +3949,50 @@ echo "processing"
 
       actor.stop();
     });
+
+    it('allows high-offset file loops to iterate (cap is on processed count)', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'File loop from offset',
+          forClause: {
+            variable: 'line',
+            start: 20000,
+            source: 'lines',
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Process {{line}}',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps, {
+        sources: {
+          lines: { kind: 'file', path: '/tmp/test.txt', format: 'text' },
+        },
+      });
+
+      const actor = createActor(machine);
+      actor.start();
+
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack[0].start).toBe(20000);
+      expect(ctx.forStack[0].iteration).toBe(20000);
+
+      // Should still allow iteration since processed count is 0
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(20001);
+
+      actor.stop();
+    });
   });
 
   describe('file source snapshot initialisation', () => {

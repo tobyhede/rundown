@@ -191,7 +191,7 @@ function nextIteration(fc: ForContext): number {
 
 /** Check whether the loop has more iterations remaining. */
 function hasMoreIterations(fc: ForContext): boolean {
-  if (fc.end === undefined) return fc.iteration < MAX_FILE_ITERATIONS;
+  if (fc.end === undefined) return fc.iteration - fc.start < MAX_FILE_ITERATIONS;
   if (fc.end === 0) return false;
   return isDescending(fc) ? fc.iteration > fc.end : fc.iteration < fc.end;
 }
