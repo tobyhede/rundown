@@ -21,11 +21,7 @@ import { runExecutionLoop } from '../services/execution.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import { collect } from './echo.js';
-import {
-  collectVariables,
-  extractVarsFromMarkdown,
-  resolveVariables,
-} from '../services/variable-discovery.js';
+import { extractVarsFromMarkdown, resolveVariables } from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
   expandForClauseVariables,
