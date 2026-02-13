@@ -888,4 +888,168 @@ describe('RunbookStateManager', () => {
       }
     });
   });
+
+  describe('sources persistence', () => {
+    it('persists sources through create/load round-trip', async () => {
+      const sources = {
+        items: {
+          kind: 'array' as const,
+          items: ['a', 'b'],
+        },
+      };
+
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        sources,
+      });
+
+      // Verify sources are present in created state
+      expect(state.sources).toEqual(sources);
+
+      // Load from disk and verify persistence
+      const loaded = await manager.load(state.id);
+      expect(loaded?.sources).toEqual(sources);
+    });
+
+    it('persists forStack with array source through actor update and reload', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::1',
+          context: {
+            variables: {},
+            retryCount: 0,
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 2,
+                start: 1,
+                end: 3,
+                variable: 'item',
+                source: { kind: 'array' as const, items: ['x', 'y', 'z'] },
+                currentValue: 'y',
+              },
+            ],
+            iterationResults: ['pass'],
+            lastAction: { type: 'CONTINUE' },
+          },
+        }),
+      };
+
+      const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
+
+      // Verify forStack with array source is set
+      expect(updated.forStack).toHaveLength(1);
+      expect(updated.forStack?.[0].source).toEqual({
+        kind: 'array',
+        items: ['x', 'y', 'z'],
+      });
+      expect(updated.forStack?.[0].currentValue).toBe('y');
+
+      // Load from disk and verify persistence
+      const loaded = await manager.load(state.id);
+      expect(loaded?.forStack).toHaveLength(1);
+      expect(loaded?.forStack?.[0].source).toEqual({
+        kind: 'array',
+        items: ['x', 'y', 'z'],
+      });
+      expect(loaded?.forStack?.[0].currentValue).toBe('y');
+    });
+
+    it('persists forStack with file source through actor update and reload', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::1',
+          context: {
+            variables: {},
+            retryCount: 0,
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 1,
+                start: 1,
+                end: 2,
+                variable: 'line',
+                source: {
+                  kind: 'file' as const,
+                  path: '/tmp/data.txt',
+                  format: 'text' as const,
+                  snapshot: null,
+                },
+                currentValue: 'line1',
+              },
+            ],
+            iterationResults: ['pass'],
+            lastAction: { type: 'CONTINUE' },
+          },
+        }),
+      };
+
+      const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
+
+      // Verify forStack with file source is set
+      expect(updated.forStack).toHaveLength(1);
+      expect(updated.forStack![0].source.kind).toBe('file');
+      expect(updated.forStack?.[0].source).toEqual({
+        kind: 'file',
+        path: '/tmp/data.txt',
+        format: 'text',
+        snapshot: null,
+      });
+
+      // Load from disk and verify persistence
+      const loaded = await manager.load(state.id);
+      expect(loaded?.forStack).toHaveLength(1);
+      expect(loaded?.forStack![0].source.kind).toBe('file');
+      expect(loaded?.forStack?.[0].source).toEqual({
+        kind: 'file',
+        path: '/tmp/data.txt',
+        format: 'text',
+        snapshot: null,
+      });
+    });
+
+    it('sources survive across multiple updates', async () => {
+      const sources = {
+        items: {
+          kind: 'array' as const,
+          items: ['a', 'b', 'c'],
+        },
+      };
+
+      // Create with sources
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        sources,
+      });
+
+      expect(state.sources).toEqual(sources);
+
+      // Update step
+      const updated1 = await manager.update(state.id, { step: '1' });
+      expect(updated1.sources).toEqual(sources);
+
+      // updateFromActor
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::1',
+          context: {
+            variables: {},
+            retryCount: 0,
+            lastAction: { type: 'CONTINUE' },
+          },
+        }),
+      };
+
+      const updated2 = await manager.updateFromActor(state.id, actor as any, mockSteps);
+      expect(updated2.sources).toEqual(sources);
+
+      // Load from disk and verify sources still present
+      const loaded = await manager.load(state.id);
+      expect(loaded?.sources).toEqual(sources);
+    });
+  });
 });

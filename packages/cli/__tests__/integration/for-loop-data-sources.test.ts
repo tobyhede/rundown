@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import { createTestWorkspace, runCli } from '../helpers/test-utils.js';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
 describe('FOR loop data source integration', () => {
-  let workspace: TestWorkspace;
+  let workspace;
 
   beforeEach(async () => {
     workspace = await createTestWorkspace();
@@ -55,12 +55,8 @@ rd echo server={{ server }}
       .filter((line) => line.startsWith('{'))
       .map((line) => JSON.parse(line));
 
-    const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered',
-    );
-    const commandStartedEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'command_started',
-    );
+    const stepEnteredEvents = events.filter((e) => e.type === 'step_entered');
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
     // Should have exactly 3 iterations
     expect(stepEnteredEvents).toHaveLength(3);
@@ -124,9 +120,7 @@ rd echo item={{ item }} index={{ Index }}
       .filter((line) => line.startsWith('{'))
       .map((line) => JSON.parse(line));
 
-    const commandStartedEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'command_started',
-    );
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
     // Should have exactly 3 iterations (positions 2, 3, 4)
     expect(commandStartedEvents).toHaveLength(3);
@@ -186,12 +180,8 @@ rd echo done
       .filter((line) => line.startsWith('{'))
       .map((line) => JSON.parse(line));
 
-    const stepEnteredEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'step_entered',
-    );
-    const commandStartedEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'command_started',
-    );
+    const stepEnteredEvents = events.filter((e) => e.type === 'step_entered');
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
     // Empty array: first iteration enters with empty value, then loop exits
     // The substep is entered once (bootstrap) before the actor evaluates the condition
@@ -244,9 +234,7 @@ rd echo item={{ item }}
       .filter((line) => line.startsWith('{'))
       .map((line) => JSON.parse(line));
 
-    const commandStartedEvents = events.filter(
-      (e: Record<string, unknown>) => e.type === 'command_started',
-    );
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
     // Should have exactly 3 iterations, not 100
     expect(commandStartedEvents).toHaveLength(3);
@@ -287,16 +275,209 @@ rd echo item={{ item }}
     expect(output).toMatch(/missing|undefined|not defined/i);
   });
 
-  // File source iteration requires FileProvider runtime wiring (not yet implemented).
-  // The FileProvider infrastructure exists but the execution loop doesn't read file
-  // lines into currentValue during iteration. This test is kept as a placeholder.
-  it.todo('routes file:path.txt to sources correctly');
+  it.todo('iterates over file source variable');
 
-  // Dot-path resolution (e.g., deployment.regions) is not yet supported in
-  // variable routing. Nested YAML objects are logged as "complex value" warnings.
-  it.todo('handles nested arrays (array within object)');
+  it('handles multiline string iteration from var-file', async () => {
+    // Create var-file with multiline string
+    await writeFile(
+      join(workspace.cwd, 'vars.yaml'),
+      `log: |
+  alpha
+  beta
+  gamma
+`,
+    );
 
-  // CLI --var flag parses values as plain strings. Array syntax like [a,b,c]
-  // requires explicit parsing which is not yet implemented.
-  it.todo('expands array from CLI --var flag');
+    // Create runbook that iterates over multiline string
+    await writeFile(
+      join(workspace.cwd, 'iterate.runbook.md'),
+      `---
+name: Multiline Iteration
+---
+# Iterate
+
+## 1. Process lines
+- FOR line IN {{ log }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle line
+- PASS: CONTINUE
+
+\`\`\`bash
+rd echo line={{ line }}
+\`\`\`
+`,
+    );
+
+    const result = runCli('run --json iterate.runbook.md --var-file vars.yaml', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
+
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    // Should have exactly 3 iterations
+    expect(commandStartedEvents).toHaveLength(3);
+
+    // Verify each iteration has correct line value
+    expect(commandStartedEvents[0].command).toContain('line=alpha');
+    expect(commandStartedEvents[1].command).toContain('line=beta');
+    expect(commandStartedEvents[2].command).toContain('line=gamma');
+  });
+
+  it('handles shell special chars in array source values', async () => {
+    // Create config with array containing special characters
+    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await writeFile(
+      join(workspace.cwd, '.rundown', 'config.yaml'),
+      `items:
+  - hello world
+  - safe-value
+  - another-safe
+`,
+    );
+
+    // Create runbook that echoes items
+    await writeFile(
+      join(workspace.cwd, 'special.runbook.md'),
+      `---
+name: Special Chars
+---
+# Special
+
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item
+- PASS: CONTINUE
+
+\`\`\`bash
+rd echo item={{ item }}
+\`\`\`
+`,
+    );
+
+    const result = runCli('run --json special.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
+
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    // Should have exactly 3 iterations
+    expect(commandStartedEvents).toHaveLength(3);
+
+    // Verify each iteration has correct item value (properly escaped for shell)
+    expect(commandStartedEvents[0].command).toContain('hello world');
+    expect(commandStartedEvents[1].command).toContain('safe-value');
+    expect(commandStartedEvents[2].command).toContain('another-safe');
+  });
+
+  it('combines array source with template variables in commands', async () => {
+    // Create config with servers array
+    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await writeFile(
+      join(workspace.cwd, '.rundown', 'config.yaml'),
+      `servers:
+  - s1
+  - s2
+`,
+    );
+
+    // Create runbook that uses both loop and CLI variable in command
+    await writeFile(
+      join(workspace.cwd, 'combined.runbook.md'),
+      `---
+name: Combined Variables
+---
+# Combined
+
+## 1. Process servers
+- FOR server IN {{ servers }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle server
+- PASS: CONTINUE
+
+\`\`\`bash
+rd echo env={{ env }} server={{ server }}
+\`\`\`
+`,
+    );
+
+    const result = runCli('run --json combined.runbook.md --var env=staging', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
+
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    // Should have exactly 2 iterations
+    expect(commandStartedEvents).toHaveLength(2);
+
+    // Verify both env and server variables are resolved
+    expect(commandStartedEvents[0].command).toContain('env=staging');
+    expect(commandStartedEvents[0].command).toContain('server=s1');
+
+    expect(commandStartedEvents[1].command).toContain('env=staging');
+    expect(commandStartedEvents[1].command).toContain('server=s2');
+  });
+
+  it('large array source (50 elements)', async () => {
+    // Create config with 50-element array
+    const items = Array.from({ length: 50 }, (_, i) => `item${String(i + 1)}`);
+    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await writeFile(
+      join(workspace.cwd, '.rundown', 'config.yaml'),
+      `items:\n${items.map((item) => `  - ${item}`).join('\n')}\n`,
+    );
+
+    // Create runbook that iterates
+    await writeFile(
+      join(workspace.cwd, 'large.runbook.md'),
+      `---
+name: Large Array
+---
+# Large
+
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item
+- PASS: CONTINUE
+
+\`\`\`bash
+rd echo item={{ item }}
+\`\`\`
+`,
+    );
+
+    const result = runCli('run --json large.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
+
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    // Should have exactly 50 iterations
+    expect(commandStartedEvents).toHaveLength(50);
+
+    // Verify first and last iterations
+    expect(commandStartedEvents[0].command).toContain('item=item1');
+    expect(commandStartedEvents[49].command).toContain('item=item50');
+  });
 });

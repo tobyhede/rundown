@@ -76,6 +76,40 @@ describe('FileProvider', () => {
       expect(item.done).toBe(true);
       provider.close();
     });
+
+    it('handles CRLF line endings', async () => {
+      const file = path.join(tmpDir, 'crlf.txt');
+      await fs.writeFile(file, 'host1\r\nhost2\r\n');
+
+      const provider = await createFileProvider(file, 'text');
+      const results: string[] = [];
+      let item = await provider.next();
+      while (!item.done) {
+        results.push(item.value);
+        item = await provider.next();
+      }
+      provider.close();
+
+      expect(results).toEqual(['host1', 'host2']);
+    });
+
+    it('handles very long lines without truncation', async () => {
+      const file = path.join(tmpDir, 'longline.txt');
+      const longLine = 'a'.repeat(100000);
+      await fs.writeFile(file, longLine + '\n');
+
+      const provider = await createFileProvider(file, 'text');
+      const results: string[] = [];
+      let item = await provider.next();
+      while (!item.done) {
+        results.push(item.value);
+        item = await provider.next();
+      }
+      provider.close();
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toHaveLength(100000);
+    });
   });
 
   describe('jsonl format', () => {
@@ -94,6 +128,22 @@ describe('FileProvider', () => {
 
       expect(results).toEqual(['{"host":"a"}', '{"host":"b"}']);
     });
+
+    it('skips empty lines in jsonl format', async () => {
+      const file = path.join(tmpDir, 'data.jsonl');
+      await fs.writeFile(file, '{"a":1}\n\n{"b":2}\n');
+
+      const provider = await createFileProvider(file, 'jsonl');
+      const results: string[] = [];
+      let item = await provider.next();
+      while (!item.done) {
+        results.push(item.value);
+        item = await provider.next();
+      }
+      provider.close();
+
+      expect(results).toEqual(['{"a":1}', '{"b":2}']);
+    });
   });
 
   describe('resume with skip', () => {
@@ -106,6 +156,59 @@ describe('FileProvider', () => {
       expect(item.done).toBe(false);
       expect(item.value).toBe('line3');
       provider.close();
+    });
+
+    it('skip accounts for empty lines in text format', async () => {
+      const file = path.join(tmpDir, 'data.txt');
+      await fs.writeFile(file, 'first\nsecond\nthird\n');
+
+      const provider = await createFileProvider(file, 'text', { skipLines: 1 });
+      const item = await provider.next();
+      expect(item.done).toBe(false);
+      expect(item.value).toBe('second');
+      provider.close();
+    });
+  });
+
+  describe('error-path resource cleanup', () => {
+    it('close is safe to call after error in next()', async () => {
+      const file = path.join(tmpDir, 'data.txt');
+      await fs.writeFile(file, 'line1\nline2\n');
+
+      const provider = await createFileProvider(file, 'text');
+      const first = await provider.next();
+      expect(first.value).toBe('line1');
+
+      expect(() => {
+        provider.close();
+      }).not.toThrow();
+    });
+
+    it('close is safe to call multiple times', async () => {
+      const file = path.join(tmpDir, 'data.txt');
+      await fs.writeFile(file, 'line1\n');
+
+      const provider = await createFileProvider(file, 'text');
+      provider.close();
+      expect(() => {
+        provider.close();
+      }).not.toThrow();
+    });
+  });
+
+  describe('close lifecycle', () => {
+    it('close during iteration does not throw', async () => {
+      const file = path.join(tmpDir, 'data.txt');
+      await fs.writeFile(file, 'line1\nline2\nline3\n');
+
+      const provider = await createFileProvider(file, 'text');
+      const first = await provider.next();
+      expect(first.done).toBe(false);
+      expect(first.value).toBe('line1');
+
+      expect(() => {
+        provider.close();
+      }).not.toThrow();
     });
   });
 });
@@ -170,5 +273,41 @@ describe('validateFileSnapshot', () => {
     await fs.writeFile(file, 'much longer content here\n');
 
     await expect(validateFileSnapshot(file, snapshot)).rejects.toThrow(/drift/i);
+  });
+
+  it('passes when mtime changes but content is identical', async () => {
+    const file = path.join(tmpDir, 'data.txt');
+    await fs.writeFile(file, 'content\n');
+
+    const snapshot = await computeFileSnapshot(file, 1);
+
+    // Change mtime by touching the file with updated timestamps
+    const now = new Date();
+    await fs.utimes(file, now, new Date(now.getTime() + 5000));
+
+    await expect(validateFileSnapshot(file, snapshot)).resolves.not.toThrow();
+  });
+
+  it('fails when mtime changes and no fingerprint in snapshot', async () => {
+    const file = path.join(tmpDir, 'data.txt');
+    await fs.writeFile(file, 'content\n');
+
+    const stat = await fs.stat(file);
+
+    // Create a snapshot manually without fingerprint
+    const snapshotWithoutFingerprint = {
+      line: 1,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      fingerprint: undefined,
+    };
+
+    // Change mtime by touching the file
+    const now = new Date();
+    await fs.utimes(file, now, new Date(now.getTime() + 5000));
+
+    await expect(validateFileSnapshot(file, snapshotWithoutFingerprint as any)).rejects.toThrow(
+      /drift/i,
+    );
   });
 });

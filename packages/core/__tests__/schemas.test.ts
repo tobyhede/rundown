@@ -361,3 +361,109 @@ describe('RunbookStateSchema migration', () => {
     }
   });
 });
+
+describe('RunbookStateSchema sources field', () => {
+  it('accepts state with sources containing array DataSource', () => {
+    const state = createValidState({
+      sources: {
+        items: {
+          kind: 'array',
+          items: ['a', 'b', 'c'],
+        },
+      },
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts state with sources containing file DataSource', () => {
+    const state = createValidState({
+      sources: {
+        hosts: {
+          kind: 'file',
+          path: '/tmp/hosts.txt',
+          format: 'text',
+        },
+      },
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts state with multiple mixed sources', () => {
+    const state = createValidState({
+      sources: {
+        items: {
+          kind: 'array',
+          items: ['a', 'b', 'c'],
+        },
+        hosts: {
+          kind: 'file',
+          path: '/tmp/hosts.txt',
+          format: 'text',
+        },
+      },
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts forStack entry with array source and currentValue', () => {
+    const state = createValidState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          variable: 'item',
+          source: {
+            kind: 'array',
+            items: ['alpha', 'beta', 'gamma'],
+          },
+          currentValue: 'beta',
+        },
+      ],
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success && result.data.forStack) {
+      expect(result.data.forStack[0].currentValue).toBe('beta');
+    }
+  });
+
+  it('accepts forStack entry with file source and snapshot', () => {
+    const state = createValidState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 10,
+          variable: 'line',
+          source: {
+            kind: 'file',
+            path: '/tmp/data.txt',
+            format: 'text',
+            snapshot: {
+              line: 2,
+              size: 100,
+              mtimeMs: 1700000000,
+              fingerprint: 'abc123',
+            },
+          },
+        },
+      ],
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success && result.data.forStack) {
+      expect(result.data.forStack[0].source.kind).toBe('file');
+    }
+  });
+});

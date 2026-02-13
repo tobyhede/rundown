@@ -1,7 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { createActor } from 'xstate';
 import { parseRunbookDocument } from '@rundown-org/parser';
-import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
+import { compileRunbookToMachine, MAX_FILE_ITERATIONS } from '../../src/runbook/compiler.js';
 import type { Step } from '../../src/runbook/types.js';
 
 describe('runbook compiler', () => {
@@ -3662,6 +3662,336 @@ echo "processing"
       // Loop should exit immediately on first PASS
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
+
+      actor.stop();
+    });
+
+    it('iterates windowed array source (2 TO 4) with correct currentValue', () => {
+      const steps = createRunbook(`
+## 1. Process items
+- FOR item IN 2 TO 4 OF {{ items }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item
+- PASS: CONTINUE
+
+\`\`\`bash
+echo "processing"
+\`\`\`
+`);
+      const sources = {
+        items: { kind: 'array' as const, items: ['a', 'b', 'c', 'd', 'e'] },
+      };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 2: currentValue = 'b' (0-indexed, so array[1])
+      let ctx = actor.getSnapshot().context;
+      let top = ctx.forStack[0];
+      expect(top.iteration).toBe(2);
+      expect(top.currentValue).toBe('b');
+
+      // Send PASS to advance to iteration 3
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      top = ctx.forStack[0];
+      expect(top.iteration).toBe(3);
+      expect(top.currentValue).toBe('c');
+
+      // Send PASS to advance to iteration 4
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      top = ctx.forStack[0];
+      expect(top.iteration).toBe(4);
+      expect(top.currentValue).toBe('d');
+
+      // Send PASS to exit loop (no more iterations)
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      expect(ctx.forStack).toEqual([]);
+
+      actor.stop();
+    });
+
+    it('GOTO intra-loop preserves forStack with array source', () => {
+      const DEFAULT_TRANSITIONS_LOCAL = {
+        all: true,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+      };
+
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Loop step',
+          forClause: { start: 1, end: 2, variable: 'item', source: 'items' },
+          substeps: [
+            {
+              id: '1',
+              description: 'First sub',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: {
+                  kind: 'fail' as const,
+                  retry: 0,
+                  action: { type: 'GOTO' as const, target: { step: '1', substep: '2' } },
+                },
+              },
+            },
+            {
+              id: '2',
+              description: 'Second sub',
+              transitions: DEFAULT_TRANSITIONS_LOCAL,
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'After loop',
+          transitions: {
+            ...DEFAULT_TRANSITIONS_LOCAL,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+          },
+        },
+      ];
+      const sources = { items: { kind: 'array' as const, items: ['x', 'y'] } };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      // Initial state: iteration 1, forStack preserved
+      let ctx = actor.getSnapshot().context;
+      let top = ctx.forStack[0];
+      expect(top.iteration).toBe(1);
+      expect(top.currentValue).toBe('x');
+      expect(top.source).toEqual({ kind: 'array', items: ['x', 'y'] });
+
+      // Send FAIL to trigger GOTO 1.2
+      actor.send({ type: 'FAIL' });
+      ctx = actor.getSnapshot().context;
+      top = ctx.forStack[0];
+      // forStack should still be preserved with same iteration
+      expect(top.iteration).toBe(1);
+      expect(top.currentValue).toBe('x');
+      expect(top.source).toEqual({ kind: 'array', items: ['x', 'y'] });
+
+      // Send PASS at 1.2 to loop back to 1.1 iteration 2
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      top = ctx.forStack[0];
+      expect(top.iteration).toBe(2);
+      expect(top.currentValue).toBe('y');
+
+      actor.stop();
+    });
+
+    it('GOTO cross-loop initializes forStack for array source step', () => {
+      const DEFAULT_TRANSITIONS_LOCAL = {
+        all: true,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+      };
+
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Source step',
+          transitions: {
+            all: true,
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '2', substep: '1' } },
+            },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+        {
+          name: '2',
+          description: 'FOR target',
+          forClause: { start: 1, end: 3, variable: 'item', source: 'items' },
+          substeps: [{ id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS_LOCAL }],
+        },
+        {
+          name: '3',
+          description: 'Final',
+          transitions: {
+            ...DEFAULT_TRANSITIONS_LOCAL,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+          },
+        },
+      ];
+      const sources = { items: { kind: 'array' as const, items: ['a', 'b', 'c'] } };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      // Send PASS to trigger GOTO 2.1
+      actor.send({ type: 'PASS' });
+      const ctx = actor.getSnapshot().context;
+      const top = ctx.forStack[0];
+
+      // Verify forStack initialized with array source at iteration 1
+      expect(top.source).toEqual({ kind: 'array', items: ['a', 'b', 'c'] });
+      expect(top.start).toBe(1);
+      expect(top.end).toBe(3);
+      expect(top.iteration).toBe(1);
+      expect(top.currentValue).toBe('a');
+
+      actor.stop();
+    });
+
+    it('GOTO cross-loop with AT into array source resolves correct currentValue', () => {
+      const DEFAULT_TRANSITIONS_LOCAL = {
+        all: true,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+      };
+
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Source step',
+          transitions: {
+            all: true,
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '2', substep: '1', at: 2 } },
+            },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+        {
+          name: '2',
+          description: 'FOR target',
+          forClause: { start: 1, end: 3, variable: 'item', source: 'items' },
+          substeps: [{ id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS_LOCAL }],
+        },
+        {
+          name: '3',
+          description: 'Final',
+          transitions: {
+            ...DEFAULT_TRANSITIONS_LOCAL,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+          },
+        },
+      ];
+      const sources = { items: { kind: 'array' as const, items: ['a', 'b', 'c'] } };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      // Send PASS to trigger GOTO 2.1 AT 2
+      actor.send({ type: 'PASS' });
+      const ctx = actor.getSnapshot().context;
+      const top = ctx.forStack[0];
+
+      // Verify forStack initialized with array source at iteration 2
+      expect(top.source).toEqual({ kind: 'array', items: ['a', 'b', 'c'] });
+      expect(top.start).toBe(1);
+      expect(top.end).toBe(3);
+      expect(top.iteration).toBe(2);
+      expect(top.currentValue).toBe('b');
+
+      actor.stop();
+    });
+  });
+
+  describe('MAX_FILE_ITERATIONS circuit breaker', () => {
+    it('is exported as a positive number', () => {
+      expect(typeof MAX_FILE_ITERATIONS).toBe('number');
+      expect(MAX_FILE_ITERATIONS).toBeGreaterThan(0);
+      expect(MAX_FILE_ITERATIONS).toBe(10_000);
+    });
+
+    it('bounds file source loops that have undefined end', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'File loop',
+          forClause: {
+            variable: 'line',
+            start: 1,
+            source: 'lines',
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Process {{line}}',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps, {
+        sources: {
+          lines: { kind: 'file', path: '/tmp/test.txt', format: 'text' },
+        },
+      });
+
+      const actor = createActor(machine);
+      actor.start();
+
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack.length).toBe(1);
+      expect(ctx.forStack[0].end).toBeUndefined();
+
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+
+      actor.stop();
+    });
+  });
+
+  describe('file source snapshot initialisation', () => {
+    it('initialises file source snapshot as null instead of a sentinel object', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'File loop',
+          forClause: {
+            variable: 'line',
+            start: 1,
+            source: 'data',
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Process {{line}}',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps, {
+        sources: {
+          data: { kind: 'file', path: '/tmp/data.txt', format: 'text' },
+        },
+      });
+
+      const actor = createActor(machine);
+      actor.start();
+
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.forStack.length).toBe(1);
+      const source = ctx.forStack[0].source;
+      expect(source.kind).toBe('file');
+      if (source.kind === 'file') {
+        expect(source.snapshot).toBeNull();
+      }
 
       actor.stop();
     });
