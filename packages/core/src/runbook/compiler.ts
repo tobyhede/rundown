@@ -198,7 +198,6 @@ function hasMoreIterations(fc: ForContext): boolean {
     if (fc.source.kind === 'file' && fc.currentValue === undefined) return false;
     return fc.iteration - fc.start < MAX_FILE_ITERATIONS;
   }
-  if (fc.end === 0) return false;
   return isDescending(fc) ? fc.iteration > fc.end : fc.iteration < fc.end;
 }
 
@@ -271,7 +270,7 @@ function createForContext(
         source = { kind: 'array', items: ds.items };
         start = Math.max(1, Math.min(forClause.start, ds.items.length));
         const requestedEnd = forClause.end ?? ds.items.length;
-        end = ds.items.length === 0 ? 0 : Math.max(1, Math.min(requestedEnd, ds.items.length));
+        end = ds.items.length === 0 ? start : Math.max(1, Math.min(requestedEnd, ds.items.length));
         break;
       }
       case 'file': {

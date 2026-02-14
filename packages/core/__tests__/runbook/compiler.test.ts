@@ -3658,7 +3658,7 @@ echo "processing"
 
       const ctx = actor.getSnapshot().context;
       const top = ctx.forStack[0];
-      expect(top.end).toBe(0); // empty → 0 iterations
+      expect(top.end).toBe(1); // empty → end equals start, no iterations
       // Loop should exit immediately on first PASS
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
