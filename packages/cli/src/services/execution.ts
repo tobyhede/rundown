@@ -195,6 +195,19 @@ export async function runExecutionLoop(
     if (iterResult.status === 'exhausted') {
       if (iterResult.terminal === 'complete') {
         const completionMessage = extractLastMessage(iterResult.state.snapshot);
+
+        // Terminal bookkeeping: mark variables and update parent agent binding
+        // (mirrors the normal isComplete path below)
+        await manager.update(runbookId, {
+          variables: { ...iterResult.state.variables, completed: true },
+        });
+        if (agentId && currentState.parentRunbookId) {
+          await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
+            status: 'done',
+            result: 'pass',
+          });
+        }
+
         if (emitter) {
           emitter.emit('RUNBOOK_COMPLETED', {
             message: completionMessage,
@@ -211,6 +224,18 @@ export async function runExecutionLoop(
         return 'done';
       }
       if (iterResult.terminal === 'stopped') {
+        // Terminal bookkeeping: mark variables and update parent agent binding
+        // (mirrors the normal isStopped path below)
+        await manager.update(runbookId, {
+          variables: { ...iterResult.state.variables, stopped: true },
+        });
+        if (agentId && currentState.parentRunbookId) {
+          await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
+            status: 'done',
+            result: 'fail',
+          });
+        }
+
         await manager.popRunbook(agentId);
         return 'stopped';
       }
