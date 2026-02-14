@@ -15,7 +15,23 @@ const FINGERPRINT_BYTES = 64 * 1024;
  * (open file, validate drift, skip to line).
  */
 export interface FileProvider {
+  /**
+   * Read the next non-empty line from the file.
+   *
+   * @returns Promise resolving to `{ value, done }`. When `done` is false,
+   *   `value` contains the trimmed line content. When `done` is true, `value`
+   *   is an empty string and should be ignored. Rejects on I/O errors (the
+   *   provider auto-closes on error).
+   */
   next(): Promise<{ value: string; done: boolean }>;
+
+  /**
+   * Release the underlying file descriptor and readline interface.
+   *
+   * Must be called when iteration is complete or abandoned — even after
+   * `next()` returns `done: true` — to prevent file descriptor leaks.
+   * Synchronous; safe to call multiple times.
+   */
   close(): void;
 }
 
@@ -43,9 +59,9 @@ export async function createFileProvider(
     while (skipped < skip) {
       const result = await iterator.next();
       if (result.done) break;
-      // Count non-empty lines for text, all lines for jsonl
+      // Count non-empty lines (matches next() behavior for both formats)
       const line = result.value.trim();
-      if (format === 'jsonl' || line.length > 0) {
+      if (line.length > 0) {
         skipped++;
       }
     }

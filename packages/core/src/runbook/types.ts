@@ -132,8 +132,20 @@ export type FileFormat = 'text' | 'jsonl';
 
 /** Data source binding passed from CLI/discovery into compiler/runtime */
 export type DataSource =
-  | { readonly kind: 'array'; readonly items: readonly string[] }
-  | { readonly kind: 'file'; readonly path: string; readonly format: FileFormat };
+  | {
+      /** Discriminant: in-memory array source */
+      readonly kind: 'array';
+      /** Array elements (1-based indexing in FOR loops: items[iteration - 1]) */
+      readonly items: readonly string[];
+    }
+  | {
+      /** Discriminant: file-backed streaming source */
+      readonly kind: 'file';
+      /** Absolute path to the data file */
+      readonly path: string;
+      /** File format: 'text' (line-per-entry) or 'jsonl' (JSON Lines) */
+      readonly format: FileFormat;
+    };
 
 /**
  * Snapshot of file position and metadata for resumable iteration.
@@ -160,12 +172,23 @@ export interface FileSnapshot {
  * - `file`: value from FileProvider — streamed, never materialized
  */
 export type ResolvedSource =
-  | { readonly kind: 'range' }
-  | { readonly kind: 'array'; readonly items: readonly string[] }
   | {
+      /** Discriminant: numeric range (stateless — value = String(position)) */ readonly kind: 'range';
+    }
+  | {
+      /** Discriminant: in-memory array */
+      readonly kind: 'array';
+      /** Array elements (1-based indexing: items[iteration - 1]) */
+      readonly items: readonly string[];
+    }
+  | {
+      /** Discriminant: file-backed streaming */
       readonly kind: 'file';
+      /** Absolute path to the data file */
       readonly path: string;
+      /** File format: 'text' or 'jsonl' */
       readonly format: FileFormat;
+      /** Snapshot for resumable iteration and drift detection; null until first persistence */
       readonly snapshot: FileSnapshot | null;
     };
 

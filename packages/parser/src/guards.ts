@@ -71,7 +71,8 @@ export function hasForClause(step: Step): step is Step & { forClause: ForClause 
  * Type guard: narrows a ForClause to SourceWindow (data-source iteration).
  *
  * @param fc - The FOR clause to check
- * @returns True if the clause references a named data source
+ * @returns True if the clause references a named data source (`fc is SourceWindow`),
+ *   enabling type narrowing to guarantee `fc.source` and `fc.variable` are strings
  */
 export function isSourced(fc: ForClause): fc is SourceWindow {
   return fc.source !== undefined;
