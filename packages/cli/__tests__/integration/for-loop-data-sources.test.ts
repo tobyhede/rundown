@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli } from '../helpers/test-utils.js';
+import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
 describe('FOR loop data source integration', () => {
-  let workspace;
+  let workspace: TestWorkspace;
 
   beforeEach(async () => {
     workspace = await createTestWorkspace();
@@ -275,10 +275,6 @@ rd echo item={{ item }}
     expect(output).toMatch(/missing|undefined|not defined/i);
   });
 
-  // File source execution wiring is incomplete: the CLI execution layer does not yet call
-  // createFileProvider to stream values from files. The compiler creates file source contexts
-  // but currentValue is never set, causing hasMoreIterations() to stop immediately.
-  // Enable this test once the execution layer wires FileProvider.next() into the iteration loop.
   it('iterates over file source variable', async () => {
     // Create a data file with 3 lines
     await writeFile(join(workspace.cwd, 'servers.txt'), 'alpha\nbeta\ngamma\n');
