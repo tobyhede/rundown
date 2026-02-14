@@ -192,9 +192,9 @@ function nextIteration(fc: ForContext): number {
 /** Check whether the loop has more iterations remaining. */
 function hasMoreIterations(fc: ForContext): boolean {
   if (fc.end === undefined) {
-    // File sources: stop when execution layer hasn't provided a value
-    // (currentValue is set by the execution layer via FileProvider.next();
-    //  until that wiring exists, this prevents runaway empty iterations)
+    // Safety net for file sources: if the resolver hasn't populated
+    // currentValue, don't iterate. In normal operation, exhaustion
+    // is handled by the ForIterationService capping `end`.
     if (fc.source.kind === 'file' && fc.currentValue === undefined) return false;
     return fc.iteration - fc.start < MAX_FILE_ITERATIONS;
   }
@@ -296,7 +296,7 @@ function createForContext(
   }
 
   const iteration = resolveAtValue(atValue, start);
-  const currentValue = source.kind === 'array' ? (source.items[iteration - 1] ?? '') : undefined;
+  const currentValue = undefined; // Resolved by ForIterationService before execution
   return {
     stepId: stepName,
     iteration,
@@ -472,6 +472,7 @@ function buildLoopExitAssign(
           return [...results, iterationResult];
         },
     lastAction: { type: actionType },
+    lastMessage: undefined as string | undefined,
     retryCount: 0,
     substep: extractSubstepFromStateId(exitTarget),
   });
@@ -542,18 +543,21 @@ function buildAggregationExitAssign(
         ...baseAssign,
         forStack: [] as readonly ForContext[],
         lastAction: { type: 'STOP' as const },
+        lastMessage: parentAction.message,
       });
     case 'COMPLETE':
       return assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
         lastAction: { type: 'COMPLETE' as const },
+        lastMessage: parentAction.message,
       });
     case 'CONTINUE':
       return assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
         lastAction: { type: 'CONTINUE' as const },
+        lastMessage: undefined as string | undefined,
       });
     case 'NEXT':
     case 'BREAK':
@@ -562,6 +566,7 @@ function buildAggregationExitAssign(
         ...baseAssign,
         forStack: [] as readonly ForContext[],
         lastAction: { type: parentAction.type },
+        lastMessage: undefined as string | undefined,
       });
   }
 }
@@ -688,20 +693,16 @@ function buildLoopBackTransition(
         const top = peekForStack(context.forStack);
         if (!top) return context.forStack;
         const nextIter = nextIteration(top);
-        let currentValue: string | undefined;
-
-        if (top.source.kind === 'array') {
-          currentValue = top.source.items[nextIter - 1];
-        }
-        // File source currentValue is set by execution layer (async FileProvider.next())
-
-        return [{ ...top, iteration: nextIter, currentValue }];
+        // All source types: clear currentValue on loop-back.
+        // The ForIterationService resolves it before the next execution.
+        return [{ ...top, iteration: nextIter, currentValue: undefined }];
       },
       iterationResults: ({ context }: { context: RunbookContext }) => {
         const results = context.iterationResults ?? [];
         return [...results, iterationResult];
       },
       lastAction: { type: actionType },
+      lastMessage: undefined as string | undefined,
       retryCount: 0,
       substep: firstSubstepId,
     }),
@@ -757,6 +758,7 @@ function buildActionTransition(
         target,
         actions: assign({
           lastAction: { type: 'CONTINUE' as const },
+          lastMessage: undefined as string | undefined,
           retryCount: 0,
           substep: extractSubstepFromStateId(target),
         }),
@@ -767,6 +769,7 @@ function buildActionTransition(
         target: 'COMPLETE',
         actions: assign({
           lastAction: { type: 'COMPLETE' as const },
+          lastMessage: action.message,
         }),
       };
     case 'STOP':
@@ -774,6 +777,7 @@ function buildActionTransition(
         target: 'STOPPED',
         actions: assign({
           lastAction: { type: 'STOP' as const },
+          lastMessage: action.message,
         }),
       };
     case 'GOTO': {
@@ -1132,6 +1136,7 @@ export function compileRunbookToMachine(
         RETRY: {
           actions: assign({
             lastAction: { type: 'RETRY' as const },
+            lastMessage: undefined as string | undefined,
             retryCount: ({ context }) => (context.retryCount as number) + 1,
             retryMax: retryMaxFromTransitions,
           }),

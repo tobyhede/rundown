@@ -17,6 +17,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   extractDisplayCommand: jest.fn((cmd) => cmd),
   createFileProvider: jest.fn(),
   computeFileSnapshot: jest.fn(),
+  ForIterationService: jest.fn().mockImplementation(() => ({
+    prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
+  })),
 }));
 
 jest.unstable_mockModule('../../src/services/internal-commands', () => ({

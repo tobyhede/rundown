@@ -2,6 +2,7 @@
 
 import {
   type RunbookStateManager,
+  ForIterationService,
   printActionBlock,
   printStepBlock,
   printStepSeparator,
@@ -20,8 +21,6 @@ import {
   evaluateFailCondition,
   countNumberedSteps,
   extractDisplayCommand,
-  createFileProvider,
-  computeFileSnapshot,
   type ExecutionEventEmitter,
   type LastAction,
   type ForContext,
@@ -178,6 +177,9 @@ export async function runExecutionLoop(
 
   let currentState: RunbookState = state;
 
+  // Service for resolving FOR loop iteration values (array, file, range)
+  const iterationService = new ForIterationService(manager);
+
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     const currentStepIndex = steps.findIndex((s) => s.name === currentState.step);
@@ -197,83 +199,46 @@ export async function runExecutionLoop(
 
     const displaySubstep = currentState.substep;
 
-    // Resolve dynamic values for file-backed data sources
-    // When inside a FOR loop over a file, the compiler advances iteration counters
-    // but the execution layer is responsible for reading the actual line content.
-    if (currentState.forStack?.length) {
-      const top = currentState.forStack[currentState.forStack.length - 1];
-      if (top.source.kind === 'file' && top.currentValue === undefined) {
-        // First-time resolution or iteration advanced: read next line from file
-        const filePath = top.source.path;
-        const format = top.source.format;
-        const skipLines = top.iteration - 1;
+    // Resolve dynamic values for all data sources (array, file, range).
+    // The ForIterationService resolves currentValue before each iteration,
+    // replacing the previous file-only inline resolution.
+    const iterResult = await iterationService.prepareIteration(runbookId, steps);
 
-        const provider = await createFileProvider(filePath, format, { skipLines });
-        try {
-          const { value, done } = await provider.next();
-          if (!done) {
-            // Update context with the resolved line value and a fresh file snapshot
-            const snapshot = await computeFileSnapshot(filePath, top.iteration);
-            const updatedStack: ForContext[] = [...currentState.forStack];
-            updatedStack[updatedStack.length - 1] = {
-              ...top,
-              currentValue: value,
-              source: { ...top.source, kind: 'file', snapshot },
-            };
-            currentState = await manager.updateForContext(runbookId, updatedStack);
-            // Re-run loop iteration to ensure variables are refreshed with the new currentValue
-            continue;
-          }
-          // File exhausted: cap the loop so hasMoreIterations returns false,
-          // then trigger an actor transition to exit the FOR loop without
-          // executing a command for this empty iteration.
-          const cappedStack: ForContext[] = [...currentState.forStack];
-          cappedStack[cappedStack.length - 1] = {
-            ...top,
-            end: top.iteration,
-          };
-          currentState = await manager.updateForContext(runbookId, cappedStack);
-
-          const exitActor = await manager.createActor(runbookId, steps);
-          if (!exitActor) return 'stopped';
-          exitActor.send({ type: 'PASS' });
-          currentState = await manager.updateFromActor(runbookId, exitActor, steps);
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-          const exitSnapshot = exitActor.getPersistedSnapshot() as any;
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          if (isRunbookComplete(exitSnapshot)) {
-            if (emitter) {
-              emitter.emit('RUNBOOK_COMPLETED', {
-                message: undefined,
-                finalPosition: {
-                  current: currentState.step,
-                  total: totalSteps,
-                  substep: currentState.substep,
-                },
-              });
-            } else {
-              printRunbookComplete(undefined);
-            }
-            await manager.popRunbook(agentId);
-            return 'done';
-          }
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          if (isRunbookStopped(exitSnapshot)) {
-            await manager.popRunbook(agentId);
-            return 'stopped';
-          }
-
-          // Reload and continue to the next step
-          const reloaded = await manager.load(runbookId);
-          if (!reloaded) return 'stopped';
-          currentState = reloaded;
-          continue;
-        } finally {
-          provider.close();
+    if (iterResult.status === 'exhausted') {
+      if (iterResult.terminal === 'complete') {
+        const completionMessage = extractLastMessage(iterResult.state.snapshot);
+        if (emitter) {
+          emitter.emit('RUNBOOK_COMPLETED', {
+            message: completionMessage,
+            finalPosition: {
+              current: iterResult.state.step,
+              total: totalSteps,
+              substep: iterResult.state.substep,
+            },
+          });
+        } else {
+          printRunbookComplete(completionMessage);
         }
+        await manager.popRunbook(agentId);
+        return 'done';
       }
+      if (iterResult.terminal === 'stopped') {
+        await manager.popRunbook(agentId);
+        return 'stopped';
+      }
+      // No terminal state — machine transitioned to next step after loop exit
+      currentState = iterResult.state;
+      continue;
     }
+
+    if (iterResult.status === 'ready') {
+      // Value resolved — re-enter loop with populated currentValue
+      currentState = iterResult.state;
+      continue;
+    }
+
+    // status === 'no-resolution-needed' — proceed to step execution
+    // State is unchanged; no need to overwrite currentState.
 
     // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration
     const stepVars = buildStepVariables(
@@ -468,11 +433,12 @@ export async function runExecutionLoop(
 
     // Handle runbook end states
     if (isComplete) {
-      // Extract message from the transition that led to completion
+      // Extract message: prefer machine snapshot (source of truth), fall back to re-evaluation
       const completionMessage =
-        lastResult === 'pass'
+        extractLastMessage(snapshot) ??
+        (lastResult === 'pass'
           ? evaluatePassCondition(currentStep).message
-          : evaluateFailCondition(currentStep, prevRetryCount).message;
+          : evaluateFailCondition(currentStep, prevRetryCount).message);
 
       const currentVars = updatedState.variables;
       await manager.update(runbookId, {
@@ -503,11 +469,12 @@ export async function runExecutionLoop(
     }
 
     if (isStopped) {
-      // Extract message from the transition that led to stop
+      // Extract message: prefer machine snapshot (source of truth), fall back to re-evaluation
       const stopMessage =
-        lastResult === 'pass'
+        extractLastMessage(snapshot) ??
+        (lastResult === 'pass'
           ? evaluatePassCondition(currentStep).message
-          : evaluateFailCondition(currentStep, prevRetryCount).message;
+          : evaluateFailCondition(currentStep, prevRetryCount).message);
 
       const currentVars = updatedState.variables;
       await manager.update(runbookId, {
@@ -633,6 +600,30 @@ export function extractRetryMax(snapshot: unknown): number {
     return (snapshot.context as SnapshotContext).retryMax ?? 0;
   }
   return 0;
+}
+
+/**
+ * Extract the lastMessage from an XState snapshot.
+ *
+ * The machine sets `lastMessage` on STOP/COMPLETE transitions.
+ * Returns undefined if no message was set.
+ *
+ * @param snapshot - The persisted XState snapshot (or RunbookState.snapshot)
+ * @returns The message string or undefined
+ */
+export function extractLastMessage(snapshot: unknown): string | undefined {
+  if (
+    snapshot &&
+    typeof snapshot === 'object' &&
+    'context' in snapshot &&
+    snapshot.context &&
+    typeof snapshot.context === 'object' &&
+    'lastMessage' in snapshot.context
+  ) {
+    const msg = (snapshot.context as Record<string, unknown>).lastMessage;
+    return typeof msg === 'string' ? msg : undefined;
+  }
+  return undefined;
 }
 
 /**

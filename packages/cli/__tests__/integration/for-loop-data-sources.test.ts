@@ -183,14 +183,14 @@ rd echo done
     const stepEnteredEvents = events.filter((e) => e.type === 'step_entered');
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
-    // Empty array: first iteration enters with empty value, then loop exits
-    // The substep is entered once (bootstrap) before the actor evaluates the condition
-    expect(stepEnteredEvents).toHaveLength(2);
-    expect(commandStartedEvents).toHaveLength(2);
+    // Empty array: ForIterationService detects exhaustion before entering the loop,
+    // so only the "Done" step is entered (0 iterations)
+    expect(stepEnteredEvents).toHaveLength(1);
+    expect(commandStartedEvents).toHaveLength(1);
 
-    // Second event is the "Done" step
-    expect(stepEnteredEvents[1].description).toContain('Done');
-    expect(commandStartedEvents[1].command).toContain('done');
+    // The only event is the "Done" step
+    expect(stepEnteredEvents[0].description).toContain('Done');
+    expect(commandStartedEvents[0].command).toContain('done');
   });
 
   it('clamps window to array length (1 TO 100 OF 3-element array)', async () => {

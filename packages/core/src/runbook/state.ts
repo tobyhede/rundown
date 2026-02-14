@@ -784,6 +784,9 @@ export class RunbookStateManager {
   /**
    * Update the FOR loop context for a runbook.
    *
+   * @internal Used by {@link ForIterationService} — external consumers should
+   * use {@link ForIterationService.prepareIteration} instead of calling this directly.
+   *
    * @param id - The runbook state ID
    * @param forStack - The updated FOR loop stack
    * @returns The updated runbook state

@@ -3551,25 +3551,25 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // Iteration 1: currentValue = 'alpha'
+      // Iteration 1: currentValue is undefined (resolved by ForIterationService)
       let ctx = actor.getSnapshot().context;
       let top = ctx.forStack[0];
       expect(top.iteration).toBe(1);
-      expect(top.currentValue).toBe('alpha');
+      expect(top.currentValue).toBeUndefined();
 
       // Send PASS to advance to iteration 2
       actor.send({ type: 'PASS' });
       ctx = actor.getSnapshot().context;
       top = ctx.forStack[0];
       expect(top.iteration).toBe(2);
-      expect(top.currentValue).toBe('beta');
+      expect(top.currentValue).toBeUndefined();
 
       // Send PASS to advance to iteration 3
       actor.send({ type: 'PASS' });
       ctx = actor.getSnapshot().context;
       top = ctx.forStack[0];
       expect(top.iteration).toBe(3);
-      expect(top.currentValue).toBe('gamma');
+      expect(top.currentValue).toBeUndefined();
 
       // Send PASS to exit loop (no more iterations)
       actor.send({ type: 'PASS' });
@@ -3686,25 +3686,25 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // Iteration 2: currentValue = 'b' (0-indexed, so array[1])
+      // Iteration 2: currentValue is undefined (resolved by ForIterationService)
       let ctx = actor.getSnapshot().context;
       let top = ctx.forStack[0];
       expect(top.iteration).toBe(2);
-      expect(top.currentValue).toBe('b');
+      expect(top.currentValue).toBeUndefined();
 
       // Send PASS to advance to iteration 3
       actor.send({ type: 'PASS' });
       ctx = actor.getSnapshot().context;
       top = ctx.forStack[0];
       expect(top.iteration).toBe(3);
-      expect(top.currentValue).toBe('c');
+      expect(top.currentValue).toBeUndefined();
 
       // Send PASS to advance to iteration 4
       actor.send({ type: 'PASS' });
       ctx = actor.getSnapshot().context;
       top = ctx.forStack[0];
       expect(top.iteration).toBe(4);
-      expect(top.currentValue).toBe('d');
+      expect(top.currentValue).toBeUndefined();
 
       // Send PASS to exit loop (no more iterations)
       actor.send({ type: 'PASS' });
@@ -3761,11 +3761,11 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // Initial state: iteration 1, forStack preserved
+      // Initial state: iteration 1, currentValue undefined (resolved by ForIterationService)
       let ctx = actor.getSnapshot().context;
       let top = ctx.forStack[0];
       expect(top.iteration).toBe(1);
-      expect(top.currentValue).toBe('x');
+      expect(top.currentValue).toBeUndefined();
       expect(top.source).toEqual({ kind: 'array', items: ['x', 'y'] });
 
       // Send FAIL to trigger GOTO 1.2
@@ -3774,7 +3774,7 @@ echo "processing"
       top = ctx.forStack[0];
       // forStack should still be preserved with same iteration
       expect(top.iteration).toBe(1);
-      expect(top.currentValue).toBe('x');
+      expect(top.currentValue).toBeUndefined();
       expect(top.source).toEqual({ kind: 'array', items: ['x', 'y'] });
 
       // Send PASS at 1.2 to loop back to 1.1 iteration 2
@@ -3782,7 +3782,7 @@ echo "processing"
       ctx = actor.getSnapshot().context;
       top = ctx.forStack[0];
       expect(top.iteration).toBe(2);
-      expect(top.currentValue).toBe('y');
+      expect(top.currentValue).toBeUndefined();
 
       actor.stop();
     });
@@ -3834,11 +3834,12 @@ echo "processing"
       const top = ctx.forStack[0];
 
       // Verify forStack initialized with array source at iteration 1
+      // currentValue is undefined — resolved by ForIterationService before execution
       expect(top.source).toEqual({ kind: 'array', items: ['a', 'b', 'c'] });
       expect(top.start).toBe(1);
       expect(top.end).toBe(3);
       expect(top.iteration).toBe(1);
-      expect(top.currentValue).toBe('a');
+      expect(top.currentValue).toBeUndefined();
 
       actor.stop();
     });
@@ -3890,11 +3891,12 @@ echo "processing"
       const top = ctx.forStack[0];
 
       // Verify forStack initialized with array source at iteration 2
+      // currentValue is undefined — resolved by ForIterationService before execution
       expect(top.source).toEqual({ kind: 'array', items: ['a', 'b', 'c'] });
       expect(top.start).toBe(1);
       expect(top.end).toBe(3);
       expect(top.iteration).toBe(2);
-      expect(top.currentValue).toBe('b');
+      expect(top.currentValue).toBeUndefined();
 
       actor.stop();
     });
