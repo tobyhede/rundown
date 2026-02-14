@@ -173,14 +173,13 @@ export async function runExecutionLoop(
   // Some immutable properties (parentRunbookId, agentId) are accessed from
   // the initial load for completion handling. This is safe because these
   // properties are set at runbook creation and never modified.
-  let state = await manager.load(runbookId);
+  const state = await manager.load(runbookId);
   if (!state) return 'stopped';
 
   let currentState: RunbookState = state;
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const currentStepIndex = steps.findIndex((s) => s.name === currentState.step);
     const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
 
@@ -190,7 +189,6 @@ export async function runExecutionLoop(
     // Determine what to render: substep if we're at one, otherwise the step
     let itemToRender: Step | Substep = currentStep;
     if (currentState.substep && currentStep.substeps) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const substep = currentStep.substeps.find((s) => s.id === currentState.substep);
       if (substep) {
         itemToRender = substep;
@@ -229,7 +227,7 @@ export async function runExecutionLoop(
           // File exhausted: cap the loop so hasMoreIterations returns false,
           // then trigger an actor transition to exit the FOR loop without
           // executing a command for this empty iteration.
-          const cappedStack: ForContext[] = [...currentState.forStack!];
+          const cappedStack: ForContext[] = [...currentState.forStack];
           cappedStack[cappedStack.length - 1] = {
             ...top,
             end: top.iteration,
