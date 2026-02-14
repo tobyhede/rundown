@@ -176,7 +176,7 @@ const ForStackEntrySchema = z
     stepId: z.string(),
     iteration: z.number().int().positive().max(MAX_FOR_BOUND),
     start: z.number().int().positive().max(MAX_FOR_BOUND),
-    end: z.number().int().nonnegative().max(MAX_FOR_BOUND).optional(),
+    end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
     variable: z.string().optional(),
     implicit: z.boolean().default(false),
     source: ResolvedSourceSchema.optional(),
