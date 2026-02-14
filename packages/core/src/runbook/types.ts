@@ -127,68 +127,139 @@ export interface StepState {
   readonly completedAt?: string;
 }
 
-/** File format for file-backed data sources */
+/**
+ * File format for file-backed data sources.
+ *
+ * - `'text'` — one value per line (empty lines skipped)
+ * - `'jsonl'` — one JSON object per line (JSON Lines format)
+ */
 export type FileFormat = 'text' | 'jsonl';
 
-/** Data source binding passed from CLI/discovery into compiler/runtime */
+/**
+ * Data source binding passed from CLI/discovery into the compiler and runtime.
+ *
+ * Represents the raw source configuration before the compiler resolves it into
+ * a {@link ResolvedSource} for the FOR loop stack. Discriminated on `kind`.
+ *
+ * - `'array'` — values are held in memory as a string array.
+ * - `'file'`  — values are streamed lazily from a file on disk.
+ */
 export type DataSource =
   | {
-      /** Discriminant: in-memory array source */
+      /** Discriminant for the in-memory array variant. */
       readonly kind: 'array';
-      /** Array elements (1-based indexing in FOR loops: items[iteration - 1]) */
+      /**
+       * Array of string values supplied to the FOR loop.
+       *
+       * Uses 1-based indexing at runtime: iteration N reads `items[N - 1]`.
+       * The array is immutable for the lifetime of the runbook execution.
+       */
       readonly items: readonly string[];
     }
   | {
-      /** Discriminant: file-backed streaming source */
+      /** Discriminant for the file-backed streaming variant. */
       readonly kind: 'file';
-      /** Absolute path to the data file */
+      /** Absolute filesystem path to the data file. */
       readonly path: string;
-      /** File format: 'text' (line-per-entry) or 'jsonl' (JSON Lines) */
+      /**
+       * Format used to parse file content into iteration values.
+       *
+       * `'text'` reads one value per non-empty line; `'jsonl'` reads one
+       * JSON object per line (JSON Lines).
+       */
       readonly format: FileFormat;
     };
 
 /**
- * Snapshot of file position and metadata for resumable iteration.
+ * Point-in-time snapshot of a file's position and metadata.
+ *
+ * Captured after each successful file-backed iteration so the runtime can
+ * resume from the correct line after a restart and detect file drift
+ * (unexpected modification between iterations).
  *
  * Line is the unit of iteration, so line is the unit of resume.
  */
 export interface FileSnapshot {
-  /** Next line to read (1-based) */
+  /**
+   * Next line number to read on resume (1-based).
+   *
+   * After reading line N, snapshot.line is set to N so the next iteration
+   * knows where to pick up.
+   */
   readonly line: number;
-  /** File size in bytes at snapshot time (drift detection) */
+  /**
+   * File size in bytes at the time the snapshot was taken.
+   *
+   * Used as a fast drift-detection check: if the current file size differs
+   * from the snapshot size, the file may have been modified.
+   */
   readonly size: number;
-  /** File modification time in ms at snapshot time (drift detection) */
+  /**
+   * File modification time in milliseconds (epoch) at snapshot time.
+   *
+   * A changed mtime triggers a fingerprint comparison (if available) or
+   * raises a drift error when no fingerprint is stored.
+   */
   readonly mtimeMs: number;
-  /** Optional SHA-256 fingerprint of first 64 KiB of file content for stronger drift detection */
+  /**
+   * SHA-256 hex digest of the first 64 KiB of file content.
+   *
+   * Provides stronger drift detection than mtime alone: if mtime changes
+   * but the fingerprint matches, the file content is considered unchanged.
+   * Absent for snapshots created before fingerprinting was introduced.
+   */
   readonly fingerprint?: string;
 }
 
 /**
- * Resolved source for FOR loop iteration.
+ * Resolved source for FOR loop iteration, stored on the {@link ForContext} stack.
  *
  * Each variant determines how values are resolved at runtime:
- * - `range`: value = String(position) — computed, stateless
- * - `array`: value = items[position - 1] — direct index, items in memory
- * - `file`: value from FileProvider — streamed, never materialized
+ * - `'range'` — value = `String(iteration)`, computed statelessly.
+ * - `'array'` — value = `items[iteration - 1]`, direct 1-based index lookup.
+ * - `'file'`  — value streamed from disk via FileProvider, never fully materialised.
+ *
+ * Discriminated on `kind`.
  */
 export type ResolvedSource =
   | {
-      /** Discriminant: numeric range (stateless — value = String(position)) */ readonly kind: 'range';
+      /**
+       * Discriminant for the numeric range variant.
+       *
+       * Range sources are stateless — the value is always `String(iteration)`
+       * and requires no persistence or I/O.
+       */
+      readonly kind: 'range';
     }
   | {
-      /** Discriminant: in-memory array */
+      /** Discriminant for the in-memory array variant. */
       readonly kind: 'array';
-      /** Array elements (1-based indexing: items[iteration - 1]) */
+      /**
+       * Array of string values for the FOR loop.
+       *
+       * Uses 1-based indexing: iteration N reads `items[N - 1]`.
+       * When `iteration - 1` exceeds the array length the source is exhausted.
+       */
       readonly items: readonly string[];
     }
   | {
-      /** Discriminant: file-backed streaming */
+      /** Discriminant for the file-backed streaming variant. */
       readonly kind: 'file';
-      /** Absolute path to the data file */
+      /** Absolute filesystem path to the data file. */
       readonly path: string;
-      /** File format: 'text' or 'jsonl' */
+      /**
+       * Format used to parse file content into iteration values.
+       *
+       * `'text'` reads one value per non-empty line; `'jsonl'` reads one
+       * JSON object per line.
+       */
       readonly format: FileFormat;
-      /** Snapshot for resumable iteration and drift detection; null until first persistence */
+      /**
+       * Resumption snapshot captured after each successful file read.
+       *
+       * `null` before the first iteration persists a value. After that,
+       * contains file position and metadata for resume and drift detection.
+       */
       readonly snapshot: FileSnapshot | null;
     };
 
