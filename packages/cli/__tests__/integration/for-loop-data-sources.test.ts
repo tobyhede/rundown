@@ -363,13 +363,14 @@ rd echo line={{ line }}
 
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
-    // Should have exactly 3 iterations
-    expect(commandStartedEvents).toHaveLength(3);
+    // 4 iterations: alpha, beta, gamma, plus trailing empty line from YAML block scalar
+    expect(commandStartedEvents).toHaveLength(4);
 
     // Verify each iteration has correct line value
     expect(commandStartedEvents[0].command).toContain('line=alpha');
     expect(commandStartedEvents[1].command).toContain('line=beta');
     expect(commandStartedEvents[2].command).toContain('line=gamma');
+    expect(commandStartedEvents[3].command).toContain("line=''");
   });
 
   it('handles shell special chars in array source values', async () => {

@@ -115,10 +115,13 @@ export function buildStepVariables(
         const clampedStart = Math.max(1, Math.min(forClause.start, ds.items.length));
         vars.Index = String(clampedStart);
         vars[forClause.variable] = ds.items[clampedStart - 1] ?? '';
-      } else {
+      } else if (ds.kind === 'file') {
         // file sources: iteration starts at forClause.start, value resolved lazily by actor
         vars.Index = String(forClause.start);
         vars[forClause.variable] = '';
+      } else {
+        // Exhaustiveness check: guard against unhandled DataSource kinds
+        throw new Error(`Unknown data source kind: ${(ds as { kind: string }).kind}`);
       }
     } else {
       // Numeric range (original behavior)

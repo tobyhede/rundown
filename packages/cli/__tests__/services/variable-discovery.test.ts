@@ -711,7 +711,7 @@ describe('resolveVariables', () => {
       expect(result.vars.log).toBe('line1\nline2\nline3');
       expect(result.sources.log).toEqual({
         kind: 'array',
-        items: ['line1', 'line2', 'line3'],
+        items: ['line1', 'line2', 'line3', ''],
       });
     });
   });

@@ -3634,6 +3634,7 @@ echo "processing"
       actor.start();
       expect(capturedError).toBeDefined();
       expect(String(capturedError)).toMatch(/Data source "missing" is not defined/);
+      expect(actor.getSnapshot().status).toBe('error');
     });
 
     it('handles empty array source (0 iterations)', () => {

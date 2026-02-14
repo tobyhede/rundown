@@ -29,7 +29,22 @@ const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
  * `sources` is consumed only at FOR loop entry time.
  */
 export interface ResolvedVariables {
+  /**
+   * Readonly map of string values used for template substitution.
+   *
+   * Feeds the Handlebars template rendering pipeline — every entry is
+   * substituted into `{{key}}` placeholders at render time.  The map is
+   * immutable for the lifetime of a single resolution pass.
+   */
   readonly vars: Readonly<Record<string, string>>;
+  /**
+   * Readonly map of {@link DataSource} objects consumed only at FOR loop
+   * entry time.
+   *
+   * Each entry provides the iteration data for a `FOR variable IN {{ key }}`
+   * clause.  The map is immutable once resolved and is not used by the
+   * template rendering pipeline.
+   */
   readonly sources: Readonly<Record<string, DataSource>>;
 }
 
@@ -333,7 +348,7 @@ async function routeVariable(
 
   // Multiline string → both maps
   if (typeof value === 'string' && value.includes('\n')) {
-    const lines = value.split('\n').filter((l) => l.length > 0);
+    const lines = value.split('\n');
     // Store the value but strip trailing newline if present
     vars[key] = value.endsWith('\n') ? value.slice(0, -1) : value;
     if (lines.length > 0) {
