@@ -17,3 +17,4 @@ export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from '.
 export type { FileProvider } from './file-provider.js';
 export { resolveForValue, type ResolvedIteration } from './source-resolver.js';
 export { ForIterationService, type IterationResult } from './for-iteration-service.js';
+export { isRunbookComplete, isRunbookStopped } from './snapshot-utils.js';

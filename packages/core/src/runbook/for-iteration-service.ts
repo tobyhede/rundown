@@ -14,6 +14,7 @@
 import type { Step, RunbookState } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { resolveForValue } from './source-resolver.js';
+import { isRunbookComplete, isRunbookStopped } from './snapshot-utils.js';
 
 /**
  * Result of preparing a FOR loop iteration.
@@ -58,11 +59,7 @@ export class ForIterationService {
   async prepareIteration(id: string, steps: Step[]): Promise<IterationResult> {
     const state = await this.manager.load(id);
     if (!state) {
-      return {
-        status: 'exhausted',
-        state: { id } as RunbookState,
-        terminal: 'stopped',
-      };
+      throw new Error(`Runbook ${id} not found`);
     }
 
     // No active FOR loop — nothing to resolve
@@ -74,6 +71,13 @@ export class ForIterationService {
 
     // Value already populated or implicit loop — skip resolution
     if (top.currentValue !== undefined || top.implicit) {
+      return { status: 'no-resolution-needed', state };
+    }
+
+    // Range sources: value is always derivable from the iteration counter.
+    // buildStepVariables reads String(top.iteration) directly, so no
+    // persistence roundtrip is needed.
+    if (top.source.kind === 'range') {
       return { status: 'no-resolution-needed', state };
     }
 
@@ -96,9 +100,12 @@ export class ForIterationService {
     const actor = await this.manager.createActor(id, steps);
     if (!actor) {
       const cappedState = await this.manager.load(id);
+      if (!cappedState) {
+        throw new Error(`Runbook ${id} not found after capping`);
+      }
       return {
         status: 'exhausted',
-        state: cappedState ?? ({ id } as RunbookState),
+        state: cappedState,
         terminal: 'stopped',
       };
     }
@@ -108,15 +115,15 @@ export class ForIterationService {
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
     const snapshot = actor.getPersistedSnapshot() as any;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const isComplete = snapshot?.status === 'done' && snapshot?.value === 'COMPLETE';
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const isStopped = snapshot?.status === 'done' && snapshot?.value === 'STOPPED';
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    const complete = isRunbookComplete(snapshot);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    const stopped = isRunbookStopped(snapshot);
 
     return {
       status: 'exhausted',
       state: exitState,
-      terminal: isComplete ? 'complete' : isStopped ? 'stopped' : undefined,
+      terminal: complete ? 'complete' : stopped ? 'stopped' : undefined,
     };
   }
 }

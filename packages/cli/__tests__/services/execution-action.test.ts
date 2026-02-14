@@ -1,5 +1,9 @@
 import { describe, it, expect } from '@jest/globals';
-import { formatActionForDisplay, extractLastAction } from '../../src/services/execution.js';
+import {
+  formatActionForDisplay,
+  extractLastAction,
+  extractLastMessage,
+} from '../../src/services/execution.js';
 
 describe('execution action helpers', () => {
   describe('extractLastAction', () => {
@@ -140,6 +144,36 @@ describe('execution action helpers', () => {
       it('handles zero retry count', () => {
         expect(formatActionForDisplay({ type: 'RETRY' }, 0, 3)).toBe('RETRY (0/3)');
       });
+    });
+  });
+
+  describe('extractLastMessage', () => {
+    it('extracts string lastMessage from valid snapshot', () => {
+      const snapshot = { context: { lastMessage: 'Step completed successfully' } };
+      expect(extractLastMessage(snapshot)).toBe('Step completed successfully');
+    });
+
+    it('returns undefined for non-string lastMessage', () => {
+      const snapshot = { context: { lastMessage: 42 } };
+      expect(extractLastMessage(snapshot)).toBeUndefined();
+    });
+
+    it('returns undefined when lastMessage field is absent', () => {
+      const snapshot = { context: { retryCount: 0 } };
+      expect(extractLastMessage(snapshot)).toBeUndefined();
+    });
+
+    it('returns undefined when context is absent', () => {
+      const snapshot = {};
+      expect(extractLastMessage(snapshot)).toBeUndefined();
+    });
+
+    it('returns undefined for null snapshot', () => {
+      expect(extractLastMessage(null)).toBeUndefined();
+    });
+
+    it('returns undefined for undefined snapshot', () => {
+      expect(extractLastMessage(undefined)).toBeUndefined();
     });
   });
 });

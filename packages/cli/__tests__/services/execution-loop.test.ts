@@ -20,6 +20,8 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ForIterationService: jest.fn().mockImplementation(() => ({
     prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
   })),
+  isRunbookComplete: jest.fn((s: any) => s?.status === 'done' && s?.value === 'COMPLETE'),
+  isRunbookStopped: jest.fn((s: any) => s?.status === 'done' && s?.value === 'STOPPED'),
 }));
 
 jest.unstable_mockModule('../../src/services/internal-commands', () => ({

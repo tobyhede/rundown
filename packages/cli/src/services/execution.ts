@@ -25,6 +25,8 @@ import {
   type LastAction,
   type ForContext,
   type DataSource,
+  isRunbookComplete as _isRunbookComplete,
+  isRunbookStopped as _isRunbookStopped,
 } from '@rundown-org/core';
 import { isSourced } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -48,23 +50,9 @@ export type StepVariables = Record<string, string>;
  */
 export type TemplateVariables = Record<string, string>;
 
-/**
- * Check if runbook snapshot indicates completion.
- * @param snapshot - XState snapshot with status and value
- * @returns True if the runbook has completed successfully
- */
-export function isRunbookComplete(snapshot: { status: string; value: unknown }): boolean {
-  return snapshot.status === 'done' && snapshot.value === 'COMPLETE';
-}
-
-/**
- * Check if runbook snapshot indicates stopped state.
- * @param snapshot - XState snapshot with status and value
- * @returns True if the runbook has been stopped
- */
-export function isRunbookStopped(snapshot: { status: string; value: unknown }): boolean {
-  return snapshot.status === 'done' && snapshot.value === 'STOPPED';
-}
+// Re-export from core so existing imports from this module continue to work
+export const isRunbookComplete = _isRunbookComplete;
+export const isRunbookStopped = _isRunbookStopped;
 
 /**
  * Build per-step dynamic variables for Phase 2 expansion.
@@ -104,8 +92,8 @@ export function buildStepVariables(
             vars[top.variable] = String(top.iteration);
             break;
           case 'array':
-            // currentValue is always set by the compiler during iteration advance.
-            // If it is missing for an array source, that is a compiler bug — surface it.
+            // currentValue is set by ForIterationService before each iteration.
+            // If missing, the service did not resolve it — fall back to empty string.
             vars[top.variable] = top.currentValue ?? '';
             break;
           case 'file':
