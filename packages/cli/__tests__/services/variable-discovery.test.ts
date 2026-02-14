@@ -658,7 +658,7 @@ describe('resolveVariables', () => {
       expect(result.vars.servers).toBeUndefined();
       expect(result.sources.servers).toEqual({
         kind: 'file',
-        path: file,
+        path: await fs.realpath(file),
         format: 'text',
       });
     });
@@ -670,7 +670,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
       expect(result.sources.data).toEqual({
         kind: 'file',
-        path: file,
+        path: await fs.realpath(file),
         format: 'jsonl',
       });
     });
@@ -682,7 +682,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ var: ['hosts=file:hosts.txt'] }, tmpDir);
       expect(result.sources.hosts).toEqual({
         kind: 'file',
-        path: file,
+        path: await fs.realpath(file),
         format: 'text',
       });
     });
@@ -727,7 +727,7 @@ describe('resolveVariables', () => {
       expect(result.vars.items).toBeUndefined();
       expect(result.sources.items).toEqual({
         kind: 'file',
-        path: dataFile,
+        path: await fs.realpath(dataFile),
         format: 'text',
       });
     });
@@ -757,7 +757,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ varFile, var: [`items=file:${fileB}`] }, tmpDir);
       expect(result.sources.items).toEqual({
         kind: 'file',
-        path: fileB,
+        path: await fs.realpath(fileB),
         format: 'text',
       });
     });
@@ -782,7 +782,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ varFile, var: [`items=file:${dataFile}`] }, tmpDir);
       expect(result.sources.items).toEqual({
         kind: 'file',
-        path: dataFile,
+        path: await fs.realpath(dataFile),
         format: 'text',
       });
     });
@@ -848,7 +848,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
       expect(result.sources.data).toEqual({
         kind: 'file',
-        path: file,
+        path: await fs.realpath(file),
         format: 'text',
       });
     });
@@ -870,7 +870,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
       expect(result.sources.data).toEqual({
         kind: 'file',
-        path: file,
+        path: await fs.realpath(file),
         format: 'text',
       });
     });

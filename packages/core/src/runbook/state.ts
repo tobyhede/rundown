@@ -782,6 +782,32 @@ export class RunbookStateManager {
   }
 
   /**
+   * Update the FOR loop context for a runbook.
+   *
+   * @param id - The runbook state ID
+   * @param forStack - The updated FOR loop stack
+   * @returns The updated runbook state
+   * @throws Error if the runbook with the given ID is not found
+   */
+  async updateForContext(id: string, forStack: ForContext[]): Promise<RunbookState> {
+    const state = await this.load(id);
+    if (!state) {
+      throw new Error(`Runbook ${id} not found`);
+    }
+
+    const snapshot = state.snapshot as Record<string, unknown> | undefined;
+    const patchedSnapshot =
+      snapshot && typeof snapshot === 'object' && 'context' in snapshot
+        ? {
+            ...snapshot,
+            context: { ...(snapshot.context as Record<string, unknown>), forStack },
+          }
+        : snapshot;
+
+    return await this.update(id, { forStack, snapshot: patchedSnapshot });
+  }
+
+  /**
    * Mark a substep as completed with a result.
    *
    * Updates the substep's status to 'done' and records the pass/fail result.

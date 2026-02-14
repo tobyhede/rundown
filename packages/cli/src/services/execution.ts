@@ -20,6 +20,8 @@ import {
   evaluateFailCondition,
   countNumberedSteps,
   extractDisplayCommand,
+  createFileProvider,
+  computeFileSnapshot,
   type ExecutionEventEmitter,
   type LastAction,
   type ForContext,
@@ -110,6 +112,10 @@ export function buildStepVariables(
           case 'file':
             vars[top.variable] = top.currentValue ?? '';
             break;
+          default: {
+            const _exhaustive: never = top.source;
+            throw new Error(`Unexpected source kind: ${(top.source as { kind: string }).kind}`);
+          }
         }
       }
     }
@@ -170,34 +176,114 @@ export async function runExecutionLoop(
   let state = await manager.load(runbookId);
   if (!state) return 'stopped';
 
+  let currentState: RunbookState = state;
+
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const currentStepIndex = steps.findIndex((s) => s.name === state!.step);
+    const currentStepIndex = steps.findIndex((s) => s.name === currentState.step);
     const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
 
-    const displayStep = state.step;
+    const displayStep = currentState.step;
     const totalSteps = countNumberedSteps(steps);
 
     // Determine what to render: substep if we're at one, otherwise the step
     let itemToRender: Step | Substep = currentStep;
-    if (state.substep && currentStep.substeps) {
+    if (currentState.substep && currentStep.substeps) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const substep = currentStep.substeps.find((s) => s.id === state!.substep);
+      const substep = currentStep.substeps.find((s) => s.id === currentState.substep);
       if (substep) {
         itemToRender = substep;
       }
     }
 
-    const displaySubstep = state.substep;
+    const displaySubstep = currentState.substep;
+
+    // Resolve dynamic values for file-backed data sources
+    // When inside a FOR loop over a file, the compiler advances iteration counters
+    // but the execution layer is responsible for reading the actual line content.
+    if (currentState.forStack?.length) {
+      const top = currentState.forStack[currentState.forStack.length - 1];
+      if (top.source.kind === 'file' && top.currentValue === undefined) {
+        // First-time resolution or iteration advanced: read next line from file
+        const filePath = top.source.path;
+        const format = top.source.format;
+        const skipLines = top.iteration - 1;
+
+        const provider = await createFileProvider(filePath, format, { skipLines });
+        try {
+          const { value, done } = await provider.next();
+          if (!done) {
+            // Update context with the resolved line value and a fresh file snapshot
+            const snapshot = await computeFileSnapshot(filePath, top.iteration);
+            const updatedStack: ForContext[] = [...currentState.forStack];
+            updatedStack[updatedStack.length - 1] = {
+              ...top,
+              currentValue: value,
+              source: { ...top.source, kind: 'file', snapshot },
+            };
+            currentState = await manager.updateForContext(runbookId, updatedStack);
+            // Re-run loop iteration to ensure variables are refreshed with the new currentValue
+            continue;
+          }
+          // File exhausted: cap the loop so hasMoreIterations returns false,
+          // then trigger an actor transition to exit the FOR loop without
+          // executing a command for this empty iteration.
+          const cappedStack: ForContext[] = [...currentState.forStack!];
+          cappedStack[cappedStack.length - 1] = {
+            ...top,
+            end: top.iteration,
+          };
+          currentState = await manager.updateForContext(runbookId, cappedStack);
+
+          const exitActor = await manager.createActor(runbookId, steps);
+          if (!exitActor) return 'stopped';
+          exitActor.send({ type: 'PASS' });
+          currentState = await manager.updateFromActor(runbookId, exitActor, steps);
+
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
+          const exitSnapshot = exitActor.getPersistedSnapshot() as any;
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          if (isRunbookComplete(exitSnapshot)) {
+            if (emitter) {
+              emitter.emit('RUNBOOK_COMPLETED', {
+                message: undefined,
+                finalPosition: {
+                  current: currentState.step,
+                  total: totalSteps,
+                  substep: currentState.substep,
+                },
+              });
+            } else {
+              printRunbookComplete(undefined);
+            }
+            await manager.popRunbook(agentId);
+            return 'done';
+          }
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          if (isRunbookStopped(exitSnapshot)) {
+            await manager.popRunbook(agentId);
+            return 'stopped';
+          }
+
+          // Reload and continue to the next step
+          const reloaded = await manager.load(runbookId);
+          if (!reloaded) return 'stopped';
+          currentState = reloaded;
+          continue;
+        } finally {
+          provider.close();
+        }
+      }
+    }
 
     // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration
     const stepVars = buildStepVariables(
-      state.step,
-      state.substep,
-      state.forStack,
+      currentState.step,
+      currentState.substep,
+      currentState.forStack,
       currentStep.forClause,
-      state.sources,
+      currentState.sources,
     );
     const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
     const expandedPrompt = itemToRender.prompt
@@ -273,11 +359,15 @@ export async function runExecutionLoop(
         execResult = await executeCommandWithPolicyCheck(
           expandedCommandCode,
           cwd,
-          state.runbookPath,
+          currentState.runbookPath,
         );
       }
     } else {
-      execResult = await executeCommandWithPolicyCheck(expandedCommandCode, cwd, state.runbookPath);
+      execResult = await executeCommandWithPolicyCheck(
+        expandedCommandCode,
+        cwd,
+        currentState.runbookPath,
+      );
     }
 
     // Emit COMMAND_COMPLETED event
@@ -321,9 +411,9 @@ export async function runExecutionLoop(
     await manager.setLastResult(runbookId, lastResult);
 
     // Capture prev state BEFORE mutation
-    const prevStep = state.step;
-    const prevSubstep = state.substep;
-    const prevRetryCount = state.retryCount;
+    const prevStep = currentState.step;
+    const prevSubstep = currentState.substep;
+    const prevRetryCount = currentState.retryCount;
 
     // Send event to actor
     const actor = await manager.createActor(runbookId, steps);
@@ -402,8 +492,8 @@ export async function runExecutionLoop(
 
       // If this was a child runbook with agent, update parent's agent binding
 
-      if (agentId && state.parentRunbookId) {
-        await manager.updateAgentBinding(state.parentRunbookId, agentId, {
+      if (agentId && currentState.parentRunbookId) {
+        await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
           status: 'done',
           result: 'pass',
         });
@@ -439,8 +529,8 @@ export async function runExecutionLoop(
 
       // If this was a child runbook with agent, update parent's agent binding
 
-      if (agentId && state.parentRunbookId) {
-        await manager.updateAgentBinding(state.parentRunbookId, agentId, {
+      if (agentId && currentState.parentRunbookId) {
+        await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
           status: 'done',
           result: 'fail',
         });
@@ -452,8 +542,9 @@ export async function runExecutionLoop(
     }
 
     // Reload state for next iteration
-    state = await manager.load(runbookId);
-    if (!state) return 'stopped';
+    const reloaded = await manager.load(runbookId);
+    if (!reloaded) return 'stopped';
+    currentState = reloaded;
   }
 }
 

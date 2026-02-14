@@ -275,7 +275,55 @@ rd echo item={{ item }}
     expect(output).toMatch(/missing|undefined|not defined/i);
   });
 
-  it.todo('iterates over file source variable');
+  // File source execution wiring is incomplete: the CLI execution layer does not yet call
+  // createFileProvider to stream values from files. The compiler creates file source contexts
+  // but currentValue is never set, causing hasMoreIterations() to stop immediately.
+  // Enable this test once the execution layer wires FileProvider.next() into the iteration loop.
+  it('iterates over file source variable', async () => {
+    // Create a data file with 3 lines
+    await writeFile(join(workspace.cwd, 'servers.txt'), 'alpha\nbeta\ngamma\n');
+
+    // Create runbook that iterates over file source
+    await writeFile(
+      join(workspace.cwd, 'file-loop.runbook.md'),
+      `---
+name: File Loop
+---
+# File Loop
+
+## 1. Process servers
+- FOR server IN {{ servers }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle server
+- PASS: CONTINUE
+
+\`\`\`bash
+rd echo server={{ server }}
+\`\`\`
+`,
+    );
+
+    const result = runCli(
+      'run --json --var servers=file:servers.txt file-loop.runbook.md',
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
+
+    const commandStartedEvents = events.filter(
+      (e: { type: string }) => e.type === 'command_started',
+    );
+
+    expect(commandStartedEvents).toHaveLength(3);
+    expect(commandStartedEvents[0].command).toContain('server=alpha');
+    expect(commandStartedEvents[1].command).toContain('server=beta');
+    expect(commandStartedEvents[2].command).toContain('server=gamma');
+  });
 
   it('handles multiline string iteration from var-file', async () => {
     // Create var-file with multiline string

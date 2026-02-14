@@ -14,6 +14,7 @@ import {
   type PendingStep,
   type RunbookState,
   type ExecutionEventEmitter,
+  type Step,
 } from '@rundown-org/core';
 import { isSourced, type ForClause } from '@rundown-org/parser';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
@@ -58,7 +59,7 @@ function validateSources(
   for (const step of steps) {
     if (step.forClause && isSourced(step.forClause)) {
       const name = step.forClause.source;
-      if (!sources[name]) {
+      if (!(name in sources)) {
         throw new Error(
           `FOR loop references undefined data source "{{${name}}}". ` +
             `Define "${name}" in .rundown/config.yaml or pass --var-file with an array value.`,
@@ -202,6 +203,12 @@ export function registerRunCommand(program: Command): void {
               sources,
             });
 
+            // Initialize actor state (populates forStack for first step)
+            const actor = await manager.createActor(state.id, runbook.steps as Step[]);
+            if (actor) {
+              await manager.updateFromActor(state.id, actor, runbook.steps as Step[]);
+            }
+
             await manager.pushRunbook(state.id, options.agent);
 
             if (runbook.steps[0].substeps && runbook.steps[0].substeps.length > 0) {
@@ -326,6 +333,12 @@ export function registerRunCommand(program: Command): void {
                 templateVars: mergedVariables, // Store variables for resume
                 sources: childSources,
               });
+
+              // Initialize actor state (populates forStack for first step)
+              const actor = await manager.createActor(childState.id, runbook.steps as Step[]);
+              if (actor) {
+                await manager.updateFromActor(childState.id, actor, runbook.steps as Step[]);
+              }
 
               await manager.updateAgentBinding(state.id, options.agent, {
                 childRunbookId: childState.id,

@@ -287,25 +287,37 @@ function inferFileFormat(filePath: string): FileFormat {
  * @param vars - Accumulator for string variables
  * @param sources - Accumulator for data sources
  * @param cwd - Current working directory for resolving relative paths
+ * @param projectRoot - Canonical project root path (pre-resolved)
  */
-function routeVariable(
+async function routeVariable(
   key: string,
   value: unknown,
   vars: Record<string, string>,
   sources: Record<string, DataSource>,
   cwd: string,
-): void {
+  projectRoot: string,
+): Promise<void> {
   // String with file: prefix → file source only (not in vars)
   if (typeof value === 'string' && value.startsWith('file:')) {
     const rawPath = value.slice(5);
     const resolved = path.resolve(cwd, rawPath);
-    // Prevent path traversal outside the project directory
-    const rel = path.relative(path.resolve(cwd), resolved);
+
+    // Prevent path traversal outside the project directory.
+    // Use realpath to resolve symlinks before validation to prevent escaping.
+    let canonical = resolved;
+    try {
+      canonical = await fs.realpath(resolved);
+    } catch {
+      // File doesn't exist yet — use resolved path for validation
+    }
+
+    const rel = path.relative(projectRoot, canonical);
     if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
       console.warn(`Warning: Ignoring file source "${key}" — path escapes project directory`);
       return;
     }
-    sources[key] = { kind: 'file', path: resolved, format: inferFileFormat(resolved) };
+
+    sources[key] = { kind: 'file', path: canonical, format: inferFileFormat(canonical) };
     // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- clearing stale cross-type entry
     delete vars[key];
     return;
@@ -435,6 +447,14 @@ export async function resolveVariables(
   const vars: Record<string, string> = {};
   const sources: Record<string, DataSource> = {};
 
+  // Canonicalize project root once for validation
+  let projectRoot = path.resolve(cwd);
+  try {
+    projectRoot = await fs.realpath(projectRoot);
+  } catch {
+    // cwd doesn't exist? (unlikely) - use resolved path
+  }
+
   // Collect raw inputs at each precedence level
   const layers = await collectRawLayers(options, cwd);
 
@@ -445,7 +465,7 @@ export async function resolveVariables(
         console.warn(`Warning: Ignoring variable with invalid key: ${key}`);
         continue;
       }
-      routeVariable(key, value, vars, sources, cwd);
+      await routeVariable(key, value, vars, sources, cwd, projectRoot);
     }
   }
 

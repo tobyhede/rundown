@@ -15,6 +15,8 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   evaluateFailCondition: jest.fn(),
   countNumberedSteps: jest.fn().mockReturnValue(2),
   extractDisplayCommand: jest.fn((cmd) => cmd),
+  createFileProvider: jest.fn(),
+  computeFileSnapshot: jest.fn(),
 }));
 
 jest.unstable_mockModule('../../src/services/internal-commands', () => ({
