@@ -735,10 +735,7 @@ describe('resolveVariables', () => {
 
   describe('frontmatter routing', () => {
     it('routes frontmatter array to both maps', async () => {
-      const result = await resolveVariables(
-        { frontmatterVars: { servers: ['a', 'b'] } as unknown as Record<string, string> },
-        tmpDir,
-      );
+      const result = await resolveVariables({ frontmatterVars: { servers: ['a', 'b'] } }, tmpDir);
       // This tests that resolveVariables handles raw (pre-normalization) frontmatter
       expect(result.sources.servers).toEqual({ kind: 'array', items: ['a', 'b'] });
     });
@@ -806,7 +803,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, 'items: override\n');
 
       const result = await resolveVariables(
-        { frontmatterVars: { items: ['x', 'y'] } as unknown as Record<string, string>, varFile },
+        { frontmatterVars: { items: ['x', 'y'] }, varFile },
         tmpDir,
       );
       expect(result.vars.items).toBe('override');
