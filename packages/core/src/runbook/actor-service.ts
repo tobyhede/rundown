@@ -241,8 +241,12 @@ export class RunbookActorService {
   async initializeState(id: string, steps: Step[]): Promise<RunbookState | null> {
     const actor = await this.createActor(id, steps);
     if (!actor) return null;
-    const { state } = await this.updateFromActor(id, actor, steps);
-    return state;
+    try {
+      const { state } = await this.updateFromActor(id, actor, steps);
+      return state;
+    } finally {
+      actor.stop();
+    }
   }
 
   /**
