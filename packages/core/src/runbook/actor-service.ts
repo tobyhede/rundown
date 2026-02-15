@@ -131,6 +131,12 @@ export class RunbookActorService {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const stateValue = snapshot.value as string;
 
+    if (typeof stateValue !== 'string') {
+      throw new Error(
+        `Unexpected non-string stateValue for runbook "${id}": ${JSON.stringify(stateValue)}`,
+      );
+    }
+
     // If the runbook is in a final state, don't try to parse a step number.
     // Just update the snapshot and variables, preserving the last step number.
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {

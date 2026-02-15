@@ -18,6 +18,7 @@ import {
   type StepPosition,
   type StepId,
   type LastAction,
+  asTerminalSnapshotOrDefault,
 } from '@rundown-org/core';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
@@ -28,7 +29,6 @@ import {
   isRunbookComplete,
   isRunbookStopped,
 } from '../services/execution.js';
-import { asTerminalSnapshotOrDefault } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 

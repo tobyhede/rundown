@@ -11,7 +11,8 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       typeof snapshot === 'object' &&
       snapshot !== null &&
       'status' in snapshot &&
-      'value' in snapshot
+      'value' in snapshot &&
+      typeof (snapshot as Record<string, unknown>).status === 'string'
     ) {
       return snapshot as { status: string; value: unknown };
     }
