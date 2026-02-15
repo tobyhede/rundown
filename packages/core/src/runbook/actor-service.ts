@@ -65,14 +65,18 @@ export class RunbookActorService {
     const machine = compileRunbookToMachine(steps, { sources: state.sources });
 
     // Migrate old snapshot context: flat FOR fields → forStack
+    // Defensive copy so mutations don't leak into manager caches
     // Snapshot migration deals with untyped persisted data — any is unavoidable
     /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
-    const snapshot = state.snapshot as any;
-    if (snapshot?.context && !snapshot.context.forStack) {
-      const ctx = snapshot.context as any;
+    const rawSnapshot = state.snapshot as any;
+    let snapshot = rawSnapshot;
+    if (rawSnapshot?.context && !rawSnapshot.context.forStack) {
+      // Only copy when migration is needed — preserve original otherwise
+      snapshot = { ...rawSnapshot };
+      const ctx = { ...(rawSnapshot.context as any) };
       if (ctx.forIteration !== undefined) {
         // Derive stepId from snapshot.value (authoritative) with state.step fallback
-        const stateValue = snapshot.value as string | undefined;
+        const stateValue = rawSnapshot.value as string | undefined;
         const stepMatch = stateValue
           ? (/^step::([^:]+)/.exec(stateValue) ?? /^step_([^_]+)/.exec(stateValue))
           : null;
@@ -120,6 +124,8 @@ export class RunbookActorService {
    * @param actor - The XState actor to read snapshot from
    * @param steps - Parsed runbook steps for step name lookup
    * @returns Updated persisted RunbookState and the raw snapshot
+   * @throws {Error} If the actor snapshot's stateValue is not a string
+   * @throws {Error} If the provided steps array is empty (for non-terminal states)
    */
   async updateFromActor(
     id: string,
@@ -197,6 +203,16 @@ export class RunbookActorService {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const lastAction = snapshot.context?.lastAction as RunbookState['lastAction'];
 
+    // Filter implicit ForContext entries — don't persist synthetic loop state
+    const realForStack = forStack?.filter((fc) => !fc.implicit);
+    const computedForStack = realForStack?.length ? realForStack : undefined;
+
+    // Only clear iterationResults when all stack entries were implicit.
+    // When forStack is empty after explicit FOR exit, iterationResults
+    // must be preserved for parent-step aggregation.
+    const hasOnlyImplicit = forStack?.length ? forStack.every((fc) => fc.implicit) : false;
+    const computedIterationResults = hasOnlyImplicit ? undefined : iterationResults;
+
     const state = await this.manager.update(id, {
       step: stepName, // string
       substep,
@@ -204,18 +220,8 @@ export class RunbookActorService {
       retryCount,
       variables,
       snapshot,
-      // Filter implicit ForContext entries — don't persist synthetic loop state
-      forStack: (() => {
-        const realForStack = forStack?.filter((fc) => !fc.implicit);
-        return realForStack?.length ? realForStack : undefined;
-      })(),
-      // Only clear iterationResults when all stack entries were implicit.
-      // When forStack is empty after explicit FOR exit, iterationResults
-      // must be preserved for parent-step aggregation.
-      iterationResults: (() => {
-        const hasOnlyImplicit = forStack?.length ? forStack.every((fc) => fc.implicit) : false;
-        return hasOnlyImplicit ? undefined : iterationResults;
-      })(),
+      forStack: computedForStack,
+      iterationResults: computedIterationResults,
       lastAction,
     });
     return { state, snapshot };
