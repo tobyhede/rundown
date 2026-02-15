@@ -91,6 +91,7 @@ export class RunbookActorService {
               start: ctx.forStart ?? 1,
               end: ctx.forEnd ?? ctx.forIteration,
               variable: ctx.forVariable,
+              implicit: false,
               source: { kind: 'range' as const },
             },
           ],
@@ -269,8 +270,13 @@ export class RunbookActorService {
   ): Promise<ActorSyncResult | null> {
     const actor = await this.createActor(id, steps);
     if (!actor) return null;
-    actor.send(event);
-    const { state, snapshot } = await this.updateFromActor(id, actor, steps);
-    return { actor, state, snapshot };
+    try {
+      actor.send(event);
+      const { state, snapshot } = await this.updateFromActor(id, actor, steps);
+      return { actor, state, snapshot };
+    } catch (err) {
+      actor.stop();
+      throw err;
+    }
   }
 }

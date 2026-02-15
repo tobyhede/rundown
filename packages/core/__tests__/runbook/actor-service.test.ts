@@ -240,6 +240,7 @@ describe('RunbookActorService', () => {
           start: 1,
           end: 3,
           variable: 'item',
+          implicit: false,
           source: { kind: 'range' },
         },
       ]);
