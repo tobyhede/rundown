@@ -1,28 +1,51 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 // Mock dependencies
-jest.unstable_mockModule('@rundown-org/core', () => ({
-  printActionBlock: jest.fn(),
-  printStepBlock: jest.fn(),
-  printStepSeparator: jest.fn(),
-  printCommandExec: jest.fn(),
-  printRunbookComplete: jest.fn(),
-  printRunbookStoppedAtStep: jest.fn(),
-  printPolicyDenied: jest.fn(),
-  executeCommand: jest.fn(),
-  executeCommandWithPolicy: jest.fn(),
-  evaluatePassCondition: jest.fn(),
-  evaluateFailCondition: jest.fn(),
-  countNumberedSteps: jest.fn().mockReturnValue(2),
-  extractDisplayCommand: jest.fn((cmd) => cmd),
-  createFileProvider: jest.fn(),
-  computeFileSnapshot: jest.fn(),
-  ForIterationService: jest.fn().mockImplementation(() => ({
-    prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
-  })),
-  isRunbookComplete: jest.fn((s: any) => s?.status === 'done' && s?.value === 'COMPLETE'),
-  isRunbookStopped: jest.fn((s: any) => s?.status === 'done' && s?.value === 'STOPPED'),
-}));
+const mockActorService = {
+  sendAndSync: jest.fn(),
+};
+
+jest.unstable_mockModule('@rundown-org/core', () => {
+  const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
+    if (
+      typeof snapshot === 'object' &&
+      snapshot !== null &&
+      'status' in snapshot &&
+      'value' in snapshot &&
+      typeof (snapshot as Record<string, unknown>).status === 'string'
+    ) {
+      return snapshot as { status: string; value: unknown };
+    }
+    return null;
+  });
+  return {
+    printActionBlock: jest.fn(),
+    printStepBlock: jest.fn(),
+    printStepSeparator: jest.fn(),
+    printCommandExec: jest.fn(),
+    printRunbookComplete: jest.fn(),
+    printRunbookStoppedAtStep: jest.fn(),
+    printPolicyDenied: jest.fn(),
+    executeCommand: jest.fn(),
+    executeCommandWithPolicy: jest.fn(),
+    evaluatePassCondition: jest.fn(),
+    evaluateFailCondition: jest.fn(),
+    countNumberedSteps: jest.fn().mockReturnValue(2),
+    extractDisplayCommand: jest.fn((cmd) => cmd),
+    createFileProvider: jest.fn(),
+    computeFileSnapshot: jest.fn(),
+    RunbookActorService: jest.fn().mockImplementation(() => mockActorService),
+    ForIterationService: jest.fn().mockImplementation(() => ({
+      prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
+    })),
+    isRunbookComplete: jest.fn((s: any) => s?.status === 'done' && s?.value === 'COMPLETE'),
+    isRunbookStopped: jest.fn((s: any) => s?.status === 'done' && s?.value === 'STOPPED'),
+    asTerminalSnapshot,
+    asTerminalSnapshotOrDefault: jest.fn((snapshot: unknown) => {
+      return asTerminalSnapshot(snapshot) ?? { status: 'active', value: undefined };
+    }),
+  };
+});
 
 jest.unstable_mockModule('../../src/services/internal-commands', () => ({
   isInternalRdCommand: jest.fn().mockReturnValue(false),
@@ -85,11 +108,11 @@ describe('runExecutionLoop', () => {
       load: jest.fn(),
       update: jest.fn(),
       setLastResult: jest.fn(),
-      createActor: jest.fn(),
-      updateFromActor: jest.fn(),
       popRunbook: jest.fn(),
       updateAgentBinding: jest.fn(),
     };
+
+    mockActorService.sendAndSync.mockReset();
 
     mockEmitter = {
       emit: jest.fn(),
@@ -163,16 +186,15 @@ describe('runExecutionLoop', () => {
 
     (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
 
-    const mockActor = {
-      send: jest.fn(),
-      getPersistedSnapshot: jest.fn().mockReturnValue({
+    mockActorService.sendAndSync.mockResolvedValue({
+      actor: {},
+      state: { id: runbookId, step: '2', status: 'running' },
+      snapshot: {
         status: 'active',
         value: '2',
         context: { lastAction: { type: 'CONTINUE' } },
-      }),
-    };
-    mockManager.createActor.mockResolvedValue(mockActor);
-    mockManager.updateFromActor.mockResolvedValue({ id: runbookId, step: '2', status: 'running' });
+      },
+    });
 
     const testSteps = [
       steps[0],
@@ -226,21 +248,20 @@ describe('runExecutionLoop', () => {
     mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
     (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
 
-    const mockActor = {
-      send: jest.fn(),
-      getPersistedSnapshot: jest.fn().mockReturnValue({
+    mockActorService.sendAndSync.mockResolvedValue({
+      actor: {},
+      state: {
+        id: runbookId,
+        step: '1',
+        status: 'done',
+        variables: {},
+        runbookPath: '/tmp/test.md',
+      },
+      snapshot: {
         status: 'done',
         value: 'COMPLETE',
         context: { lastAction: { type: 'COMPLETE' } },
-      }),
-    };
-    mockManager.createActor.mockResolvedValue(mockActor);
-    mockManager.updateFromActor.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      status: 'done',
-      variables: {},
-      runbookPath: '/tmp/test.md',
+      },
     });
 
     const result = await runExecutionLoop(

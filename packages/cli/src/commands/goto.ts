@@ -3,6 +3,7 @@
 import type { Command } from 'commander';
 import {
   RunbookStateManager,
+  RunbookActorService,
   parseStepIdFromString,
   stepIdToString,
   countNumberedSteps,
@@ -110,24 +111,20 @@ export function registerGotoCommand(program: Command): void {
             }
           }
 
-          // Create XState actor
-          const actor = await manager.createActor(state.id, steps);
-          if (!actor) {
-            output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
-            output.flush();
-            process.exit(1);
-          }
+          const actorService = new RunbookActorService(manager);
 
           const prevStep = state.step;
           const prevSubstep = state.substep;
 
-          // SEND GOTO EVENT TO XSTATE (not direct state manipulation!)
-          actor.send({ type: 'GOTO', target });
-
-          // Update state from XState (single source of truth)
-          // Note: We call updateFromActor to persist the new state, but don't use the return value
-          // since we show "from" position in the action block
-          await manager.updateFromActor(state.id, actor, steps);
+          const syncResult = await actorService.sendAndSync(state.id, steps, {
+            type: 'GOTO',
+            target,
+          });
+          if (!syncResult) {
+            output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
+            output.flush();
+            process.exit(1);
+          }
 
           // Update lastAction and CLEAR lastResult (prevent stale PASS/FAIL leaking)
           await manager.update(state.id, {

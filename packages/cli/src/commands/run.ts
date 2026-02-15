@@ -5,6 +5,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import {
   RunbookStateManager,
+  RunbookActorService,
   parseRunbookDocument,
   RunbookSyntaxError,
   stepIdToString,
@@ -80,10 +81,8 @@ async function initializeActor(
   stateId: string,
   steps: Step[],
 ): Promise<void> {
-  const actor = await manager.createActor(stateId, steps);
-  if (actor) {
-    await manager.updateFromActor(stateId, actor, steps);
-  }
+  const actorService = new RunbookActorService(manager);
+  await actorService.initializeState(stateId, steps);
 }
 
 /**

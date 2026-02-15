@@ -2,6 +2,7 @@
 
 import {
   type RunbookStateManager,
+  RunbookActorService,
   ForIterationService,
   printActionBlock,
   printStepBlock,
@@ -27,6 +28,7 @@ import {
   type DataSource,
   isRunbookComplete as _isRunbookComplete,
   isRunbookStopped as _isRunbookStopped,
+  asTerminalSnapshotOrDefault,
 } from '@rundown-org/core';
 import { isSourced } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -179,7 +181,8 @@ export async function runExecutionLoop(
   let currentState: RunbookState = state;
 
   // Service for resolving FOR loop iteration values (array, file, range)
-  const iterationService = new ForIterationService(manager);
+  const actorService = new RunbookActorService(manager);
+  const iterationService = new ForIterationService(manager, actorService);
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
@@ -422,19 +425,16 @@ export async function runExecutionLoop(
     const prevRetryCount = currentState.retryCount;
 
     // Send event to actor
-    const actor = await manager.createActor(runbookId, steps);
-    if (!actor) return 'stopped';
+    const syncResult = await actorService.sendAndSync(runbookId, steps, {
+      type: execResult.success ? 'PASS' : 'FAIL',
+    });
+    if (!syncResult) return 'stopped';
 
-    actor.send({ type: execResult.success ? 'PASS' : 'FAIL' });
-    const updatedState = await manager.updateFromActor(runbookId, actor, steps);
+    const { state: updatedState, snapshot } = syncResult;
 
-    // XState snapshot type is not fully typed
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-    const snapshot = actor.getPersistedSnapshot() as any;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    const isComplete = isRunbookComplete(snapshot);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    const isStopped = isRunbookStopped(snapshot);
+    const terminalSnapshot = asTerminalSnapshotOrDefault(snapshot);
+    const isComplete = isRunbookComplete(terminalSnapshot);
+    const isStopped = isRunbookStopped(terminalSnapshot);
 
     // Read action from XState context (source of truth for retryMax and lastAction)
     const retryMax = extractRetryMax(snapshot);

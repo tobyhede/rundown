@@ -11,10 +11,16 @@
  * @module
  */
 
-import type { Step, RunbookState } from './types.js';
-import type { RunbookStateManager } from './state.js';
+import type { Step, RunbookState, ForContext } from './types.js';
+import type { ActorSyncResult } from './actor-service.js';
+import type { RunbookEvent } from './compiler.js';
 import { resolveForValue } from './source-resolver.js';
-import { isRunbookComplete, isRunbookStopped } from './snapshot-utils.js';
+import {
+  isRunbookComplete,
+  isRunbookStopped,
+  asTerminalSnapshot,
+  asTerminalSnapshotOrDefault,
+} from './snapshot-utils.js';
 
 /**
  * Result of preparing a FOR loop iteration.
@@ -32,6 +38,39 @@ export type IterationResult =
       readonly terminal?: 'complete' | 'stopped';
     };
 
+/** Minimal state-reading contract needed by ForIterationService. */
+export interface ForStateReader {
+  /**
+   * Load persisted runbook state.
+   *
+   * @param id - Runbook instance ID
+   * @returns The state, or null if not found
+   */
+  load(id: string): Promise<RunbookState | null>;
+
+  /**
+   * Persist an updated FOR context stack.
+   *
+   * @param id - Runbook instance ID
+   * @param forStack - The updated FOR context stack to persist
+   * @returns The updated runbook state
+   */
+  updateForContext(id: string, forStack: ForContext[]): Promise<RunbookState>;
+}
+
+/** Minimal actor-operation contract needed by ForIterationService. */
+export interface ForActorOperations {
+  /**
+   * Send an event to the runbook actor and synchronise persisted state.
+   *
+   * @param id - Runbook instance ID
+   * @param steps - Parsed step definitions for actor creation
+   * @param event - The event to send (e.g., PASS to trigger loop-exit guard)
+   * @returns The sync result, or null if the actor could not be created
+   */
+  sendAndSync(id: string, steps: Step[], event: RunbookEvent): Promise<ActorSyncResult | null>;
+}
+
 /**
  * Service that owns the full "prepare iteration" lifecycle for FOR loops.
  *
@@ -40,8 +79,14 @@ export type IterationResult =
  * to trigger the loop-exit guard.
  */
 export class ForIterationService {
-  /** @param manager - State manager for reading/writing runbook state */
-  constructor(private readonly manager: RunbookStateManager) {}
+  /**
+   * @param manager - State reader for loading/updating runbook state
+   * @param actorService - Actor operations for XState event dispatch
+   */
+  constructor(
+    private readonly manager: ForStateReader,
+    private readonly actorService: ForActorOperations,
+  ) {}
 
   /**
    * Prepare the next FOR loop iteration.
@@ -99,8 +144,9 @@ export class ForIterationService {
     cappedStack[cappedStack.length - 1] = result.capped;
     await this.manager.updateForContext(id, cappedStack);
 
-    const actor = await this.manager.createActor(id, steps);
-    if (!actor) {
+    // Send PASS to trigger the machine's loop-exit guard (hasMoreIterations returns false)
+    const syncResult = await this.actorService.sendAndSync(id, steps, { type: 'PASS' });
+    if (!syncResult) {
       const cappedState = await this.manager.load(id);
       if (!cappedState) {
         throw new Error(`Runbook ${id} not found after capping`);
@@ -112,19 +158,20 @@ export class ForIterationService {
       };
     }
 
-    actor.send({ type: 'PASS' });
-    const exitState = await this.manager.updateFromActor(id, actor, steps);
+    if (!asTerminalSnapshot(syncResult.snapshot)) {
+      console.warn(
+        `Unexpected snapshot shape after sendAndSync for runbook "${id}"; using active-state default. ` +
+          `Snapshot: ${JSON.stringify(syncResult.snapshot)}`,
+      );
+    }
+    const terminalSnapshot = asTerminalSnapshotOrDefault(syncResult.snapshot);
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-    const snapshot = actor.getPersistedSnapshot() as any;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    const complete = isRunbookComplete(snapshot);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    const stopped = isRunbookStopped(snapshot);
+    const complete = isRunbookComplete(terminalSnapshot);
+    const stopped = isRunbookStopped(terminalSnapshot);
 
     return {
       status: 'exhausted',
-      state: exitState,
+      state: syncResult.state,
       terminal: complete ? 'complete' : stopped ? 'stopped' : undefined,
     };
   }

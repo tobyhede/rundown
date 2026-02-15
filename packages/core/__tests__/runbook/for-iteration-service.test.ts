@@ -7,10 +7,28 @@ jest.unstable_mockModule('../../src/runbook/source-resolver.js', () => ({
 }));
 
 // Mock snapshot-utils (used internally)
-jest.unstable_mockModule('../../src/runbook/snapshot-utils.js', () => ({
-  isRunbookComplete: jest.fn(),
-  isRunbookStopped: jest.fn(),
-}));
+jest.unstable_mockModule('../../src/runbook/snapshot-utils.js', () => {
+  const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
+    if (
+      typeof snapshot === 'object' &&
+      snapshot !== null &&
+      'status' in snapshot &&
+      'value' in snapshot &&
+      typeof (snapshot as Record<string, unknown>).status === 'string'
+    ) {
+      return snapshot as { status: string; value: unknown };
+    }
+    return null;
+  });
+  return {
+    isRunbookComplete: jest.fn(),
+    isRunbookStopped: jest.fn(),
+    asTerminalSnapshot,
+    asTerminalSnapshotOrDefault: jest.fn((snapshot: unknown) => {
+      return asTerminalSnapshot(snapshot) ?? { status: 'active', value: undefined };
+    }),
+  };
+});
 
 const { resolveForValue } = await import('../../src/runbook/source-resolver.js');
 const { isRunbookComplete, isRunbookStopped } = await import('../../src/runbook/snapshot-utils.js');
@@ -42,15 +60,18 @@ const steps: Step[] = [] as unknown as Step[];
 
 describe('ForIterationService', () => {
   let mockManager: any;
+  let mockActorService: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
     mockManager = {
       load: jest.fn(),
-      createActor: jest.fn(),
       updateForContext: jest.fn(),
-      updateFromActor: jest.fn(),
+    };
+
+    mockActorService = {
+      sendAndSync: jest.fn(),
     };
   });
 
@@ -58,7 +79,7 @@ describe('ForIterationService', () => {
     it('throws when load returns null', async () => {
       mockManager.load.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager);
+      const service = new ForIterationService(mockManager, mockActorService);
       await expect(service.prepareIteration('missing-id', steps)).rejects.toThrow(
         'Runbook missing-id not found',
       );
@@ -68,7 +89,7 @@ describe('ForIterationService', () => {
       const state = makeState();
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager);
+      const service = new ForIterationService(mockManager, mockActorService);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -87,7 +108,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager);
+      const service = new ForIterationService(mockManager, mockActorService);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -106,7 +127,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager);
+      const service = new ForIterationService(mockManager, mockActorService);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -128,7 +149,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager);
+      const service = new ForIterationService(mockManager, mockActorService);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -155,7 +176,7 @@ describe('ForIterationService', () => {
       });
       mockManager.updateForContext.mockResolvedValue(updatedState);
 
-      const service = new ForIterationService(mockManager);
+      const service = new ForIterationService(mockManager, mockActorService);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('ready');
@@ -189,19 +210,24 @@ describe('ForIterationService', () => {
         capped: { ...fc, end: 4 },
       });
       mockManager.updateForContext.mockResolvedValue(undefined);
-      mockManager.createActor.mockResolvedValue(mockActor);
-      mockManager.updateFromActor.mockResolvedValue(exitState);
+      mockActorService.sendAndSync.mockResolvedValue({
+        actor: mockActor,
+        state: exitState,
+        snapshot: { status: 'done', value: 'COMPLETE' },
+      });
       mockedIsComplete.mockReturnValue(true);
       mockedIsStopped.mockReturnValue(false);
 
-      const service = new ForIterationService(mockManager);
+      const service = new ForIterationService(mockManager, mockActorService);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('exhausted');
       if (result.status === 'exhausted') {
         expect(result.terminal).toBe('complete');
       }
-      expect(mockActor.send).toHaveBeenCalledWith({ type: 'PASS' });
+      expect(mockActorService.sendAndSync).toHaveBeenCalledWith('test-123', steps, {
+        type: 'PASS',
+      });
     });
 
     it('throws when actor creation fails and reload returns null', async () => {
@@ -224,9 +250,9 @@ describe('ForIterationService', () => {
         capped: { ...fc, end: 4 },
       });
       mockManager.updateForContext.mockResolvedValue(undefined);
-      mockManager.createActor.mockResolvedValue(null);
+      mockActorService.sendAndSync.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager);
+      const service = new ForIterationService(mockManager, mockActorService);
       await expect(service.prepareIteration('test-123', steps)).rejects.toThrow(
         'Runbook test-123 not found after capping',
       );
@@ -253,9 +279,9 @@ describe('ForIterationService', () => {
         capped: { ...fc, end: 4 },
       });
       mockManager.updateForContext.mockResolvedValue(undefined);
-      mockManager.createActor.mockResolvedValue(null);
+      mockActorService.sendAndSync.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager);
+      const service = new ForIterationService(mockManager, mockActorService);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('exhausted');

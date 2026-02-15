@@ -16,5 +16,17 @@ export { evaluateFailCondition, evaluatePassCondition } from './transition-handl
 export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from './file-provider.js';
 export type { FileProvider } from './file-provider.js';
 export { resolveForValue, type ResolvedIteration } from './source-resolver.js';
-export { ForIterationService, type IterationResult } from './for-iteration-service.js';
-export { isRunbookComplete, isRunbookStopped } from './snapshot-utils.js';
+export {
+  ForIterationService,
+  type IterationResult,
+  type ForStateReader,
+  type ForActorOperations,
+} from './for-iteration-service.js';
+export {
+  isRunbookComplete,
+  isRunbookStopped,
+  asTerminalSnapshot,
+  asTerminalSnapshotOrDefault,
+} from './snapshot-utils.js';
+export { RunbookActorService, type ActorSyncResult, type AnyActorRef } from './actor-service.js';
+export type { RunbookEvent } from './compiler.js';
