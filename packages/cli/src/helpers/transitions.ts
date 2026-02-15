@@ -132,7 +132,8 @@ export interface TransitionContext {
  *
  * If agent specified but no runbook in agent's stack, check default stack for binding.
  *
- * @param manager - Runbook state manager
+ * @param sessionService - Session service for stack operations
+ * @param manager - Runbook state manager for loading state
  * @param agentId - Optional agent ID
  * @returns Active runbook state or null if none found
  */

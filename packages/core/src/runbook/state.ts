@@ -384,6 +384,11 @@ export class RunbookStateManager {
     });
   }
 
+  /**
+   * Load the session data from disk.
+   *
+   * @returns The parsed session data, or a default empty session if the file doesn't exist
+   */
   async loadSession(): Promise<SessionData> {
     try {
       const content = await fs.readFile(this.sessionPath, 'utf8');
@@ -393,6 +398,11 @@ export class RunbookStateManager {
     }
   }
 
+  /**
+   * Persist session data to disk.
+   *
+   * @param session - The session data to write
+   */
   async saveSession(session: SessionData): Promise<void> {
     await fs.mkdir(path.dirname(this.sessionPath), { recursive: true });
     await fs.writeFile(this.sessionPath, JSON.stringify(session, null, 2));

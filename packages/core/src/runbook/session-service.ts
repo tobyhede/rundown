@@ -114,17 +114,15 @@ export class SessionService {
   async stash(agentId?: string): Promise<string | null> {
     const session = await this.manager.loadSession();
 
-    let activeId: string | undefined;
+    let activeId: string;
     if (agentId) {
       const stack = session.stacks[agentId];
       if (!stack || stack.length === 0) return null;
-      activeId = stack[stack.length - 1];
-      stack.pop();
+      activeId = stack.pop()!;
     } else {
       const stack = session.defaultStack;
       if (stack.length === 0) return null;
-      activeId = stack[stack.length - 1];
-      stack.pop();
+      activeId = stack.pop()!;
     }
 
     session.stashedRunbookId = activeId;
