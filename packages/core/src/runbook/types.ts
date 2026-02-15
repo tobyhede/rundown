@@ -57,6 +57,29 @@ export type { StepId } from '@rundown-org/parser';
 import { type StepId } from '@rundown-org/parser';
 
 /**
+ * JSON primitive value (string, number, boolean, or null).
+ *
+ * Used as a building block for recursive JSON value types in FOR loop iteration.
+ */
+export type JsonPrimitive = string | number | boolean | null;
+
+/**
+ * Recursive JSON value type supporting arbitrary JSON structures.
+ *
+ * Includes primitives, arrays, and objects. Used to represent loop iteration values
+ * when FOR loops iterate over JSONL files or JSON arrays, allowing currentValue
+ * to hold complex JSON objects rather than just strings.
+ *
+ * @example
+ * ```
+ * const scalar: JsonValue = 42;
+ * const array: JsonValue = ['a', 1, true];
+ * const object: JsonValue = { host: 'server-a', count: 1 };
+ * ```
+ */
+export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
+
+/**
  * Structured discriminated union for the last action taken by the state machine.
  *
  * Replaces the previous string-based representation to preserve full transition
@@ -131,7 +154,7 @@ export interface StepState {
  * File format for file-backed data sources.
  *
  * - `'text'` — one value per line (empty lines skipped)
- * - `'jsonl'` — one JSON object per line (JSON Lines format)
+ * - `'jsonl'` — one JSON value per line (JSON Lines format)
  */
 export type FileFormat = 'text' | 'jsonl';
 
@@ -165,7 +188,7 @@ export type DataSource =
        * Format used to parse file content into iteration values.
        *
        * `'text'` reads one value per non-empty line; `'jsonl'` reads one
-       * JSON object per line (JSON Lines).
+       * JSON value per line (JSON Lines).
        */
       readonly format: FileFormat;
     };
@@ -251,7 +274,7 @@ export type ResolvedSource =
        * Format used to parse file content into iteration values.
        *
        * `'text'` reads one value per non-empty line; `'jsonl'` reads one
-       * JSON object per line.
+       * JSON value per line.
        */
       readonly format: FileFormat;
       /**
@@ -281,8 +304,8 @@ export interface ForContext {
   readonly implicit: boolean;
   /** Resolved data source — always present. Determines value resolution strategy. */
   readonly source: ResolvedSource;
-  /** Value at current position (set after first iteration for array/file sources) */
-  readonly currentValue?: string;
+  /** Value at current position (set after first iteration for array/file sources). Supports JSON values for JSONL iteration. */
+  readonly currentValue?: JsonValue;
 }
 
 /**

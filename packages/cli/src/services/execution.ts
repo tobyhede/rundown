@@ -41,8 +41,11 @@ import { expandLoopVariables, expandLoopVariablesForCommand } from './template-r
 /**
  * Per-step dynamic variables (e.g., `Step`, `Index`, named loop variable).
  * Produced by {@link buildStepVariables} and consumed by loop variable expansion.
+ *
+ * Values can be strings (for Step, Index, scalar values) or JSON values (for JSONL objects).
+ * The renderer functions handle both types transparently.
  */
-export type StepVariables = Record<string, string>;
+export type StepVariables = Record<string, unknown>;
 
 /**
  * Template variables for AST-level substitution (e.g., `environment`, `port`).
@@ -96,11 +99,13 @@ export function buildStepVariables(
             break;
           case 'array':
             // currentValue is set by ForIterationService before each iteration.
-            // If missing, the service did not resolve it — fall back to empty string.
-            vars[top.variable] = top.currentValue ?? '';
+            // If missing (undefined), the service did not resolve it — fall back to empty string.
+            // Preserve all other values including null, false, 0, etc.
+            vars[top.variable] = top.currentValue !== undefined ? top.currentValue : '';
             break;
           case 'file':
-            vars[top.variable] = top.currentValue ?? '';
+            // Same handling for file sources: preserve JSON values, fall back to empty string on undefined
+            vars[top.variable] = top.currentValue !== undefined ? top.currentValue : '';
             break;
           default: {
             const _exhaustive: never = top.source;

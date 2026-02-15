@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { JsonValue } from './runbook/types.js';
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -169,6 +170,27 @@ const ResolvedSourceSchema = z.discriminatedUnion('kind', [
 ]);
 
 /**
+ * Recursive JSON value schema for loop iteration values.
+ *
+ * Supports arbitrary JSON structures: primitives, arrays, and objects.
+ * Used to validate currentValue in ForStackEntry when iterating over JSONL files.
+ * Uses z.lazy() for recursive reference handling.
+ *
+ * When used with .optional(), allows either a JSON value or absence (undefined),
+ * but explicitly rejects undefined values that are passed through objects.
+ */
+const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ]),
+);
+
+/**
  * Zod schema for ForStack entry with optional source field for backward compat
  */
 const ForStackEntrySchema = z
@@ -180,7 +202,7 @@ const ForStackEntrySchema = z
     variable: z.string().optional(),
     implicit: z.boolean().default(false),
     source: ResolvedSourceSchema.optional(),
-    currentValue: z.string().optional(),
+    currentValue: JsonValueSchema.optional(),
   })
   .transform((entry) => ({
     ...entry,

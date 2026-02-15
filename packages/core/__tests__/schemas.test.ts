@@ -467,3 +467,203 @@ describe('RunbookStateSchema sources field', () => {
     }
   });
 });
+
+describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
+  it('accepts forStack entry with object currentValue (JSONL object from file)', () => {
+    const state = createValidState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 2,
+          variable: 'record',
+          source: {
+            kind: 'file',
+            path: '/tmp/data.jsonl',
+            format: 'jsonl',
+            snapshot: null,
+          },
+          currentValue: { host: 'server-a', count: 1 },
+        },
+      ],
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success && result.data.forStack?.[0]) {
+      expect(result.data.forStack[0].currentValue).toEqual({ host: 'server-a', count: 1 });
+    }
+  });
+
+  it('accepts forStack entry with array currentValue (JSON array from JSONL)', () => {
+    const state = createValidState({
+      forStack: [
+        {
+          stepId: '2',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          variable: 'item',
+          source: {
+            kind: 'file',
+            path: '/tmp/items.jsonl',
+            format: 'jsonl',
+            snapshot: null,
+          },
+          currentValue: ['a', 1, true],
+        },
+      ],
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success && result.data.forStack?.[0]) {
+      expect(result.data.forStack[0].currentValue).toEqual(['a', 1, true]);
+    }
+  });
+
+  it('accepts forStack entry with number currentValue', () => {
+    const state = createValidState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 5,
+          variable: 'num',
+          source: {
+            kind: 'file',
+            path: '/tmp/numbers.jsonl',
+            format: 'jsonl',
+            snapshot: null,
+          },
+          currentValue: 42,
+        },
+      ],
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success && result.data.forStack?.[0]) {
+      expect(result.data.forStack[0].currentValue).toBe(42);
+    }
+  });
+
+  it('accepts forStack entry with boolean currentValue', () => {
+    const state = createValidState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 4,
+          variable: 'flag',
+          source: {
+            kind: 'file',
+            path: '/tmp/flags.jsonl',
+            format: 'jsonl',
+            snapshot: null,
+          },
+          currentValue: false,
+        },
+      ],
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success && result.data.forStack?.[0]) {
+      expect(result.data.forStack[0].currentValue).toBe(false);
+    }
+  });
+
+  it('accepts forStack entry with null currentValue', () => {
+    const state = createValidState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 2,
+          variable: 'value',
+          source: {
+            kind: 'file',
+            path: '/tmp/nullable.jsonl',
+            format: 'jsonl',
+            snapshot: null,
+          },
+          currentValue: null,
+        },
+      ],
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success && result.data.forStack?.[0]) {
+      expect(result.data.forStack[0].currentValue).toBeNull();
+    }
+  });
+
+  it('rejects forStack entry with non-JSON currentValue (function)', () => {
+    const state = createValidState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 2,
+          variable: 'item',
+          source: {
+            kind: 'file',
+            path: '/tmp/data.jsonl',
+            format: 'jsonl',
+            snapshot: null,
+          },
+          currentValue: (() => 'not json') as unknown,
+        },
+      ],
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts nested JSON object with mixed types in currentValue', () => {
+    const state = createValidState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 1,
+          variable: 'complex',
+          source: {
+            kind: 'file',
+            path: '/tmp/complex.jsonl',
+            format: 'jsonl',
+            snapshot: null,
+          },
+          currentValue: {
+            name: 'test',
+            count: 5,
+            active: true,
+            tags: ['a', 'b'],
+            metadata: { nested: null },
+          },
+        },
+      ],
+    });
+
+    const result = RunbookStateSchema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success && result.data.forStack?.[0]) {
+      expect(result.data.forStack[0].currentValue).toEqual({
+        name: 'test',
+        count: 5,
+        active: true,
+        tags: ['a', 'b'],
+        metadata: { nested: null },
+      });
+    }
+  });
+});

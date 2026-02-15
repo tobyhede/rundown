@@ -328,5 +328,147 @@ describe('execution service', () => {
       expect(vars.Index).toBe('3');
       expect(vars.item).toBe('c');
     });
+
+    it('preserves JSONL object currentValue in variable map', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 2,
+          variable: 'record',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/data.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          currentValue: { host: 'server-a', region: 'us-west' },
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.record).toEqual({ host: 'server-a', region: 'us-west' });
+      expect(vars.Index).toBe('1');
+    });
+
+    it('preserves JSONL primitive currentValue (number) in variable map', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          variable: 'count',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/nums.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          currentValue: 42,
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.count).toBe(42);
+    });
+
+    it('preserves JSONL boolean currentValue in variable map', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 2,
+          variable: 'enabled',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/bools.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          currentValue: false,
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.enabled).toBe(false);
+    });
+
+    it('preserves JSONL null currentValue in variable map', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 2,
+          variable: 'nullable',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/nulls.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          currentValue: null,
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.nullable).toBe(null);
+    });
+
+    it('keeps Index and Step as strings even with object-valued loop variables', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 3,
+          start: 1,
+          end: 5,
+          variable: 'config',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/config.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          currentValue: { name: 'test', value: 100 },
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.Step).toBe('1.1');
+      expect(vars.Index).toBe('3');
+      expect(typeof vars.Step).toBe('string');
+      expect(typeof vars.Index).toBe('string');
+      expect(vars.config).toEqual({ name: 'test', value: 100 });
+    });
+
+    it('falls back to empty string for file JSONL when currentValue is undefined', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          variable: 'item',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/data.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          // currentValue intentionally omitted
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.item).toBe('');
+    });
   });
 });

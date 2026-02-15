@@ -10,7 +10,7 @@
  */
 
 import { createFileProvider, computeFileSnapshot } from './file-provider.js';
-import type { ForContext, FileSnapshot } from './types.js';
+import type { ForContext, FileSnapshot, JsonValue } from './types.js';
 
 /**
  * Discriminated union for the result of resolving a FOR loop iteration value.
@@ -61,12 +61,25 @@ export async function resolveForValue(fc: ForContext): Promise<ResolvedIteration
         if (done) {
           return { kind: 'exhausted', capped: { ...fc, end: fc.iteration } };
         }
+        // Parse value based on format
+        let currentValue: JsonValue = value;
+        if (fc.source.format === 'jsonl') {
+          try {
+            currentValue = JSON.parse(value) as JsonValue;
+          } catch (cause) {
+            const truncated = value.length > 120 ? value.substring(0, 120) + '...' : value;
+            throw new Error(
+              `Failed to parse JSONL at ${fc.source.path} line ${String(fc.iteration)}: ${truncated}`,
+              { cause },
+            );
+          }
+        }
         const snapshot: FileSnapshot = await computeFileSnapshot(fc.source.path, fc.iteration);
         return {
           kind: 'resolved',
           context: {
             ...fc,
-            currentValue: value,
+            currentValue,
             source: { ...fc.source, snapshot },
           },
         };
