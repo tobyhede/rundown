@@ -107,7 +107,7 @@ Variables whose values are arrays or `file:`-prefixed paths become **data source
 
 Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 
-**File formats:** `.jsonl` files are parsed as JSON Lines (one JSON object per line). All other extensions use plain text (one value per non-empty line).
+**File formats:** `.jsonl` files are parsed as JSON Lines (one JSON value per line). Each line may contain any JSON value (string, number, boolean, null, array, or object). When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. All other extensions (e.g., `.txt`) use plain text (one value per non-empty line). Users who need raw line strings from a `.jsonl` file should rename it to a `.txt` extension.
 
 **Notes:**
 - Arrays and `file:` values are supported in `.rundown/config.yaml` and `--var-file`, not in frontmatter `vars:`
