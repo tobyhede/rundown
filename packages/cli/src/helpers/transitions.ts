@@ -28,7 +28,7 @@ import {
   isRunbookComplete,
   isRunbookStopped,
 } from '../services/execution.js';
-import { asTerminalSnapshot } from '@rundown-org/core';
+import { asTerminalSnapshotOrDefault } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 
@@ -379,7 +379,7 @@ export async function handleAgentBinding(
 
   if (conditionResult.action === 'retry') {
     actor.send({ type: config.eventType });
-    const retryState = await actorService.updateFromActor(state.id, actor, steps);
+    const { state: retryState } = await actorService.updateFromActor(state.id, actor, steps);
     output.status(true, 'retry', `Agent ${agentId} retrying step ${stepName}`, {
       agent: agentId,
       step: stepName,
@@ -402,7 +402,7 @@ export async function handleAgentBinding(
 
   if (conditionResult.action === 'goto') {
     actor.send({ type: config.eventType });
-    const gotoState = await actorService.updateFromActor(state.id, actor, steps);
+    const { state: gotoState } = await actorService.updateFromActor(state.id, actor, steps);
     output.status(true, 'goto', `Agent ${agentId} triggered goto to step ${gotoState.step}`, {
       agent: agentId,
       step: gotoState.step,
@@ -483,13 +483,13 @@ export async function executeTransition(
   // Send event
   actor.send({ type: config.eventType });
 
-  const updatedState = await actorService.updateFromActor(state.id, actor, steps);
+  const { state: updatedState, snapshot: rawSnapshot } = await actorService.updateFromActor(
+    state.id,
+    actor,
+    steps,
+  );
 
-  const rawSnapshot = actor.getPersistedSnapshot();
-  const terminalSnapshot = asTerminalSnapshot(rawSnapshot) ?? {
-    status: 'active',
-    value: undefined,
-  };
+  const terminalSnapshot = asTerminalSnapshotOrDefault(rawSnapshot);
   const isComplete = isRunbookComplete(terminalSnapshot);
   const isStopped = isRunbookStopped(terminalSnapshot);
 

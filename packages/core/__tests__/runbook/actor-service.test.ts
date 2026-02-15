@@ -55,7 +55,11 @@ describe('RunbookActorService', () => {
         }),
       };
 
-      const updated = await actorService.updateFromActor(state.id, actor as any, mockSteps);
+      const { state: updated } = await actorService.updateFromActor(
+        state.id,
+        actor as any,
+        mockSteps,
+      );
       expect(updated.step).toBe('1');
       expect(updated.substep).toBe('2');
     });
@@ -75,7 +79,7 @@ describe('RunbookActorService', () => {
         { name: '3', description: 'S3' },
       ];
 
-      const updated = await actorService.updateFromActor(state.id, actor as any, steps);
+      const { state: updated } = await actorService.updateFromActor(state.id, actor as any, steps);
       expect(updated.step).toBe('3');
       expect(updated.substep).toBeUndefined();
     });
@@ -99,6 +103,22 @@ describe('RunbookActorService', () => {
     it('returns null for nonexistent runbook', async () => {
       const result = await actorService.sendAndSync('nonexistent', mockSteps, { type: 'PASS' });
       expect(result).toBeNull();
+    });
+
+    it('sends event, syncs state, and returns actor + state + snapshot', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
+
+      expect(result).not.toBeNull();
+      expect(result!.actor).toBeDefined();
+      expect(result!.state).toBeDefined();
+      expect(result!.state.id).toBe(state.id);
+      expect(result!.snapshot).toBeDefined();
+
+      // Snapshot should have expected XState shape
+      const snap = result!.snapshot as { status: string; value: unknown };
+      expect(typeof snap.status).toBe('string');
+      expect(snap).toHaveProperty('value');
     });
   });
 
@@ -128,7 +148,11 @@ describe('RunbookActorService', () => {
         }),
       };
 
-      const updated = await actorService.updateFromActor(state.id, actor as any, mockSteps);
+      const { state: updated } = await actorService.updateFromActor(
+        state.id,
+        actor as any,
+        mockSteps,
+      );
 
       expect(updated.forStack).toEqual([
         {
@@ -174,7 +198,7 @@ describe('RunbookActorService', () => {
         }),
       };
 
-      const completed = await actorService.updateFromActor(
+      const { state: completed } = await actorService.updateFromActor(
         state.id,
         completeActor as any,
         mockSteps,
@@ -263,7 +287,11 @@ describe('RunbookActorService', () => {
         }),
       };
 
-      const updated = await actorService.updateFromActor(state.id, actor as any, mockSteps);
+      const { state: updated } = await actorService.updateFromActor(
+        state.id,
+        actor as any,
+        mockSteps,
+      );
       expect(updated.forStack).toBeUndefined();
     });
 
@@ -291,7 +319,11 @@ describe('RunbookActorService', () => {
         }),
       };
 
-      const updated = await actorService.updateFromActor(state.id, actor as any, mockSteps);
+      const { state: updated } = await actorService.updateFromActor(
+        state.id,
+        actor as any,
+        mockSteps,
+      );
       expect(updated.iterationResults).toBeUndefined();
     });
 
@@ -319,7 +351,11 @@ describe('RunbookActorService', () => {
         }),
       };
 
-      const updated = await actorService.updateFromActor(state.id, actor as any, mockSteps);
+      const { state: updated } = await actorService.updateFromActor(
+        state.id,
+        actor as any,
+        mockSteps,
+      );
       expect(updated.forStack).toHaveLength(1);
       expect(updated.iterationResults).toEqual(['pass']);
     });
@@ -341,7 +377,7 @@ describe('RunbookActorService', () => {
 
       const steps: Step[] = [...mockSteps, { name: '2', description: 'After loop' }];
 
-      const updated = await actorService.updateFromActor(state.id, actor as any, steps);
+      const { state: updated } = await actorService.updateFromActor(state.id, actor as any, steps);
       expect(updated.forStack).toBeUndefined(); // empty stack not persisted
       expect(updated.iterationResults).toEqual(['pass', 'fail', 'pass']); // preserved
     });
@@ -374,7 +410,11 @@ describe('RunbookActorService', () => {
         }),
       };
 
-      const updated = await actorService.updateFromActor(state.id, actor as any, mockSteps);
+      const { state: updated } = await actorService.updateFromActor(
+        state.id,
+        actor as any,
+        mockSteps,
+      );
 
       // Verify forStack with array source is set
       expect(updated.forStack).toHaveLength(1);
@@ -425,7 +465,11 @@ describe('RunbookActorService', () => {
         }),
       };
 
-      const updated = await actorService.updateFromActor(state.id, actor as any, mockSteps);
+      const { state: updated } = await actorService.updateFromActor(
+        state.id,
+        actor as any,
+        mockSteps,
+      );
 
       // Verify forStack with file source is set
       expect(updated.forStack).toHaveLength(1);
@@ -481,7 +525,11 @@ describe('RunbookActorService', () => {
         }),
       };
 
-      const updated2 = await actorService.updateFromActor(state.id, actor as any, mockSteps);
+      const { state: updated2 } = await actorService.updateFromActor(
+        state.id,
+        actor as any,
+        mockSteps,
+      );
       expect(updated2.sources).toEqual(sources);
 
       // Load from disk and verify sources still present

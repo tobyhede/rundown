@@ -22,6 +22,11 @@ export {
   type ForStateReader,
   type ForActorOperations,
 } from './for-iteration-service.js';
-export { isRunbookComplete, isRunbookStopped, asTerminalSnapshot } from './snapshot-utils.js';
+export {
+  isRunbookComplete,
+  isRunbookStopped,
+  asTerminalSnapshot,
+  asTerminalSnapshotOrDefault,
+} from './snapshot-utils.js';
 export { RunbookActorService, type ActorSyncResult, type AnyActorRef } from './actor-service.js';
 export type { RunbookEvent } from './compiler.js';

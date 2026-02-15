@@ -5,29 +5,8 @@ const mockActorService = {
   sendAndSync: jest.fn(),
 };
 
-jest.unstable_mockModule('@rundown-org/core', () => ({
-  printActionBlock: jest.fn(),
-  printStepBlock: jest.fn(),
-  printStepSeparator: jest.fn(),
-  printCommandExec: jest.fn(),
-  printRunbookComplete: jest.fn(),
-  printRunbookStoppedAtStep: jest.fn(),
-  printPolicyDenied: jest.fn(),
-  executeCommand: jest.fn(),
-  executeCommandWithPolicy: jest.fn(),
-  evaluatePassCondition: jest.fn(),
-  evaluateFailCondition: jest.fn(),
-  countNumberedSteps: jest.fn().mockReturnValue(2),
-  extractDisplayCommand: jest.fn((cmd) => cmd),
-  createFileProvider: jest.fn(),
-  computeFileSnapshot: jest.fn(),
-  RunbookActorService: jest.fn().mockImplementation(() => mockActorService),
-  ForIterationService: jest.fn().mockImplementation(() => ({
-    prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
-  })),
-  isRunbookComplete: jest.fn((s: any) => s?.status === 'done' && s?.value === 'COMPLETE'),
-  isRunbookStopped: jest.fn((s: any) => s?.status === 'done' && s?.value === 'STOPPED'),
-  asTerminalSnapshot: jest.fn((snapshot: unknown) => {
+jest.unstable_mockModule('@rundown-org/core', () => {
+  const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
     if (
       typeof snapshot === 'object' &&
       snapshot !== null &&
@@ -37,8 +16,35 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       return snapshot as { status: string; value: unknown };
     }
     return null;
-  }),
-}));
+  });
+  return {
+    printActionBlock: jest.fn(),
+    printStepBlock: jest.fn(),
+    printStepSeparator: jest.fn(),
+    printCommandExec: jest.fn(),
+    printRunbookComplete: jest.fn(),
+    printRunbookStoppedAtStep: jest.fn(),
+    printPolicyDenied: jest.fn(),
+    executeCommand: jest.fn(),
+    executeCommandWithPolicy: jest.fn(),
+    evaluatePassCondition: jest.fn(),
+    evaluateFailCondition: jest.fn(),
+    countNumberedSteps: jest.fn().mockReturnValue(2),
+    extractDisplayCommand: jest.fn((cmd) => cmd),
+    createFileProvider: jest.fn(),
+    computeFileSnapshot: jest.fn(),
+    RunbookActorService: jest.fn().mockImplementation(() => mockActorService),
+    ForIterationService: jest.fn().mockImplementation(() => ({
+      prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
+    })),
+    isRunbookComplete: jest.fn((s: any) => s?.status === 'done' && s?.value === 'COMPLETE'),
+    isRunbookStopped: jest.fn((s: any) => s?.status === 'done' && s?.value === 'STOPPED'),
+    asTerminalSnapshot,
+    asTerminalSnapshotOrDefault: jest.fn((snapshot: unknown) => {
+      return asTerminalSnapshot(snapshot) ?? { status: 'active', value: undefined };
+    }),
+  };
+});
 
 jest.unstable_mockModule('../../src/services/internal-commands', () => ({
   isInternalRdCommand: jest.fn().mockReturnValue(false),

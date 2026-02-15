@@ -28,7 +28,7 @@ import {
   type DataSource,
   isRunbookComplete as _isRunbookComplete,
   isRunbookStopped as _isRunbookStopped,
-  asTerminalSnapshot,
+  asTerminalSnapshotOrDefault,
 } from '@rundown-org/core';
 import { isSourced } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -432,10 +432,7 @@ export async function runExecutionLoop(
 
     const { state: updatedState, snapshot } = syncResult;
 
-    const terminalSnapshot = asTerminalSnapshot(snapshot) ?? {
-      status: 'active',
-      value: undefined,
-    };
+    const terminalSnapshot = asTerminalSnapshotOrDefault(snapshot);
     const isComplete = isRunbookComplete(terminalSnapshot);
     const isStopped = isRunbookStopped(terminalSnapshot);
 

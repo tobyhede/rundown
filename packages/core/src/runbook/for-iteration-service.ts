@@ -15,7 +15,12 @@ import type { Step, RunbookState, ForContext } from './types.js';
 import type { ActorSyncResult } from './actor-service.js';
 import type { RunbookEvent } from './compiler.js';
 import { resolveForValue } from './source-resolver.js';
-import { isRunbookComplete, isRunbookStopped, asTerminalSnapshot } from './snapshot-utils.js';
+import {
+  isRunbookComplete,
+  isRunbookStopped,
+  asTerminalSnapshot,
+  asTerminalSnapshotOrDefault,
+} from './snapshot-utils.js';
 
 /**
  * Result of preparing a FOR loop iteration.
@@ -153,10 +158,13 @@ export class ForIterationService {
       };
     }
 
-    const terminalSnapshot = asTerminalSnapshot(syncResult.snapshot) ?? {
-      status: 'active',
-      value: undefined,
-    };
+    if (!asTerminalSnapshot(syncResult.snapshot)) {
+      console.warn(
+        `Unexpected snapshot shape after sendAndSync for runbook "${id}"; using active-state default. ` +
+          `Snapshot: ${JSON.stringify(syncResult.snapshot)}`,
+      );
+    }
+    const terminalSnapshot = asTerminalSnapshotOrDefault(syncResult.snapshot);
 
     const complete = isRunbookComplete(terminalSnapshot);
     const stopped = isRunbookStopped(terminalSnapshot);

@@ -43,6 +43,9 @@ export interface ActorSyncResult {
  * initialisation (create + sync with no event) and transition (create + send + sync).
  */
 export class RunbookActorService {
+  /**
+   * @param manager - State manager for persisting runbook state to disk
+   */
   constructor(private readonly manager: RunbookStateManager) {}
 
   /**
@@ -116,9 +119,13 @@ export class RunbookActorService {
    * @param id - Runbook state ID
    * @param actor - The XState actor to read snapshot from
    * @param steps - Parsed runbook steps for step name lookup
-   * @returns Updated persisted RunbookState
+   * @returns Updated persisted RunbookState and the raw snapshot
    */
-  async updateFromActor(id: string, actor: AnyActorRef, steps: Step[]): Promise<RunbookState> {
+  async updateFromActor(
+    id: string,
+    actor: AnyActorRef,
+    steps: Step[],
+  ): Promise<{ state: RunbookState; snapshot: unknown }> {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
     const snapshot = actor.getPersistedSnapshot() as any;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -132,13 +139,20 @@ export class RunbookActorService {
         string,
         boolean | number | string
       >;
-      return await this.manager.update(id, {
+      const state = await this.manager.update(id, {
         variables,
         snapshot,
         // Clear FOR loop state on completion
         forStack: undefined,
         iterationResults: undefined,
       });
+      return { state, snapshot };
+    }
+
+    if (!steps.length) {
+      throw new Error(
+        `updateFromActor called with empty steps array for runbook "${id}" (stateValue: "${stateValue}")`,
+      );
     }
 
     // Parse step name from XState state value
@@ -177,7 +191,7 @@ export class RunbookActorService {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const lastAction = snapshot.context?.lastAction as RunbookState['lastAction'];
 
-    return await this.manager.update(id, {
+    const state = await this.manager.update(id, {
       step: stepName, // string
       substep,
       stepName: step.description,
@@ -198,6 +212,7 @@ export class RunbookActorService {
       })(),
       lastAction,
     });
+    return { state, snapshot };
   }
 
   /**
@@ -213,7 +228,8 @@ export class RunbookActorService {
   async initializeState(id: string, steps: Step[]): Promise<RunbookState | null> {
     const actor = await this.createActor(id, steps);
     if (!actor) return null;
-    return await this.updateFromActor(id, actor, steps);
+    const { state } = await this.updateFromActor(id, actor, steps);
+    return state;
   }
 
   /**
@@ -237,8 +253,7 @@ export class RunbookActorService {
     const actor = await this.createActor(id, steps);
     if (!actor) return null;
     actor.send(event);
-    const state = await this.updateFromActor(id, actor, steps);
-    const snapshot = actor.getPersistedSnapshot();
+    const { state, snapshot } = await this.updateFromActor(id, actor, steps);
     return { actor, state, snapshot };
   }
 }

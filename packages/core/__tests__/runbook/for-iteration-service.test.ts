@@ -7,21 +7,28 @@ jest.unstable_mockModule('../../src/runbook/source-resolver.js', () => ({
 }));
 
 // Mock snapshot-utils (used internally)
-jest.unstable_mockModule('../../src/runbook/snapshot-utils.js', () => ({
-  isRunbookComplete: jest.fn(),
-  isRunbookStopped: jest.fn(),
-  asTerminalSnapshot: jest.fn((snapshot: unknown) => {
+jest.unstable_mockModule('../../src/runbook/snapshot-utils.js', () => {
+  const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
     if (
       typeof snapshot === 'object' &&
       snapshot !== null &&
       'status' in snapshot &&
-      'value' in snapshot
+      'value' in snapshot &&
+      typeof (snapshot as Record<string, unknown>).status === 'string'
     ) {
       return snapshot as { status: string; value: unknown };
     }
     return null;
-  }),
-}));
+  });
+  return {
+    isRunbookComplete: jest.fn(),
+    isRunbookStopped: jest.fn(),
+    asTerminalSnapshot,
+    asTerminalSnapshotOrDefault: jest.fn((snapshot: unknown) => {
+      return asTerminalSnapshot(snapshot) ?? { status: 'active', value: undefined };
+    }),
+  };
+});
 
 const { resolveForValue } = await import('../../src/runbook/source-resolver.js');
 const { isRunbookComplete, isRunbookStopped } = await import('../../src/runbook/snapshot-utils.js');

@@ -40,9 +40,20 @@ export function asTerminalSnapshot(snapshot: unknown): { status: string; value: 
     typeof snapshot === 'object' &&
     snapshot !== null &&
     'status' in snapshot &&
-    'value' in snapshot
+    'value' in snapshot &&
+    typeof (snapshot as Record<string, unknown>).status === 'string'
   ) {
     return snapshot as { status: string; value: unknown };
   }
   return null;
+}
+
+/**
+ * Narrow snapshot to terminal shape, falling back to an active-state default.
+ *
+ * @param snapshot - Raw persisted XState snapshot
+ * @returns Terminal-shaped snapshot (never null)
+ */
+export function asTerminalSnapshotOrDefault(snapshot: unknown): { status: string; value: unknown } {
+  return asTerminalSnapshot(snapshot) ?? { status: 'active', value: undefined };
 }
