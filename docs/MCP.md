@@ -314,7 +314,9 @@ Start a runbook or bind an agent to a pending step.
 }
 ```
 
-**CLI Equivalent:** `rundown run [<file>] [--step <id>] [--agent <id>] [--prompted] --json`
+**CLI Equivalent:** `rundown run [<file>] [--step <id>] [--agent <id>] [--prompted] [--var key=value] [--var-file path] --json`
+
+**Note:** The `--var` and `--var-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters.
 
 ---
 

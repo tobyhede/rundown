@@ -111,6 +111,18 @@ The policy layer protects against:
 └─────────────────────────────────────────────────────┘
 ```
 
+### Data Source File Security
+
+File-backed data sources (`--var items=file:data.txt`) are subject to security controls:
+
+- **Symlink resolution:** `fs.realpath()` resolves symlinks before path validation
+- **Path containment:** Resolved paths must stay within the project root directory
+- **Blocked sources:** Paths escaping the project are silently ignored with a warning
+- **Drift detection:** File snapshots (size, mtime, SHA-256 of first 64 KiB) detect modification between iterations
+- **Iteration cap:** `MAX_FILE_ITERATIONS` (10,000) prevents runaway loops from unbounded file sources
+
+These controls are always active, independent of the sandbox layer.
+
 ## Policy Configuration
 
 ### Config File Locations

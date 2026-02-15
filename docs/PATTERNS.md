@@ -1887,6 +1887,68 @@ Execute child runbook task.
 
 ---
 
+### data-source-loop.runbook.md
+
+FOR loop iteration over a data source (array or file).
+
+
+**data-source-loop.runbook.md:**
+
+```rundown
+---
+name: data-source-loop
+description: Demonstrates FOR loop over a data source
+tags:
+  - features
+  - for-loop
+
+scenarios:
+  completed:
+    description: Iterates over all items from a data source
+    commands:
+      - rd run --prompted data-source-loop.runbook.md --var-file items.yaml
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+---
+
+# Data Source Loop
+
+Iterates over items from a data source.
+
+## 1 Process items
+- FOR item IN {{ items }}
+- PASS ALL: COMPLETE
+- FAIL ANY: STOP
+### 1 Handle item
+- PASS: CONTINUE
+- FAIL: BREAK
+Process {{item}} (iteration {{Index}}).
+```
+
+**Example `items.yaml`:**
+
+```yaml
+items:
+  - alpha
+  - bravo
+  - charlie
+```
+
+**CLI Usage:**
+
+```bash
+# Using --var-file with an array
+rd run data-source-loop.runbook.md --var-file items.yaml
+
+# Using a file data source
+rd run data-source-loop.runbook.md --var items=file:data/items.txt
+```
+
+
+---
+
 ## Specific Features
 
 Additional specific functionality.

@@ -65,6 +65,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `Day` | `04` | Current day (01-31) |
 | `WorkPath` | `.work` | Default artifact directory |
 | `Step` | `3.1` | Current qualified step identifier |
+| `Index` | `3` | Current loop iteration number (inside FOR) |
 
 Built-in variables use PascalCase and can be overridden by any other source.
 
@@ -91,7 +92,27 @@ Server running on port {{ port }} in {{ environment }} mode.
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
-- Frontmatter vars support string, number, and boolean values (converted to strings)
+- Frontmatter vars support string, number, and boolean values (converted to strings). For arrays and file data sources, use `.rundown/config.yaml` or `--var-file`
+
+### Data Sources
+
+Variables whose values are arrays or `file:`-prefixed paths become **data sources** for FOR loop iteration:
+
+| Value Type | In `vars` | In `sources` | Example |
+|------------|-----------|--------------|---------|
+| `file:path/to/data.txt` | Not set | File DataSource | `--var items=file:data.txt` |
+| Array (YAML) | Comma-joined | Array DataSource | `items: [a, b, c]` in config |
+| Multiline string | Raw string | Array DataSource (split on newlines) | YAML block scalar |
+| Scalar | String value | Not set | `--var name=value` |
+
+Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
+
+**File formats:** `.jsonl` files are parsed as JSON Lines (one JSON object per line). All other extensions use plain text (one value per non-empty line).
+
+**Notes:**
+- Arrays and `file:` values are supported in `.rundown/config.yaml` and `--var-file`, not in frontmatter `vars:`
+- File paths must stay within the project root (symlinks resolved, traversal blocked)
+- `file:` values are routed to sources only — they do NOT appear as template variables
 
 ## Schema Output
 

@@ -101,6 +101,11 @@ where index is:
 
 where for_clause is:
   "- FOR" [ variable_name "IN" ] range
+  | "- FOR" variable_name "IN" source_ref
+  | "- FOR" variable_name "IN" integer "TO" integer "OF" source_ref
+
+where source_ref is:
+  "{{" variable_name "}}"              -- references a named data source
 
 where range is:
   integer                              -- implicit start (1), end is integer
@@ -110,7 +115,7 @@ where range is:
   | "{{" variable_name "}}" "TO" "{{" variable_name "}}"  -- variable both bounds
   | "{{" variable_name "}}"            -- count-only with template variable
 
-Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result).
+Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result). Source references in `FOR var IN {{ source }}` and `... OF {{ source }}` are NOT expanded — they are parsed as data source identifiers resolved at runtime.
 
 where variable_name is:
   [a-zA-Z_][a-zA-Z0-9_]*
@@ -164,8 +169,12 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 | Named variable, implicit start | `- FOR batch IN 10` | Iterates 1..10, `{{batch}}` available |
 | No variable, implicit start | `- FOR 10` | Iterates 1..10, no named variable |
 | Variable bounds | `- FOR batch IN 1 TO {{Max}}` | End bound from template variable |
+| Named variable, source (all items) | `- FOR item IN {{ items }}` | Iterates all items from data source, `{{item}}` available |
+| Named variable, windowed source | `- FOR item IN 3 TO 7 OF {{ items }}` | Items 3–7 from data source, `{{item}}` available |
 
 **Direction inference:** When `start > end`, the loop iterates downward (step size −1). When `start <= end`, it iterates upward (step size +1). Single-number shorthand (`FOR N`) always ascends from 1.
+
+**Data source binding:** When a FOR clause references a data source, the named variable receives the data element at each iteration — not the iteration index. `{{Index}}` always holds the 1-based iteration number. A named variable is required for data source FOR clauses. Data sources are defined via `.rundown/config.yaml` or `--var-file`. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration details.
 
 **Rules:**
 - FOR must appear before transitions in the step's bullet list
@@ -182,7 +191,7 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 | `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`) | Always |
 | `{{Index}}` | Current loop iteration number (1-based) | Inside FOR steps |
 
-These use PascalCase, consistent with other built-in variables (Date, WorkPath). `{{Step}}` is expanded per-step. The loop variable (if named) and `{{Index}}` are expanded per-iteration.
+These use PascalCase, consistent with other built-in variables (Date, WorkPath). `{{Step}}` is expanded per-step. The loop variable (if named) and `{{Index}}` are expanded per-iteration. For data source loops, the named variable holds the data element while `{{Index}}` holds the iteration number.
 
 ---
 

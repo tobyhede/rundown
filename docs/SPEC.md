@@ -210,7 +210,7 @@ Rundown provides built-in variables using PascalCase, consistent with existing b
 | `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`) | Always |
 | `{{Index}}` | Current loop iteration number | Inside FOR steps |
 
-These join the template variable context alongside user-defined variables. `{{Step}}` is always available and expands to the qualified step identifier. `{{Index}}` is only defined inside a FOR loop; outside a loop it is preserved as literal text.
+These join the template variable context alongside user-defined variables. `{{Step}}` is always available and expands to the qualified step identifier. `{{Index}}` is only defined inside a FOR loop; outside a loop it is preserved as literal text. For data source loops, `{{Index}}` still reflects the iteration number while the named variable holds the resolved data element.
 
 ### Undefined Variable Behavior
 
@@ -286,10 +286,18 @@ A step with a `FOR` annotation iterates its substeps.
 | `FOR var IN 10` | Implicit start (1), named variable |
 | `FOR 10` | Implicit start (1), no variable |
 | `FOR var IN 1 TO {{Max}}` | Variable range |
+| `FOR var IN {{ source }}` | All items from data source |
+| `FOR var IN 1 TO 5 OF {{ source }}` | Windowed data source (items 1–5) |
 
 **Direction inference:** When `start > end`, the loop iterates downward by 1 (e.g., `FOR 10 TO 1` iterates 10, 9, 8, ..., 1). When `start <= end`, it iterates upward by 1. Single-number shorthand (`FOR 5`) always starts at 1 and is ascending.
 
-**Loop variable:** The named variable joins the template variable context per-iteration. Accessible as `{{var}}` in step content and code blocks. Its value equals the iteration index.
+**Open-ended iteration:** `FOR item IN {{ items }}` iterates until the source is exhausted. A safety limit of 10,000 iterations prevents runaway loops. Windowed sources (`FOR item IN 1 TO 5 OF {{ items }}`) iterate only the specified range. Descending ranges are not supported for data sources.
+
+**Loop variable:** The named variable joins the template variable context per-iteration. Accessible as `{{var}}` in step content and code blocks. For numeric ranges, its value equals the iteration index. For data sources, its value is the element at the current position (e.g., a line from a file or an array entry).
+
+**Source references:** Double-brace references in source position (`FOR var IN {{ source }}`, `... OF {{ source }}`) are **not** expanded by the template engine. They are parsed as data source identifiers and resolved at runtime against the sources map. This is distinct from template variable bounds (`FOR var IN 1 TO {{ Max }}`), which are expanded before parsing.
+
+Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{ source }}`) is not valid.
 
 **Aggregation:** Parent FOR step transitions use ALL/ANY to aggregate **across iterations**. Substep transitions control within-iteration flow (CONTINUE, NEXT, BREAK, STOP, GOTO). Parent transitions evaluate the post-loop aggregate (PASS ALL, FAIL ANY, etc.).
 
@@ -537,6 +545,7 @@ Parsers and executors must adhere to strict validation:
 7. **FOR validation**: `NEXT` and `BREAK` are only valid within substeps of a FOR step.
 8. **FOR steps require substeps**: A step with a FOR annotation must contain substeps; FOR is invalid on steps with code blocks or runbooks.
 9. **FOR placement**: The FOR annotation must appear before transitions in the bullet list.
+10. **Source validation**: FOR clauses with a data source reference must reference a defined data source. A named variable is required for data source FOR clauses.
 
 ---
 
