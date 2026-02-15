@@ -68,7 +68,10 @@ export const isRunbookStopped = _isRunbookStopped;
  * @param substepId - Optional substep identifier (e.g., "1")
  * @param forStack - Current FOR loop stack from persisted state
  * @param forClause - FOR clause from the step definition (bootstrap fallback)
+ * @param sources - Data-source bindings for sourced FOR clauses
  * @returns Variable map with `Step` and optional `Index` / named variable
+ * @throws Error if a sourced FOR clause references a missing data source
+ * @throws Error if an unexpected source kind is encountered
  */
 export function buildStepVariables(
   stepId: string,
@@ -108,8 +111,13 @@ export function buildStepVariables(
     }
   } else if (forClause) {
     // Bootstrap: first iteration before actor has run
-    if (isSourced(forClause) && sources?.[forClause.source]) {
-      const ds = sources[forClause.source];
+    if (isSourced(forClause)) {
+      const ds = sources?.[forClause.source];
+      if (!ds) {
+        throw new Error(
+          `Data source "${forClause.source}" not found for FOR loop in step ${stepId}`,
+        );
+      }
       if (ds.kind === 'array') {
         // Clamp start to match compiler behavior (compiler.ts buildForContext)
         const clampedStart = Math.max(1, Math.min(forClause.start, ds.items.length));
@@ -224,6 +232,8 @@ export async function runExecutionLoop(
         return 'done';
       }
       if (iterResult.terminal === 'stopped') {
+        const stopMessage = extractLastMessage(iterResult.state.snapshot);
+
         // Terminal bookkeeping: mark variables and update parent agent binding
         // (mirrors the normal isStopped path below)
         await manager.update(runbookId, {
@@ -234,6 +244,21 @@ export async function runExecutionLoop(
             status: 'done',
             result: 'fail',
           });
+        }
+
+        const stopPos = {
+          current: iterResult.state.step,
+          total: totalSteps,
+          substep: iterResult.state.substep,
+        };
+        if (emitter) {
+          emitter.emit('RUNBOOK_STOPPED', {
+            message: stopMessage,
+            position: stopPos,
+            reason: 'fail_transition',
+          });
+        } else {
+          printRunbookStoppedAtStep(stopPos, stopMessage);
         }
 
         await manager.popRunbook(agentId);
