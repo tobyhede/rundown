@@ -6,7 +6,7 @@ import {
   isInternalRdCommand,
   executeRdCommandInternal,
 } from '../../src/services/internal-commands.js';
-import { RunbookStateManager, parseRunbook, type Runbook } from '@rundown-org/core';
+import { RunbookStateManager, SessionService, parseRunbook, type Runbook } from '@rundown-org/core';
 
 describe('internal-commands', () => {
   describe('isInternalRdCommand()', () => {
@@ -85,7 +85,8 @@ rd echo test
       });
 
       // Push to make it active
-      await manager.pushRunbook(state.id);
+      const sessionService = new SessionService(manager);
+      await sessionService.pushRunbook(state.id);
     }
 
     beforeEach(async () => {

@@ -6,6 +6,7 @@ import * as path from 'path';
 import {
   RunbookStateManager,
   RunbookActorService,
+  SessionService,
   parseRunbookDocument,
   RunbookSyntaxError,
   stepIdToString,
@@ -117,10 +118,11 @@ export function registerRunCommand(program: Command): void {
         try {
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
+          const sessionService = new SessionService(manager);
 
           // Mode 1: --step - Push step to pending queue
           if (options.step && !options.agent) {
-            const state = await manager.getActive();
+            const state = await sessionService.getActive();
             if (!state) {
               output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
               output.flush();
@@ -222,7 +224,7 @@ export function registerRunCommand(program: Command): void {
             // Initialize actor state (populates forStack for first step)
             await initializeActor(manager, state.id, runbook.steps as Step[]);
 
-            await manager.pushRunbook(state.id, options.agent);
+            await sessionService.pushRunbook(state.id, options.agent);
 
             if (runbook.steps[0].substeps && runbook.steps[0].substeps.length > 0) {
               await manager.initializeSubsteps(state.id, runbook.steps[0].substeps);
@@ -261,7 +263,7 @@ export function registerRunCommand(program: Command): void {
 
           // Mode 3: --agent - Bind agent to pending step
           if (options.agent) {
-            const state = await manager.getActive();
+            const state = await sessionService.getActive();
             if (!state) {
               output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
               output.flush();
@@ -354,7 +356,7 @@ export function registerRunCommand(program: Command): void {
                 childRunbookId: childState.id,
               });
 
-              await manager.pushRunbook(childState.id, options.agent);
+              await sessionService.pushRunbook(childState.id, options.agent);
 
               // Update lastAction
               await manager.update(childState.id, { lastAction: { type: 'START' } });

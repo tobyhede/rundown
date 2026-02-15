@@ -1,7 +1,7 @@
 // packages/cli/src/commands/prune.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager } from '@rundown-org/core';
+import { RunbookStateManager, SessionService } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -36,9 +36,10 @@ export function registerPruneCommand(program: Command): void {
         const output = new OutputEmitter({ json: options.json });
 
         const manager = new RunbookStateManager(cwd);
+        const sessionService = new SessionService(manager);
         const states = await manager.list();
-        const activeState = await manager.getActive();
-        const stashedId = await manager.getStashedRunbookId();
+        const activeState = await sessionService.getActive();
+        const stashedId = await sessionService.getStashedRunbookId();
 
         // Default to --completed if no filter flags provided
         const hasFilter = options.completed ?? options.active ?? options.inactive ?? options.all;

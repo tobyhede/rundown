@@ -1,7 +1,12 @@
 // packages/cli/src/commands/pop.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, countNumberedSteps, type ActionBlockData } from '@rundown-org/core';
+import {
+  RunbookStateManager,
+  SessionService,
+  countNumberedSteps,
+  type ActionBlockData,
+} from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { getStepRetryMax, buildMetadata, formatActionForDisplay } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -25,8 +30,9 @@ export function registerPopCommand(program: Command): void {
           const cwd = getCwd();
           const output = new OutputEmitter({ json: options.json });
           const manager = new RunbookStateManager(cwd);
+          const sessionService = new SessionService(manager);
 
-          const state = await manager.pop(options.agent);
+          const state = await sessionService.pop(options.agent);
 
           if (!state) {
             output.status(false, 'pop', 'No stashed runbook to restore');

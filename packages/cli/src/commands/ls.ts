@@ -1,7 +1,7 @@
 // packages/cli/src/commands/ls.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager } from '@rundown-org/core';
+import { RunbookStateManager, SessionService } from '@rundown-org/core';
 import { discoverRunbooks } from '../services/discovery.js';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -74,9 +74,10 @@ export function registerLsCommand(program: Command): void {
 
         // MODE 2: List active runbooks (default)
         const manager = new RunbookStateManager(cwd);
+        const sessionService = new SessionService(manager);
         const states = await manager.list();
-        const active = await manager.getActive();
-        const stashedId = await manager.getStashedRunbookId();
+        const active = await sessionService.getActive();
+        const stashedId = await sessionService.getStashedRunbookId();
 
         // Pre-calculate derived data for table display
         const enrichedStates = await Promise.all(

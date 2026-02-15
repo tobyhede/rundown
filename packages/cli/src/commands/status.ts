@@ -3,6 +3,7 @@
 import type { Command } from 'commander';
 import {
   RunbookStateManager,
+  SessionService,
   stepIdToString,
   countNumberedSteps,
   type ActionBlockData,
@@ -69,8 +70,9 @@ export function registerStatusCommand(program: Command): void {
         const output = new OutputEmitter({ json: options.json });
 
         const manager = new RunbookStateManager(cwd);
-        const state = await manager.getActive(options.agent);
-        const stashedId = await manager.getStashedRunbookId();
+        const sessionService = new SessionService(manager);
+        const state = await sessionService.getActive(options.agent);
+        const stashedId = await sessionService.getStashedRunbookId();
 
         // Case 1: No active runbook and nothing stashed
         if (!state && !stashedId) {

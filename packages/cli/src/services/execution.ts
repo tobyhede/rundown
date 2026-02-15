@@ -3,6 +3,7 @@
 import {
   type RunbookStateManager,
   RunbookActorService,
+  SessionService,
   ForIterationService,
   printActionBlock,
   printStepBlock,
@@ -182,6 +183,7 @@ export async function runExecutionLoop(
 
   // Service for resolving FOR loop iteration values (array, file, range)
   const actorService = new RunbookActorService(manager);
+  const sessionService = new SessionService(manager);
   const iterationService = new ForIterationService(manager, actorService);
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -236,7 +238,7 @@ export async function runExecutionLoop(
         } else {
           printRunbookComplete(completionMessage);
         }
-        await manager.popRunbook(agentId);
+        await sessionService.popRunbook(agentId);
         return 'done';
       }
       if (iterResult.terminal === 'stopped') {
@@ -269,7 +271,7 @@ export async function runExecutionLoop(
           printRunbookStoppedAtStep(stopPos, stopMessage);
         }
 
-        await manager.popRunbook(agentId);
+        await sessionService.popRunbook(agentId);
         return 'stopped';
       }
       // No terminal state — machine transitioned to next step after loop exit
@@ -507,7 +509,7 @@ export async function runExecutionLoop(
       }
 
       // Pop current runbook from stack (makes parent active if exists, or clears stack)
-      await manager.popRunbook(agentId);
+      await sessionService.popRunbook(agentId);
       return 'done';
     }
 
@@ -545,7 +547,7 @@ export async function runExecutionLoop(
       }
 
       // Pop current runbook from stack
-      await manager.popRunbook(agentId);
+      await sessionService.popRunbook(agentId);
       return 'stopped';
     }
 

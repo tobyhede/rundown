@@ -1,7 +1,7 @@
 // packages/cli/src/commands/complete.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager } from '@rundown-org/core';
+import { RunbookStateManager, SessionService } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -33,7 +33,8 @@ export function registerCompleteCommand(program: Command): void {
           const output = new OutputEmitter({ json: options.json });
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
-          const state = await manager.getActive(options.agent);
+          const sessionService = new SessionService(manager);
+          const state = await sessionService.getActive(options.agent);
 
           if (!state) {
             output.noActiveRunbook('complete');
@@ -49,7 +50,7 @@ export function registerCompleteCommand(program: Command): void {
             step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true },
           });
-          await manager.popRunbook(options.agent);
+          await sessionService.popRunbook(options.agent);
 
           // Emit completion
           output.complete(message ?? 'Runbook completed successfully');

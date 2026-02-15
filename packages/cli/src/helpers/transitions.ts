@@ -11,6 +11,7 @@
 import {
   RunbookStateManager,
   RunbookActorService,
+  SessionService,
   type AnyActorRef,
   countNumberedSteps,
   type Step,
@@ -112,6 +113,8 @@ export interface TransitionContext {
   manager: RunbookStateManager;
   /** Actor lifecycle service */
   actorService: RunbookActorService;
+  /** Session stack orchestration service */
+  sessionService: SessionService;
   /** Current runbook state */
   state: RunbookState;
   /** Parsed runbook steps */
@@ -134,14 +137,15 @@ export interface TransitionContext {
  * @returns Active runbook state or null if none found
  */
 export async function resolveActiveState(
+  sessionService: SessionService,
   manager: RunbookStateManager,
   agentId?: string,
 ): Promise<RunbookState | null> {
-  let state = await manager.getActive(agentId);
+  let state = await sessionService.getActive(agentId);
 
   // If agent specified but no runbook in agent's stack, check default stack for binding
   if (!state && agentId) {
-    const parentState = await manager.getActive(); // Default stack
+    const parentState = await sessionService.getActive(); // Default stack
     if (parentState) {
       const binding = await manager.getAgentBinding(parentState.id, agentId);
       if (binding) {
@@ -173,7 +177,8 @@ export async function buildTransitionContext(
 ): Promise<TransitionContext | null> {
   const manager = new RunbookStateManager(cwd);
   const actorService = new RunbookActorService(manager);
-  const state = await resolveActiveState(manager, agentId);
+  const sessionService = new SessionService(manager);
+  const state = await resolveActiveState(sessionService, manager, agentId);
 
   if (!state) {
     return null;
@@ -186,7 +191,7 @@ export async function buildTransitionContext(
     throw new Error('Failed to initialize runbook engine');
   }
 
-  return { output, manager, actorService, state, steps, actor, cwd, agentId };
+  return { output, manager, actorService, sessionService, state, steps, actor, cwd, agentId };
 }
 
 /**
@@ -279,7 +284,7 @@ export async function handleTerminalState(
   positions: { prevPos: StepPosition; newPos: StepPosition },
   conditionResult: ConditionResult,
 ): Promise<'complete' | 'stopped' | 'continue'> {
-  const { output, manager, state, steps, agentId } = ctx;
+  const { output, manager, sessionService, state, steps, agentId } = ctx;
   const { prevPos, newPos } = positions;
 
   /**
@@ -298,7 +303,7 @@ export async function handleTerminalState(
     }
 
     if (effects.popRunbook) {
-      await manager.popRunbook(agentId);
+      await sessionService.popRunbook(agentId);
     }
   };
 

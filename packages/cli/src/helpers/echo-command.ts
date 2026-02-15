@@ -9,7 +9,7 @@
  * command dispatcher.
  */
 
-import { RunbookStateManager, type ExecutionResult } from '@rundown-org/core';
+import { RunbookStateManager, SessionService, type ExecutionResult } from '@rundown-org/core';
 import { isValidResult } from '../services/execution.js';
 
 /**
@@ -52,7 +52,8 @@ export async function executeEchoLogic(
   cwd: string,
 ): Promise<EchoCommandResult> {
   const manager = new RunbookStateManager(cwd);
-  const state = await manager.getActive();
+  const sessionService = new SessionService(manager);
+  const state = await sessionService.getActive();
 
   if (!state) {
     return {

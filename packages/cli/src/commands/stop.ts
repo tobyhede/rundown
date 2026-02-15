@@ -1,7 +1,7 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager } from '@rundown-org/core';
+import { RunbookStateManager, SessionService } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -24,7 +24,8 @@ export function registerStopCommand(program: Command): void {
           const cwd = getCwd();
           const output = new OutputEmitter({ json: options.json });
           const manager = new RunbookStateManager(cwd);
-          const state = await manager.getActive(options.agent);
+          const sessionService = new SessionService(manager);
+          const state = await sessionService.getActive(options.agent);
 
           if (!state) {
             output.noActiveRunbook('stop');
@@ -34,7 +35,7 @@ export function registerStopCommand(program: Command): void {
 
           // Delete and clear
           await manager.delete(state.id);
-          await manager.popRunbook(options.agent);
+          await sessionService.popRunbook(options.agent);
 
           // Emit structured output - renderer decides format
           output.metadata(buildMetadata(state));
