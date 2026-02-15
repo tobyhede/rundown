@@ -72,24 +72,38 @@ export async function createFileProvider(
     throw error;
   }
 
+  let closed = false;
+
   return {
     async next() {
       try {
         for (;;) {
           const result = await iterator.next();
-          if (result.done) return { value: '', done: true };
+          if (result.done) {
+            if (!closed) {
+              closed = true;
+              rl.close();
+              stream.destroy();
+            }
+            return { value: '', done: true };
+          }
           const line = result.value.trim();
-          // Skip empty lines for text format; jsonl keeps all non-empty
+          // Skip empty lines (both text and jsonl formats)
           if (line.length === 0) continue;
           return { value: line, done: false };
         }
       } catch (error) {
-        rl.close();
-        stream.destroy();
+        if (!closed) {
+          closed = true;
+          rl.close();
+          stream.destroy();
+        }
         throw error;
       }
     },
     close() {
+      if (closed) return;
+      closed = true;
       rl.close();
       stream.destroy();
     },

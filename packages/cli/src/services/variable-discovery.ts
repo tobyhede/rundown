@@ -351,9 +351,7 @@ async function routeVariable(
     const lines = value.split('\n');
     // Store the value but strip trailing newline if present
     vars[key] = value.endsWith('\n') ? value.slice(0, -1) : value;
-    if (lines.length > 0) {
-      sources[key] = { kind: 'array', items: lines };
-    }
+    sources[key] = { kind: 'array', items: lines };
     return;
   }
 
