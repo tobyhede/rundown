@@ -4,7 +4,7 @@ import {
   getAllStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { join, dirname } from 'path';
+import { join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { extractRawFrontmatter } from '../../src/helpers/extract-raw-frontmatter.js';
 import { parseScenarios, type Scenario, type Scenarios } from '../../src/schemas/scenarios.js';
@@ -90,6 +90,7 @@ function copyPatternToWorkspace(relativePath: string, workspace: TestWorkspace):
   try {
     copyFileSync(sourcePath, join(targetDir, filename));
   } catch (err) {
+    console.warn(`Pattern file not at expected path ${sourcePath}, using fallback search`);
     const foundPath = findFileByName(patternsDir, filename);
     if (foundPath) {
       copyFileSync(foundPath, join(targetDir, filename));
@@ -105,7 +106,7 @@ function copyPatternToWorkspace(relativePath: string, workspace: TestWorkspace):
  */
 function extractReferencedRunbooks(scenario: Scenario): string[] {
   const referenced: string[] = [];
-  const runbookPattern = /(\S+\.runbook\.md)/g;
+  const runbookPattern = /([\w][\w.\-/]*\.runbook\.md)/g;
 
   for (const cmd of scenario.commands) {
     const matches = cmd.match(runbookPattern);
@@ -133,7 +134,7 @@ function copyPatternWithDependencies(
 
   const referenced = extractReferencedRunbooks(scenario);
   for (const ref of referenced) {
-    if (ref !== filename) {
+    if (ref !== basename(filename)) {
       try {
         copyPatternToWorkspace(ref, workspace);
       } catch (err) {

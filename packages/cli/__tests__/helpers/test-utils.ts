@@ -97,8 +97,7 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
       CLAUDE_PLUGIN_ROOT: pluginDir,
       NO_COLOR: '1',
       FORCE_COLOR: undefined, // Prevent inheritance - avoids NO_COLOR warning
-      RUNDOWN_LOG: '1', // Enable logging for debugging
-      DEBUG: '1', // Enable debug logging
+      RUNDOWN_LOG: '0',
     },
   });
 

@@ -22,7 +22,7 @@ describe('Security: Symlink Traversal', () => {
     });
   });
 
-  it('vulnerability: resolveVariables allows symlinks escaping project directory', async () => {
+  it('should block resolveVariables from following symlinks escaping the project directory', async () => {
     const linkPath = join(workspace.cwd, 'secret-link');
     try {
       await symlink(secretPath, linkPath);
