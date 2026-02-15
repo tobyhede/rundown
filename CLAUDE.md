@@ -96,10 +96,10 @@ Server running on port {{ port }} in {{ environment }} mode.
 
 ### Data Sources
 
-Variables whose values are arrays or `file:`-prefixed paths become **data sources** for FOR loop iteration:
+Variables whose values are arrays or `file:`-prefixed paths become **data sources** for FOR loop iteration. Template variables are expanded with `{{ }}` syntax, while data sources drive `FOR variable IN {{ source }}` iteration:
 
-| Value Type | In `vars` | In `sources` | Example |
-|------------|-----------|--------------|---------|
+| Value Type | Template Variable | Data Source | Example |
+|------------|-------------------|-------------|---------|
 | `file:path/to/data.txt` | Not set | File DataSource | `--var items=file:data.txt` |
 | Array (YAML) | Comma-joined | Array DataSource | `items: [a, b, c]` in config |
 | Multiline string | Raw string | Array DataSource (split on newlines) | YAML block scalar |

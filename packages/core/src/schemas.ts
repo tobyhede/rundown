@@ -265,6 +265,7 @@ export const RunbookStateSchema = z
       .optional(),
     runbookSrc: z.string().optional(),
     templateVars: z.record(z.string(), z.string()).optional(),
+    /** Data source bindings for sourced FOR loops (array or file-backed). */
     sources: z
       .record(
         z.string(),
@@ -286,7 +287,7 @@ export const RunbookStateSchema = z
       return {
         ...rest,
         forStack: [
-          {
+          ForStackEntrySchema.parse({
             stepId: rest.step,
             iteration: forIteration,
             start: forStart ?? 1,
@@ -294,7 +295,7 @@ export const RunbookStateSchema = z
             variable: forVariable,
             implicit: false,
             source: { kind: 'range' as const },
-          },
+          }),
         ],
       };
     }

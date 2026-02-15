@@ -40,7 +40,8 @@ export interface FileProvider {
  * Create a FileProvider for lazy line-by-line streaming.
  *
  * @param filePath - Absolute path to the data file
- * @param format - File format (text or jsonl)
+ * @param format - File format metadata from the source descriptor — line-level
+ *   processing is format-agnostic (both text and jsonl are line-oriented)
  * @param options - Optional: skipLines to resume from a position
  * @returns A FileProvider that streams non-empty lines
  */
@@ -173,10 +174,10 @@ async function computeFingerprint(filePath: string, size: number): Promise<strin
   const fd = await fsp.open(filePath, 'r');
   try {
     const buffer = Buffer.alloc(Math.min(FINGERPRINT_BYTES, size));
-    await fd.read(buffer, 0, buffer.length, 0);
+    const { bytesRead } = await fd.read(buffer, 0, buffer.length, 0);
 
     const hash = crypto.createHash('sha256');
-    hash.update(buffer);
+    hash.update(bytesRead < buffer.length ? buffer.subarray(0, bytesRead) : buffer);
     return hash.digest('hex');
   } finally {
     await fd.close();

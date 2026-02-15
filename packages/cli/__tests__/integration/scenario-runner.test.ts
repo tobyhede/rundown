@@ -160,7 +160,7 @@ async function executeScenario(
     const args = cmd.replace(/^rd\s+/, '');
     const result = runCli(args, workspace);
 
-    const isAgentFail = cmd.includes('fail') && cmd.includes('--agent');
+    const isAgentFail = /^rd\s+fail\b/.test(cmd) && cmd.includes('--agent');
     const allowNonZero = (isLastCommand && scenario.result === 'STOP') || isAgentFail;
 
     if (!allowNonZero && result.exitCode !== 0) {

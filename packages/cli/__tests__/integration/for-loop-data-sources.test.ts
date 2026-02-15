@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  runCli,
+  parseJsonEvents,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
@@ -50,10 +55,7 @@ rd echo server={{ server }}
     const result = runCli('run --json deploy.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    const events = result.stdout
-      .split('\n')
-      .filter((line) => line.startsWith('{'))
-      .map((line) => JSON.parse(line));
+    const events = parseJsonEvents(result.stdout);
 
     const stepEnteredEvents = events.filter((e) => e.type === 'step_entered');
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
@@ -115,10 +117,7 @@ rd echo item={{ item }} index={{ Index }}
     const result = runCli('run --json windowed.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    const events = result.stdout
-      .split('\n')
-      .filter((line) => line.startsWith('{'))
-      .map((line) => JSON.parse(line));
+    const events = parseJsonEvents(result.stdout);
 
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
@@ -175,10 +174,7 @@ rd echo done
     const result = runCli('run --json empty.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    const events = result.stdout
-      .split('\n')
-      .filter((line) => line.startsWith('{'))
-      .map((line) => JSON.parse(line));
+    const events = parseJsonEvents(result.stdout);
 
     const stepEnteredEvents = events.filter((e) => e.type === 'step_entered');
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
@@ -229,10 +225,7 @@ rd echo item={{ item }}
     const result = runCli('run --json clamp.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    const events = result.stdout
-      .split('\n')
-      .filter((line) => line.startsWith('{'))
-      .map((line) => JSON.parse(line));
+    const events = parseJsonEvents(result.stdout);
 
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
@@ -306,10 +299,7 @@ rd echo server={{ server }}
     );
     expect(result.exitCode).toBe(0);
 
-    const events = result.stdout
-      .split('\n')
-      .filter((line) => line.startsWith('{'))
-      .map((line) => JSON.parse(line));
+    const events = parseJsonEvents(result.stdout);
 
     const commandStartedEvents = events.filter(
       (e: { type: string }) => e.type === 'command_started',
@@ -356,10 +346,7 @@ rd echo line={{ line }}
     const result = runCli('run --json iterate.runbook.md --var-file vars.yaml', workspace);
     expect(result.exitCode).toBe(0);
 
-    const events = result.stdout
-      .split('\n')
-      .filter((line) => line.startsWith('{'))
-      .map((line) => JSON.parse(line));
+    const events = parseJsonEvents(result.stdout);
 
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
@@ -409,10 +396,7 @@ rd echo item={{ item }}
     const result = runCli('run --json special.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    const events = result.stdout
-      .split('\n')
-      .filter((line) => line.startsWith('{'))
-      .map((line) => JSON.parse(line));
+    const events = parseJsonEvents(result.stdout);
 
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
@@ -460,10 +444,7 @@ rd echo env={{ env }} server={{ server }}
     const result = runCli('run --json combined.runbook.md --var env=staging', workspace);
     expect(result.exitCode).toBe(0);
 
-    const events = result.stdout
-      .split('\n')
-      .filter((line) => line.startsWith('{'))
-      .map((line) => JSON.parse(line));
+    const events = parseJsonEvents(result.stdout);
 
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
@@ -511,10 +492,7 @@ rd echo item={{ item }}
     const result = runCli('run --json large.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    const events = result.stdout
-      .split('\n')
-      .filter((line) => line.startsWith('{'))
-      .map((line) => JSON.parse(line));
+    const events = parseJsonEvents(result.stdout);
 
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 

@@ -272,6 +272,22 @@ export async function writeConfig(
 }
 
 /**
+ * Parse JSON events from CLI `--json` output.
+ *
+ * Splits stdout by newline, keeps only lines starting with `{`, and
+ * parses each as JSON.
+ *
+ * @param stdout - Raw stdout string from CLI execution
+ * @returns Array of parsed JSON event objects
+ */
+export function parseJsonEvents(stdout: string): unknown[] {
+  return stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .map((line) => JSON.parse(line) as unknown);
+}
+
+/**
  * Helper to find action output from JSON output.
  * JSON output may be multi-line formatted or contain multiple JSON objects.
  *

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { createTestWorkspace } from '../helpers/test-utils.js';
 import { writeFile, symlink, unlink } from 'fs/promises';
+import { lstatSync } from 'node:fs';
 import { join, dirname } from 'path';
 import { resolveVariables } from '../../src/services/variable-discovery.js';
 
@@ -30,6 +31,7 @@ describe('Security: Symlink Traversal', () => {
       console.warn('Skipping symlink test due to symlink creation failure', e);
       return;
     }
+    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
 
     // Call resolveVariables with a "file:secret-link" variable
     // It should ideally block this because it points outside the project.
@@ -45,5 +47,6 @@ describe('Security: Symlink Traversal', () => {
 
     // CURRENT BEHAVIOR: It is now BLOCKED (SECURED)
     expect(result.sources).not.toHaveProperty('my_source');
+    expect(result.vars).not.toHaveProperty('my_source');
   });
 });

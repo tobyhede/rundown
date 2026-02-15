@@ -40,6 +40,7 @@ export type IterationResult =
  * to trigger the loop-exit guard.
  */
 export class ForIterationService {
+  /** @param manager - State manager for reading/writing runbook state */
   constructor(private readonly manager: RunbookStateManager) {}
 
   /**
@@ -55,6 +56,7 @@ export class ForIterationService {
    * @param id - Runbook instance ID
    * @param steps - Parsed step definitions for actor creation
    * @returns An IterationResult indicating next action for the caller
+   * @throws {Error} When state has no current step
    */
   async prepareIteration(id: string, steps: Step[]): Promise<IterationResult> {
     const state = await this.manager.load(id);

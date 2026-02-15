@@ -1917,7 +1917,7 @@ scenarios:
 
 Iterates over items from a data source.
 
-## 1 Process items
+## 1. Process items
 - FOR item IN {{ items }}
 - PASS ALL: COMPLETE
 - FAIL ANY: STOP

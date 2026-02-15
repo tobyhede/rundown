@@ -237,6 +237,8 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
  * - `FOR start TO end` (unnamed, range)
  * - `FOR variable IN count` (named, count only — start defaults to 1)
  * - `FOR count` (unnamed, count only — start defaults to 1)
+ * - `FOR variable IN {{ source }}` (all items from data source)
+ * - `FOR variable IN start TO end OF {{ source }}` (windowed data source)
  *
  * Bounds must be positive integers. Unresolved template variables (e.g., `{{Count}}`)
  * cause the clause to be rejected (returns null).
