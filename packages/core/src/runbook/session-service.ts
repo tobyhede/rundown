@@ -142,7 +142,7 @@ export class SessionService {
   }
 
   /**
-   * Restore a previously stashed runbook to the active stack.
+   * Unstash a previously stashed runbook to the active stack.
    *
    * Retrieves the stashed runbook ID and pushes it back onto the agent's
    * stack, making it the active runbook again. Clears the stashed slot.
@@ -150,7 +150,7 @@ export class SessionService {
    * @param agentId - Optional agent ID; if omitted, uses the default stack
    * @returns The restored runbook state, or null if nothing was stashed or runbook not found
    */
-  async pop(agentId?: string): Promise<RunbookState | null> {
+  async unstash(agentId?: string): Promise<RunbookState | null> {
     const session = await this.manager.loadSession();
     const stashedId = session.stashedRunbookId;
 

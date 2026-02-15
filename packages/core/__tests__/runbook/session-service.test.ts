@@ -67,6 +67,12 @@ describe('SessionService', () => {
       expect(active?.id).toBe(parent.id);
     });
 
+    it('popRunbook returns null on empty stack without side effects', async () => {
+      const result = await sessionService.popRunbook();
+      expect(result).toBeNull();
+      expect(await sessionService.getActive()).toBeNull();
+    });
+
     it('supports arbitrary nesting depth', async () => {
       const wf1 = await manager.create('level1.md', mockRunbook, { runbookPath: 'level1.md' });
       const wf2 = await manager.create('level2.md', mockRunbook, { runbookPath: 'level2.md' });
@@ -137,7 +143,7 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(state.id);
       await sessionService.stash();
 
-      const restored = await sessionService.pop();
+      const restored = await sessionService.unstash();
 
       expect(restored?.id).toBe(state.id);
       expect((await sessionService.getActive())?.id).toBe(state.id);
@@ -145,7 +151,7 @@ describe('SessionService', () => {
     });
 
     it('pop returns null when nothing stashed', async () => {
-      const restored = await sessionService.pop();
+      const restored = await sessionService.unstash();
       expect(restored).toBeNull();
     });
 
@@ -164,7 +170,7 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(state.id, 'agent-y');
       await sessionService.stash('agent-y');
 
-      const restored = await sessionService.pop('agent-y');
+      const restored = await sessionService.unstash('agent-y');
 
       expect(restored?.id).toBe(state.id);
       expect((await sessionService.getActive('agent-y'))?.id).toBe(state.id);

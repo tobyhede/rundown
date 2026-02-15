@@ -190,7 +190,7 @@ export class RunbookActorService {
     const step = steps.find((s) => s.name === stepName) ?? steps[0];
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const retryCount = snapshot.context?.retryCount as number;
+    const retryCount = (snapshot.context?.retryCount as number | undefined) ?? 0;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const variables = (snapshot.context?.variables ?? {}) as Record<
       string,
@@ -261,6 +261,8 @@ export class RunbookActorService {
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps
    * @param event - Runbook event to send (PASS, FAIL, RETRY, or GOTO)
+   * @throws {Error} If the actor snapshot's stateValue is not a string (from {@link updateFromActor})
+   * @throws {Error} If the steps array is empty for a non-terminal state (from {@link updateFromActor})
    * @returns Actor, updated state, and snapshot; or null if state not found
    */
   async sendAndSync(

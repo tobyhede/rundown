@@ -32,7 +32,7 @@ export function registerPopCommand(program: Command): void {
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
 
-          const state = await sessionService.pop(options.agent);
+          const state = await sessionService.unstash(options.agent);
 
           if (!state) {
             output.status(false, 'pop', 'No stashed runbook to restore');

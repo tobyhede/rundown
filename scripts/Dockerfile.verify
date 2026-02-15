@@ -19,15 +19,11 @@
 
 FROM node:22-slim AS base
 
-ARG SUDO_VERSION="1.9.13p3-1+deb12u1"
-ARG GIT_VERSION="1:2.39.5-0+deb12u2"
-ARG CA_CERTIFICATES_VERSION="20230311"
-
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      sudo="${SUDO_VERSION}" \
-      git="${GIT_VERSION}" \
-      ca-certificates="${CA_CERTIFICATES_VERSION}" && \
+      sudo \
+      git \
+      ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # Claude Code blocks root — create non-root user
