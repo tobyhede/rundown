@@ -28,9 +28,10 @@ export interface FileProvider {
   /**
    * Release the underlying file descriptor and readline interface.
    *
-   * Must be called when iteration is complete or abandoned — even after
-   * `next()` returns `done: true` — to prevent file descriptor leaks.
-   * Synchronous; safe to call multiple times.
+   * Resources are auto-released when `next()` returns `done: true`, so
+   * callers only need to call `close()` for early abandonment (e.g.,
+   * stopping iteration before exhaustion). Idempotent; safe to call
+   * multiple times or after EOF.
    */
   close(): void;
 }
