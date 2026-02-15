@@ -2,7 +2,7 @@ export type * from './types.js';
 export * from './step-id.js';
 export * from './step-utils.js';
 export { RunbookStateManager } from './state.js';
-export { compileRunbookToMachine } from './compiler.js';
+export { compileRunbookToMachine, MAX_FILE_ITERATIONS } from './compiler.js';
 export {
   executeCommand,
   executeCommandWithPolicy,
@@ -13,3 +13,8 @@ export {
 } from './executor.js';
 export { renderRunbook, renderStep } from './renderer/renderer.js';
 export { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
+export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from './file-provider.js';
+export type { FileProvider } from './file-provider.js';
+export { resolveForValue, type ResolvedIteration } from './source-resolver.js';
+export { ForIterationService, type IterationResult } from './for-iteration-service.js';
+export { isRunbookComplete, isRunbookStopped } from './snapshot-utils.js';

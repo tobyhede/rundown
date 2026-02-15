@@ -14,14 +14,16 @@ import {
   type PendingStep,
   type RunbookState,
   type ExecutionEventEmitter,
+  type Step,
 } from '@rundown-org/core';
+import { isSourced, type ForClause } from '@rundown-org/parser';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import { collect } from './echo.js';
-import { collectVariables, extractVarsFromMarkdown } from '../services/variable-discovery.js';
+import { extractVarsFromMarkdown, resolveVariables } from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
   expandForClauseVariables,
@@ -41,6 +43,47 @@ function emitRunbookStarted(
     prompted,
     statePath: `.claude/rundown/runs/${runbookState.id}.json`,
   });
+}
+
+/**
+ * Validate that all sourced FOR clauses reference defined data sources.
+ *
+ * @param steps - Parsed runbook steps
+ * @param sources - Resolved data sources
+ * @throws Error if any step references an undefined source
+ */
+function validateSources(
+  steps: readonly { forClause?: ForClause }[],
+  sources: Readonly<Record<string, unknown>>,
+): void {
+  for (const step of steps) {
+    if (step.forClause && isSourced(step.forClause)) {
+      const name = step.forClause.source;
+      if (!(name in sources)) {
+        throw new Error(
+          `FOR loop references undefined data source "{{${name}}}". ` +
+            `Define "${name}" in .rundown/config.yaml or pass --var-file with an array value.`,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Initialize actor state for a runbook, populating forStack for the first step.
+ * @param manager - The RunbookStateManager instance
+ * @param stateId - The ID of the runbook state
+ * @param steps - The parsed runbook steps
+ */
+async function initializeActor(
+  manager: RunbookStateManager,
+  stateId: string,
+  steps: Step[],
+): Promise<void> {
+  const actor = await manager.createActor(stateId, steps);
+  if (actor) {
+    await manager.updateFromActor(stateId, actor, steps);
+  }
 }
 
 /**
@@ -138,19 +181,26 @@ export function registerRunCommand(program: Command): void {
             // Load raw markdown and collect variables
             const rawContent = await fs.readFile(filePath, 'utf8');
             const frontmatterVars = extractVarsFromMarkdown(rawContent);
-            const mergedVariables = await collectVariables(
+            const { vars: mergedVariables, sources } = await resolveVariables(
               { varFile: options.varFile, var: options.var, frontmatterVars },
               cwd,
             );
 
             // Pre-expand FOR clause bounds (parser needs numeric values)
-            const forExpandedContent = expandForClauseVariables(rawContent, mergedVariables);
+            const forExpandedContent = expandForClauseVariables(
+              rawContent,
+              mergedVariables,
+              new Set(Object.keys(sources)),
+            );
 
             // Parse markdown ({{variables}} in non-FOR contexts are literal text in mdast)
             const rawRunbook = parseRunbookDocument(forExpandedContent, path.basename(filePath));
 
             // Then substitute variables into parsed AST with context-aware escaping
             const runbook = substituteRunbookVariables(rawRunbook, mergedVariables);
+
+            // Validate sourced FOR clauses reference defined data sources
+            validateSources(runbook.steps, sources);
 
             if (runbook.steps.length === 0) {
               output.error('Runbook has no steps', 'VALIDATION_ERROR', {
@@ -167,7 +217,11 @@ export function registerRunCommand(program: Command): void {
               agentId: options.agent,
               runbookSrc: rawContent, // Store raw markdown (not expanded)
               templateVars: mergedVariables, // Store variables for resume re-application
+              sources,
             });
+
+            // Initialize actor state (populates forStack for first step)
+            await initializeActor(manager, state.id, runbook.steps as Step[]);
 
             await manager.pushRunbook(state.id, options.agent);
 
@@ -250,18 +304,25 @@ export function registerRunCommand(program: Command): void {
               // Load raw child markdown and collect variables
               const rawContent = await fs.readFile(runbookPath, 'utf8');
               const frontmatterVars = extractVarsFromMarkdown(rawContent);
-              const mergedVariables = await collectVariables(
+              const { vars: mergedVariables, sources: childSources } = await resolveVariables(
                 { varFile: options.varFile, var: options.var, frontmatterVars },
                 cwd,
               );
 
               // Pre-expand FOR clause bounds, then parse and substitute into AST
-              const forExpandedContent = expandForClauseVariables(rawContent, mergedVariables);
+              const forExpandedContent = expandForClauseVariables(
+                rawContent,
+                mergedVariables,
+                new Set(Object.keys(childSources)),
+              );
               const rawRunbook = parseRunbookDocument(
                 forExpandedContent,
                 path.basename(runbookPath),
               );
               const runbook = substituteRunbookVariables(rawRunbook, mergedVariables);
+
+              // Validate sourced FOR clauses reference defined data sources
+              validateSources(runbook.steps, childSources);
 
               if (runbook.steps.length === 0) {
                 output.error('Child runbook has no steps', 'VALIDATION_ERROR', {
@@ -284,7 +345,11 @@ export function registerRunCommand(program: Command): void {
                 prompted: parentPrompted,
                 runbookSrc: rawContent, // Store raw markdown
                 templateVars: mergedVariables, // Store variables for resume
+                sources: childSources,
               });
+
+              // Initialize actor state (populates forStack for first step)
+              await initializeActor(manager, childState.id, runbook.steps as Step[]);
 
               await manager.updateAgentBinding(state.id, options.agent, {
                 childRunbookId: childState.id,

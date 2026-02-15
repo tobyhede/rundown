@@ -544,21 +544,45 @@ describe('RunbookStateManager', () => {
       // Update with forStack
       const updated = await manager.update(state.id, {
         forStack: [
-          { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 3,
+            variable: 'item',
+            implicit: false,
+            source: { kind: 'range' as const },
+          },
         ],
         iterationResults: ['pass', 'pass'],
       });
 
       // Verify forStack is set
       expect(updated.forStack).toEqual([
-        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'item',
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
       ]);
       expect(updated.iterationResults).toEqual(['pass', 'pass']);
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
       expect(loaded?.forStack).toEqual([
-        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'item',
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
       ]);
       expect(loaded?.iterationResults).toEqual(['pass', 'pass']);
     });
@@ -572,7 +596,16 @@ describe('RunbookStateManager', () => {
           context: {
             variables: { test: 'value' },
             retryCount: 0,
-            forStack: [{ stepId: '1', iteration: 1, start: 1, end: 3, variable: 'item' }],
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 1,
+                start: 1,
+                end: 3,
+                variable: 'item',
+                source: { kind: 'range' as const },
+              },
+            ],
             iterationResults: ['pass'],
             lastAction: { type: 'START' },
           },
@@ -582,7 +615,14 @@ describe('RunbookStateManager', () => {
       const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
 
       expect(updated.forStack).toEqual([
-        { stepId: '1', iteration: 1, start: 1, end: 3, variable: 'item' },
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          variable: 'item',
+          source: { kind: 'range' as const },
+        },
       ]);
       expect(updated.iterationResults).toEqual(['pass']);
       expect(updated.lastAction).toEqual({ type: 'START' });
@@ -594,7 +634,15 @@ describe('RunbookStateManager', () => {
       // First, set forStack
       await manager.update(state.id, {
         forStack: [
-          { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'item', implicit: false },
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 3,
+            variable: 'item',
+            implicit: false,
+            source: { kind: 'range' as const },
+          },
         ],
         iterationResults: ['pass', 'pass'],
       });
@@ -660,6 +708,7 @@ describe('RunbookStateManager', () => {
           start: 1,
           end: 3,
           variable: 'item',
+          source: { kind: 'range' },
         },
       ]);
       expect(context.forIteration).toBeUndefined();
@@ -676,7 +725,16 @@ describe('RunbookStateManager', () => {
         getPersistedSnapshot: () => ({
           value: 'step::1::1',
           context: {
-            forStack: [{ stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }],
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 1,
+                start: 1,
+                end: 1,
+                implicit: true,
+                source: { kind: 'range' as const },
+              },
+            ],
             iterationResults: [],
             retryCount: 0,
             variables: {},
@@ -695,7 +753,16 @@ describe('RunbookStateManager', () => {
         getPersistedSnapshot: () => ({
           value: 'step::1::1',
           context: {
-            forStack: [{ stepId: '1', iteration: 1, start: 1, end: 1, implicit: true }],
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 1,
+                start: 1,
+                end: 1,
+                implicit: true,
+                source: { kind: 'range' as const },
+              },
+            ],
             iterationResults: ['pass'],
             retryCount: 0,
             variables: {},
@@ -714,7 +781,16 @@ describe('RunbookStateManager', () => {
         getPersistedSnapshot: () => ({
           value: 'step::1::1',
           context: {
-            forStack: [{ stepId: '1', iteration: 2, start: 1, end: 3, variable: 'batch' }],
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 2,
+                start: 1,
+                end: 3,
+                variable: 'batch',
+                source: { kind: 'range' as const },
+              },
+            ],
             iterationResults: ['pass'],
             retryCount: 0,
             variables: {},
@@ -810,6 +886,170 @@ describe('RunbookStateManager', () => {
           expect(e.message).toContain('restart execution');
         }
       }
+    });
+  });
+
+  describe('sources persistence', () => {
+    it('persists sources through create/load round-trip', async () => {
+      const sources = {
+        items: {
+          kind: 'array' as const,
+          items: ['a', 'b'],
+        },
+      };
+
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        sources,
+      });
+
+      // Verify sources are present in created state
+      expect(state.sources).toEqual(sources);
+
+      // Load from disk and verify persistence
+      const loaded = await manager.load(state.id);
+      expect(loaded?.sources).toEqual(sources);
+    });
+
+    it('persists forStack with array source through actor update and reload', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::1',
+          context: {
+            variables: {},
+            retryCount: 0,
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 2,
+                start: 1,
+                end: 3,
+                variable: 'item',
+                source: { kind: 'array' as const, items: ['x', 'y', 'z'] },
+                currentValue: 'y',
+              },
+            ],
+            iterationResults: ['pass'],
+            lastAction: { type: 'CONTINUE' },
+          },
+        }),
+      };
+
+      const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
+
+      // Verify forStack with array source is set
+      expect(updated.forStack).toHaveLength(1);
+      expect(updated.forStack?.[0].source).toEqual({
+        kind: 'array',
+        items: ['x', 'y', 'z'],
+      });
+      expect(updated.forStack?.[0].currentValue).toBe('y');
+
+      // Load from disk and verify persistence
+      const loaded = await manager.load(state.id);
+      expect(loaded?.forStack).toHaveLength(1);
+      expect(loaded?.forStack?.[0].source).toEqual({
+        kind: 'array',
+        items: ['x', 'y', 'z'],
+      });
+      expect(loaded?.forStack?.[0].currentValue).toBe('y');
+    });
+
+    it('persists forStack with file source through actor update and reload', async () => {
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::1',
+          context: {
+            variables: {},
+            retryCount: 0,
+            forStack: [
+              {
+                stepId: '1',
+                iteration: 1,
+                start: 1,
+                end: 2,
+                variable: 'line',
+                source: {
+                  kind: 'file' as const,
+                  path: '/tmp/data.txt',
+                  format: 'text' as const,
+                  snapshot: null,
+                },
+                currentValue: 'line1',
+              },
+            ],
+            iterationResults: ['pass'],
+            lastAction: { type: 'CONTINUE' },
+          },
+        }),
+      };
+
+      const updated = await manager.updateFromActor(state.id, actor as any, mockSteps);
+
+      // Verify forStack with file source is set
+      expect(updated.forStack).toHaveLength(1);
+      expect(updated.forStack![0].source.kind).toBe('file');
+      expect(updated.forStack?.[0].source).toEqual({
+        kind: 'file',
+        path: '/tmp/data.txt',
+        format: 'text',
+        snapshot: null,
+      });
+
+      // Load from disk and verify persistence
+      const loaded = await manager.load(state.id);
+      expect(loaded?.forStack).toHaveLength(1);
+      expect(loaded?.forStack![0].source.kind).toBe('file');
+      expect(loaded?.forStack?.[0].source).toEqual({
+        kind: 'file',
+        path: '/tmp/data.txt',
+        format: 'text',
+        snapshot: null,
+      });
+    });
+
+    it('sources survive across multiple updates', async () => {
+      const sources = {
+        items: {
+          kind: 'array' as const,
+          items: ['a', 'b', 'c'],
+        },
+      };
+
+      // Create with sources
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        sources,
+      });
+
+      expect(state.sources).toEqual(sources);
+
+      // Update step
+      const updated1 = await manager.update(state.id, { step: '1' });
+      expect(updated1.sources).toEqual(sources);
+
+      // updateFromActor
+      const actor = {
+        getPersistedSnapshot: () => ({
+          value: 'step::1',
+          context: {
+            variables: {},
+            retryCount: 0,
+            lastAction: { type: 'CONTINUE' },
+          },
+        }),
+      };
+
+      const updated2 = await manager.updateFromActor(state.id, actor as any, mockSteps);
+      expect(updated2.sources).toEqual(sources);
+
+      // Load from disk and verify sources still present
+      const loaded = await manager.load(state.id);
+      expect(loaded?.sources).toEqual(sources);
     });
   });
 });

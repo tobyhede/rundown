@@ -1,6 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
-import { hasPrompt, hasCommand, hasSubsteps, hasRunbooks, hasForClause } from '../src/guards.js';
-import type { Step, Substep } from '../src/ast.js';
+import {
+  hasPrompt,
+  hasCommand,
+  hasSubsteps,
+  hasRunbooks,
+  hasForClause,
+  isSourced,
+} from '../src/guards.js';
+import type { Step, Substep, ForClause } from '../src/ast.js';
 
 const createStep = (overrides: Partial<Step> = {}): Step => ({
   name: '1',
@@ -256,5 +263,36 @@ describe('hasForClause', () => {
         expect(step.forClause.variable).toBe('batch');
       }
     });
+  });
+});
+
+describe('isSourced', () => {
+  it('returns true when source is present', () => {
+    const fc: ForClause = { variable: 'x', start: 1, source: 'items' };
+    expect(isSourced(fc)).toBe(true);
+  });
+
+  it('returns false when source is absent (NumericWindow)', () => {
+    const fc: ForClause = { variable: 'x', start: 1, end: 5 };
+    expect(isSourced(fc)).toBe(false);
+  });
+
+  it('narrows to SourceWindow with guaranteed variable and source', () => {
+    const fc: ForClause = { variable: 'server', start: 1, source: 'servers' };
+    if (isSourced(fc)) {
+      // TypeScript narrows: fc.source is string, fc.variable is string
+      const _source: string = fc.source;
+      const _variable: string = fc.variable;
+      expect(_source).toBe('servers');
+      expect(_variable).toBe('server');
+    }
+  });
+
+  it('narrows NumericWindow with guaranteed end', () => {
+    const fc: ForClause = { start: 1, end: 10 };
+    if (!isSourced(fc)) {
+      const _end: number = fc.end;
+      expect(_end).toBe(10);
+    }
   });
 });

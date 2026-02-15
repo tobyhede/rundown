@@ -13,18 +13,112 @@ import type { Runbook, Step, Substep, Command } from '@rundown-org/parser';
 const TEMPLATE_VAR_REGEX = /{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}/g;
 
 /**
- * Expand loop variables in text using simple regex substitution.
+ * Regex for matching dotted paths in loop variables (e.g., {{item.name}}, {{config.meta.region}}).
+ * Supports variable names and dotted field access.
+ */
+const LOOP_VAR_REGEX = /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*}}/g;
+
+/**
+ * Resolve a dotted path in an object using own-property traversal.
+ * Uses `Object.hasOwn` at each segment and nullish checks.
+ * Does not traverse the prototype chain.
+ *
+ * @param obj - The object to traverse
+ * @param path - Dot-separated path (e.g., "meta.region")
+ * @returns The resolved value or undefined if path cannot be resolved
+ */
+function resolveDottedPath(obj: unknown, path: string): unknown {
+  const segments = path.split('.');
+  let current: unknown = obj;
+
+  for (const segment of segments) {
+    // Nullish check: stop if current is null or undefined
+    if (current == null) {
+      return undefined;
+    }
+    // Check if current is an object
+    if (typeof current !== 'object') {
+      return undefined;
+    }
+    // Own-property traversal only
+    if (!Object.hasOwn(current, segment)) {
+      return undefined;
+    }
+    current = (current as Readonly<Record<string, unknown>>)[segment];
+  }
+
+  return current;
+}
+
+/**
+ * Render a loop value for text interpolation.
+ * Converts non-string values to their display representation.
+ *
+ * - string: returned as-is (no extra quoting)
+ * - number, boolean: JSON.stringify
+ * - null: `JSON.stringify(null)` produces the four-character string `"null"`
+ * - object, array: JSON.stringify
+ *
+ * @param value - The value to render
+ * @returns Display string representation
+ */
+function renderLoopValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Resolve a loop variable placeholder to its rendered string value.
+ *
+ * Handles both simple variable names and dotted paths for object property access.
+ * Returns `undefined` if the variable or path cannot be resolved.
+ *
+ * @param path - Variable path from the placeholder (e.g., "item" or "item.name")
+ * @param variables - Loop variable key-value pairs
+ * @returns Rendered string value, or undefined if unresolvable
+ */
+function resolveLoopPlaceholder(
+  path: string,
+  variables: Record<string, unknown>,
+): string | undefined {
+  // Handle simple variable names (no dots)
+  if (!path.includes('.')) {
+    if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
+      return renderLoopValue(variables[path]);
+    }
+    return undefined;
+  }
+
+  // Handle dotted paths
+  const [rootVar, ...pathSegments] = path.split('.');
+  if (!Object.hasOwn(variables, rootVar)) {
+    return undefined;
+  }
+
+  const resolved = resolveDottedPath(variables[rootVar], pathSegments.join('.'));
+  if (resolved === undefined) {
+    return undefined;
+  }
+
+  return renderLoopValue(resolved);
+}
+
+/**
+ * Expand loop variables in text using regex substitution with dotted-path resolution.
  *
  * Phase 2 of variable expansion: per-iteration loop variables (regex).
+ * Supports dotted paths for object property access (e.g., `{{item.name}}`, `{{config.meta.region}}`).
  * Unmatched variables are preserved as literal `{{name}}` text.
  *
  * @param text - Text containing `{{variable}}` placeholders
- * @param variables - Key-value pairs for substitution (e.g., `{ batch: "2", Index: "2" }`)
+ * @param variables - Key-value pairs for substitution (e.g., `{ batch: "2", Index: "2", item: {...} }`)
  * @returns Text with matched variables replaced
  */
-export function expandLoopVariables(text: string, variables: Record<string, string>): string {
-  return text.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
-    return Object.hasOwn(variables, name) ? variables[name] : match;
+export function expandLoopVariables(text: string, variables: Record<string, unknown>): string {
+  return text.replace(LOOP_VAR_REGEX, (match, path: string) => {
+    return resolveLoopPlaceholder(path, variables) ?? match;
   });
 }
 
@@ -43,14 +137,18 @@ const FOR_CLAUSE_LINE = /^\s*-\s+FOR\s.+$/gm;
  *
  * @param markdown - Raw markdown containing potential FOR clause lines
  * @param variables - Template variables for substitution
+ * @param sourceKeys - Optional set of source variable names to preserve unexpanded
  * @returns Markdown with FOR clause lines expanded
  */
 export function expandForClauseVariables(
   markdown: string,
   variables: Record<string, string>,
+  sourceKeys?: ReadonlySet<string>,
 ): string {
   return markdown.replace(FOR_CLAUSE_LINE, (line) => {
     return line.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
+      // Don't expand source references — they're consumed by the parser as data source identifiers
+      if (sourceKeys?.has(name)) return match;
       return Object.hasOwn(variables, name) ? variables[name] : match;
     });
   });
@@ -184,7 +282,7 @@ export function substituteRunbookVariables(
 /**
  * Expand loop variables in command code with shell escaping.
  *
- * Like {@link expandLoopVariables} but applies {@link shellEscapeValue} to values.
+ * Like {@link expandLoopVariables} but applies {@link shellEscapeValue} to values after rendering.
  * Used for per-iteration loop variable expansion in command code contexts.
  *
  * @param text - Command code text containing `{{variable}}` placeholders
@@ -193,7 +291,10 @@ export function substituteRunbookVariables(
  */
 export function expandLoopVariablesForCommand(
   text: string,
-  variables: Record<string, string>,
+  variables: Record<string, unknown>,
 ): string {
-  return substituteText(text, variables, shellEscapeValue);
+  return text.replace(LOOP_VAR_REGEX, (match, path: string) => {
+    const resolved = resolveLoopPlaceholder(path, variables);
+    return resolved !== undefined ? shellEscapeValue(resolved) : match;
+  });
 }

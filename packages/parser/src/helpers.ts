@@ -237,6 +237,8 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
  * - `FOR start TO end` (unnamed, range)
  * - `FOR variable IN count` (named, count only — start defaults to 1)
  * - `FOR count` (unnamed, count only — start defaults to 1)
+ * - `FOR variable IN {{ source }}` (all items from data source)
+ * - `FOR variable IN start TO end OF {{ source }}` (windowed data source)
  *
  * Bounds must be positive integers. Unresolved template variables (e.g., `{{Count}}`)
  * cause the clause to be rejected (returns null).
@@ -260,11 +262,32 @@ export function parseForClause(text: string): ForClause | null {
 
   // Pattern 1: FOR variable IN start TO end
   // Pattern 2: FOR variable IN count (start defaults to 1)
+  // Pattern 5: FOR variable IN {{ source }} (all items)
+  // Pattern 6: FOR variable IN start TO end OF {{ source }} (windowed source)
   const namedMatch = /^([a-zA-Z_][a-zA-Z0-9_]*)\s+IN\s+(.+)$/.exec(rest);
   if (namedMatch) {
     const variable = namedMatch[1];
     if (isReservedWord(variable)) return null;
     const rangeStr = namedMatch[2].trim();
+
+    // Source pattern: {{ source }} (spaces optional)
+    const sourceMatch = /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}$/.exec(rangeStr);
+    if (sourceMatch) {
+      return { variable, start: 1, source: sourceMatch[1] };
+    }
+
+    // Windowed source pattern: start TO end OF {{ source }}
+    const windowedSourceMatch =
+      /^(\S+)\s+TO\s+(\S+)\s+OF\s+\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}$/.exec(rangeStr);
+    if (windowedSourceMatch) {
+      const start = parseBound(windowedSourceMatch[1]);
+      const end = parseBound(windowedSourceMatch[2]);
+      const source = windowedSourceMatch[3];
+      if (start !== null && end !== null) {
+        return { variable, start, end, source };
+      }
+      return null;
+    }
 
     // Try "start TO end"
     const toMatch = /^(\S+)\s+TO\s+(\S+)$/.exec(rangeStr);

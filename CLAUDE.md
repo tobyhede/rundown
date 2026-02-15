@@ -65,6 +65,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `Day` | `04` | Current day (01-31) |
 | `WorkPath` | `.work` | Default artifact directory |
 | `Step` | `3.1` | Current qualified step identifier |
+| `Index` | `3` | Current loop iteration number (inside FOR) |
 
 Built-in variables use PascalCase. The date/time variables (`Date`, `DateTime`, `Year`, `Month`, `Day`) and `WorkPath` are static run-time variables set once per execution and can be overridden via `--var`. The `Step` variable (and `Index` during FOR loops) are dynamic per-step variables that reflect the current execution position and cannot be overridden via `--var`.
 
@@ -91,7 +92,27 @@ Server running on port {{ port }} in {{ environment }} mode.
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
-- Frontmatter vars support string, number, and boolean values (converted to strings)
+- Frontmatter vars support string, number, and boolean values (converted to strings). For arrays and file data sources, use `.rundown/config.yaml` or `--var-file`
+
+### Data Sources
+
+Variables whose values are arrays or `file:`-prefixed paths become **data sources** for FOR loop iteration. Template variables are expanded with `{{ }}` syntax, while data sources drive `FOR variable IN {{ source }}` iteration:
+
+| Value Type | Template Variable | Data Source | Example |
+|------------|-------------------|-------------|---------|
+| `file:path/to/data.txt` | Not set | File DataSource | `--var items=file:data.txt` |
+| Array (YAML) | Comma-joined | Array DataSource | `items: [a, b, c]` in config |
+| Multiline string | Raw string | Array DataSource (split on newlines) | YAML block scalar |
+| Scalar | String value | Not set | `--var name=value` |
+
+Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
+
+**File formats:** `.jsonl` files are parsed as JSON Lines (one JSON value per line). Each line may contain any JSON value (string, number, boolean, null, array, or object). When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. All other extensions (e.g., `.txt`) use plain text (one value per non-empty line). Users who need raw line strings from a `.jsonl` file should rename it to a `.txt` extension.
+
+**Notes:**
+- Arrays and `file:` values are supported in `.rundown/config.yaml` and `--var-file`, not in frontmatter `vars:`
+- File paths must stay within the project root (symlinks resolved, traversal blocked)
+- `file:` values are routed to sources only — they do NOT appear as template variables
 
 ## Schema Output
 

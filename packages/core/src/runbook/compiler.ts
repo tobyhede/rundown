@@ -1,8 +1,18 @@
 import { setup, assign } from 'xstate';
-import type { Step, Action, Transitions, LastAction, ForContext } from './types.js';
+import type { Step, Action, Transitions, LastAction, ForContext, DataSource } from './types.js';
 import type { StepId } from './step-id.js';
 import type { ForClause } from '@rundown-org/parser';
+import { isSourced } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
+
+/**
+ * Safety limit for file-backed data sources with open iteration windows.
+ *
+ * When a FOR loop iterates over a file source without an explicit end bound,
+ * this constant prevents runaway iteration if the execution layer fails to
+ * signal completion.
+ */
+export const MAX_FILE_ITERATIONS = 10_000;
 
 /**
  * Context passed through the XState runbook state machine.
@@ -170,6 +180,7 @@ function peekForStack(stack: readonly ForContext[]): ForContext | undefined {
 
 /** Check if a FOR context iterates in descending order. */
 function isDescending(fc: ForContext): boolean {
+  if (fc.end === undefined) return false;
   return fc.start > fc.end;
 }
 
@@ -180,6 +191,13 @@ function nextIteration(fc: ForContext): number {
 
 /** Check whether the loop has more iterations remaining. */
 function hasMoreIterations(fc: ForContext): boolean {
+  if (fc.end === undefined) {
+    // Safety net for file sources: if the resolver hasn't populated
+    // currentValue, don't iterate. In normal operation, exhaustion
+    // is handled by the ForIterationService capping `end`.
+    if (fc.source.kind === 'file' && fc.currentValue === undefined) return false;
+    return fc.iteration - fc.start < MAX_FILE_ITERATIONS;
+  }
   return isDescending(fc) ? fc.iteration > fc.end : fc.iteration < fc.end;
 }
 
@@ -235,15 +253,59 @@ function createForContext(
   forClause: ForClause,
   atValue?: number | string,
   implicit = false,
+  sources?: Readonly<Record<string, DataSource>>,
 ): ForContext {
-  const iteration = resolveAtValue(atValue, forClause.start);
+  let source: ForContext['source'];
+  let start: number;
+  let end: number | undefined;
+
+  if (isSourced(forClause)) {
+    const ds = sources?.[forClause.source];
+    if (!ds) {
+      throw new Error(`Data source "${forClause.source}" is not defined`);
+    }
+
+    switch (ds.kind) {
+      case 'array': {
+        source = { kind: 'array', items: ds.items };
+        start = Math.max(1, Math.min(forClause.start, ds.items.length));
+        const requestedEnd = forClause.end ?? ds.items.length;
+        end = ds.items.length === 0 ? start : Math.max(1, Math.min(requestedEnd, ds.items.length));
+        break;
+      }
+      case 'file': {
+        if (forClause.end !== undefined && forClause.start > forClause.end) {
+          throw new Error('Descending windows are not supported for file sources');
+        }
+        // FileSnapshot is computed at runtime in the execution layer
+        source = {
+          kind: 'file',
+          path: ds.path,
+          format: ds.format,
+          snapshot: null,
+        };
+        start = forClause.start;
+        end = forClause.end; // undefined for open windows
+        break;
+      }
+    }
+  } else {
+    source = { kind: 'range' };
+    start = forClause.start;
+    end = forClause.end;
+  }
+
+  const iteration = resolveAtValue(atValue, start);
+  const currentValue = undefined; // Resolved by ForIterationService before execution
   return {
     stepId: stepName,
     iteration,
-    start: forClause.start,
-    end: forClause.end,
+    start,
+    end,
     variable: forClause.variable,
     implicit,
+    source,
+    currentValue,
   };
 }
 
@@ -325,6 +387,7 @@ function buildTransition(
   stepName: string,
   substepId: string | undefined,
   steps: Step[],
+  sources?: Readonly<Record<string, DataSource>>,
 ): TransitionConfig {
   const { retry, action, kind } = transition;
   // Normalize kind to pass/fail for iteration result recording
@@ -338,6 +401,7 @@ function buildTransition(
       substepId,
       steps,
       resultKind,
+      sources,
     );
     const retryGuard: TransitionEntry = {
       guard: ({ context }: { context: RunbookContext }) => context.retryCount < retry,
@@ -355,7 +419,7 @@ function buildTransition(
   }
 
   // No retry: execute action directly
-  return buildActionTransition(action, stepName, substepId, steps, resultKind);
+  return buildActionTransition(action, stepName, substepId, steps, resultKind, sources);
 }
 
 /**
@@ -408,6 +472,7 @@ function buildLoopExitAssign(
           return [...results, iterationResult];
         },
     lastAction: { type: actionType },
+    lastMessage: undefined as string | undefined,
     retryCount: 0,
     substep: extractSubstepFromStateId(exitTarget),
   });
@@ -431,6 +496,7 @@ function buildAggregationExitAssign(
   exitTarget: string,
   iterationResult: 'pass' | 'fail',
   steps: Step[],
+  sources?: Readonly<Record<string, DataSource>>,
 ): AssignAction {
   const baseAssign = {
     retryCount: 0,
@@ -456,6 +522,8 @@ function buildAggregationExitAssign(
               targetStep.name,
               targetForClause,
               parentAction.target.at !== undefined ? Number(parentAction.target.at) : undefined,
+              false,
+              sources,
             ),
           ],
           iterationResults: [] as ('pass' | 'fail')[],
@@ -475,18 +543,21 @@ function buildAggregationExitAssign(
         ...baseAssign,
         forStack: [] as readonly ForContext[],
         lastAction: { type: 'STOP' as const },
+        lastMessage: parentAction.message,
       });
     case 'COMPLETE':
       return assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
         lastAction: { type: 'COMPLETE' as const },
+        lastMessage: parentAction.message,
       });
     case 'CONTINUE':
       return assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
         lastAction: { type: 'CONTINUE' as const },
+        lastMessage: undefined as string | undefined,
       });
     case 'NEXT':
     case 'BREAK':
@@ -495,6 +566,7 @@ function buildAggregationExitAssign(
         ...baseAssign,
         forStack: [] as readonly ForContext[],
         lastAction: { type: parentAction.type },
+        lastMessage: undefined as string | undefined,
       });
   }
 }
@@ -552,6 +624,7 @@ function buildAggregationExitTransitions(
   actionType: 'CONTINUE' | 'NEXT' | 'BREAK',
   steps: Step[],
   isImplicit?: boolean,
+  sources?: Readonly<Record<string, DataSource>>,
 ): TransitionEntry[] {
   // No aggregation for implicit FOR loops or steps without explicit FOR + transitions
   if (isImplicit || !parentStep.forClause || !parentStep.transitions) {
@@ -585,6 +658,7 @@ function buildAggregationExitTransitions(
         passTarget,
         iterationResult,
         steps,
+        sources,
       ),
     },
     {
@@ -595,6 +669,7 @@ function buildAggregationExitTransitions(
         failTarget,
         iterationResult,
         steps,
+        sources,
       ),
     },
   ];
@@ -617,13 +692,17 @@ function buildLoopBackTransition(
       forStack: ({ context }: { context: RunbookContext }) => {
         const top = peekForStack(context.forStack);
         if (!top) return context.forStack;
-        return [{ ...top, iteration: nextIteration(top) }];
+        const nextIter = nextIteration(top);
+        // All source types: clear currentValue on loop-back.
+        // The ForIterationService resolves it before the next execution.
+        return [{ ...top, iteration: nextIter, currentValue: undefined }];
       },
       iterationResults: ({ context }: { context: RunbookContext }) => {
         const results = context.iterationResults ?? [];
         return [...results, iterationResult];
       },
       lastAction: { type: actionType },
+      lastMessage: undefined as string | undefined,
       retryCount: 0,
       substep: firstSubstepId,
     }),
@@ -639,6 +718,7 @@ function buildActionTransition(
   substepId: string | undefined,
   steps: Step[],
   kind?: 'pass' | 'fail',
+  sources?: Readonly<Record<string, DataSource>>,
 ): TransitionConfig {
   switch (action.type) {
     case 'CONTINUE': {
@@ -668,6 +748,7 @@ function buildActionTransition(
             'CONTINUE',
             steps,
             isImplicit,
+            sources,
           ),
         ];
       }
@@ -677,6 +758,7 @@ function buildActionTransition(
         target,
         actions: assign({
           lastAction: { type: 'CONTINUE' as const },
+          lastMessage: undefined as string | undefined,
           retryCount: 0,
           substep: extractSubstepFromStateId(target),
         }),
@@ -687,6 +769,7 @@ function buildActionTransition(
         target: 'COMPLETE',
         actions: assign({
           lastAction: { type: 'COMPLETE' as const },
+          lastMessage: action.message,
         }),
       };
     case 'STOP':
@@ -694,6 +777,7 @@ function buildActionTransition(
         target: 'STOPPED',
         actions: assign({
           lastAction: { type: 'STOP' as const },
+          lastMessage: action.message,
         }),
       };
     case 'GOTO': {
@@ -730,14 +814,7 @@ function buildActionTransition(
                 context.forStack,
               );
               return [
-                {
-                  stepId: targetStepObj.name,
-                  iteration,
-                  start: forClause.start,
-                  end: forClause.end,
-                  variable: forClause.variable,
-                  implicit: isImplicit,
-                },
+                createForContext(targetStepObj.name, forClause, iteration, isImplicit, sources),
               ];
             },
             iterationResults: ({
@@ -801,7 +878,15 @@ function buildActionTransition(
           iterationResult,
           currentStep.substeps?.[0]?.id,
         ),
-        ...buildAggregationExitTransitions(currentStep, exitTarget, iterationResult, 'NEXT', steps),
+        ...buildAggregationExitTransitions(
+          currentStep,
+          exitTarget,
+          iterationResult,
+          'NEXT',
+          steps,
+          undefined,
+          sources,
+        ),
       ];
     }
 
@@ -822,6 +907,8 @@ function buildActionTransition(
         iterationResult,
         'BREAK',
         steps,
+        undefined,
+        sources,
       );
     }
   }
@@ -836,11 +923,15 @@ function buildActionTransition(
  * - COMPLETE and STOPPED final states
  *
  * @param steps - The parsed runbook steps to compile
+ * @param options - Optional compilation options including data sources
  * @returns An XState state machine definition
  */
 // XState snapshot type is not fully typed
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
-export function compileRunbookToMachine(steps: Step[]) {
+export function compileRunbookToMachine(
+  steps: Step[],
+  options?: { sources?: Readonly<Record<string, DataSource>> },
+) {
   const states: Record<string, { on: Record<string, unknown>; entry?: unknown }> = {};
 
   // Build a flat list of all states to generate GOTO transitions
@@ -901,6 +992,7 @@ export function compileRunbookToMachine(steps: Step[]) {
                   stepInfo.forClause,
                   undefined,
                   stepInfo.implicit,
+                  options?.sources,
                 ),
               ];
             },
@@ -965,14 +1057,13 @@ export function compileRunbookToMachine(steps: Step[]) {
                   context.forStack,
                 );
                 return [
-                  {
-                    stepId: forStepForTarget.step.name,
+                  createForContext(
+                    forStepForTarget.step.name,
+                    forStepForTarget.forClause,
                     iteration,
-                    start: forStepForTarget.forClause.start,
-                    end: forStepForTarget.forClause.end,
-                    variable: forStepForTarget.forClause.variable,
-                    implicit: forStepForTarget.implicit,
-                  },
+                    forStepForTarget.implicit,
+                    options?.sources,
+                  ),
                 ];
               },
               iterationResults: ({
@@ -1032,6 +1123,7 @@ export function compileRunbookToMachine(steps: Step[]) {
           config.stepName,
           config.substepId,
           steps,
+          options?.sources,
         ),
         FAIL: buildTransition(
           config.transitions.fail,
@@ -1039,10 +1131,12 @@ export function compileRunbookToMachine(steps: Step[]) {
           config.stepName,
           config.substepId,
           steps,
+          options?.sources,
         ),
         RETRY: {
           actions: assign({
             lastAction: { type: 'RETRY' as const },
+            lastMessage: undefined as string | undefined,
             retryCount: ({ context }) => (context.retryCount as number) + 1,
             retryMax: retryMaxFromTransitions,
           }),

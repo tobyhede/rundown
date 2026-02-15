@@ -1,4 +1,4 @@
-import type { Step, Substep, Command, ForClause } from './ast.js';
+import type { Step, Substep, Command, ForClause, SourceWindow } from './ast.js';
 
 /**
  * Type guard: checks if a step or substep has a prompt defined.
@@ -65,4 +65,15 @@ export function hasRunbooks<T extends Step | Substep>(
  */
 export function hasForClause(step: Step): step is Step & { forClause: ForClause } {
   return step.forClause !== undefined;
+}
+
+/**
+ * Type guard: narrows a ForClause to SourceWindow (data-source iteration).
+ *
+ * @param fc - The FOR clause to check
+ * @returns True if the clause references a named data source (`fc is SourceWindow`),
+ *   enabling type narrowing to guarantee `fc.source` and `fc.variable` are strings
+ */
+export function isSourced(fc: ForClause): fc is SourceWindow {
+  return fc.source !== undefined;
 }

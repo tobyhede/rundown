@@ -35,15 +35,36 @@ export const CommandSchema = z.object({
 });
 
 /**
- * Zod schema for ForClause
+ * Zod schema for NumericWindow
  *
- * Validates FOR loop range specifications with numeric bounds.
+ * Validates numeric FOR loop range specifications.
  */
-export const ForClauseSchema = z.object({
+export const NumericWindowSchema = z.object({
   variable: z.string().regex(NAMED_IDENTIFIER_PATTERN).optional(),
   start: z.number().int().positive().max(MAX_FOR_BOUND),
   end: z.number().int().positive().max(MAX_FOR_BOUND),
+  source: z.never().optional(),
 });
+
+/**
+ * Zod schema for SourceWindow
+ *
+ * Validates data-source FOR loop specifications.
+ */
+export const SourceWindowSchema = z.object({
+  variable: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+  start: z.number().int().positive().max(MAX_FOR_BOUND),
+  end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+  source: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+});
+
+/**
+ * Zod schema for ForClause
+ *
+ * Validates FOR loop specifications with numeric bounds or data sources.
+ * Discriminated union: source field absent = numeric, present = data source.
+ */
+export const ForClauseSchema = z.union([NumericWindowSchema, SourceWindowSchema]);
 
 /**
  * Schema for step names in Step.name field.

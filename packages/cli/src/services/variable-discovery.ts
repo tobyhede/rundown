@@ -14,12 +14,39 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
+import type { DataSource, FileFormat } from '@rundown-org/core';
 
 /**
  * Valid identifier pattern for variable names.
  * Must start with letter or underscore, followed by letters, digits, or underscores.
  */
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+/**
+ * Resolved variables: string vars for template substitution + data sources for FOR loops.
+ *
+ * `vars` feeds the template rendering pipeline (unchanged).
+ * `sources` is consumed only at FOR loop entry time.
+ */
+export interface ResolvedVariables {
+  /**
+   * Readonly map of string values used for template substitution.
+   *
+   * Feeds the Handlebars template rendering pipeline — every entry is
+   * substituted into `{{key}}` placeholders at render time.  The map is
+   * immutable for the lifetime of a single resolution pass.
+   */
+  readonly vars: Readonly<Record<string, string>>;
+  /**
+   * Readonly map of {@link DataSource} objects consumed only at FOR loop
+   * entry time.
+   *
+   * Each entry provides the iteration data for a `FOR variable IN {{ key }}`
+   * clause.  The map is immutable once resolved and is not used by the
+   * template rendering pipeline.
+   */
+  readonly sources: Readonly<Record<string, DataSource>>;
+}
 
 /**
  * Normalize a raw variables object to Record<string, string>.
@@ -127,10 +154,22 @@ export function mergeVariables(
 /**
  * Load variables from a YAML file.
  *
- * @param filePath - Path to the YAML file
- * @returns Variables object, or empty object if file doesn't exist or is invalid
+ * @param filePath - Absolute path to the YAML file
+ * @param options - Optional: set normalize=false to preserve raw types (arrays, multiline strings)
+ * @returns Variable record (string values when normalized, unknown values when raw)
  */
-export async function loadVariablesFromFile(filePath: string): Promise<Record<string, string>> {
+export async function loadVariablesFromFile(
+  filePath: string,
+  options: { normalize: false },
+): Promise<Record<string, unknown>>;
+export async function loadVariablesFromFile(
+  filePath: string,
+  options?: { normalize?: true },
+): Promise<Record<string, string>>;
+export async function loadVariablesFromFile(
+  filePath: string,
+  options?: { normalize?: boolean },
+): Promise<Record<string, unknown>> {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
     const parsed = yaml.load(content);
@@ -139,7 +178,11 @@ export async function loadVariablesFromFile(filePath: string): Promise<Record<st
       return {};
     }
 
-    return normalizeVariables(parsed as Record<string, unknown>);
+    const raw = parsed as Record<string, unknown>;
+    if (options?.normalize === false) {
+      return raw;
+    }
+    return normalizeVariables(raw);
   } catch {
     return {};
   }
@@ -170,15 +213,16 @@ export function extractVarsFromMarkdown(markdown: string): Record<string, string
 }
 
 /**
- * Discover variables from .rundown/config.yaml in the project.
+ * Find the .rundown/config.yaml file by walking upward from cwd.
  *
- * Searches upward from cwd for a .rundown directory containing config.yaml.
- * Stops at git root or filesystem root to prevent loading from unrelated directories.
+ * Searches upward from the given directory for a .rundown directory
+ * containing config.yaml. Stops at git root or filesystem root to
+ * prevent loading from unrelated parent directories.
  *
  * @param cwd - Starting directory for search
- * @returns Discovered variables, or empty object if not found
+ * @returns Absolute path to the config file, or null if not found
  */
-export async function discoverVariables(cwd: string): Promise<Record<string, string>> {
+export async function findConfigFile(cwd: string): Promise<string | null> {
   let dir = cwd;
   let parent = path.dirname(dir);
 
@@ -188,7 +232,7 @@ export async function discoverVariables(cwd: string): Promise<Record<string, str
 
     try {
       await fs.access(configPath);
-      return await loadVariablesFromFile(configPath);
+      return configPath;
     } catch {
       // File doesn't exist, continue searching
     }
@@ -198,7 +242,7 @@ export async function discoverVariables(cwd: string): Promise<Record<string, str
     try {
       await fs.access(gitPath);
       // Found git root, stop searching
-      return {};
+      return null;
     } catch {
       // Not git root, continue
     }
@@ -211,50 +255,166 @@ export async function discoverVariables(cwd: string): Promise<Record<string, str
   const configPath = path.join(dir, '.rundown', 'config.yaml');
   try {
     await fs.access(configPath);
-    return await loadVariablesFromFile(configPath);
+    return configPath;
   } catch {
-    return {};
+    return null;
   }
 }
 
 /**
- * Collect all variables from CLI options and auto-discovery.
+ * Discover variables from .rundown/config.yaml in the project.
  *
- * Precedence (highest to lowest):
- * 1. --var flags
- * 2. --var-file contents
- * 3. Auto-discovered .rundown/config.yaml
- * 4. Frontmatter vars
- * 5. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath)
+ * Searches upward from cwd for a .rundown directory containing config.yaml.
+ * Stops at git root or filesystem root to prevent loading from unrelated directories.
  *
- * @param options - CLI options containing varFile, var flags, and frontmatterVars
- * @param cwd - Current working directory
- * @returns Merged variables with proper precedence
+ * @param cwd - Starting directory for search
+ * @returns Discovered variables, or empty object if not found
  */
-export async function collectVariables(
-  options: { varFile?: string; var?: string[]; frontmatterVars?: Record<string, string> },
+export async function discoverVariables(cwd: string): Promise<Record<string, string>> {
+  const configPath = await findConfigFile(cwd);
+  if (configPath) {
+    return await loadVariablesFromFile(configPath);
+  }
+  return {};
+}
+
+/**
+ * Infer file format from extension.
+ *
+ * @param filePath - The file path to inspect
+ * @returns 'jsonl' for .jsonl files, 'text' for all others
+ */
+function inferFileFormat(filePath: string): FileFormat {
+  return filePath.endsWith('.jsonl') ? 'jsonl' : 'text';
+}
+
+/**
+ * Route a single variable value into vars and/or sources based on its type.
+ *
+ * Routing rules:
+ * - String with file: prefix → file source only (not in vars)
+ * - Array → both maps (comma-joined in vars, array DataSource in sources)
+ * - Multiline string → both maps (raw in vars, split lines as array DataSource in sources)
+ * - Other scalar → vars only
+ *
+ * @param key - Variable name
+ * @param value - Variable value (unknown type)
+ * @param vars - Accumulator for string variables
+ * @param sources - Accumulator for data sources
+ * @param cwd - Current working directory for resolving relative paths
+ * @param projectRoot - Canonical project root path (pre-resolved)
+ */
+async function routeVariable(
+  key: string,
+  value: unknown,
+  vars: Record<string, string>,
+  sources: Record<string, DataSource>,
   cwd: string,
-): Promise<Record<string, string>> {
-  // 1. Get built-in defaults (lowest precedence)
-  const builtins = getBuiltinVariables();
+  projectRoot: string,
+): Promise<void> {
+  // String with file: prefix → file source only (not in vars)
+  if (typeof value === 'string' && value.startsWith('file:')) {
+    const rawPath = value.slice(5);
+    const resolved = path.resolve(cwd, rawPath);
 
-  // 2. Frontmatter vars (second lowest)
-  const frontmatter = options.frontmatterVars ?? {};
+    // Prevent path traversal outside the project directory.
+    // Use realpath to resolve symlinks before validation to prevent escaping.
+    let canonical = resolved;
+    try {
+      canonical = await fs.realpath(resolved);
+    } catch {
+      // File doesn't exist yet — use resolved path for validation
+    }
 
-  // 3. Auto-discover from .rundown/config.yaml
-  const discovered = await discoverVariables(cwd);
+    const rel = path.relative(projectRoot, canonical);
+    if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+      console.warn(`Warning: Ignoring file source "${key}" — path escapes project directory`);
+      return;
+    }
 
-  // 4. Load from --var-file if provided
-  let fromFile: Record<string, string> = {};
+    sources[key] = { kind: 'file', path: canonical, format: inferFileFormat(canonical) };
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- clearing stale cross-type entry
+    delete vars[key];
+    return;
+  }
+
+  // Array → both maps
+  if (Array.isArray(value)) {
+    const items = value.map(String);
+    vars[key] = items.join(', ');
+    sources[key] = { kind: 'array', items };
+    return;
+  }
+
+  // Multiline string → both maps
+  if (typeof value === 'string' && value.includes('\n')) {
+    const lines = value.split('\n');
+    // Store the value but strip trailing newline if present
+    vars[key] = value.endsWith('\n') ? value.slice(0, -1) : value;
+    sources[key] = { kind: 'array', items: lines };
+    return;
+  }
+
+  // Scalar → vars only (clear any stale source from lower-precedence layer)
+  if (typeof value === 'object' && value !== null) {
+    console.warn(`Warning: Ignoring variable "${key}" with complex value`);
+    return;
+  }
+  vars[key] = String(value);
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- clearing stale cross-type entry
+  delete sources[key];
+}
+
+/**
+ * Discover raw (pre-normalization) variables from .rundown/config.yaml.
+ *
+ * Searches upward from cwd for a .rundown directory containing config.yaml.
+ * Stops at git root or filesystem root to prevent loading from unrelated directories.
+ *
+ * @param cwd - Starting directory for search
+ * @returns Discovered variables with raw types preserved, or empty object if not found
+ */
+async function discoverRawVariables(cwd: string): Promise<Record<string, unknown>> {
+  const configPath = await findConfigFile(cwd);
+  if (configPath) {
+    return await loadVariablesFromFile(configPath, { normalize: false });
+  }
+  return {};
+}
+
+/**
+ * Collect raw (pre-normalization) variable layers in precedence order.
+ *
+ * Returns array from lowest to highest precedence.
+ *
+ * @param options - Variable sources from CLI flags, var-file, and frontmatter
+ * @param cwd - Current working directory for resolving relative paths
+ * @returns Array of variable layers in precedence order
+ */
+async function collectRawLayers(
+  options: { varFile?: string; var?: string[]; frontmatterVars?: Record<string, unknown> },
+  cwd: string,
+): Promise<Record<string, unknown>[]> {
+  // 1. Built-ins (lowest)
+  const builtins: Record<string, unknown> = getBuiltinVariables();
+
+  // 2. Frontmatter
+  const frontmatter: Record<string, unknown> = options.frontmatterVars ?? {};
+
+  // 3. Auto-discovered config
+  const discovered: Record<string, unknown> = await discoverRawVariables(cwd);
+
+  // 4. Var-file
+  let fromFile: Record<string, unknown> = {};
   if (options.varFile) {
     const varFilePath = path.isAbsolute(options.varFile)
       ? options.varFile
       : path.join(cwd, options.varFile);
-    fromFile = await loadVariablesFromFile(varFilePath);
+    fromFile = await loadVariablesFromFile(varFilePath, { normalize: false });
   }
 
-  // 5. Parse --var flags (highest precedence)
-  const fromFlags: Record<string, string> = {};
+  // 5. CLI flags (highest)
+  const fromFlags: Record<string, unknown> = {};
   if (options.var) {
     for (const flag of options.var) {
       const parsed = parseVarFlag(flag);
@@ -266,6 +426,61 @@ export async function collectVariables(
     }
   }
 
-  // 6. Merge with precedence: builtins < frontmatter < discovered < fromFile < fromFlags
-  return mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
+  return [builtins, frontmatter, discovered, fromFile, fromFlags];
+}
+
+/**
+ * Resolve variables into dual maps: string vars for templates + data sources for FOR loops.
+ *
+ * Processes variable layers in precedence order (lowest to highest):
+ * 1. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath)
+ * 2. Frontmatter vars
+ * 3. Auto-discovered .rundown/config.yaml
+ * 4. --var-file contents
+ * 5. --var flags (highest precedence)
+ *
+ * Each variable value is routed based on its type:
+ * - String with file: prefix → file source only
+ * - Array → both vars (comma-joined) and sources (array)
+ * - Multiline string → both vars and sources (array of lines)
+ * - Scalar → vars only
+ *
+ * @param options - Variable sources from CLI flags, var-file, and frontmatter
+ * @param cwd - Current working directory for resolving relative paths
+ * @returns ResolvedVariables with vars and sources maps
+ */
+export async function resolveVariables(
+  options: {
+    varFile?: string;
+    var?: string[];
+    frontmatterVars?: Record<string, unknown>;
+  },
+  cwd: string,
+): Promise<ResolvedVariables> {
+  const vars: Record<string, string> = {};
+  const sources: Record<string, DataSource> = {};
+
+  // Canonicalize project root once for validation
+  let projectRoot = path.resolve(cwd);
+  try {
+    projectRoot = await fs.realpath(projectRoot);
+  } catch {
+    // cwd doesn't exist? (unlikely) - use resolved path
+  }
+
+  // Collect raw inputs at each precedence level
+  const layers = await collectRawLayers(options, cwd);
+
+  // Process each layer in precedence order (lowest to highest)
+  for (const layer of layers) {
+    for (const [key, value] of Object.entries(layer)) {
+      if (!VALID_IDENTIFIER.test(key)) {
+        console.warn(`Warning: Ignoring variable with invalid key: ${key}`);
+        continue;
+      }
+      await routeVariable(key, value, vars, sources, cwd, projectRoot);
+    }
+  }
+
+  return { vars, sources };
 }

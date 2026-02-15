@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { JsonValue } from './runbook/types.js';
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -145,6 +146,70 @@ const SubstepStateSchema = z.object({
 });
 
 /**
+ * Zod schema for ResolvedSource discriminated union
+ */
+const ResolvedSourceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('range') }),
+  z.object({
+    kind: z.literal('array'),
+    items: z.array(z.string()).readonly(),
+  }),
+  z.object({
+    kind: z.literal('file'),
+    path: z.string(),
+    format: z.enum(['text', 'jsonl']),
+    snapshot: z
+      .object({
+        line: z.number().int().positive(),
+        size: z.number().nonnegative(),
+        mtimeMs: z.number().nonnegative(),
+        fingerprint: z.string().optional(),
+      })
+      .nullable(),
+  }),
+]);
+
+/**
+ * Recursive JSON value schema for loop iteration values.
+ *
+ * Supports arbitrary JSON structures: primitives, arrays, and objects.
+ * Used to validate currentValue in ForStackEntry when iterating over JSONL files.
+ * Uses z.lazy() for recursive reference handling.
+ *
+ * When used with .optional(), allows either a JSON value or absence (undefined),
+ * but explicitly rejects undefined values that are passed through objects.
+ */
+const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ]),
+);
+
+/**
+ * Zod schema for ForStack entry with optional source field for backward compat
+ */
+const ForStackEntrySchema = z
+  .object({
+    stepId: z.string(),
+    iteration: z.number().int().positive().max(MAX_FOR_BOUND),
+    start: z.number().int().positive().max(MAX_FOR_BOUND),
+    end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+    variable: z.string().optional(),
+    implicit: z.boolean().default(false),
+    source: ResolvedSourceSchema.optional(),
+    currentValue: JsonValueSchema.optional(),
+  })
+  .transform((entry) => ({
+    ...entry,
+    source: entry.source ?? { kind: 'range' as const },
+  }));
+
+/**
  * Runbook State Schema - Runtime Validation for Persisted RunbookState
  */
 export const RunbookStateSchema = z
@@ -189,18 +254,7 @@ export const RunbookStateSchema = z
       })
       .optional(),
     // FOR loop tracking: stack of loop contexts for nested loops
-    forStack: z
-      .array(
-        z.object({
-          stepId: z.string(), // Step name (e.g., "3") that owns this FOR loop
-          iteration: z.number().int().positive().max(MAX_FOR_BOUND), // Current iteration number (1-based)
-          start: z.number().int().positive().max(MAX_FOR_BOUND), // Start of the iteration range
-          end: z.number().int().positive().max(MAX_FOR_BOUND), // End of the iteration range (inclusive)
-          variable: z.string().optional(), // Named loop variable (e.g., "batch")
-          implicit: z.boolean().default(false), // True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence.
-        }),
-      )
-      .optional(),
+    forStack: z.array(ForStackEntrySchema).optional(),
     // Backward compat: accept old flat fields for migration
     forIteration: z.number().int().positive().optional(),
     forStart: z.number().int().optional(),
@@ -233,6 +287,20 @@ export const RunbookStateSchema = z
       .optional(),
     runbookSrc: z.string().optional(),
     templateVars: z.record(z.string(), z.string()).optional(),
+    /** Data source bindings for sourced FOR loops (array or file-backed). */
+    sources: z
+      .record(
+        z.string(),
+        z.discriminatedUnion('kind', [
+          z.object({ kind: z.literal('array'), items: z.array(z.string()).readonly() }),
+          z.object({
+            kind: z.literal('file'),
+            path: z.string(),
+            format: z.enum(['text', 'jsonl']),
+          }),
+        ]),
+      )
+      .optional(),
   })
   .transform((data) => {
     const { forIteration, forStart, forEnd, forVariable, ...rest } = data;
@@ -241,14 +309,15 @@ export const RunbookStateSchema = z
       return {
         ...rest,
         forStack: [
-          {
+          ForStackEntrySchema.parse({
             stepId: rest.step,
             iteration: forIteration,
             start: forStart ?? 1,
             end: forEnd ?? forIteration,
             variable: forVariable,
             implicit: false,
-          },
+            source: { kind: 'range' as const },
+          }),
         ],
       };
     }

@@ -60,6 +60,7 @@ The Rundown system separates concerns into three layers:
 | **Format** | `.runbook.md` files | Runbook definition (steps, transitions, commands) |
 | **State Machine** | XState-compiled machine | State transitions and guards |
 | **Persistence** | JSON files | Runbook state survives context clears |
+| **Iteration** | ForIterationService | Per-iteration data source value resolution |
 
 The CLI is an orchestration and control interface. Claude executes the actual work.
 
@@ -238,12 +239,14 @@ See [SPEC.md FOR Steps](./SPEC.md#for-steps) for the full grammar and all clause
 | `FOR 1 TO N` | Explicit range, no variable |
 | `FOR var IN N` | Implicit start (1), named variable |
 | `FOR N` | Implicit start (1), no variable |
+| `FOR var IN {{ source }}` | All items from data source |
+| `FOR var IN 1 TO N OF {{ source }}` | Windowed data source |
 
 **Loop variable expansion:**
 
 The named loop variable and `{{Index}}` are expanded per-iteration:
 - `{{Index}}` - Current iteration number (1-based), available inside all FOR substeps
-- `{{var}}` - Named loop variable (equals the iteration index)
+- `{{var}}` - Named loop variable. For numeric ranges, equals the iteration index. For data sources (array/file), holds the current data element.
 
 These are expanded per-iteration, unlike template variables which are expanded once at `rd run` time.
 
@@ -273,6 +276,60 @@ In runbook transitions, `GOTO N AT I` enters step N at iteration I. See [GOTO fo
 **Status display during loops:**
 
 When a FOR loop is active, `rundown status` reflects the current iteration via the `forStack` field in the state file. The step display shows the active step and substep within the loop.
+
+#### Data Sources
+
+FOR loops can iterate over arrays or files instead of numeric ranges.
+
+**Defining sources:**
+
+Sources are defined via `.rundown/config.yaml`, `--var-file`, or `--var` flags. Values are routed based on type:
+
+| Value Pattern | Routing |
+|---------------|---------|
+| `file:path/to/data.txt` | File source only (not a template var) |
+| YAML array `[a, b, c]` | Both: comma-joined in vars, array in sources |
+| Multiline YAML string | Both: raw in vars, lines split into array source |
+| Scalar string/number | Template vars only (no source created) |
+
+**Example `.rundown/config.yaml`:**
+```yaml
+environment: staging
+items:
+  - alpha
+  - bravo
+  - charlie
+log_file: file:data/results.jsonl
+```
+
+**Example runbook:**
+````markdown
+## 2 Process items
+- FOR item IN {{ items }}
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+### 1 Handle item
+- PASS: CONTINUE
+- FAIL: BREAK
+Handle {{item}} (iteration {{Index}}).
+````
+
+**File formats:**
+
+| Extension | Format | Parsing |
+|-----------|--------|---------|
+| `.jsonl` | JSON Lines | One JSON value per line (string, number, boolean, null, array, or object) |
+| All others | Plain text | One value per non-empty line |
+
+**JSONL semantics:** Each `.jsonl` line is parsed as a JSON value. When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. Users who need raw line strings should use a text source (e.g., `.txt`) instead of `.jsonl`.
+
+**Open-ended iteration:** `FOR item IN {{ source }}` iterates until the source is exhausted, capped at 10,000 iterations.
+
+**Windowed iteration:** `FOR item IN 3 TO 7 OF {{ source }}` reads only items at positions 3 through 7.
+
+**Drift detection:** File sources record a snapshot (size, mtime, SHA-256 fingerprint) at first access. On resume, the snapshot is validated — if the file changed, execution fails with a drift error. Fingerprint comparison allows harmless mtime changes (e.g., backup tools) to pass.
+
+**Validation:** The CLI validates that all sourced FOR clauses reference defined data sources. Missing sources produce: `FOR loop references undefined data source "{{name}}"`.
 
 ---
 
@@ -320,6 +377,10 @@ Each runbook state file contains:
   "stepName": "Execute batch",
   "retryCount": 0,
   "variables": { "environment": "staging" },
+  "sources": {
+    "items": { "kind": "array", "items": ["alpha", "bravo", "charlie"] },
+    "log_file": { "kind": "file", "path": "data/results.jsonl", "format": "jsonl" }
+  },
   "steps": [],
   "pendingSteps": [],
   "agentBindings": {},
@@ -327,10 +388,11 @@ Each runbook state file contains:
   "forStack": [
     {
       "stepId": "2",
-      "iteration": 3,
+      "iteration": 2,
       "start": 1,
-      "end": 5,
-      "variable": "batch"
+      "variable": "item",
+      "source": { "kind": "array", "items": ["alpha", "bravo", "charlie"] },
+      "currentValue": "bravo"
     }
   ],
   "iterationResults": ["pass", "pass"],
@@ -353,7 +415,10 @@ Key fields:
 - `lastResult`: Last PASS/FAIL signal (`pass` or `fail`)
 - `runbookPath`: Repo-relative resolved file path to the runbook source
 - `runbookSrc`: Runbook source content with template variables expanded (frozen at run time)
+- `sources`: Data source definitions for FOR loops (arrays and file references)
 - `forStack`: Active FOR loop stack (present during loop execution; see [FOR Loops](#for-loops))
+- `forStack[].source`: Resolved source for the active loop (range, array, or file with snapshot)
+- `forStack[].currentValue`: Data element at the current iteration (array/file sources)
 - `iterationResults`: Array of per-iteration outcomes (`"pass"` or `"fail"`) for the current loop
 - `snapshot`: XState persisted snapshot for state restoration
 
@@ -396,7 +461,14 @@ Example `.rundown/config.yaml`:
 environment: staging
 version: 1.2.3
 db_host: localhost
+items:
+  - alpha
+  - bravo
+  - charlie
+log_file: file:data/results.jsonl
 ```
+
+Arrays become data sources for `FOR item IN {{ items }}`. The `file:` prefix creates file-backed sources. Scalar values remain regular template variables. See [Data Sources](#data-sources) for details.
 
 ### Usage Examples
 
@@ -979,6 +1051,9 @@ Scenario: COMPLETE
 | "Runbook file not found" | Missing runbook | Check file path |
 | "Step N does not exist" | Invalid GOTO target | Check step numbers |
 | "Invalid step target" | Bad goto format | Use "N" or "N.M" |
+| "FOR loop references undefined data source" | Sourced FOR clause without matching source | Define source in config.yaml or --var-file |
+| "File drift detected" | Data file changed during iteration | Ensure file stability or restart runbook |
+| "Descending windows are not supported for file sources" | `start > end` on file source | File sources must iterate forward |
 
 ### State Recovery
 

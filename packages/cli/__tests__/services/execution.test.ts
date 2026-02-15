@@ -6,7 +6,7 @@ import {
   getStepRetryMax,
   buildStepVariables,
 } from '../../src/services/execution.js';
-import type { Step } from '@rundown-org/core';
+import type { Step, ForContext, DataSource } from '@rundown-org/core';
 
 describe('execution service', () => {
   describe('isRunbookComplete', () => {
@@ -105,14 +105,22 @@ describe('execution service', () => {
 
     it('returns Index and named variable from forStack', () => {
       const vars = buildStepVariables('1', '1', [
-        { stepId: '1', iteration: 2, start: 1, end: 3, variable: 'batch' },
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'batch',
+          implicit: false,
+          source: { kind: 'range' },
+        },
       ]);
       expect(vars).toMatchObject({ Step: '1.1', Index: '2', batch: '2' });
     });
 
     it('omits Index for implicit ForContext', () => {
       const vars = buildStepVariables('1', '1', [
-        { stepId: '1', iteration: 1, start: 1, end: 1, implicit: true },
+        { stepId: '1', iteration: 1, start: 1, end: 1, implicit: true, source: { kind: 'range' } },
       ]);
       expect(vars).toEqual({ Step: '1.1' });
       expect(vars).not.toHaveProperty('Index');
@@ -121,6 +129,346 @@ describe('execution service', () => {
     it('falls back to forClause when forStack empty', () => {
       const vars = buildStepVariables('1', '1', [], { start: 1, end: 3 });
       expect(vars).toMatchObject({ Step: '1.1', Index: '1' });
+    });
+  });
+
+  describe('buildStepVariables with data sources', () => {
+    it('resolves array source value from currentValue', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'server',
+          implicit: false,
+          source: { kind: 'array', items: ['alpha', 'beta', 'gamma'] },
+          currentValue: 'beta',
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.server).toBe('beta');
+      expect(vars.Index).toBe('2');
+    });
+
+    it('resolves range source value as iteration number (unchanged behavior)', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 3,
+          start: 1,
+          end: 5,
+          variable: 'i',
+          implicit: false,
+          source: { kind: 'range' },
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.i).toBe('3');
+      expect(vars.Index).toBe('3');
+    });
+
+    it('resolves file source value from currentValue', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          variable: 'host',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/hosts.txt',
+            format: 'text' as const,
+            snapshot: null,
+          },
+          currentValue: 'web-server-01',
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.host).toBe('web-server-01');
+      expect(vars.Index).toBe('1');
+    });
+
+    it('uses empty string for array source when currentValue is undefined (no silent fallback)', () => {
+      // When currentValue is not set, we should get empty string,
+      // not silently fall back to items[iteration-1]. An unset currentValue
+      // for an array source indicates a compiler bug that should surface.
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          variable: 'server',
+          implicit: false,
+          source: { kind: 'array', items: ['alpha', 'beta', 'gamma'] },
+          // currentValue intentionally omitted
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      // After the fix, should be '' not 'beta'
+      expect(vars.server).toBe('');
+    });
+
+    it('uses empty string for file source when currentValue is undefined', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          variable: 'line',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/f.txt',
+            format: 'text' as const,
+            snapshot: null,
+          },
+          // currentValue intentionally omitted
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.line).toBe('');
+      expect(vars.Index).toBe('1');
+    });
+
+    it('falls back to forClause for array source bootstrap (no forStack)', () => {
+      const sources: Readonly<Record<string, DataSource>> = {
+        items: { kind: 'array', items: ['a', 'b', 'c'] },
+      };
+      const forClause = {
+        start: 1,
+        end: 3,
+        variable: 'item',
+        source: 'items',
+      } as unknown as Step['forClause'];
+
+      const vars = buildStepVariables('1', '1', [], forClause, sources);
+      expect(vars.item).toBe('a');
+      expect(vars.Index).toBe('1');
+    });
+
+    it('falls back to forClause for file source bootstrap (no forStack)', () => {
+      const sources: Readonly<Record<string, DataSource>> = {
+        data: {
+          kind: 'file',
+          path: '/tmp/data.txt',
+          format: 'text' as const,
+        },
+      };
+      const forClause = {
+        start: 1,
+        variable: 'line',
+        source: 'data',
+      } as unknown as Step['forClause'];
+
+      const vars = buildStepVariables('1', '1', [], forClause, sources);
+      expect(vars.line).toBe('');
+      expect(vars.Index).toBe('1');
+    });
+
+    it('omits Index for implicit forStack even with source present', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 1,
+          variable: 'item',
+          implicit: true,
+          source: { kind: 'array', items: ['x'] },
+          currentValue: 'x',
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      // Implicit entries omit both Index and the named variable
+      expect(vars).not.toHaveProperty('Index');
+      expect(vars).not.toHaveProperty('item');
+    });
+
+    it('resolves currentValue from array source at windowed position', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 3,
+          start: 1,
+          end: 4,
+          variable: 'item',
+          implicit: false,
+          source: { kind: 'array', items: ['a', 'b', 'c', 'd'] },
+          currentValue: 'c',
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.item).toBe('c');
+      expect(vars.Index).toBe('3');
+    });
+
+    it('clamps bootstrap array index when forClause.start exceeds array length', () => {
+      const sources: Readonly<Record<string, DataSource>> = {
+        items: { kind: 'array', items: ['a', 'b', 'c'] },
+      };
+      const forClause = {
+        start: 100,
+        end: 200,
+        variable: 'item',
+        source: 'items',
+      } as unknown as Step['forClause'];
+
+      const vars = buildStepVariables('1', '1', [], forClause, sources);
+      // Clamped to array length (3), matching compiler behavior
+      expect(vars.Index).toBe('3');
+      expect(vars.item).toBe('c');
+    });
+
+    it('preserves JSONL object currentValue in variable map', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 2,
+          variable: 'record',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/data.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          currentValue: { host: 'server-a', region: 'us-west' },
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.record).toEqual({ host: 'server-a', region: 'us-west' });
+      expect(vars.Index).toBe('1');
+    });
+
+    it('preserves JSONL primitive currentValue (number) in variable map', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          variable: 'count',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/nums.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          currentValue: 42,
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.count).toBe(42);
+    });
+
+    it('preserves JSONL boolean currentValue in variable map', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 2,
+          variable: 'enabled',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/bools.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          currentValue: false,
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.enabled).toBe(false);
+    });
+
+    it('preserves JSONL null currentValue in variable map', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 2,
+          variable: 'nullable',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/nulls.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          currentValue: null,
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.nullable).toBe(null);
+    });
+
+    it('keeps Index and Step as strings even with object-valued loop variables', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 3,
+          start: 1,
+          end: 5,
+          variable: 'config',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/config.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          currentValue: { name: 'test', value: 100 },
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.Step).toBe('1.1');
+      expect(vars.Index).toBe('3');
+      expect(typeof vars.Step).toBe('string');
+      expect(typeof vars.Index).toBe('string');
+      expect(vars.config).toEqual({ name: 'test', value: 100 });
+    });
+
+    it('falls back to empty string for file JSONL when currentValue is undefined', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          variable: 'item',
+          implicit: false,
+          source: {
+            kind: 'file',
+            path: '/tmp/data.jsonl',
+            format: 'jsonl' as const,
+            snapshot: null,
+          },
+          // currentValue intentionally omitted
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.item).toBe('');
     });
   });
 });

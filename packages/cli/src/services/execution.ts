@@ -2,6 +2,7 @@
 
 import {
   type RunbookStateManager,
+  ForIterationService,
   printActionBlock,
   printStepBlock,
   printStepSeparator,
@@ -23,7 +24,11 @@ import {
   type ExecutionEventEmitter,
   type LastAction,
   type ForContext,
+  type DataSource,
+  isRunbookComplete as _isRunbookComplete,
+  isRunbookStopped as _isRunbookStopped,
 } from '@rundown-org/core';
+import { isSourced } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import {
   getPolicyEvaluator,
@@ -36,8 +41,11 @@ import { expandLoopVariables, expandLoopVariablesForCommand } from './template-r
 /**
  * Per-step dynamic variables (e.g., `Step`, `Index`, named loop variable).
  * Produced by {@link buildStepVariables} and consumed by loop variable expansion.
+ *
+ * Values can be strings (for Step, Index, scalar values) or JSON values (for JSONL objects).
+ * The renderer functions handle both types transparently.
  */
-export type StepVariables = Record<string, string>;
+export type StepVariables = Record<string, unknown>;
 
 /**
  * Template variables for AST-level substitution (e.g., `environment`, `port`).
@@ -45,23 +53,9 @@ export type StepVariables = Record<string, string>;
  */
 export type TemplateVariables = Record<string, string>;
 
-/**
- * Check if runbook snapshot indicates completion.
- * @param snapshot - XState snapshot with status and value
- * @returns True if the runbook has completed successfully
- */
-export function isRunbookComplete(snapshot: { status: string; value: unknown }): boolean {
-  return snapshot.status === 'done' && snapshot.value === 'COMPLETE';
-}
-
-/**
- * Check if runbook snapshot indicates stopped state.
- * @param snapshot - XState snapshot with status and value
- * @returns True if the runbook has been stopped
- */
-export function isRunbookStopped(snapshot: { status: string; value: unknown }): boolean {
-  return snapshot.status === 'done' && snapshot.value === 'STOPPED';
-}
+// Re-export from core so existing imports from this module continue to work
+export const isRunbookComplete = _isRunbookComplete;
+export const isRunbookStopped = _isRunbookStopped;
 
 /**
  * Build per-step dynamic variables for Phase 2 expansion.
@@ -77,13 +71,17 @@ export function isRunbookStopped(snapshot: { status: string; value: unknown }): 
  * @param substepId - Optional substep identifier (e.g., "1")
  * @param forStack - Current FOR loop stack from persisted state
  * @param forClause - FOR clause from the step definition (bootstrap fallback)
+ * @param sources - Data-source bindings for sourced FOR clauses
  * @returns Variable map with `Step` and optional `Index` / named variable
+ * @throws Error if a sourced FOR clause references a missing data source
+ * @throws Error if an unexpected source kind is encountered
  */
 export function buildStepVariables(
   stepId: string,
   substepId: string | undefined,
   forStack?: readonly ForContext[],
   forClause?: Step['forClause'],
+  sources?: Readonly<Record<string, DataSource>>,
 ): StepVariables {
   const step = substepId ? `${stepId}.${substepId}` : stepId;
   const vars: StepVariables = { Step: step };
@@ -93,15 +91,54 @@ export function buildStepVariables(
     const top = forStack[forStack.length - 1];
     if (!top.implicit) {
       vars.Index = String(top.iteration);
+
       if (top.variable) {
-        vars[top.variable] = String(top.iteration);
+        switch (top.source.kind) {
+          case 'range':
+            vars[top.variable] = String(top.iteration);
+            break;
+          case 'array':
+            // currentValue is set by ForIterationService before each iteration.
+            // If missing (undefined), the service did not resolve it — fall back to empty string.
+            // Preserve all other values including null, false, 0, etc.
+            vars[top.variable] = top.currentValue !== undefined ? top.currentValue : '';
+            break;
+          case 'file':
+            // Same handling for file sources: preserve JSON values, fall back to empty string on undefined
+            vars[top.variable] = top.currentValue !== undefined ? top.currentValue : '';
+            break;
+          default: {
+            const _exhaustive: never = top.source;
+            throw new Error(`Unexpected source kind: ${(top.source as { kind: string }).kind}`);
+          }
+        }
       }
     }
   } else if (forClause) {
     // Bootstrap: first iteration before actor has run
-    vars.Index = String(forClause.start);
-    if (forClause.variable) {
-      vars[forClause.variable] = String(forClause.start);
+    if (isSourced(forClause)) {
+      const ds = sources?.[forClause.source];
+      if (!ds) {
+        throw new Error(
+          `Data source "${forClause.source}" not found for FOR loop in step ${stepId}`,
+        );
+      }
+      if (ds.kind === 'array') {
+        // Clamp start to match compiler behavior (compiler.ts buildForContext)
+        const clampedStart = Math.max(1, Math.min(forClause.start, ds.items.length));
+        vars.Index = String(clampedStart);
+        vars[forClause.variable] = ds.items[clampedStart - 1] ?? '';
+      } else {
+        // ds.kind === 'file': iteration starts at forClause.start, value resolved lazily by actor
+        vars.Index = String(forClause.start);
+        vars[forClause.variable] = '';
+      }
+    } else {
+      // Numeric range (original behavior)
+      vars.Index = String(forClause.start);
+      if (forClause.variable) {
+        vars[forClause.variable] = String(forClause.start);
+      }
     }
   }
 
@@ -136,36 +173,123 @@ export async function runExecutionLoop(
   // Some immutable properties (parentRunbookId, agentId) are accessed from
   // the initial load for completion handling. This is safe because these
   // properties are set at runbook creation and never modified.
-  let state = await manager.load(runbookId);
+  const state = await manager.load(runbookId);
   if (!state) return 'stopped';
+
+  let currentState: RunbookState = state;
+
+  // Service for resolving FOR loop iteration values (array, file, range)
+  const iterationService = new ForIterationService(manager);
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const currentStepIndex = steps.findIndex((s) => s.name === state!.step);
+    const currentStepIndex = steps.findIndex((s) => s.name === currentState.step);
     const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
 
-    const displayStep = state.step;
+    const displayStep = currentState.step;
     const totalSteps = countNumberedSteps(steps);
 
     // Determine what to render: substep if we're at one, otherwise the step
     let itemToRender: Step | Substep = currentStep;
-    if (state.substep && currentStep.substeps) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const substep = currentStep.substeps.find((s) => s.id === state!.substep);
+    if (currentState.substep && currentStep.substeps) {
+      const substep = currentStep.substeps.find((s) => s.id === currentState.substep);
       if (substep) {
         itemToRender = substep;
       }
     }
 
-    const displaySubstep = state.substep;
+    const displaySubstep = currentState.substep;
+
+    // Resolve dynamic values for all data sources (array, file, range).
+    // The ForIterationService resolves currentValue before each iteration,
+    // replacing the previous file-only inline resolution.
+    const iterResult = await iterationService.prepareIteration(runbookId, steps);
+
+    if (iterResult.status === 'exhausted') {
+      if (iterResult.terminal === 'complete') {
+        const completionMessage = extractLastMessage(iterResult.state.snapshot);
+
+        // Terminal bookkeeping: mark variables and update parent agent binding
+        // (mirrors the normal isComplete path below)
+        await manager.update(runbookId, {
+          variables: { ...iterResult.state.variables, completed: true },
+        });
+        if (agentId && currentState.parentRunbookId) {
+          await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
+            status: 'done',
+            result: 'pass',
+          });
+        }
+
+        if (emitter) {
+          emitter.emit('RUNBOOK_COMPLETED', {
+            message: completionMessage,
+            finalPosition: {
+              current: iterResult.state.step,
+              total: totalSteps,
+              substep: iterResult.state.substep,
+            },
+          });
+        } else {
+          printRunbookComplete(completionMessage);
+        }
+        await manager.popRunbook(agentId);
+        return 'done';
+      }
+      if (iterResult.terminal === 'stopped') {
+        const stopMessage = extractLastMessage(iterResult.state.snapshot);
+
+        // Terminal bookkeeping: mark variables and update parent agent binding
+        // (mirrors the normal isStopped path below)
+        await manager.update(runbookId, {
+          variables: { ...iterResult.state.variables, stopped: true },
+        });
+        if (agentId && currentState.parentRunbookId) {
+          await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
+            status: 'done',
+            result: 'fail',
+          });
+        }
+
+        const stopPos = {
+          current: iterResult.state.step,
+          total: totalSteps,
+          substep: iterResult.state.substep,
+        };
+        if (emitter) {
+          emitter.emit('RUNBOOK_STOPPED', {
+            message: stopMessage,
+            position: stopPos,
+            reason: 'fail_transition',
+          });
+        } else {
+          printRunbookStoppedAtStep(stopPos, stopMessage);
+        }
+
+        await manager.popRunbook(agentId);
+        return 'stopped';
+      }
+      // No terminal state — machine transitioned to next step after loop exit
+      currentState = iterResult.state;
+      continue;
+    }
+
+    if (iterResult.status === 'ready') {
+      // Value resolved — re-enter loop with populated currentValue
+      currentState = iterResult.state;
+      continue;
+    }
+
+    // status === 'no-resolution-needed' — proceed to step execution
+    // State is unchanged; no need to overwrite currentState.
 
     // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration
     const stepVars = buildStepVariables(
-      state.step,
-      state.substep,
-      state.forStack,
+      currentState.step,
+      currentState.substep,
+      currentState.forStack,
       currentStep.forClause,
+      currentState.sources,
     );
     const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
     const expandedPrompt = itemToRender.prompt
@@ -241,11 +365,15 @@ export async function runExecutionLoop(
         execResult = await executeCommandWithPolicyCheck(
           expandedCommandCode,
           cwd,
-          state.runbookPath,
+          currentState.runbookPath,
         );
       }
     } else {
-      execResult = await executeCommandWithPolicyCheck(expandedCommandCode, cwd, state.runbookPath);
+      execResult = await executeCommandWithPolicyCheck(
+        expandedCommandCode,
+        cwd,
+        currentState.runbookPath,
+      );
     }
 
     // Emit COMMAND_COMPLETED event
@@ -289,9 +417,9 @@ export async function runExecutionLoop(
     await manager.setLastResult(runbookId, lastResult);
 
     // Capture prev state BEFORE mutation
-    const prevStep = state.step;
-    const prevSubstep = state.substep;
-    const prevRetryCount = state.retryCount;
+    const prevStep = currentState.step;
+    const prevSubstep = currentState.substep;
+    const prevRetryCount = currentState.retryCount;
 
     // Send event to actor
     const actor = await manager.createActor(runbookId, steps);
@@ -348,11 +476,12 @@ export async function runExecutionLoop(
 
     // Handle runbook end states
     if (isComplete) {
-      // Extract message from the transition that led to completion
+      // Extract message: prefer machine snapshot (source of truth), fall back to re-evaluation
       const completionMessage =
-        lastResult === 'pass'
+        extractLastMessage(snapshot) ??
+        (lastResult === 'pass'
           ? evaluatePassCondition(currentStep).message
-          : evaluateFailCondition(currentStep, prevRetryCount).message;
+          : evaluateFailCondition(currentStep, prevRetryCount).message);
 
       const currentVars = updatedState.variables;
       await manager.update(runbookId, {
@@ -370,8 +499,8 @@ export async function runExecutionLoop(
 
       // If this was a child runbook with agent, update parent's agent binding
 
-      if (agentId && state.parentRunbookId) {
-        await manager.updateAgentBinding(state.parentRunbookId, agentId, {
+      if (agentId && currentState.parentRunbookId) {
+        await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
           status: 'done',
           result: 'pass',
         });
@@ -383,11 +512,12 @@ export async function runExecutionLoop(
     }
 
     if (isStopped) {
-      // Extract message from the transition that led to stop
+      // Extract message: prefer machine snapshot (source of truth), fall back to re-evaluation
       const stopMessage =
-        lastResult === 'pass'
+        extractLastMessage(snapshot) ??
+        (lastResult === 'pass'
           ? evaluatePassCondition(currentStep).message
-          : evaluateFailCondition(currentStep, prevRetryCount).message;
+          : evaluateFailCondition(currentStep, prevRetryCount).message);
 
       const currentVars = updatedState.variables;
       await manager.update(runbookId, {
@@ -407,8 +537,8 @@ export async function runExecutionLoop(
 
       // If this was a child runbook with agent, update parent's agent binding
 
-      if (agentId && state.parentRunbookId) {
-        await manager.updateAgentBinding(state.parentRunbookId, agentId, {
+      if (agentId && currentState.parentRunbookId) {
+        await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
           status: 'done',
           result: 'fail',
         });
@@ -420,8 +550,9 @@ export async function runExecutionLoop(
     }
 
     // Reload state for next iteration
-    state = await manager.load(runbookId);
-    if (!state) return 'stopped';
+    const reloaded = await manager.load(runbookId);
+    if (!reloaded) return 'stopped';
+    currentState = reloaded;
   }
 }
 
@@ -512,6 +643,30 @@ export function extractRetryMax(snapshot: unknown): number {
     return (snapshot.context as SnapshotContext).retryMax ?? 0;
   }
   return 0;
+}
+
+/**
+ * Extract the lastMessage from an XState snapshot.
+ *
+ * The machine sets `lastMessage` on STOP/COMPLETE transitions.
+ * Returns undefined if no message was set.
+ *
+ * @param snapshot - The persisted XState snapshot (or RunbookState.snapshot)
+ * @returns The message string or undefined
+ */
+export function extractLastMessage(snapshot: unknown): string | undefined {
+  if (
+    snapshot &&
+    typeof snapshot === 'object' &&
+    'context' in snapshot &&
+    snapshot.context &&
+    typeof snapshot.context === 'object' &&
+    'lastMessage' in snapshot.context
+  ) {
+    const msg = (snapshot.context as Record<string, unknown>).lastMessage;
+    return typeof msg === 'string' ? msg : undefined;
+  }
+  return undefined;
 }
 
 /**

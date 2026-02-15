@@ -318,6 +318,74 @@ describe('ForClauseSchema', () => {
   });
 });
 
+describe('SourceWindow validation', () => {
+  it('validates source window without end bound', () => {
+    const result = ForClauseSchema.safeParse({
+      variable: 'item',
+      start: 1,
+      source: 'items',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('validates source window with end bound', () => {
+    const result = ForClauseSchema.safeParse({
+      variable: 'item',
+      start: 1,
+      end: 10,
+      source: 'items',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('requires variable for source window', () => {
+    const result = ForClauseSchema.safeParse({
+      start: 1,
+      source: 'items',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('requires source name to be non-empty', () => {
+    const result = ForClauseSchema.safeParse({
+      variable: 'item',
+      start: 1,
+      source: '',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('validates source window with underscores in source name', () => {
+    const result = ForClauseSchema.safeParse({
+      variable: 'item',
+      start: 1,
+      source: 'my_items_2',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects source window with hyphens in source name', () => {
+    const result = ForClauseSchema.safeParse({
+      variable: 'item',
+      start: 1,
+      source: 'my-items',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('allows end to be optional for source window', () => {
+    const result = ForClauseSchema.safeParse({
+      variable: 'server',
+      start: 1,
+      source: 'servers',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.end).toBeUndefined();
+    }
+  });
+});
+
 describe('ActionSchema with NEXT and BREAK', () => {
   it('validates NEXT action', () => {
     expect(ActionSchema.safeParse({ type: 'NEXT' }).success).toBe(true);

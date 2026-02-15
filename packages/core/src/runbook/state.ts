@@ -11,6 +11,7 @@ import {
   type SubstepState,
   type Step,
   type Runbook,
+  type DataSource,
 } from './types.js';
 import type { StepId } from './step-id.js';
 import { RunbookStateSchema } from '../schemas.js';
@@ -41,6 +42,8 @@ interface CreateOptions {
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, string>;
+  /** Data source bindings for FOR loop iteration (arrays and file references). */
+  readonly sources?: Readonly<Record<string, DataSource>>;
 }
 
 /**
@@ -113,6 +116,7 @@ export class RunbookStateManager {
       prompted: options.prompted,
       runbookSrc: options.runbookSrc,
       templateVars: options.templateVars,
+      sources: options.sources,
     };
 
     await this.save(state);
@@ -181,7 +185,7 @@ export class RunbookStateManager {
     const state = await this.load(id);
     if (!state) return null;
 
-    const machine = compileRunbookToMachine(steps);
+    const machine = compileRunbookToMachine(steps, { sources: state.sources });
 
     // Migrate old snapshot context: flat FOR fields → forStack
     // Snapshot migration deals with untyped persisted data — any is unavoidable
@@ -206,6 +210,7 @@ export class RunbookStateManager {
               start: ctx.forStart ?? 1,
               end: ctx.forEnd ?? ctx.forIteration,
               variable: ctx.forVariable,
+              source: { kind: 'range' as const },
             },
           ],
           forIteration: undefined,
@@ -347,7 +352,7 @@ export class RunbookStateManager {
     const stepName = match ? match[1] : steps[0].name;
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    let substep = snapshot.context.substep as string | undefined;
+    let substep = snapshot.context?.substep as string | undefined;
     if (!substep && match?.[2]) {
       substep = match[2];
     }
@@ -774,6 +779,35 @@ export class RunbookStateManager {
     );
 
     await this.update(runbookId, { substepStates: updated });
+  }
+
+  /**
+   * Update the FOR loop context for a runbook.
+   *
+   * @internal Used by {@link ForIterationService} — external consumers should
+   * use {@link ForIterationService.prepareIteration} instead of calling this directly.
+   *
+   * @param id - The runbook state ID
+   * @param forStack - The updated FOR loop stack
+   * @returns The updated runbook state
+   * @throws Error if the runbook with the given ID is not found
+   */
+  async updateForContext(id: string, forStack: ForContext[]): Promise<RunbookState> {
+    const state = await this.load(id);
+    if (!state) {
+      throw new Error(`Runbook ${id} not found`);
+    }
+
+    const snapshot = state.snapshot as Record<string, unknown> | undefined;
+    const patchedSnapshot =
+      snapshot && typeof snapshot === 'object' && 'context' in snapshot
+        ? {
+            ...snapshot,
+            context: { ...(snapshot.context as Record<string, unknown>), forStack },
+          }
+        : snapshot;
+
+    return await this.update(id, { forStack, snapshot: patchedSnapshot });
   }
 
   /**

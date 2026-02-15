@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import {
   discoverVariables,
+  findConfigFile,
   parseVarFlag,
   mergeVariables,
   loadVariablesFromFile,
-  collectVariables,
   extractVarsFromMarkdown,
   getBuiltinVariables,
+  resolveVariables,
 } from '../../src/services/variable-discovery.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -277,6 +278,91 @@ describe('loadVariablesFromFile', () => {
   });
 });
 
+describe('findConfigFile', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'find-config-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should return config path when .rundown/config.yaml exists', async () => {
+    const rundownDir = path.join(tmpDir, '.rundown');
+    await fs.mkdir(rundownDir, { recursive: true });
+    const configPath = path.join(rundownDir, 'config.yaml');
+    await fs.writeFile(configPath, 'key: value');
+
+    const result = await findConfigFile(tmpDir);
+
+    expect(result).toBe(configPath);
+  });
+
+  it('should return null when no config found', async () => {
+    const result = await findConfigFile(tmpDir);
+    expect(result).toBeNull();
+  });
+
+  it('should find config in parent directory', async () => {
+    const rundownDir = path.join(tmpDir, '.rundown');
+    await fs.mkdir(rundownDir, { recursive: true });
+    const configPath = path.join(rundownDir, 'config.yaml');
+    await fs.writeFile(configPath, 'key: value');
+
+    const nested = path.join(tmpDir, 'nested', 'deep');
+    await fs.mkdir(nested, { recursive: true });
+
+    const result = await findConfigFile(nested);
+
+    expect(result).toBe(configPath);
+  });
+
+  it('should stop at git root and return null', async () => {
+    await fs.mkdir(path.join(tmpDir, '.git'));
+
+    const nested = path.join(tmpDir, 'nested', 'deep');
+    await fs.mkdir(nested, { recursive: true });
+
+    const result = await findConfigFile(nested);
+    expect(result).toBeNull();
+  });
+
+  it('should not find config above git root', async () => {
+    // Parent has config
+    const parentRundownDir = path.join(tmpDir, '.rundown');
+    await fs.mkdir(parentRundownDir, { recursive: true });
+    await fs.writeFile(path.join(parentRundownDir, 'config.yaml'), 'should_not_find: true');
+
+    // Repo has .git
+    const repoDir = path.join(tmpDir, 'repo');
+    await fs.mkdir(path.join(repoDir, '.git'), { recursive: true });
+
+    const subdir = path.join(repoDir, 'subdir');
+    await fs.mkdir(subdir, { recursive: true });
+
+    const result = await findConfigFile(subdir);
+    expect(result).toBeNull();
+  });
+
+  it('should find config at git root level', async () => {
+    // Git root with config
+    await fs.mkdir(path.join(tmpDir, '.git'));
+    const rundownDir = path.join(tmpDir, '.rundown');
+    await fs.mkdir(rundownDir, { recursive: true });
+    const configPath = path.join(rundownDir, 'config.yaml');
+    await fs.writeFile(configPath, 'key: value');
+
+    const nested = path.join(tmpDir, 'nested');
+    await fs.mkdir(nested, { recursive: true });
+
+    const result = await findConfigFile(nested);
+
+    expect(result).toBe(configPath);
+  });
+});
+
 describe('discoverVariables', () => {
   let tmpDir: string;
 
@@ -345,288 +431,6 @@ describe('discoverVariables', () => {
     // Run discovery from subdir - should stop at git root, not find parent config
     const result = await discoverVariables(subdir);
     expect(result).toEqual({});
-  });
-});
-
-describe('collectVariables', () => {
-  let tmpDir: string;
-  let warnSpy: jest.SpiedFunction<typeof console.warn>;
-
-  beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'collect-var-test-'));
-    warnSpy = jest.spyOn(console, 'warn').mockImplementation(jest.fn());
-  });
-
-  afterEach(async () => {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-    warnSpy.mockRestore();
-  });
-
-  it('should include built-in variables when no other sources provided', async () => {
-    const result = await collectVariables({}, tmpDir);
-
-    // Should contain all built-in variables
-    expect(result).toHaveProperty('Date');
-    expect(result).toHaveProperty('DateTime');
-    expect(result).toHaveProperty('Year');
-    expect(result).toHaveProperty('Month');
-    expect(result).toHaveProperty('Day');
-    expect(result).toHaveProperty('WorkPath');
-    expect(result.WorkPath).toBe('.work');
-  });
-
-  it('should collect from --var flags and include builtins', async () => {
-    const result = await collectVariables(
-      {
-        var: ['key1=value1', 'key2=value2'],
-      },
-      tmpDir,
-    );
-
-    // User variables
-    expect(result.key1).toBe('value1');
-    expect(result.key2).toBe('value2');
-
-    // Built-ins still present
-    expect(result).toHaveProperty('Date');
-    expect(result).toHaveProperty('WorkPath');
-  });
-
-  it('should collect from --var-file and include builtins', async () => {
-    const varFilePath = path.join(tmpDir, 'vars.yaml');
-    await fs.writeFile(varFilePath, 'file_key1: file_value1\nfile_key2: file_value2');
-
-    const result = await collectVariables(
-      {
-        varFile: varFilePath,
-      },
-      tmpDir,
-    );
-
-    // File variables
-    expect(result.file_key1).toBe('file_value1');
-    expect(result.file_key2).toBe('file_value2');
-
-    // Built-ins still present
-    expect(result).toHaveProperty('Date');
-    expect(result).toHaveProperty('WorkPath');
-  });
-
-  it('should collect from discovered config and include builtins', async () => {
-    const rundownDir = path.join(tmpDir, '.rundown');
-    await fs.mkdir(rundownDir, { recursive: true });
-    await fs.writeFile(
-      path.join(rundownDir, 'config.yaml'),
-      'discovered_key1: discovered_value1\ndiscovered_key2: discovered_value2',
-    );
-
-    const result = await collectVariables({}, tmpDir);
-
-    // Discovered variables
-    expect(result.discovered_key1).toBe('discovered_value1');
-    expect(result.discovered_key2).toBe('discovered_value2');
-
-    // Built-ins still present
-    expect(result).toHaveProperty('Date');
-    expect(result).toHaveProperty('WorkPath');
-  });
-
-  it('should merge all sources with correct precedence (flags > file > discovered > builtins)', async () => {
-    // Setup discovered config
-    const rundownDir = path.join(tmpDir, '.rundown');
-    await fs.mkdir(rundownDir, { recursive: true });
-    await fs.writeFile(
-      path.join(rundownDir, 'config.yaml'),
-      'shared: from_discovered\nkey_discovered: value_discovered',
-    );
-
-    // Setup var file
-    const varFilePath = path.join(tmpDir, 'vars.yaml');
-    await fs.writeFile(varFilePath, 'shared: from_file\nkey_file: value_file');
-
-    const result = await collectVariables(
-      {
-        varFile: varFilePath,
-        var: ['shared=from_flag', 'key_flag=value_flag'],
-      },
-      tmpDir,
-    );
-
-    // Verify precedence: flags > file > discovered
-    expect(result.shared).toBe('from_flag');
-    expect(result.key_discovered).toBe('value_discovered');
-    expect(result.key_file).toBe('value_file');
-    expect(result.key_flag).toBe('value_flag');
-
-    // Built-ins still present
-    expect(result).toHaveProperty('Date');
-    expect(result).toHaveProperty('WorkPath');
-  });
-
-  it('should allow --var flag to override built-in variables', async () => {
-    const result = await collectVariables(
-      {
-        var: ['WorkPath=custom-path', 'Date=2000-01-01'],
-      },
-      tmpDir,
-    );
-
-    expect(result.WorkPath).toBe('custom-path');
-    expect(result.Date).toBe('2000-01-01');
-  });
-
-  it('should allow --var-file to override built-in variables', async () => {
-    const varFilePath = path.join(tmpDir, 'vars.yaml');
-    // Use quoted string to prevent YAML from parsing as date
-    await fs.writeFile(varFilePath, 'WorkPath: from-file\nDate: "2020-06-15"');
-
-    const result = await collectVariables(
-      {
-        varFile: varFilePath,
-      },
-      tmpDir,
-    );
-
-    expect(result.WorkPath).toBe('from-file');
-    expect(result.Date).toBe('2020-06-15');
-  });
-
-  it('should allow discovered config to override built-in variables', async () => {
-    const rundownDir = path.join(tmpDir, '.rundown');
-    await fs.mkdir(rundownDir, { recursive: true });
-    await fs.writeFile(
-      path.join(rundownDir, 'config.yaml'),
-      'WorkPath: discovered-path\nYear: 1999',
-    );
-
-    const result = await collectVariables({}, tmpDir);
-
-    expect(result.WorkPath).toBe('discovered-path');
-    expect(result.Year).toBe('1999');
-  });
-
-  it('should warn on console for invalid --var flag format', async () => {
-    const result = await collectVariables(
-      {
-        var: ['valid=value', 'invalid-without-equals', 'also-invalid-key=value'],
-      },
-      tmpDir,
-    );
-
-    expect(result.valid).toBe('value');
-
-    expect(warnSpy).toHaveBeenCalledTimes(2);
-    expect(warnSpy).toHaveBeenCalledWith(
-      'Warning: Ignoring invalid --var flag: invalid-without-equals',
-    );
-    expect(warnSpy).toHaveBeenCalledWith(
-      'Warning: Ignoring invalid --var flag: also-invalid-key=value',
-    );
-  });
-
-  it('should handle relative path for --var-file', async () => {
-    // Create a var file in tmpDir
-    await fs.writeFile(path.join(tmpDir, 'relative-vars.yaml'), 'rel_key: rel_value');
-
-    const result = await collectVariables(
-      {
-        varFile: 'relative-vars.yaml',
-      },
-      tmpDir,
-    );
-
-    expect(result.rel_key).toBe('rel_value');
-  });
-
-  it('should handle absolute path for --var-file', async () => {
-    const absolutePath = path.join(tmpDir, 'absolute-vars.yaml');
-    await fs.writeFile(absolutePath, 'abs_key: abs_value');
-
-    const result = await collectVariables(
-      {
-        varFile: absolutePath,
-      },
-      tmpDir,
-    );
-
-    expect(result.abs_key).toBe('abs_value');
-  });
-
-  it('should include frontmatter vars when provided', async () => {
-    const result = await collectVariables(
-      {
-        frontmatterVars: { fm_key: 'fm_value', custom: 'from_frontmatter' },
-      },
-      tmpDir,
-    );
-
-    expect(result.fm_key).toBe('fm_value');
-    expect(result.custom).toBe('from_frontmatter');
-
-    // Built-ins still present
-    expect(result).toHaveProperty('Date');
-    expect(result).toHaveProperty('WorkPath');
-  });
-
-  it('should allow frontmatter vars to override builtins', async () => {
-    const result = await collectVariables(
-      {
-        frontmatterVars: { Date: '2020-01-01', WorkPath: 'fm-work' },
-      },
-      tmpDir,
-    );
-
-    expect(result.Date).toBe('2020-01-01');
-    expect(result.WorkPath).toBe('fm-work');
-  });
-
-  it('should allow discovered config to override frontmatter vars', async () => {
-    const rundownDir = path.join(tmpDir, '.rundown');
-    await fs.mkdir(rundownDir, { recursive: true });
-    await fs.writeFile(path.join(rundownDir, 'config.yaml'), 'shared: from_discovered');
-
-    const result = await collectVariables(
-      {
-        frontmatterVars: { shared: 'from_frontmatter' },
-      },
-      tmpDir,
-    );
-
-    expect(result.shared).toBe('from_discovered');
-  });
-
-  it('should apply full precedence: flags > file > discovered > frontmatter > builtins', async () => {
-    // Setup discovered config
-    const rundownDir = path.join(tmpDir, '.rundown');
-    await fs.mkdir(rundownDir, { recursive: true });
-    await fs.writeFile(
-      path.join(rundownDir, 'config.yaml'),
-      'shared: from_discovered\nkey_discovered: value_discovered',
-    );
-
-    // Setup var file
-    const varFilePath = path.join(tmpDir, 'vars.yaml');
-    await fs.writeFile(varFilePath, 'shared: from_file\nkey_file: value_file');
-
-    const result = await collectVariables(
-      {
-        frontmatterVars: { shared: 'from_frontmatter', key_frontmatter: 'value_frontmatter' },
-        varFile: varFilePath,
-        var: ['shared=from_flag', 'key_flag=value_flag'],
-      },
-      tmpDir,
-    );
-
-    // Verify precedence: flags > file > discovered > frontmatter > builtins
-    expect(result.shared).toBe('from_flag');
-    expect(result.key_frontmatter).toBe('value_frontmatter');
-    expect(result.key_discovered).toBe('value_discovered');
-    expect(result.key_file).toBe('value_file');
-    expect(result.key_flag).toBe('value_flag');
-
-    // Built-ins still present
-    expect(result).toHaveProperty('Date');
-    expect(result).toHaveProperty('WorkPath');
   });
 });
 
@@ -822,6 +626,250 @@ vars:
 
     expect(result).toEqual({
       key: 'value',
+    });
+  });
+});
+
+describe('resolveVariables', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resolve-var-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('scalar routing', () => {
+    it('routes --var scalar to vars only', async () => {
+      const result = await resolveVariables({ var: ['env=staging'] }, tmpDir);
+      expect(result.vars.env).toBe('staging');
+      expect(result.sources.env).toBeUndefined();
+    });
+  });
+
+  describe('file: prefix routing', () => {
+    it('routes --var file: to sources as file DataSource', async () => {
+      const file = path.join(tmpDir, 'servers.txt');
+      await fs.writeFile(file, 'host1\nhost2\n');
+
+      const result = await resolveVariables({ var: [`servers=file:${file}`] }, tmpDir);
+      expect(result.vars.servers).toBeUndefined();
+      expect(result.sources.servers).toEqual({
+        kind: 'file',
+        path: await fs.realpath(file),
+        format: 'text',
+      });
+    });
+
+    it('infers jsonl format from .jsonl extension', async () => {
+      const file = path.join(tmpDir, 'data.jsonl');
+      await fs.writeFile(file, '{"a":1}\n');
+
+      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      expect(result.sources.data).toEqual({
+        kind: 'file',
+        path: await fs.realpath(file),
+        format: 'jsonl',
+      });
+    });
+
+    it('resolves relative file: paths against cwd', async () => {
+      const file = path.join(tmpDir, 'hosts.txt');
+      await fs.writeFile(file, 'h1\n');
+
+      const result = await resolveVariables({ var: ['hosts=file:hosts.txt'] }, tmpDir);
+      expect(result.sources.hosts).toEqual({
+        kind: 'file',
+        path: await fs.realpath(file),
+        format: 'text',
+      });
+    });
+  });
+
+  describe('YAML array routing', () => {
+    it('routes YAML array to both vars (comma-joined) and sources (array)', async () => {
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'servers:\n  - alpha\n  - beta\n  - gamma\n');
+
+      const result = await resolveVariables({ varFile }, tmpDir);
+      expect(result.vars.servers).toBe('alpha, beta, gamma');
+      expect(result.sources.servers).toEqual({
+        kind: 'array',
+        items: ['alpha', 'beta', 'gamma'],
+      });
+    });
+  });
+
+  describe('YAML multiline string routing', () => {
+    it('routes YAML multiline string to both vars and sources', async () => {
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'log: |\n  line1\n  line2\n  line3\n');
+
+      const result = await resolveVariables({ varFile }, tmpDir);
+      expect(result.vars.log).toBe('line1\nline2\nline3');
+      expect(result.sources.log).toEqual({
+        kind: 'array',
+        items: ['line1', 'line2', 'line3', ''],
+      });
+    });
+  });
+
+  describe('YAML file: prefix routing', () => {
+    it('routes YAML file: value to sources only', async () => {
+      const dataFile = path.join(tmpDir, 'data.txt');
+      await fs.writeFile(dataFile, 'x\n');
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, `items: "file:${dataFile}"\n`);
+
+      const result = await resolveVariables({ varFile }, tmpDir);
+      expect(result.vars.items).toBeUndefined();
+      expect(result.sources.items).toEqual({
+        kind: 'file',
+        path: await fs.realpath(dataFile),
+        format: 'text',
+      });
+    });
+  });
+
+  describe('frontmatter routing', () => {
+    it('routes frontmatter array to both maps', async () => {
+      const result = await resolveVariables({ frontmatterVars: { servers: ['a', 'b'] } }, tmpDir);
+      // This tests that resolveVariables handles raw (pre-normalization) frontmatter
+      expect(result.sources.servers).toEqual({ kind: 'array', items: ['a', 'b'] });
+    });
+  });
+
+  describe('precedence', () => {
+    it('flag sources override var-file sources', async () => {
+      const fileA = path.join(tmpDir, 'a.txt');
+      const fileB = path.join(tmpDir, 'b.txt');
+      await fs.writeFile(fileA, 'from-a\n');
+      await fs.writeFile(fileB, 'from-b\n');
+
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, `items: "file:${fileA}"\n`);
+
+      const result = await resolveVariables({ varFile, var: [`items=file:${fileB}`] }, tmpDir);
+      expect(result.sources.items).toEqual({
+        kind: 'file',
+        path: await fs.realpath(fileB),
+        format: 'text',
+      });
+    });
+  });
+
+  describe('cross-source conflicts', () => {
+    it('flag scalar overrides var-file array source', async () => {
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'servers:\n  - alpha\n  - beta\n');
+
+      const result = await resolveVariables({ varFile, var: ['servers=prod'] }, tmpDir);
+      expect(result.vars.servers).toBe('prod');
+      expect(result.sources.servers).toBeUndefined();
+    });
+
+    it('flag file: source overrides var-file array source', async () => {
+      const dataFile = path.join(tmpDir, 'data.txt');
+      await fs.writeFile(dataFile, 'content');
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'items:\n  - x\n  - y\n');
+
+      const result = await resolveVariables({ varFile, var: [`items=file:${dataFile}`] }, tmpDir);
+      expect(result.sources.items).toEqual({
+        kind: 'file',
+        path: await fs.realpath(dataFile),
+        format: 'text',
+      });
+    });
+
+    it('var-file array overrides frontmatter scalar', async () => {
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'servers:\n  - a\n  - b\n');
+
+      const result = await resolveVariables(
+        { frontmatterVars: { servers: 'single' }, varFile },
+        tmpDir,
+      );
+      expect(result.sources.servers).toEqual({
+        kind: 'array',
+        items: ['a', 'b'],
+      });
+    });
+
+    it('deterministic outcome: var-file scalar clears frontmatter array source', async () => {
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'items: override\n');
+
+      const result = await resolveVariables(
+        { frontmatterVars: { items: ['x', 'y'] }, varFile },
+        tmpDir,
+      );
+      expect(result.vars.items).toBe('override');
+      expect(result.sources.items).toBeUndefined();
+    });
+
+    it('flag scalar overrides var-file multiline source', async () => {
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'log: |\n  line1\n  line2\n');
+
+      const result = await resolveVariables({ varFile, var: ['log=override'] }, tmpDir);
+      expect(result.vars.log).toBe('override');
+      expect(result.sources.log).toBeUndefined();
+    });
+  });
+
+  describe('file source sandbox check', () => {
+    it('rejects sibling directory path (prefix bypass)', async () => {
+      // cwd=/repo should reject /repo2/data.txt
+      const cwd = path.join(tmpDir, 'repo');
+      await fs.mkdir(cwd, { recursive: true });
+
+      const siblingDir = path.join(tmpDir, 'repo2');
+      await fs.mkdir(siblingDir, { recursive: true });
+      const siblingFile = path.join(siblingDir, 'data.txt');
+      await fs.writeFile(siblingFile, 'evil\n');
+
+      const result = await resolveVariables({ var: [`data=file:${siblingFile}`] }, cwd);
+      // File source should be rejected — not in sources
+      expect(result.sources.data).toBeUndefined();
+    });
+
+    it('accepts file within subdirectory', async () => {
+      const sub = path.join(tmpDir, 'sub');
+      await fs.mkdir(sub, { recursive: true });
+      const file = path.join(sub, 'data.txt');
+      await fs.writeFile(file, 'ok\n');
+
+      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      expect(result.sources.data).toEqual({
+        kind: 'file',
+        path: await fs.realpath(file),
+        format: 'text',
+      });
+    });
+
+    it('rejects path traversal via ../', async () => {
+      const nested = path.join(tmpDir, 'project');
+      await fs.mkdir(nested, { recursive: true });
+
+      const result = await resolveVariables({ var: ['data=file:../escape.txt'] }, nested);
+      expect(result.sources.data).toBeUndefined();
+    });
+
+    it('accepts directory whose name starts with double-dot', async () => {
+      const dotDir = path.join(tmpDir, '..cache');
+      await fs.mkdir(dotDir, { recursive: true });
+      const file = path.join(dotDir, 'data.txt');
+      await fs.writeFile(file, 'ok\n');
+
+      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      expect(result.sources.data).toEqual({
+        kind: 'file',
+        path: await fs.realpath(file),
+        format: 'text',
+      });
     });
   });
 });

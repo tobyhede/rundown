@@ -97,7 +97,7 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
       CLAUDE_PLUGIN_ROOT: pluginDir,
       NO_COLOR: '1',
       FORCE_COLOR: undefined, // Prevent inheritance - avoids NO_COLOR warning
-      RUNDOWN_LOG: '0', // Disable logging during tests
+      RUNDOWN_LOG: '0',
     },
   });
 
@@ -269,6 +269,22 @@ export async function writeConfig(
 ): Promise<void> {
   const configPath = join(workspace.cwd, '.claude', 'rundown.json');
   await writeFile(configPath, JSON.stringify(config, null, 2));
+}
+
+/**
+ * Parse JSON events from CLI `--json` output.
+ *
+ * Splits stdout by newline, keeps only lines starting with `{`, and
+ * parses each as JSON.
+ *
+ * @param stdout - Raw stdout string from CLI execution
+ * @returns Array of parsed JSON event objects
+ */
+export function parseJsonEvents(stdout: string): unknown[] {
+  return stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .map((line) => JSON.parse(line) as unknown);
 }
 
 /**

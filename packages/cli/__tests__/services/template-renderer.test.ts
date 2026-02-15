@@ -263,6 +263,146 @@ describe('expandLoopVariablesForCommand', () => {
       "deploy 'prod; drop db'",
     );
   });
+
+  // Task 4: JSONL object semantics tests
+  it('resolves nested object fields via dotted path', () => {
+    const variables: Record<string, unknown> = {
+      item: { name: 'server-a', region: 'us-west' },
+      Index: '1',
+    };
+    expect(expandLoopVariables('Server {{item.name}}', variables)).toBe('Server server-a');
+  });
+
+  it('resolves deep dotted paths in objects', () => {
+    const variables: Record<string, unknown> = {
+      item: { meta: { region: 'us-west', tier: 'prod' } },
+    };
+    expect(expandLoopVariables('{{item.meta.region}}', variables)).toBe('us-west');
+  });
+
+  it('renders object as compact JSON string', () => {
+    const variables: Record<string, unknown> = {
+      item: { host: 'server-a', count: 1 },
+    };
+    expect(expandLoopVariables('Config: {{item}}', variables)).toContain('{');
+    expect(expandLoopVariables('Config: {{item}}', variables)).toContain('}');
+  });
+
+  it('renders null as JSON string "null"', () => {
+    const variables: Record<string, unknown> = {
+      value: null,
+    };
+    expect(expandLoopVariables('Result: {{value}}', variables)).toBe('Result: null');
+  });
+
+  it('renders number as JSON string', () => {
+    const variables: Record<string, unknown> = {
+      count: 42,
+    };
+    expect(expandLoopVariables('Count: {{count}}', variables)).toBe('Count: 42');
+  });
+
+  it('renders boolean as JSON string', () => {
+    const variables: Record<string, unknown> = {
+      enabled: true,
+      active: false,
+    };
+    expect(expandLoopVariables('Enabled: {{enabled}}, Active: {{active}}', variables)).toBe(
+      'Enabled: true, Active: false',
+    );
+  });
+
+  it('renders string as-is without extra quoting', () => {
+    const variables: Record<string, unknown> = {
+      msg: 'hello',
+    };
+    expect(expandLoopVariables('Message: {{msg}}', variables)).toBe('Message: hello');
+  });
+
+  it('preserves placeholder for missing dotted paths', () => {
+    const variables: Record<string, unknown> = {
+      item: { name: 'server-a' },
+    };
+    expect(expandLoopVariables('Region: {{item.nonexistent}}', variables)).toBe(
+      'Region: {{item.nonexistent}}',
+    );
+  });
+
+  it('resolves falsy leaf values correctly (zero)', () => {
+    const variables: Record<string, unknown> = {
+      config: { count: 0 },
+    };
+    expect(expandLoopVariables('Count: {{config.count}}', variables)).toBe('Count: 0');
+  });
+
+  it('resolves falsy leaf values correctly (false)', () => {
+    const variables: Record<string, unknown> = {
+      config: { active: false },
+    };
+    expect(expandLoopVariables('Active: {{config.active}}', variables)).toBe('Active: false');
+  });
+
+  it('resolves falsy leaf values correctly (empty string)', () => {
+    const variables: Record<string, unknown> = {
+      config: { label: '' },
+    };
+    expect(expandLoopVariables('Label: "{{config.label}}"', variables)).toBe('Label: ""');
+  });
+
+  it('does not traverse prototype chain', () => {
+    const obj: any = { name: 'test' };
+    const variables: Record<string, unknown> = {
+      item: obj,
+    };
+    expect(expandLoopVariables('{{item.constructor}}', variables)).toBe('{{item.constructor}}');
+  });
+
+  it('shell-escapes serialized JSON in command context', () => {
+    const variables: Record<string, unknown> = {
+      config: { cmd: 'rm -rf /' },
+    };
+    expect(expandLoopVariablesForCommand('process {{config}}', variables)).toContain('rm -rf');
+    expect(expandLoopVariablesForCommand('process {{config}}', variables)).toMatch(/'/);
+  });
+
+  it('continues to work with string variables unchanged', () => {
+    const variables: Record<string, unknown> = {
+      Step: '3.1',
+      Index: '2',
+      server: 'alpha',
+    };
+    expect(expandLoopVariables('At {{Step}}, iteration {{Index}} for {{server}}', variables)).toBe(
+      'At 3.1, iteration 2 for alpha',
+    );
+  });
+
+  it('handles nullish path segment gracefully', () => {
+    const variables: Record<string, unknown> = {
+      item: { meta: null },
+    };
+    expect(expandLoopVariables('{{item.meta.region}}', variables)).toBe('{{item.meta.region}}');
+  });
+
+  it('handles undefined path segment gracefully', () => {
+    const variables: Record<string, unknown> = {
+      item: { meta: { nested: { value: 42 } } },
+    };
+    expect(expandLoopVariables('{{item.missing.value}}', variables)).toBe('{{item.missing.value}}');
+  });
+
+  it('renders array as JSON string', () => {
+    const variables: Record<string, unknown> = {
+      items: [1, 2, 3],
+    };
+    const result = expandLoopVariables('Items: {{items}}', variables);
+    expect(result).toContain('[');
+    expect(result).toContain(']');
+  });
+
+  it('does not resolve numeric index paths on arrays (regex rejects leading digits)', () => {
+    const result = expandLoopVariables('val={{item.0}}', { item: ['a', 'b', 'c'] });
+    expect(result).toBe('val={{item.0}}');
+  });
 });
 
 describe('expandForClauseVariables', () => {
@@ -293,5 +433,55 @@ describe('expandForClauseVariables', () => {
     expect(result.steps[0].forClause).toEqual({ variable: 'env', start: 1, end: 3 });
     expect(result.steps[0].substeps).toHaveLength(1);
     expect(result.steps[0].substeps![0].command!.code).toBe('deploy staging');
+  });
+
+  it('preserves source reference when sourceKeys is provided', () => {
+    const markdown = '- FOR server IN {{ servers }}';
+    const result = expandForClauseVariables(
+      markdown,
+      { servers: 'prod,staging' },
+      new Set(['servers']),
+    );
+    expect(result).toBe('- FOR server IN {{ servers }}');
+  });
+
+  it('expands non-source vars while preserving source references', () => {
+    const markdown = '- FOR item IN 1 TO {{ Max }} OF {{ items }}';
+    const result = expandForClauseVariables(
+      markdown,
+      { Max: '10', items: 'data' },
+      new Set(['items']),
+    );
+    expect(result).toBe('- FOR item IN 1 TO 10 OF {{ items }}');
+  });
+
+  it('expands all FOR vars when sourceKeys is undefined', () => {
+    const markdown = '- FOR item IN {{ items }}';
+    const result = expandForClauseVariables(markdown, { items: 'a,b,c' });
+    expect(result).toBe('- FOR item IN a,b,c');
+  });
+
+  it('only expands variables on FOR clause lines', () => {
+    const lines = [
+      '- FOR server IN {{ servers }}',
+      '',
+      'Some text with {{ Max }} in it',
+      '',
+      '```bash',
+      'echo {{ Max }}',
+      '```',
+    ];
+    const markdown = lines.join('\n');
+    const result = expandForClauseVariables(markdown, { servers: 'a', Max: '5' });
+    const expected = [
+      '- FOR server IN a',
+      '',
+      'Some text with {{ Max }} in it',
+      '',
+      '```bash',
+      'echo {{ Max }}',
+      '```',
+    ].join('\n');
+    expect(result).toBe(expected);
   });
 });

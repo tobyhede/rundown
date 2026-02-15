@@ -1240,12 +1240,22 @@ describe('parseForClause', () => {
       expect(parseForClause('FOR batch IN 1 TO {{End}}')).toBeNull();
     });
 
-    it('rejects named count with template variable', () => {
-      expect(parseForClause('FOR batch IN {{Count}}')).toBeNull();
+    // Note: The following tests now accept {{ identifier }} as a source reference
+    // because the source syntax uses the same {{ }} braces.
+    // These are no longer template variables but source references.
+
+    it('accepts named count as source reference (previously template variable)', () => {
+      // FOR batch IN {{ Count }} is now valid - it references source "Count"
+      expect(parseForClause('FOR batch IN {{ Count }}')).toEqual({
+        variable: 'batch',
+        start: 1,
+        source: 'Count',
+      });
     });
 
-    it('rejects unnamed count with template variable', () => {
-      expect(parseForClause('FOR {{Count}}')).toBeNull();
+    it('rejects unnamed count that looks like template', () => {
+      // FOR {{ Count }} without variable is not valid - source syntax requires a variable
+      expect(parseForClause('FOR {{ Count }}')).toBeNull();
     });
   });
 
@@ -1317,6 +1327,74 @@ describe('parseForClause', () => {
 
     it('accepts minimal descending range', () => {
       expect(parseForClause('FOR 2 TO 1')).toEqual({ start: 2, end: 1 });
+    });
+  });
+
+  describe('data source iteration', () => {
+    it('parses FOR variable IN {{ source }} (all items)', () => {
+      expect(parseForClause('FOR server IN {{ servers }}')).toEqual({
+        variable: 'server',
+        start: 1,
+        source: 'servers',
+      });
+    });
+
+    it('parses FOR variable IN {{ source }} with no spaces in braces', () => {
+      expect(parseForClause('FOR server IN {{servers}}')).toEqual({
+        variable: 'server',
+        start: 1,
+        source: 'servers',
+      });
+    });
+
+    it('parses FOR variable IN start TO end OF {{ source }} (windowed)', () => {
+      expect(parseForClause('FOR item IN 1 TO 10 OF {{ items }}')).toEqual({
+        variable: 'item',
+        start: 1,
+        end: 10,
+        source: 'items',
+      });
+    });
+
+    it('parses windowed source with non-1 start', () => {
+      expect(parseForClause('FOR item IN 5 TO 20 OF {{ batch }}')).toEqual({
+        variable: 'item',
+        start: 5,
+        end: 20,
+        source: 'batch',
+      });
+    });
+
+    it('rejects reserved word as variable in source syntax', () => {
+      expect(parseForClause('FOR PASS IN {{ items }}')).toBeNull();
+    });
+
+    it('rejects source syntax without variable', () => {
+      expect(parseForClause('FOR {{ items }}')).toBeNull();
+    });
+
+    it('rejects source name with invalid characters', () => {
+      expect(parseForClause('FOR x IN {{ my-items }}')).toBeNull();
+    });
+
+    it('parses source name matching identifier pattern', () => {
+      expect(parseForClause('FOR x IN {{ my_items_2 }}')).toEqual({
+        variable: 'x',
+        start: 1,
+        source: 'my_items_2',
+      });
+    });
+
+    it('rejects source reference without braces', () => {
+      expect(parseForClause('FOR item IN 1 TO 10 OF items')).toBeNull();
+    });
+
+    it('rejects empty source name in braces', () => {
+      expect(parseForClause('FOR item IN {{ }}')).toBeNull();
+    });
+
+    it('rejects empty windowed source name', () => {
+      expect(parseForClause('FOR item IN 1 TO 10 OF {{ }}')).toBeNull();
     });
   });
 });

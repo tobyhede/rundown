@@ -124,6 +124,22 @@ Variables defined in frontmatter `vars:` serve as defaults. CLI `--var` flags ta
 
 See CLAUDE.md for full variable source precedence.
 
+#### Data Sources in Configuration
+
+Arrays and `file:`-prefixed values in configuration enable FOR loop data sources:
+
+```yaml
+# .rundown/config.yaml
+environment: staging
+items:
+  - alpha
+  - bravo
+  - charlie
+log_file: file:data/results.jsonl
+```
+
+Arrays become data sources for `FOR item IN {{ items }}`. The `file:` prefix creates file-backed sources. Scalar values remain regular template variables.
+
 ## Authoring Conventions
 
 ### Always write explicit transitions

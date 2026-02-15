@@ -44,7 +44,8 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
   }
   // New flow: raw runbookSrc + templateVars → pre-expand FOR clauses, parse, substitute
   if (state.templateVars) {
-    const forExpanded = expandForClauseVariables(state.runbookSrc, state.templateVars);
+    const sourceKeys = new Set(Object.keys(state.sources ?? {}));
+    const forExpanded = expandForClauseVariables(state.runbookSrc, state.templateVars, sourceKeys);
     const runbook = parseRunbookDocument(forExpanded, state.runbook);
     return substituteRunbookVariables(runbook, state.templateVars).steps;
   }
