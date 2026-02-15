@@ -44,7 +44,7 @@ function resolveDottedPath(obj: unknown, path: string): unknown {
     if (!Object.hasOwn(current, segment)) {
       return undefined;
     }
-    current = (current as Record<string, unknown>)[segment];
+    current = (current as Readonly<Record<string, unknown>>)[segment];
   }
 
   return current;
@@ -55,7 +55,8 @@ function resolveDottedPath(obj: unknown, path: string): unknown {
  * Converts non-string values to their display representation.
  *
  * - string: returned as-is (no extra quoting)
- * - number, boolean, null: JSON.stringify
+ * - number, boolean: JSON.stringify
+ * - null: `JSON.stringify(null)` produces the four-character string `"null"`
  * - object, array: JSON.stringify
  *
  * @param value - The value to render
@@ -66,6 +67,42 @@ function renderLoopValue(value: unknown): string {
     return value;
   }
   return JSON.stringify(value);
+}
+
+/**
+ * Resolve a loop variable placeholder to its rendered string value.
+ *
+ * Handles both simple variable names and dotted paths for object property access.
+ * Returns `undefined` if the variable or path cannot be resolved.
+ *
+ * @param path - Variable path from the placeholder (e.g., "item" or "item.name")
+ * @param variables - Loop variable key-value pairs
+ * @returns Rendered string value, or undefined if unresolvable
+ */
+function resolveLoopPlaceholder(
+  path: string,
+  variables: Record<string, unknown>,
+): string | undefined {
+  // Handle simple variable names (no dots)
+  if (!path.includes('.')) {
+    if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
+      return renderLoopValue(variables[path]);
+    }
+    return undefined;
+  }
+
+  // Handle dotted paths
+  const [rootVar, ...pathSegments] = path.split('.');
+  if (!Object.hasOwn(variables, rootVar)) {
+    return undefined;
+  }
+
+  const resolved = resolveDottedPath(variables[rootVar], pathSegments.join('.'));
+  if (resolved === undefined) {
+    return undefined;
+  }
+
+  return renderLoopValue(resolved);
 }
 
 /**
@@ -81,26 +118,7 @@ function renderLoopValue(value: unknown): string {
  */
 export function expandLoopVariables(text: string, variables: Record<string, unknown>): string {
   return text.replace(LOOP_VAR_REGEX, (match, path: string) => {
-    // Handle simple variable names (no dots)
-    if (!path.includes('.')) {
-      if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
-        return renderLoopValue(variables[path]);
-      }
-      return match;
-    }
-
-    // Handle dotted paths
-    const [rootVar, ...pathSegments] = path.split('.');
-    if (!Object.hasOwn(variables, rootVar)) {
-      return match;
-    }
-
-    const resolved = resolveDottedPath(variables[rootVar], pathSegments.join('.'));
-    if (resolved === undefined) {
-      return match;
-    }
-
-    return renderLoopValue(resolved);
+    return resolveLoopPlaceholder(path, variables) ?? match;
   });
 }
 
@@ -170,15 +188,13 @@ export function shellEscapeValue(value: string): string {
  */
 export function substituteText(
   text: string,
-  variables: Record<string, unknown>,
+  variables: Record<string, string>,
   escapeFn?: (value: string) => string,
 ): string {
   return text.replace(TEMPLATE_VAR_REGEX, (match, name: string) => {
     if (!Object.hasOwn(variables, name)) return match;
     const value = variables[name];
-    // If value is not a string, render it first
-    const strValue = typeof value === 'string' ? value : JSON.stringify(value);
-    return escapeFn ? escapeFn(strValue) : strValue;
+    return escapeFn ? escapeFn(value) : value;
   });
 }
 
@@ -278,27 +294,7 @@ export function expandLoopVariablesForCommand(
   variables: Record<string, unknown>,
 ): string {
   return text.replace(LOOP_VAR_REGEX, (match, path: string) => {
-    // Handle simple variable names (no dots)
-    if (!path.includes('.')) {
-      if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
-        const rendered = renderLoopValue(variables[path]);
-        return shellEscapeValue(rendered);
-      }
-      return match;
-    }
-
-    // Handle dotted paths
-    const [rootVar, ...pathSegments] = path.split('.');
-    if (!Object.hasOwn(variables, rootVar)) {
-      return match;
-    }
-
-    const resolved = resolveDottedPath(variables[rootVar], pathSegments.join('.'));
-    if (resolved === undefined) {
-      return match;
-    }
-
-    const rendered = renderLoopValue(resolved);
-    return shellEscapeValue(rendered);
+    const resolved = resolveLoopPlaceholder(path, variables);
+    return resolved !== undefined ? shellEscapeValue(resolved) : match;
   });
 }

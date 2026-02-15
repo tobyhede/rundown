@@ -201,15 +201,12 @@ describe('resolveForValue', () => {
           source: { kind: 'file', path: file, format: 'jsonl', snapshot: null },
         };
 
-        await expect(resolveForValue(fc)).rejects.toThrow();
-        try {
-          await resolveForValue(fc);
-        } catch (error) {
-          const message = String(error);
-          expect(message).toContain(file);
-          expect(message).toContain('2');
-          expect(message).toContain('invalid json');
-        }
+        const err = await resolveForValue(fc).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(Error);
+        const message = (err as Error).message;
+        expect(message).toContain(file);
+        expect(message).toContain('2');
+        expect(message).toContain('invalid json');
       });
 
       it('parses JSONL null value correctly and renders via JSON.stringify', async () => {
