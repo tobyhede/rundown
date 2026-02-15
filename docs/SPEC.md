@@ -36,6 +36,10 @@ Steps must be identified sequentially or by name.
 
 **Reserved Names**: `NEXT`, `CONTINUE`, `COMPLETE`, `STOP`, `GOTO`, `RETRY`, `PASS`, `FAIL`, `YES`, `NO`, `ALL`, `ANY`, `BREAK`, `FOR`, `IN`, `TO`, `AT`.
 
+Reserved word matching is case-sensitive. `NEXT` is reserved; `Next` and `NextStep` are valid.
+
+Named identifiers must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
+
 ### 2.2 Content Order
 Step content must appear in this strict order:
 1.  **FOR Annotation**: Loop definition (optional).
@@ -52,8 +56,8 @@ Executes a command or displays a prompt. Max one code block per step.
 
 | Tag | Type | Behavior |
 | :--- | :--- | :--- |
-| `bash`, `sh` | Executable | Runs in shell. Exit 0 = PASS, else FAIL. |
-| `bash prompt` | Display | Output only. Not executed. |
+| `bash`, `sh`, `shell` | Executable | Runs in shell. Exit 0 = PASS, else FAIL. |
+| `bash prompt`, `prompt` | Display | Output only. Not executed. |
 | `json`, etc. | Display | Output only. |
 
 *   **Environment**: Inherits parent environment.
@@ -103,21 +107,32 @@ Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
 
 **GOTO Syntax**:
 *   `GOTO 3`: Jump to Step 3.
+*   `GOTO 3` (FOR step, no AT): Defaults to iteration 1.
 *   `GOTO 3 AT 1`: Jump to Step 3, iteration 1 (if FOR step).
 *   `GOTO 3 AT {{Index}}`: Re-enter Step 3 at current iteration.
 
 ## 5. Iteration (FOR)
 
 Steps annotated with `FOR` execute their substeps repeatedly.
-Syntax: `- FOR {VAR} IN {RANGE}`
 
-| Syntax | Range | Example |
-| :--- | :--- | :--- |
-| `1 TO N` | Numeric | `FOR i IN 1 TO 5` |
-| `N TO 1` | Descending | `FOR i IN 5 TO 1` |
-| `{{Source}}` | Data Source | `FOR item IN {{items}}` |
-| `N OF {{Source}}` | Windowed | `FOR item IN 1 TO 5 OF {{items}}` |
+| Syntax | Description |
+| :--- | :--- |
+| `FOR var IN 1 TO N` | Named variable, ascending range. |
+| `FOR 1 TO N` | Unnamed, ascending range. |
+| `FOR var IN N TO 1` | Named variable, descending range. |
+| `FOR N TO 1` | Unnamed, descending range. |
+| `FOR var IN N` | Named variable, implicit start (1 TO N). |
+| `FOR N` | Unnamed, implicit start (1 TO N). |
+| `FOR var IN 1 TO {{Max}}` | Template-variable bound (expanded before parse). |
+| `FOR var IN {{source}}` | Named variable, data source (all items). |
+| `FOR var IN 1 TO N OF {{source}}` | Named variable, windowed data source. |
 
+*   **Direction**: When `start > end`, iteration descends (step −1). When `start <= end`, it ascends (step +1). Single-number shorthand (`FOR N`) always ascends from 1.
+*   **Limits**: Open-ended data source iteration is capped at 10,000 iterations. Numeric bounds are capped at 10,000 at parse time.
+*   **Source references**: `{{ source }}` in FOR clauses is NOT template-expanded. It is a data source identifier resolved at runtime. Template-variable bounds (`{{ Max }}`) ARE expanded before parsing.
+*   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
+*   **No descending data sources**: Descending windows (`start > end`) are not supported for data sources.
+*   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
 *   **Constraint**: FOR steps MUST have substeps.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
 *   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.
@@ -156,3 +171,6 @@ scenarios:
 4.  **Exclusivity**: Only one body type (Code OR Substeps OR Runbooks).
 5.  **Single Command**: Max one executable block per step.
 6.  **Loop Safety**: `NEXT`/`BREAK` only valid inside FOR substeps.
+7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
+8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
+9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.
