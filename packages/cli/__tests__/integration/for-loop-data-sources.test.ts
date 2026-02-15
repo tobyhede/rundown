@@ -564,6 +564,9 @@ rd echo name={{ item.name }} count={{ item.count }} full={{ item }}
     expect(commandStartedEvents[2].command).toContain('count=30');
     expect(commandStartedEvents[2].command).toContain('"name":"charlie"');
 
+    // Verify shell escaping: full JSON object should be single-quoted in command
+    expect(commandStartedEvents[0].command).toMatch(/'[^']*"name":"alice"[^']*'/);
+
     // Verify no raw {{item}} templates remain
     const allText = JSON.stringify(events);
     expect(allText).not.toContain('{{item');
