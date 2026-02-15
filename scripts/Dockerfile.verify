@@ -9,6 +9,11 @@
 # Build:
 #   docker build -f scripts/Dockerfile.verify --target local -t rundown-verify:local .
 #   docker build -f scripts/Dockerfile.verify --target npm   -t rundown-verify:npm .
+#
+# Prerequisites:
+#   Run scripts/verify-install.sh (which cleans dist/*.tgz before packing)
+#   to ensure exactly one tarball per package. Stale tarballs will cause
+#   glob ambiguity in the COPY and npm install steps below.
 
 # ── Base stage ───────────────────────────────────────────────────────────────
 

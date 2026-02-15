@@ -88,11 +88,17 @@ export class SessionService {
 
     let stack: string[];
     if (agentId) {
-      stack = session.stacks[agentId] ?? [];
-      stack.pop();
-      session.stacks[agentId] = stack;
+      const existing = session.stacks[agentId];
+      if (!existing || existing.length === 0) return null;
+      existing.pop();
+      if (existing.length === 0) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete session.stacks[agentId];
+      }
+      stack = existing;
     } else {
       stack = session.defaultStack;
+      if (stack.length === 0) return null;
       stack.pop();
     }
 
@@ -114,16 +120,20 @@ export class SessionService {
   async stash(agentId?: string): Promise<string | null> {
     const session = await this.manager.loadSession();
 
-    let activeId: string;
+    let activeId: string | undefined;
     if (agentId) {
       const stack = session.stacks[agentId];
       if (!stack || stack.length === 0) return null;
-      activeId = stack.pop()!;
+      activeId = stack[stack.length - 1];
+      stack.length -= 1;
     } else {
       const stack = session.defaultStack;
       if (stack.length === 0) return null;
-      activeId = stack.pop()!;
+      activeId = stack[stack.length - 1];
+      stack.length -= 1;
     }
+
+    if (!activeId) return null;
 
     session.stashedRunbookId = activeId;
     await this.manager.saveSession(session);

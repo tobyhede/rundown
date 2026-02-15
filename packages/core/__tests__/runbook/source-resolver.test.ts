@@ -205,7 +205,7 @@ describe('resolveForValue', () => {
         expect(err).toBeInstanceOf(Error);
         const message = (err as Error).message;
         expect(message).toContain(file);
-        expect(message).toContain('2');
+        expect(message).toContain('line 2');
         expect(message).toContain('invalid json');
       });
 

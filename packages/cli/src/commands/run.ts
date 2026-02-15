@@ -248,7 +248,7 @@ export function registerRunCommand(program: Command): void {
               [...runbook.steps],
               cwd,
               !!options.prompted,
-              undefined,
+              options.agent,
               emitter,
             );
 

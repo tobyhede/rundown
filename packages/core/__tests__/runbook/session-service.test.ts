@@ -169,5 +169,18 @@ describe('SessionService', () => {
       expect(restored?.id).toBe(state.id);
       expect((await sessionService.getActive('agent-y'))?.id).toBe(state.id);
     });
+
+    it('second agent stash overwrites first agent stash (shared slot)', async () => {
+      const s1 = await manager.create('a.md', mockRunbook, { runbookPath: 'a.md' });
+      const s2 = await manager.create('b.md', mockRunbook, { runbookPath: 'b.md' });
+      await sessionService.pushRunbook(s1.id, 'agent-001');
+      await sessionService.pushRunbook(s2.id, 'agent-002');
+
+      await sessionService.stash('agent-001');
+      await sessionService.stash('agent-002');
+
+      // Second stash overwrites the shared stashedRunbookId slot
+      expect(await sessionService.getStashedRunbookId()).toBe(s2.id);
+    });
   });
 });
