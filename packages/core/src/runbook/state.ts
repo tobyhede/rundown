@@ -1,7 +1,6 @@
 // src/runbook/state.ts
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createActor, type AnyActorRef } from 'xstate';
 import {
   type RunbookState,
   type ForContext,
@@ -9,13 +8,11 @@ import {
   type PendingStep,
   type Substep,
   type SubstepState,
-  type Step,
   type Runbook,
   type DataSource,
 } from './types.js';
 import type { StepId } from './step-id.js';
 import { RunbookStateSchema } from '../schemas.js';
-import { compileRunbookToMachine } from './compiler.js';
 
 const STATE_DIR = '.claude/rundown/runs';
 const SESSION_FILE = '.claude/rundown/session.json';
@@ -172,68 +169,6 @@ export class RunbookStateManager {
   }
 
   /**
-   * Initialize an XState actor for a runbook.
-   *
-   * Loads the runbook state and creates an XState actor with the
-   * compiled state machine, restoring from any persisted snapshot.
-   *
-   * @param id - The runbook state ID
-   * @param steps - The runbook steps to compile into a state machine
-   * @returns The started XState actor, or null if the runbook state is not found
-   */
-  async createActor(id: string, steps: Step[]): Promise<AnyActorRef | null> {
-    const state = await this.load(id);
-    if (!state) return null;
-
-    const machine = compileRunbookToMachine(steps, { sources: state.sources });
-
-    // Migrate old snapshot context: flat FOR fields → forStack
-    // Snapshot migration deals with untyped persisted data — any is unavoidable
-    /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
-    const snapshot = state.snapshot as any;
-    if (snapshot?.context && !snapshot.context.forStack) {
-      const ctx = snapshot.context as any;
-      if (ctx.forIteration !== undefined) {
-        // Derive stepId from snapshot.value (authoritative) with state.step fallback
-        const stateValue = snapshot.value as string | undefined;
-        const stepMatch = stateValue
-          ? (/^step::([^:]+)/.exec(stateValue) ?? /^step_([^_]+)/.exec(stateValue))
-          : null;
-        const stepId = stepMatch?.[1] ?? state.step;
-
-        snapshot.context = {
-          ...ctx,
-          forStack: [
-            {
-              stepId,
-              iteration: ctx.forIteration,
-              start: ctx.forStart ?? 1,
-              end: ctx.forEnd ?? ctx.forIteration,
-              variable: ctx.forVariable,
-              source: { kind: 'range' as const },
-            },
-          ],
-          forIteration: undefined,
-          forStart: undefined,
-          forEnd: undefined,
-          forVariable: undefined,
-        };
-      } else {
-        // No active loop — just ensure forStack exists
-        snapshot.context = { ...ctx, forStack: [] };
-      }
-    }
-    /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
-
-    const actor = createActor(machine, {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      snapshot,
-    });
-    actor.start();
-    return actor;
-  }
-
-  /**
    * Save a runbook state to disk.
    *
    * Creates the state directory if it does not exist and writes the state
@@ -302,101 +237,6 @@ export class RunbookStateManager {
   async isParentPrompted(parentRunbookId: string): Promise<boolean> {
     const parent = await this.load(parentRunbookId);
     return parent?.prompted ?? false;
-  }
-
-  /**
-   * Update runbook state from an XState actor snapshot.
-   *
-   * Extracts the current step, substep, retry count, and variables from the
-   * actor's persisted snapshot and updates the runbook state. Handles final
-   * states (COMPLETE, STOPPED) by preserving the last step information.
-   *
-   * @param id - The runbook state ID
-   * @param actor - The XState actor to extract state from
-   * @param steps - The runbook step definitions for name resolution
-   * @returns The updated runbook state
-   * @throws Error if the runbook with the given ID is not found
-   */
-  async updateFromActor(id: string, actor: AnyActorRef, steps: Step[]): Promise<RunbookState> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-    const snapshot = actor.getPersistedSnapshot() as any;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const stateValue = snapshot.value as string;
-
-    // If the runbook is in a final state, don't try to parse a step number.
-    // Just update the snapshot and variables, preserving the last step number.
-    if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const variables = (snapshot.context?.variables ?? {}) as Record<
-        string,
-        boolean | number | string
-      >;
-      return await this.update(id, {
-        variables,
-        snapshot,
-        // Clear FOR loop state on completion
-        forStack: undefined,
-        iterationResults: undefined,
-      });
-    }
-
-    // Parse step name from XState state value
-    const primaryMatch = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
-    const legacyMatch = !primaryMatch ? /^step_([^_]+)(?:_([^_]+))?$/.exec(stateValue) : null;
-    if (legacyMatch) {
-      console.warn(
-        'Deprecated state-ID format "step_…" detected. Please restart execution to migrate to "step::…" format.',
-      );
-    }
-    const match = primaryMatch ?? legacyMatch;
-    const stepName = match ? match[1] : steps[0].name;
-
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    let substep = snapshot.context?.substep as string | undefined;
-    if (!substep && match?.[2]) {
-      substep = match[2];
-    }
-
-    // Find step by name (unified lookup)
-    const step = steps.find((s) => s.name === stepName) ?? steps[0];
-
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const retryCount = snapshot.context?.retryCount as number;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const variables = (snapshot.context?.variables ?? {}) as Record<
-      string,
-      boolean | number | string
-    >;
-
-    // FOR loop context
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const forStack = snapshot.context?.forStack as ForContext[] | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const iterationResults = snapshot.context?.iterationResults as ('pass' | 'fail')[] | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const lastAction = snapshot.context?.lastAction as RunbookState['lastAction'];
-
-    return await this.update(id, {
-      step: stepName, // string
-      substep,
-      stepName: step.description,
-      retryCount,
-      variables,
-      snapshot,
-      // Filter implicit ForContext entries — don't persist synthetic loop state
-      forStack: (() => {
-        const realForStack = forStack?.filter((fc) => !fc.implicit);
-        return realForStack?.length ? realForStack : undefined;
-      })(),
-      // Only clear iterationResults when all stack entries were implicit.
-      // When forStack is empty after explicit FOR exit, iterationResults
-      // must be preserved for parent-step aggregation.
-      iterationResults: (() => {
-        const hasOnlyImplicit = forStack?.length ? forStack.every((fc) => fc.implicit) : false;
-        return hasOnlyImplicit ? undefined : iterationResults;
-      })(),
-      lastAction,
-    });
   }
 
   /**

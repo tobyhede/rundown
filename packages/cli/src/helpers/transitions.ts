@@ -8,9 +8,10 @@
  * @module helpers/transitions
  */
 
-import type { AnyActorRef } from 'xstate';
 import {
   RunbookStateManager,
+  RunbookActorService,
+  type AnyActorRef,
   countNumberedSteps,
   type Step,
   type RunbookState,
@@ -27,6 +28,7 @@ import {
   isRunbookComplete,
   isRunbookStopped,
 } from '../services/execution.js';
+import { asTerminalSnapshot } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 
@@ -108,6 +110,8 @@ export interface TransitionContext {
   output: OutputEmitter;
   /** Runbook state manager */
   manager: RunbookStateManager;
+  /** Actor lifecycle service */
+  actorService: RunbookActorService;
   /** Current runbook state */
   state: RunbookState;
   /** Parsed runbook steps */
@@ -168,6 +172,7 @@ export async function buildTransitionContext(
   agentId?: string,
 ): Promise<TransitionContext | null> {
   const manager = new RunbookStateManager(cwd);
+  const actorService = new RunbookActorService(manager);
   const state = await resolveActiveState(manager, agentId);
 
   if (!state) {
@@ -176,12 +181,12 @@ export async function buildTransitionContext(
 
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
-  const actor = await manager.createActor(state.id, steps);
+  const actor = await actorService.createActor(state.id, steps);
   if (!actor) {
     throw new Error('Failed to initialize runbook engine');
   }
 
-  return { output, manager, state, steps, actor, cwd, agentId };
+  return { output, manager, actorService, state, steps, actor, cwd, agentId };
 }
 
 /**
@@ -357,7 +362,7 @@ export async function handleAgentBinding(
   agentId: string,
   config: TransitionConfig,
 ): Promise<boolean> {
-  const { output, manager, state, steps, actor, cwd } = ctx;
+  const { output, manager, actorService, state, steps, actor, cwd } = ctx;
   const binding = await manager.getAgentBinding(state.id, agentId);
 
   if (!binding) {
@@ -374,7 +379,7 @@ export async function handleAgentBinding(
 
   if (conditionResult.action === 'retry') {
     actor.send({ type: config.eventType });
-    const retryState = await manager.updateFromActor(state.id, actor, steps);
+    const retryState = await actorService.updateFromActor(state.id, actor, steps);
     output.status(true, 'retry', `Agent ${agentId} retrying step ${stepName}`, {
       agent: agentId,
       step: stepName,
@@ -397,7 +402,7 @@ export async function handleAgentBinding(
 
   if (conditionResult.action === 'goto') {
     actor.send({ type: config.eventType });
-    const gotoState = await manager.updateFromActor(state.id, actor, steps);
+    const gotoState = await actorService.updateFromActor(state.id, actor, steps);
     output.status(true, 'goto', `Agent ${agentId} triggered goto to step ${gotoState.step}`, {
       agent: agentId,
       step: gotoState.step,
@@ -466,7 +471,7 @@ export async function executeTransition(
   ctx: TransitionContext,
   config: TransitionConfig,
 ): Promise<void> {
-  const { output, manager, state, steps, actor, cwd, agentId } = ctx;
+  const { output, manager, actorService, state, steps, actor, cwd, agentId } = ctx;
 
   // Capture prev state BEFORE mutation (deep copy for retryCount, etc.)
   const prevState = { ...state };
@@ -478,21 +483,21 @@ export async function executeTransition(
   // Send event
   actor.send({ type: config.eventType });
 
-  const updatedState = await manager.updateFromActor(state.id, actor, steps);
+  const updatedState = await actorService.updateFromActor(state.id, actor, steps);
 
-  // XState snapshot type is not fully typed
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-  const snapshot = actor.getPersistedSnapshot() as any;
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-  const isComplete = isRunbookComplete(snapshot);
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-  const isStopped = isRunbookStopped(snapshot);
+  const rawSnapshot = actor.getPersistedSnapshot();
+  const terminalSnapshot = asTerminalSnapshot(rawSnapshot) ?? {
+    status: 'active',
+    value: undefined,
+  };
+  const isComplete = isRunbookComplete(terminalSnapshot);
+  const isStopped = isRunbookStopped(terminalSnapshot);
 
   // Read action from XState context (source of truth for retryMax and lastAction)
   const prevStepIndex = steps.findIndex((s) => s.name === prevState.step);
   const currentStep = prevStepIndex >= 0 ? steps[prevStepIndex] : steps[0];
-  const retryMax = extractRetryMax(snapshot);
-  const lastActionFromContext = extractLastAction(snapshot);
+  const retryMax = extractRetryMax(rawSnapshot);
+  const lastActionFromContext = extractLastAction(rawSnapshot);
 
   const action = formatActionForDisplay(lastActionFromContext, updatedState.retryCount, retryMax);
 

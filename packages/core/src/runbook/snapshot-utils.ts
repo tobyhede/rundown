@@ -28,3 +28,21 @@ export function isRunbookComplete(snapshot: { status: string; value: unknown }):
 export function isRunbookStopped(snapshot: { status: string; value: unknown }): boolean {
   return snapshot.status === 'done' && snapshot.value === 'STOPPED';
 }
+
+/**
+ * Safely narrow an unknown snapshot to the shape expected by terminal-state helpers.
+ *
+ * @param snapshot - Raw persisted XState snapshot (unknown type)
+ * @returns The snapshot cast to terminal shape, or null if it doesn't match
+ */
+export function asTerminalSnapshot(snapshot: unknown): { status: string; value: unknown } | null {
+  if (
+    typeof snapshot === 'object' &&
+    snapshot !== null &&
+    'status' in snapshot &&
+    'value' in snapshot
+  ) {
+    return snapshot as { status: string; value: unknown };
+  }
+  return null;
+}
