@@ -86,7 +86,7 @@ export class SessionService {
   async popRunbook(agentId?: string): Promise<string | null> {
     const session = await this.manager.loadSession();
 
-    let stack: string[];
+    let parentRunbook: string | null;
     if (agentId) {
       const existing = session.stacks[agentId];
       if (!existing || existing.length === 0) return null;
@@ -95,17 +95,15 @@ export class SessionService {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete session.stacks[agentId];
       }
-      stack = existing;
+      parentRunbook = existing[existing.length - 1] ?? null;
     } else {
-      stack = session.defaultStack;
-      if (stack.length === 0) return null;
-      stack.pop();
+      if (session.defaultStack.length === 0) return null;
+      session.defaultStack.pop();
+      parentRunbook = session.defaultStack[session.defaultStack.length - 1] ?? null;
     }
 
     await this.manager.saveSession(session);
-
-    // Return new top (parent runbook)
-    return stack[stack.length - 1] ?? null;
+    return parentRunbook;
   }
 
   /**
@@ -115,10 +113,13 @@ export class SessionService {
    * in the session's stashed slot. Only one runbook can be stashed at a time.
    *
    * @param agentId - Optional agent ID; if omitted, uses the default stack
-   * @returns The stashed runbook ID, or null if no runbook was active
+   * @returns The stashed runbook ID, or null if no runbook was active or a stash already exists
    */
   async stash(agentId?: string): Promise<string | null> {
     const session = await this.manager.loadSession();
+
+    // Refuse to overwrite an existing stash — caller must unstash first
+    if (session.stashedRunbookId) return null;
 
     let activeId: string | undefined;
     if (agentId) {

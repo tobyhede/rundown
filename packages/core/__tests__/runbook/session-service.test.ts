@@ -176,17 +176,36 @@ describe('SessionService', () => {
       expect((await sessionService.getActive('agent-y'))?.id).toBe(state.id);
     });
 
-    it('second agent stash overwrites first agent stash (shared slot)', async () => {
+    it('unstash returns null and clears stash when persisted state is missing', async () => {
+      const state = await manager.create('temp.md', mockRunbook, { runbookPath: 'temp.md' });
+      await sessionService.pushRunbook(state.id);
+      await sessionService.stash();
+
+      // Simulate state file deletion
+      await manager.delete(state.id);
+
+      const restored = await sessionService.unstash();
+      expect(restored).toBeNull();
+      expect(await sessionService.getStashedRunbookId()).toBeNull();
+      expect(await sessionService.getActive()).toBeNull();
+    });
+
+    it('stash refuses to overwrite existing stash', async () => {
       const s1 = await manager.create('a.md', mockRunbook, { runbookPath: 'a.md' });
       const s2 = await manager.create('b.md', mockRunbook, { runbookPath: 'b.md' });
       await sessionService.pushRunbook(s1.id, 'agent-001');
       await sessionService.pushRunbook(s2.id, 'agent-002');
 
-      await sessionService.stash('agent-001');
-      await sessionService.stash('agent-002');
+      const first = await sessionService.stash('agent-001');
+      const second = await sessionService.stash('agent-002');
 
-      // Second stash overwrites the shared stashedRunbookId slot
-      expect(await sessionService.getStashedRunbookId()).toBe(s2.id);
+      // First stash succeeds, second is refused
+      expect(first).toBe(s1.id);
+      expect(second).toBeNull();
+      // Original stash preserved
+      expect(await sessionService.getStashedRunbookId()).toBe(s1.id);
+      // agent-002's runbook remains on its stack (not popped)
+      expect((await sessionService.getActive('agent-002'))?.id).toBe(s2.id);
     });
   });
 });

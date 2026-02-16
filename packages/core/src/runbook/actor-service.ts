@@ -68,7 +68,9 @@ export class RunbookActorService {
     const machine = compileRunbookToMachine(steps, { sources: state.sources });
 
     // Migrate old snapshot context: flat FOR fields → forStack
-    // Defensive copy so mutations don't leak into manager caches
+    // Intentionally shallow copy — only snapshot.context is replaced during
+    // migration, so other nested properties (e.g. snapshot.children) remain
+    // aliased to the original. This is safe because we never mutate them.
     // Snapshot migration deals with untyped persisted data — any is unavoidable
     /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
     const rawSnapshot = state.snapshot as any;
