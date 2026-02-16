@@ -5,7 +5,6 @@ import {
   type RunbookState,
   type ForContext,
   type AgentBinding,
-  type PendingStep,
   type Substep,
   type SubstepState,
   type Runbook,
@@ -218,28 +217,6 @@ export class RunbookStateManager {
   }
 
   /**
-   * Set the last result (pass/fail) for a runbook step.
-   *
-   * @param id - The runbook state ID
-   * @param result - The result to record ('pass' or 'fail')
-   * @throws Error if the runbook with the given ID is not found
-   */
-  async setLastResult(id: string, result: 'pass' | 'fail'): Promise<void> {
-    await this.update(id, { lastResult: result });
-  }
-
-  /**
-   * Check if a parent runbook was started in prompted mode.
-   *
-   * @param parentRunbookId - The parent runbook state ID
-   * @returns True if the parent runbook has prompted flag set, false otherwise
-   */
-  async isParentPrompted(parentRunbookId: string): Promise<boolean> {
-    const parent = await this.load(parentRunbookId);
-    return parent?.prompted ?? false;
-  }
-
-  /**
    * Delete a runbook state file from disk.
    *
    * Silently ignores errors if the file does not exist.
@@ -277,40 +254,6 @@ export class RunbookStateManager {
     } catch {
       return [];
     }
-  }
-
-  /**
-   * Push a pending step onto the runbook's pending step queue.
-   *
-   * Pending steps are used to correlate Step tool dispatch with SubagentStart
-   * events in orchestration scenarios.
-   *
-   * @param id - The runbook state ID
-   * @param pending - The pending step to push (includes stepId and optional child runbook path)
-   * @throws Error if the runbook with the given ID is not found
-   */
-  async pushPendingStep(id: string, pending: PendingStep): Promise<void> {
-    const state = await this.load(id);
-    if (!state) throw new Error(`Runbook ${id} not found`);
-
-    await this.update(id, {
-      pendingSteps: [...state.pendingSteps, pending],
-    });
-  }
-
-  /**
-   * Pop the first pending step from the runbook's pending step queue.
-   *
-   * @param id - The runbook state ID
-   * @returns The first pending step, or null if the queue is empty or runbook not found
-   */
-  async popPendingStep(id: string): Promise<PendingStep | null> {
-    const state = await this.load(id);
-    if (!state || state.pendingSteps.length === 0) return null;
-
-    const [first, ...rest] = state.pendingSteps;
-    await this.update(id, { pendingSteps: rest });
-    return first;
   }
 
   /**
@@ -406,27 +349,6 @@ export class RunbookStateManager {
   async saveSession(session: SessionData): Promise<void> {
     await fs.mkdir(path.dirname(this.sessionPath), { recursive: true });
     await fs.writeFile(this.sessionPath, JSON.stringify(session, null, 2));
-  }
-
-  /**
-   * Get the result of a child runbook execution.
-   *
-   * Determines the result based on the child runbook's variables:
-   * - Returns 'fail' if stopped is true
-   * - Returns 'pass' if completed is true or runbook not found
-   * - Returns null if the runbook is still in progress
-   *
-   * @param childId - The child runbook state ID
-   * @returns 'pass', 'fail', or null if still in progress
-   */
-  async getChildRunbookResult(childId: string): Promise<'pass' | 'fail' | null> {
-    const child = await this.load(childId);
-    if (!child) return 'pass';
-
-    if (child.variables.stopped === true) return 'fail';
-    if (child.variables.completed === true) return 'pass';
-
-    return null;
   }
 
   /**

@@ -9,6 +9,10 @@ const mockSessionService = {
   popRunbook: jest.fn(),
 };
 
+const mockLifecycleService = {
+  setLastResult: jest.fn(),
+};
+
 jest.unstable_mockModule('@rundown-org/core', () => {
   const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
     if (
@@ -40,6 +44,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     computeFileSnapshot: jest.fn(),
     RunbookActorService: jest.fn().mockImplementation(() => mockActorService),
     SessionService: jest.fn().mockImplementation(() => mockSessionService),
+    ExecutionLifecycleService: jest.fn().mockImplementation(() => mockLifecycleService),
     ForIterationService: jest.fn().mockImplementation(() => ({
       prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
     })),
@@ -112,7 +117,6 @@ describe('runExecutionLoop', () => {
     mockManager = {
       load: jest.fn(),
       update: jest.fn(),
-      setLastResult: jest.fn(),
       updateAgentBinding: jest.fn(),
     };
 

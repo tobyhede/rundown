@@ -12,6 +12,7 @@ import {
   RunbookStateManager,
   RunbookActorService,
   SessionService,
+  ExecutionLifecycleService,
   type AnyActorRef,
   countNumberedSteps,
   type Step,
@@ -115,6 +116,8 @@ export interface TransitionContext {
   actorService: RunbookActorService;
   /** Session stack orchestration service */
   sessionService: SessionService;
+  /** Execution lifecycle service */
+  lifecycleService: ExecutionLifecycleService;
   /** Current runbook state */
   state: RunbookState;
   /** Parsed runbook steps */
@@ -179,6 +182,7 @@ export async function buildTransitionContext(
   const manager = new RunbookStateManager(cwd);
   const actorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
+  const lifecycleService = new ExecutionLifecycleService(manager);
   const state = await resolveActiveState(sessionService, manager, agentId);
 
   if (!state) {
@@ -192,7 +196,18 @@ export async function buildTransitionContext(
     throw new Error('Failed to initialize runbook engine');
   }
 
-  return { output, manager, actorService, sessionService, state, steps, actor, cwd, agentId };
+  return {
+    output,
+    manager,
+    actorService,
+    sessionService,
+    lifecycleService,
+    state,
+    steps,
+    actor,
+    cwd,
+    agentId,
+  };
 }
 
 /**
@@ -368,7 +383,7 @@ export async function handleAgentBinding(
   agentId: string,
   config: TransitionConfig,
 ): Promise<boolean> {
-  const { output, manager, actorService, state, steps, actor, cwd } = ctx;
+  const { output, manager, actorService, lifecycleService, state, steps, actor, cwd } = ctx;
   const binding = await manager.getAgentBinding(state.id, agentId);
 
   if (!binding) {
@@ -433,7 +448,7 @@ export async function handleAgentBinding(
   let result: 'pass' | 'fail' = config.lastResult;
 
   if (binding.childRunbookId) {
-    const childResult = await manager.getChildRunbookResult(binding.childRunbookId);
+    const childResult = await lifecycleService.getChildRunbookResult(binding.childRunbookId);
     if (childResult === null) {
       throw new Error(
         `Child runbook still active. Complete or stop it first.\nChild runbook: ${binding.childRunbookId}`,

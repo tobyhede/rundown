@@ -7,6 +7,7 @@ import {
   RunbookStateManager,
   RunbookActorService,
   SessionService,
+  ExecutionLifecycleService,
   parseRunbookDocument,
   RunbookSyntaxError,
   stepIdToString,
@@ -119,6 +120,7 @@ export function registerRunCommand(program: Command): void {
           const manager = new RunbookStateManager(cwd);
           const actorService = new RunbookActorService(manager);
           const sessionService = new SessionService(manager);
+          const lifecycleService = new ExecutionLifecycleService(manager);
 
           // Mode 1: --step - Push step to pending queue
           if (options.step && !options.agent) {
@@ -147,7 +149,7 @@ export function registerRunCommand(program: Command): void {
               runbook: file,
             };
 
-            await manager.pushPendingStep(state.id, pendingStep);
+            await lifecycleService.pushPendingStep(state.id, pendingStep);
 
             const runbookInfo = file ? ` with runbook ${file}` : '';
             output.status(
@@ -270,7 +272,7 @@ export function registerRunCommand(program: Command): void {
               process.exit(1);
             }
 
-            const pending = await manager.popPendingStep(state.id);
+            const pending = await lifecycleService.popPendingStep(state.id);
             if (!pending) {
               output.error('No pending step to bind', 'AGENT_BINDING_ERROR', {
                 agent: options.agent,

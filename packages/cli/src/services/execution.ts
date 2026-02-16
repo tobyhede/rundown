@@ -4,6 +4,7 @@ import {
   type RunbookStateManager,
   RunbookActorService,
   SessionService,
+  ExecutionLifecycleService,
   ForIterationService,
   printActionBlock,
   printStepBlock,
@@ -184,6 +185,7 @@ export async function runExecutionLoop(
   // Service for resolving FOR loop iteration values (array, file, range)
   const actorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
+  const lifecycleService = new ExecutionLifecycleService(manager);
   const iterationService = new ForIterationService(manager, actorService);
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -419,7 +421,7 @@ export async function runExecutionLoop(
 
     // Store result
     const lastResult = execResult.success ? 'pass' : 'fail';
-    await manager.setLastResult(runbookId, lastResult);
+    await lifecycleService.setLastResult(runbookId, lastResult);
 
     // Capture prev state BEFORE mutation
     const prevStep = currentState.step;
