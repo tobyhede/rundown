@@ -96,7 +96,7 @@ excluded_tools: [
   'read_memory',
   'list_memories',
   'edit_memory',
-  'delete_memory',
+  'delete_memory'
 ]
 
 # initial prompt for the project. It will always be given to the LLM upon activating the project
