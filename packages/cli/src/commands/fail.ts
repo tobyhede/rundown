@@ -9,6 +9,7 @@ import {
   buildTransitionContext,
   executeTransition,
   handleAgentBinding,
+  type TransitionConfig,
 } from '../helpers/transitions.js';
 
 /**
@@ -36,25 +37,7 @@ export function registerFailCommand(program: Command): void {
           }
 
           try {
-            // Handle agent binding completion (substep case)
-            // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
-            if (options.agent) {
-              const config = {
-                eventType: 'FAIL' as const,
-                commandName: 'fail' as const,
-                lastResult: 'fail' as const,
-                computeActionResult: () => false, // Always false for fail
-                evaluateCondition: (step: Step, prevState: RunbookState) =>
-                  evaluateFailCondition(step, prevState.retryCount),
-                terminalOrder: 'stopped-first' as const,
-                onStopped: { popRunbook: true, updateParentBinding: true },
-                onComplete: { popRunbook: true, updateParentBinding: true },
-              };
-              const handled = await handleAgentBinding(ctx, options.agent, config);
-              if (handled) return;
-            }
-
-            await executeTransition(ctx, {
+            const failConfig: TransitionConfig = {
               eventType: 'FAIL',
               commandName: 'fail',
               lastResult: 'fail',
@@ -64,7 +47,16 @@ export function registerFailCommand(program: Command): void {
               terminalOrder: 'stopped-first',
               onStopped: { popRunbook: true, updateParentBinding: true },
               onComplete: { popRunbook: true, updateParentBinding: true },
-            });
+            };
+
+            // Handle agent binding completion (substep case)
+            // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
+            if (options.agent) {
+              const handled = await handleAgentBinding(ctx, options.agent, failConfig);
+              if (handled) return;
+            }
+
+            await executeTransition(ctx, failConfig);
           } finally {
             ctx.actor.stop();
           }

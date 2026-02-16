@@ -17,7 +17,12 @@ import type { Step, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent } from './compiler.js';
 
-// Re-export so CLI callers import from core, not directly from xstate
+/**
+ * Re-export of XState's {@link https://stately.ai/docs/actors | AnyActorRef} type.
+ *
+ * Provided so CLI callers import from `@rundown-org/core` rather than
+ * depending on `xstate` directly.
+ */
 export type { AnyActorRef } from 'xstate';
 
 /**

@@ -125,6 +125,10 @@ export class SessionService {
       const stack = session.stacks[agentId];
       if (!stack || stack.length === 0) return null;
       activeId = stack.pop();
+      if (stack.length === 0) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete session.stacks[agentId];
+      }
     } else {
       const stack = session.defaultStack;
       if (stack.length === 0) return null;

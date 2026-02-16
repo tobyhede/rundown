@@ -10,6 +10,7 @@ import {
   executeTransition,
   handleAgentBinding,
   type ActionType,
+  type TransitionConfig,
 } from '../helpers/transitions.js';
 
 /**
@@ -37,26 +38,7 @@ export function registerPassCommand(program: Command): void {
           }
 
           try {
-            // Handle agent binding completion (substep case)
-            // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
-            if (options.agent) {
-              const config = {
-                eventType: 'PASS' as const,
-                commandName: 'pass' as const,
-                lastResult: 'pass' as const,
-                computeActionResult: (actionType: ActionType) =>
-                  actionType !== 'RETRY' && actionType !== 'STOP',
-                evaluateCondition: (step: Step, prevState: RunbookState) =>
-                  evaluatePassCondition(step, prevState.retryCount),
-                terminalOrder: 'complete-first' as const,
-                onStopped: { popRunbook: false, updateParentBinding: false },
-                onComplete: { popRunbook: true, updateParentBinding: true },
-              };
-              const handled = await handleAgentBinding(ctx, options.agent, config);
-              if (handled) return;
-            }
-
-            await executeTransition(ctx, {
+            const passConfig: TransitionConfig = {
               eventType: 'PASS',
               commandName: 'pass',
               lastResult: 'pass',
@@ -67,7 +49,16 @@ export function registerPassCommand(program: Command): void {
               terminalOrder: 'complete-first',
               onStopped: { popRunbook: false, updateParentBinding: false },
               onComplete: { popRunbook: true, updateParentBinding: true },
-            });
+            };
+
+            // Handle agent binding completion (substep case)
+            // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
+            if (options.agent) {
+              const handled = await handleAgentBinding(ctx, options.agent, passConfig);
+              if (handled) return;
+            }
+
+            await executeTransition(ctx, passConfig);
           } finally {
             ctx.actor.stop();
           }

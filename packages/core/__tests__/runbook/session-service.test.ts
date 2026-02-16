@@ -138,7 +138,7 @@ describe('SessionService', () => {
       expect(stashedId).toBeNull();
     });
 
-    it('pop restores stashed runbook', async () => {
+    it('unstash restores stashed runbook', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       await sessionService.pushRunbook(state.id);
       await sessionService.stash();
@@ -150,7 +150,7 @@ describe('SessionService', () => {
       expect(await sessionService.getStashedRunbookId()).toBeNull();
     });
 
-    it('pop returns null when nothing stashed', async () => {
+    it('unstash returns null when nothing stashed', async () => {
       const restored = await sessionService.unstash();
       expect(restored).toBeNull();
     });
@@ -165,7 +165,7 @@ describe('SessionService', () => {
       expect(await sessionService.getActive('agent-x')).toBeNull();
     });
 
-    it('pop restores to agent-specific stack', async () => {
+    it('unstash restores to agent-specific stack', async () => {
       const state = await manager.create('agent.md', mockRunbook, { runbookPath: 'agent.md' });
       await sessionService.pushRunbook(state.id, 'agent-y');
       await sessionService.stash('agent-y');
