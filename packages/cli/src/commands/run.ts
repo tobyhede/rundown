@@ -73,16 +73,15 @@ function validateSources(
 
 /**
  * Initialize actor state for a runbook, populating forStack for the first step.
- * @param manager - The RunbookStateManager instance
+ * @param actorService - The RunbookActorService instance for state initialization
  * @param stateId - The ID of the runbook state
  * @param steps - The parsed runbook steps
  */
 async function initializeActor(
-  manager: RunbookStateManager,
+  actorService: RunbookActorService,
   stateId: string,
   steps: Step[],
 ): Promise<void> {
-  const actorService = new RunbookActorService(manager);
   await actorService.initializeState(stateId, steps);
 }
 
@@ -118,6 +117,7 @@ export function registerRunCommand(program: Command): void {
         try {
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
+          const actorService = new RunbookActorService(manager);
           const sessionService = new SessionService(manager);
 
           // Mode 1: --step - Push step to pending queue
@@ -222,7 +222,7 @@ export function registerRunCommand(program: Command): void {
             });
 
             // Initialize actor state (populates forStack for first step)
-            await initializeActor(manager, state.id, runbook.steps as Step[]);
+            await initializeActor(actorService, state.id, runbook.steps as Step[]);
 
             await sessionService.pushRunbook(state.id, options.agent);
 
@@ -350,7 +350,7 @@ export function registerRunCommand(program: Command): void {
               });
 
               // Initialize actor state (populates forStack for first step)
-              await initializeActor(manager, childState.id, runbook.steps as Step[]);
+              await initializeActor(actorService, childState.id, runbook.steps as Step[]);
 
               await manager.updateAgentBinding(state.id, options.agent, {
                 childRunbookId: childState.id,
