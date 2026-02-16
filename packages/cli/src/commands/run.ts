@@ -17,7 +17,6 @@ import {
   type PendingStep,
   type RunbookState,
   type ExecutionEventEmitter,
-  type Step,
 } from '@rundown-org/core';
 import { isSourced, type ForClause } from '@rundown-org/parser';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
@@ -70,20 +69,6 @@ function validateSources(
       }
     }
   }
-}
-
-/**
- * Initialize actor state for a runbook, populating forStack for the first step.
- * @param actorService - The RunbookActorService instance for state initialization
- * @param stateId - The ID of the runbook state
- * @param steps - The parsed runbook steps
- */
-async function initializeActor(
-  actorService: RunbookActorService,
-  stateId: string,
-  steps: Step[],
-): Promise<void> {
-  await actorService.initializeState(stateId, steps);
 }
 
 /**
@@ -224,7 +209,7 @@ export function registerRunCommand(program: Command): void {
             });
 
             // Initialize actor state (populates forStack for first step)
-            await initializeActor(actorService, state.id, runbook.steps as Step[]);
+            await actorService.initializeState(state.id, [...runbook.steps]);
 
             await sessionService.pushRunbook(state.id, options.agent);
 
@@ -352,7 +337,7 @@ export function registerRunCommand(program: Command): void {
               });
 
               // Initialize actor state (populates forStack for first step)
-              await initializeActor(actorService, childState.id, runbook.steps as Step[]);
+              await actorService.initializeState(childState.id, [...runbook.steps]);
 
               await manager.updateAgentBinding(state.id, options.agent, {
                 childRunbookId: childState.id,

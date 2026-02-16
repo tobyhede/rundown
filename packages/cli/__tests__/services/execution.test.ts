@@ -1,12 +1,16 @@
 import { describe, it, expect } from '@jest/globals';
 import {
-  isRunbookComplete,
-  isRunbookStopped,
   isValidResult,
   getStepRetryMax,
   buildStepVariables,
 } from '../../src/services/execution.js';
-import type { Step, ForContext, DataSource } from '@rundown-org/core';
+import {
+  isRunbookComplete,
+  isRunbookStopped,
+  type Step,
+  type ForContext,
+  type DataSource,
+} from '@rundown-org/core';
 
 describe('execution service', () => {
   describe('isRunbookComplete', () => {

@@ -28,8 +28,8 @@ import {
   type LastAction,
   type ForContext,
   type DataSource,
-  isRunbookComplete as _isRunbookComplete,
-  isRunbookStopped as _isRunbookStopped,
+  isRunbookComplete,
+  isRunbookStopped,
   asTerminalSnapshotOrDefault,
 } from '@rundown-org/core';
 import { isSourced } from '@rundown-org/parser';
@@ -56,10 +56,6 @@ export type StepVariables = Record<string, unknown>;
  * Sourced from frontmatter, CLI flags, or config files.
  */
 export type TemplateVariables = Record<string, string>;
-
-// Re-export from core so existing imports from this module continue to work
-export const isRunbookComplete = _isRunbookComplete;
-export const isRunbookStopped = _isRunbookStopped;
 
 /**
  * Build per-step dynamic variables for Phase 2 expansion.
