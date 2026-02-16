@@ -15,6 +15,8 @@ import {
   ExecutionLifecycleService,
   type AnyActorRef,
   countNumberedSteps,
+  isRunbookComplete,
+  isRunbookStopped,
   type Step,
   type RunbookState,
   type StepPosition,
@@ -28,8 +30,6 @@ import {
   formatActionForDisplay,
   extractLastAction,
   extractRetryMax,
-  isRunbookComplete,
-  isRunbookStopped,
 } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
@@ -399,52 +399,62 @@ export async function handleAgentBinding(
   const conditionResult = config.evaluateCondition(agentStep, state);
 
   if (conditionResult.action === 'retry') {
-    actor.send({ type: config.eventType });
-    const { state: retryState } = await actorService.updateFromActor(state.id, actor, steps);
-    output.status(true, 'retry', `Agent ${agentId} retrying step ${stepName}`, {
-      agent: agentId,
-      step: stepName,
-    });
-    // Continue with execution loop for retry
-    const retryEmitter = createBridgedEmitter(retryState, output);
-    const loopResult = await runExecutionLoop(
-      manager,
-      state.id,
-      steps,
-      cwd,
-      !!state.prompted,
-      agentId,
-      retryEmitter,
-    );
-    output.flush();
-    if (loopResult === 'stopped') process.exit(1);
-    return true;
+    try {
+      actor.send({ type: config.eventType });
+      const { state: retryState } = await actorService.updateFromActor(state.id, actor, steps);
+      output.status(true, 'retry', `Agent ${agentId} retrying step ${stepName}`, {
+        agent: agentId,
+        step: stepName,
+      });
+      // Continue with execution loop for retry
+      const retryEmitter = createBridgedEmitter(retryState, output);
+      const loopResult = await runExecutionLoop(
+        manager,
+        state.id,
+        steps,
+        cwd,
+        !!state.prompted,
+        agentId,
+        retryEmitter,
+      );
+      output.flush();
+      if (loopResult === 'stopped') process.exit(1);
+      return true;
+    } finally {
+      actor.stop();
+    }
   }
 
   if (conditionResult.action === 'goto') {
-    actor.send({ type: config.eventType });
-    const { state: gotoState } = await actorService.updateFromActor(state.id, actor, steps);
-    output.status(true, 'goto', `Agent ${agentId} triggered goto to step ${gotoState.step}`, {
-      agent: agentId,
-      step: gotoState.step,
-    });
-    // Continue with execution loop after GOTO
-    const gotoEmitter = createBridgedEmitter(gotoState, output);
-    const loopResult = await runExecutionLoop(
-      manager,
-      state.id,
-      steps,
-      cwd,
-      !!state.prompted,
-      agentId,
-      gotoEmitter,
-    );
-    output.flush();
-    if (loopResult === 'stopped') process.exit(1);
-    return true;
+    try {
+      actor.send({ type: config.eventType });
+      const { state: gotoState } = await actorService.updateFromActor(state.id, actor, steps);
+      output.status(true, 'goto', `Agent ${agentId} triggered goto to step ${gotoState.step}`, {
+        agent: agentId,
+        step: gotoState.step,
+      });
+      // Continue with execution loop after GOTO
+      const gotoEmitter = createBridgedEmitter(gotoState, output);
+      const loopResult = await runExecutionLoop(
+        manager,
+        state.id,
+        steps,
+        cwd,
+        !!state.prompted,
+        agentId,
+        gotoEmitter,
+      );
+      output.flush();
+      if (loopResult === 'stopped') process.exit(1);
+      return true;
+    } finally {
+      actor.stop();
+    }
   }
 
-  // No retry/goto - mark binding as done
+  // No retry/goto - mark binding as done; stop actor since it's no longer needed
+  actor.stop();
+
   let result: 'pass' | 'fail' = config.lastResult;
 
   if (binding.childRunbookId) {
@@ -494,97 +504,101 @@ export async function executeTransition(
 ): Promise<void> {
   const { output, manager, actorService, state, steps, actor, cwd, agentId } = ctx;
 
-  // Capture prev state BEFORE mutation (deep copy for retryCount, etc.)
-  const prevState = { ...state };
+  try {
+    // Capture prev state BEFORE mutation (deep copy for retryCount, etc.)
+    const prevState = { ...state };
 
-  // Calculate initial position for action output
-  const { displayStep } = calculatePosition(state, steps);
-  const prevSubstep = state.substep;
+    // Calculate initial position for action output
+    const { displayStep } = calculatePosition(state, steps);
+    const prevSubstep = state.substep;
 
-  // Send event
-  actor.send({ type: config.eventType });
+    // Send event
+    actor.send({ type: config.eventType });
 
-  const { state: updatedState, snapshot: rawSnapshot } = await actorService.updateFromActor(
-    state.id,
-    actor,
-    steps,
-  );
+    const { state: updatedState, snapshot: rawSnapshot } = await actorService.updateFromActor(
+      state.id,
+      actor,
+      steps,
+    );
 
-  const terminalSnapshot = asTerminalSnapshotOrDefault(rawSnapshot);
-  const isComplete = isRunbookComplete(terminalSnapshot);
-  const isStopped = isRunbookStopped(terminalSnapshot);
+    const terminalSnapshot = asTerminalSnapshotOrDefault(rawSnapshot);
+    const isComplete = isRunbookComplete(terminalSnapshot);
+    const isStopped = isRunbookStopped(terminalSnapshot);
 
-  // Read action from XState context (source of truth for retryMax and lastAction)
-  const prevStepIndex = steps.findIndex((s) => s.name === prevState.step);
-  const currentStep = prevStepIndex >= 0 ? steps[prevStepIndex] : steps[0];
-  const retryMax = extractRetryMax(rawSnapshot);
-  const lastActionFromContext = extractLastAction(rawSnapshot);
+    // Read action from XState context (source of truth for retryMax and lastAction)
+    const prevStepIndex = steps.findIndex((s) => s.name === prevState.step);
+    const currentStep = prevStepIndex >= 0 ? steps[prevStepIndex] : steps[0];
+    const retryMax = extractRetryMax(rawSnapshot);
+    const lastActionFromContext = extractLastAction(rawSnapshot);
 
-  const action = formatActionForDisplay(lastActionFromContext, updatedState.retryCount, retryMax);
+    const action = formatActionForDisplay(lastActionFromContext, updatedState.retryCount, retryMax);
 
-  // Derive action type and compute result
-  const actionType = parseActionType(lastActionFromContext);
-  const actionResult = config.computeActionResult(actionType);
+    // Derive action type and compute result
+    const actionType = parseActionType(lastActionFromContext);
+    const actionResult = config.computeActionResult(actionType);
 
-  // Update lastAction and lastResult in persistent state (pass structured object directly)
-  await manager.update(state.id, {
-    lastAction: lastActionFromContext,
-    lastResult: config.lastResult,
-  });
+    // Update lastAction and lastResult in persistent state (pass structured object directly)
+    await manager.update(state.id, {
+      lastAction: lastActionFromContext,
+      lastResult: config.lastResult,
+    });
 
-  // Build positions for output
-  const totalStepsValue = countNumberedSteps(steps);
+    // Build positions for output
+    const totalStepsValue = countNumberedSteps(steps);
 
-  const prevPos = { current: displayStep, total: totalStepsValue, substep: prevSubstep };
-  const newPos = {
-    current: updatedState.step,
-    total: totalStepsValue,
-    substep: updatedState.substep,
-  };
+    const prevPos = { current: displayStep, total: totalStepsValue, substep: prevSubstep };
+    const newPos = {
+      current: updatedState.step,
+      total: totalStepsValue,
+      substep: updatedState.substep,
+    };
 
-  // Emit action block
-  output.action({
-    action,
-    from: prevPos,
-    result: actionResult,
-    at: newPos,
-  });
+    // Emit action block
+    output.action({
+      action,
+      from: prevPos,
+      result: actionResult,
+      at: newPos,
+    });
 
-  // Evaluate condition for terminal state message (using prevState for correct retryCount)
-  const conditionResult = config.evaluateCondition(currentStep, prevState);
+    // Evaluate condition for terminal state message (using prevState for correct retryCount)
+    const conditionResult = config.evaluateCondition(currentStep, prevState);
 
-  // Handle terminal states
-  const terminalResult = await handleTerminalState(
-    ctx,
-    config,
-    isComplete,
-    isStopped,
-    prevState,
-    { prevPos, newPos },
-    conditionResult,
-  );
+    // Handle terminal states
+    const terminalResult = await handleTerminalState(
+      ctx,
+      config,
+      isComplete,
+      isStopped,
+      prevState,
+      { prevPos, newPos },
+      conditionResult,
+    );
 
-  if (terminalResult !== 'continue') {
-    return;
-  }
+    if (terminalResult !== 'continue') {
+      return;
+    }
 
-  // Create emitter bridged to unified output
-  const emitter = createBridgedEmitter(updatedState, output);
+    // Create emitter bridged to unified output
+    const emitter = createBridgedEmitter(updatedState, output);
 
-  const loopResult = await runExecutionLoop(
-    manager,
-    state.id,
-    steps,
-    cwd,
-    !!state.prompted,
-    agentId,
-    emitter,
-  );
+    const loopResult = await runExecutionLoop(
+      manager,
+      state.id,
+      steps,
+      cwd,
+      !!state.prompted,
+      agentId,
+      emitter,
+    );
 
-  // Flush any remaining output
-  output.flush();
+    // Flush any remaining output
+    output.flush();
 
-  if (loopResult === 'stopped') {
-    process.exit(1);
+    if (loopResult === 'stopped') {
+      process.exit(1);
+    }
+  } finally {
+    actor.stop();
   }
 }

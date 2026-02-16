@@ -101,12 +101,11 @@ describe('RunbookActorService', () => {
       expect(result).toBeNull();
     });
 
-    it('sends event, syncs state, and returns actor + state + snapshot', async () => {
+    it('sends event, syncs state, and returns state + snapshot', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
 
       expect(result).not.toBeNull();
-      expect(result!.actor).toBeDefined();
       expect(result!.state).toBeDefined();
       expect(result!.state.id).toBe(state.id);
       expect(result!.snapshot).toBeDefined();

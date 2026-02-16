@@ -124,13 +124,11 @@ export class SessionService {
     if (agentId) {
       const stack = session.stacks[agentId];
       if (!stack || stack.length === 0) return null;
-      activeId = stack[stack.length - 1];
-      stack.length -= 1;
+      activeId = stack.pop();
     } else {
       const stack = session.defaultStack;
       if (stack.length === 0) return null;
-      activeId = stack[stack.length - 1];
-      stack.length -= 1;
+      activeId = stack.pop();
     }
 
     if (!activeId) return null;

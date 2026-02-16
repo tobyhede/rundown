@@ -35,35 +35,39 @@ export function registerFailCommand(program: Command): void {
             return;
           }
 
-          // Handle agent binding completion (substep case)
-          // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
-          if (options.agent) {
-            const config = {
-              eventType: 'FAIL' as const,
-              commandName: 'fail' as const,
-              lastResult: 'fail' as const,
+          try {
+            // Handle agent binding completion (substep case)
+            // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
+            if (options.agent) {
+              const config = {
+                eventType: 'FAIL' as const,
+                commandName: 'fail' as const,
+                lastResult: 'fail' as const,
+                computeActionResult: () => false, // Always false for fail
+                evaluateCondition: (step: Step, prevState: RunbookState) =>
+                  evaluateFailCondition(step, prevState.retryCount),
+                terminalOrder: 'stopped-first' as const,
+                onStopped: { popRunbook: true, updateParentBinding: true },
+                onComplete: { popRunbook: true, updateParentBinding: true },
+              };
+              const handled = await handleAgentBinding(ctx, options.agent, config);
+              if (handled) return;
+            }
+
+            await executeTransition(ctx, {
+              eventType: 'FAIL',
+              commandName: 'fail',
+              lastResult: 'fail',
               computeActionResult: () => false, // Always false for fail
               evaluateCondition: (step: Step, prevState: RunbookState) =>
                 evaluateFailCondition(step, prevState.retryCount),
-              terminalOrder: 'stopped-first' as const,
+              terminalOrder: 'stopped-first',
               onStopped: { popRunbook: true, updateParentBinding: true },
               onComplete: { popRunbook: true, updateParentBinding: true },
-            };
-            const handled = await handleAgentBinding(ctx, options.agent, config);
-            if (handled) return;
+            });
+          } finally {
+            ctx.actor.stop();
           }
-
-          await executeTransition(ctx, {
-            eventType: 'FAIL',
-            commandName: 'fail',
-            lastResult: 'fail',
-            computeActionResult: () => false, // Always false for fail
-            evaluateCondition: (step: Step, prevState: RunbookState) =>
-              evaluateFailCondition(step, prevState.retryCount),
-            terminalOrder: 'stopped-first',
-            onStopped: { popRunbook: true, updateParentBinding: true },
-            onComplete: { popRunbook: true, updateParentBinding: true },
-          });
         },
         { json: options.json },
       );

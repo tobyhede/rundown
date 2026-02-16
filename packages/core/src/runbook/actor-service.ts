@@ -23,12 +23,10 @@ export type { AnyActorRef } from 'xstate';
 /**
  * Result of a {@link RunbookActorService.sendAndSync} operation.
  *
- * Bundles the actor, updated persisted state, and raw snapshot so callers
+ * Bundles the updated persisted state and raw snapshot so callers
  * can inspect terminal states (COMPLETE / STOPPED) without an extra call.
  */
 export interface ActorSyncResult {
-  /** The XState actor (started, event already sent) */
-  actor: AnyActorRef;
   /** The persisted RunbookState after syncing from actor snapshot */
   state: RunbookState;
   /** The raw persisted snapshot for terminal-state inspection */
@@ -251,19 +249,19 @@ export class RunbookActorService {
   }
 
   /**
-   * Create actor, send event, sync state, and return all three artefacts.
+   * Create actor, send event, sync state, and return updated state + snapshot.
    *
    * This is the dominant usage pattern: create actor from persisted state,
    * send a transition event (PASS/FAIL/GOTO), sync the result back to disk,
-   * and return the actor + state + snapshot for the caller to inspect
-   * terminal states and extract context.
+   * and return state + snapshot for the caller to inspect terminal states.
+   * The actor is stopped before returning.
    *
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps
    * @param event - Runbook event to send (PASS, FAIL, RETRY, or GOTO)
    * @throws {Error} If the actor snapshot's stateValue is not a string (from {@link updateFromActor})
    * @throws {Error} If the steps array is empty for a non-terminal state (from {@link updateFromActor})
-   * @returns Actor, updated state, and snapshot; or null if state not found
+   * @returns Updated state and snapshot; or null if state not found
    */
   async sendAndSync(
     id: string,
@@ -275,10 +273,9 @@ export class RunbookActorService {
     try {
       actor.send(event);
       const { state, snapshot } = await this.updateFromActor(id, actor, steps);
-      return { actor, state, snapshot };
-    } catch (err) {
+      return { state, snapshot };
+    } finally {
       actor.stop();
-      throw err;
     }
   }
 }
