@@ -380,11 +380,11 @@ describe('RunbookActorService', () => {
 
       // Verify forStack with array source is set
       expect(updated.forStack).toHaveLength(1);
-      expect(updated.forStack![0].source).toEqual({
+      expect(updated.forStack?.[0].source).toEqual({
         kind: 'array',
         items: ['x', 'y', 'z'],
       });
-      expect(updated.forStack![0].currentValue).toBe('y');
+      expect(updated.forStack?.[0].currentValue).toBe('y');
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
@@ -429,8 +429,8 @@ describe('RunbookActorService', () => {
 
       // Verify forStack with file source is set
       expect(updated.forStack).toHaveLength(1);
-      expect(updated.forStack![0].source.kind).toBe('file');
-      expect(updated.forStack![0].source).toEqual({
+      expect(updated.forStack?.[0].source.kind).toBe('file');
+      expect(updated.forStack?.[0].source).toEqual({
         kind: 'file',
         path: '/tmp/data.txt',
         format: 'text',
@@ -440,8 +440,8 @@ describe('RunbookActorService', () => {
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
       expect(loaded?.forStack).toHaveLength(1);
-      expect(loaded?.forStack![0].source.kind).toBe('file');
-      expect(loaded?.forStack![0].source).toEqual({
+      expect(loaded?.forStack?.[0].source.kind).toBe('file');
+      expect(loaded?.forStack?.[0].source).toEqual({
         kind: 'file',
         path: '/tmp/data.txt',
         format: 'text',

@@ -23,9 +23,18 @@ function generateId(): string {
   return `wf-${date}-${random}`;
 }
 
+/**
+ * Persisted session state tracking active runbook stacks per agent.
+ *
+ * Each agent maintains an independent stack of runbook IDs. A single
+ * shared stash slot allows temporarily parking a runbook.
+ */
 export interface SessionData {
-  stacks: Partial<Record<string, string[]>>; // agentId → [wf1, wf2, ...]
-  defaultStack: string[]; // main agent stack (no agentId)
+  /** Agent-specific runbook stacks, keyed by agent ID */
+  stacks: Partial<Record<string, string[]>>;
+  /** Default runbook stack used when no agent ID is specified */
+  defaultStack: string[];
+  /** ID of a temporarily stashed runbook, if any */
   stashedRunbookId?: string;
 }
 
