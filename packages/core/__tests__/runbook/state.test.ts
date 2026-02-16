@@ -11,6 +11,7 @@ describe('RunbookStateManager', () => {
   let testDir: string;
   let manager: RunbookStateManager;
   let lifecycleService: ExecutionLifecycleService;
+  let sessionService: SessionService;
   const mockSteps: Step[] = [
     {
       name: '1',
@@ -27,6 +28,7 @@ describe('RunbookStateManager', () => {
     testDir = await mkdtemp(join(tmpdir(), 'ws-test-'));
     manager = new RunbookStateManager(testDir);
     lifecycleService = new ExecutionLifecycleService(manager);
+    sessionService = new SessionService(manager);
   });
 
   afterEach(async () => {
@@ -58,7 +60,6 @@ describe('RunbookStateManager', () => {
       const child = await manager.create('child.runbook.md', mockRunbook, {
         runbookPath: 'child.runbook.md',
       });
-      const sessionService = new SessionService(manager);
       await sessionService.pushRunbook(child.id);
 
       const result = await lifecycleService.getChildRunbookResult(child.id);
@@ -74,7 +75,6 @@ describe('RunbookStateManager', () => {
       const child = await manager.create('child.runbook.md', mockRunbook, {
         runbookPath: 'child.runbook.md',
       });
-      const sessionService = new SessionService(manager);
       await sessionService.pushRunbook(child.id);
       await sessionService.stash();
 

@@ -348,7 +348,10 @@ export class RunbookStateManager {
    */
   async saveSession(session: SessionData): Promise<void> {
     await fs.mkdir(path.dirname(this.sessionPath), { recursive: true });
-    await fs.writeFile(this.sessionPath, JSON.stringify(session, null, 2));
+    await fs.writeFile(this.sessionPath, JSON.stringify(session, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
   }
 
   /**

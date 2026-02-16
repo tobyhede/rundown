@@ -195,7 +195,6 @@ describe('runExecutionLoop', () => {
     (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
 
     mockActorService.sendAndSync.mockResolvedValue({
-      actor: {},
       state: { id: runbookId, step: '2', status: 'running' },
       snapshot: {
         status: 'active',
@@ -257,7 +256,6 @@ describe('runExecutionLoop', () => {
     (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
 
     mockActorService.sendAndSync.mockResolvedValue({
-      actor: {},
       state: {
         id: runbookId,
         step: '1',
