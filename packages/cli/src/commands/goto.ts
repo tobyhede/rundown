@@ -4,6 +4,7 @@ import type { Command } from 'commander';
 import {
   RunbookStateManager,
   RunbookActorService,
+  SessionService,
   parseStepIdFromString,
   stepIdToString,
   countNumberedSteps,
@@ -31,7 +32,8 @@ export function registerGotoCommand(program: Command): void {
           const output = new OutputEmitter({ json: options.json });
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
-          const state = await manager.getActive();
+          const sessionService = new SessionService(manager);
+          const state = await sessionService.getActive();
 
           if (!state) {
             output.noActiveRunbook('goto');

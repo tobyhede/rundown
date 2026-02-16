@@ -9,6 +9,11 @@
 # Build:
 #   docker build -f scripts/Dockerfile.verify --target local -t rundown-verify:local .
 #   docker build -f scripts/Dockerfile.verify --target npm   -t rundown-verify:npm .
+#
+# Prerequisites:
+#   Run scripts/verify-install.sh (which cleans dist/*.tgz before packing)
+#   to ensure exactly one tarball per package. Stale tarballs will cause
+#   glob ambiguity in the COPY and npm install steps below.
 
 # ── Base stage ───────────────────────────────────────────────────────────────
 
@@ -33,8 +38,7 @@ RUN useradd -m -s /bin/bash testuser && \
 RUN npm install -g @anthropic-ai/claude-code@2
 
 # Copy entrypoint
-COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY --chmod=755 scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 USER testuser
 WORKDIR /home/testuser
@@ -43,6 +47,7 @@ WORKDIR /home/testuser
 
 FROM base AS local
 
+# NOTE: verify-install.sh must run before docker build to remove stale tarballs
 # Copy packed tarballs
 USER root
 COPY dist/rundown-org-parser-*.tgz /tmp/tarballs/
@@ -60,7 +65,7 @@ RUN npm install -g \
 
 USER testuser
 
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["local"]
 
 # ── npm stage (post-publish) ─────────────────────────────────────────────────
@@ -68,5 +73,5 @@ CMD ["local"]
 FROM base AS npm
 
 # npm packages are installed at runtime via entrypoint
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["npm"]

@@ -17,18 +17,21 @@ import type { Step, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent } from './compiler.js';
 
-// Re-export so CLI callers import from core, not directly from xstate
+/**
+ * Re-export of XState's {@link https://stately.ai/docs/actors | AnyActorRef} type.
+ *
+ * Provided so CLI callers import from `@rundown-org/core` rather than
+ * depending on `xstate` directly.
+ */
 export type { AnyActorRef } from 'xstate';
 
 /**
  * Result of a {@link RunbookActorService.sendAndSync} operation.
  *
- * Bundles the actor, updated persisted state, and raw snapshot so callers
+ * Bundles the updated persisted state and raw snapshot so callers
  * can inspect terminal states (COMPLETE / STOPPED) without an extra call.
  */
 export interface ActorSyncResult {
-  /** The XState actor (started, event already sent) */
-  actor: AnyActorRef;
   /** The persisted RunbookState after syncing from actor snapshot */
   state: RunbookState;
   /** The raw persisted snapshot for terminal-state inspection */
@@ -65,7 +68,9 @@ export class RunbookActorService {
     const machine = compileRunbookToMachine(steps, { sources: state.sources });
 
     // Migrate old snapshot context: flat FOR fields → forStack
-    // Defensive copy so mutations don't leak into manager caches
+    // Intentionally shallow copy — only snapshot.context is replaced during
+    // migration, so other nested properties (e.g. snapshot.children) remain
+    // aliased to the original. This is safe because we never mutate them.
     // Snapshot migration deals with untyped persisted data — any is unavoidable
     /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
     const rawSnapshot = state.snapshot as any;
@@ -136,13 +141,14 @@ export class RunbookActorService {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
     const snapshot = actor.getPersistedSnapshot() as any;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const stateValue = snapshot.value as string;
+    const rawValue: unknown = snapshot.value;
 
-    if (typeof stateValue !== 'string') {
+    if (typeof rawValue !== 'string') {
       throw new Error(
-        `Unexpected non-string stateValue for runbook "${id}": ${JSON.stringify(stateValue)}`,
+        `Unexpected non-string stateValue for runbook "${id}": ${JSON.stringify(rawValue)}`,
       );
     }
+    const stateValue = rawValue;
 
     // If the runbook is in a final state, don't try to parse a step number.
     // Just update the snapshot and variables, preserving the last step number.
@@ -189,7 +195,7 @@ export class RunbookActorService {
     const step = steps.find((s) => s.name === stepName) ?? steps[0];
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const retryCount = snapshot.context?.retryCount as number;
+    const retryCount = (snapshot.context?.retryCount as number | undefined) ?? 0;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const variables = (snapshot.context?.variables ?? {}) as Record<
       string,
@@ -250,17 +256,19 @@ export class RunbookActorService {
   }
 
   /**
-   * Create actor, send event, sync state, and return all three artefacts.
+   * Create actor, send event, sync state, and return updated state + snapshot.
    *
    * This is the dominant usage pattern: create actor from persisted state,
    * send a transition event (PASS/FAIL/GOTO), sync the result back to disk,
-   * and return the actor + state + snapshot for the caller to inspect
-   * terminal states and extract context.
+   * and return state + snapshot for the caller to inspect terminal states.
+   * The actor is stopped before returning.
    *
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps
    * @param event - Runbook event to send (PASS, FAIL, RETRY, or GOTO)
-   * @returns Actor, updated state, and snapshot; or null if state not found
+   * @throws {Error} If the actor snapshot's stateValue is not a string (from {@link updateFromActor})
+   * @throws {Error} If the steps array is empty for a non-terminal state (from {@link updateFromActor})
+   * @returns Updated state and snapshot; or null if state not found
    */
   async sendAndSync(
     id: string,
@@ -272,10 +280,9 @@ export class RunbookActorService {
     try {
       actor.send(event);
       const { state, snapshot } = await this.updateFromActor(id, actor, steps);
-      return { actor, state, snapshot };
-    } catch (err) {
+      return { state, snapshot };
+    } finally {
       actor.stop();
-      throw err;
     }
   }
 }

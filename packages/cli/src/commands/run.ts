@@ -6,6 +6,8 @@ import * as path from 'path';
 import {
   RunbookStateManager,
   RunbookActorService,
+  SessionService,
+  ExecutionLifecycleService,
   parseRunbookDocument,
   RunbookSyntaxError,
   stepIdToString,
@@ -15,7 +17,6 @@ import {
   type PendingStep,
   type RunbookState,
   type ExecutionEventEmitter,
-  type Step,
 } from '@rundown-org/core';
 import { isSourced, type ForClause } from '@rundown-org/parser';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
@@ -71,21 +72,6 @@ function validateSources(
 }
 
 /**
- * Initialize actor state for a runbook, populating forStack for the first step.
- * @param manager - The RunbookStateManager instance
- * @param stateId - The ID of the runbook state
- * @param steps - The parsed runbook steps
- */
-async function initializeActor(
-  manager: RunbookStateManager,
-  stateId: string,
-  steps: Step[],
-): Promise<void> {
-  const actorService = new RunbookActorService(manager);
-  await actorService.initializeState(stateId, steps);
-}
-
-/**
  * Registers the 'run' command for starting runbooks.
  * @param program - Commander program instance to register the command on
  */
@@ -117,10 +103,13 @@ export function registerRunCommand(program: Command): void {
         try {
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
+          const actorService = new RunbookActorService(manager);
+          const sessionService = new SessionService(manager);
+          const lifecycleService = new ExecutionLifecycleService(manager);
 
           // Mode 1: --step - Push step to pending queue
           if (options.step && !options.agent) {
-            const state = await manager.getActive();
+            const state = await sessionService.getActive();
             if (!state) {
               output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
               output.flush();
@@ -145,7 +134,7 @@ export function registerRunCommand(program: Command): void {
               runbook: file,
             };
 
-            await manager.pushPendingStep(state.id, pendingStep);
+            await lifecycleService.pushPendingStep(state.id, pendingStep);
 
             const runbookInfo = file ? ` with runbook ${file}` : '';
             output.status(
@@ -220,9 +209,9 @@ export function registerRunCommand(program: Command): void {
             });
 
             // Initialize actor state (populates forStack for first step)
-            await initializeActor(manager, state.id, runbook.steps as Step[]);
+            await actorService.initializeState(state.id, [...runbook.steps]);
 
-            await manager.pushRunbook(state.id, options.agent);
+            await sessionService.pushRunbook(state.id, options.agent);
 
             if (runbook.steps[0].substeps && runbook.steps[0].substeps.length > 0) {
               await manager.initializeSubsteps(state.id, runbook.steps[0].substeps);
@@ -246,7 +235,7 @@ export function registerRunCommand(program: Command): void {
               [...runbook.steps],
               cwd,
               !!options.prompted,
-              undefined,
+              options.agent,
               emitter,
             );
 
@@ -261,14 +250,14 @@ export function registerRunCommand(program: Command): void {
 
           // Mode 3: --agent - Bind agent to pending step
           if (options.agent) {
-            const state = await manager.getActive();
+            const state = await sessionService.getActive();
             if (!state) {
               output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
               output.flush();
               process.exit(1);
             }
 
-            const pending = await manager.popPendingStep(state.id);
+            const pending = await lifecycleService.popPendingStep(state.id);
             if (!pending) {
               output.error('No pending step to bind', 'AGENT_BINDING_ERROR', {
                 agent: options.agent,
@@ -348,13 +337,13 @@ export function registerRunCommand(program: Command): void {
               });
 
               // Initialize actor state (populates forStack for first step)
-              await initializeActor(manager, childState.id, runbook.steps as Step[]);
+              await actorService.initializeState(childState.id, [...runbook.steps]);
 
               await manager.updateAgentBinding(state.id, options.agent, {
                 childRunbookId: childState.id,
               });
 
-              await manager.pushRunbook(childState.id, options.agent);
+              await sessionService.pushRunbook(childState.id, options.agent);
 
               // Update lastAction
               await manager.update(childState.id, { lastAction: { type: 'START' } });

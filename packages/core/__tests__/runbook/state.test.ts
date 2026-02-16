@@ -3,11 +3,15 @@ import { mkdtemp, rm, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
+import { SessionService } from '../../src/runbook/session-service.js';
+import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { type Step, type Runbook } from '../../src/runbook/types.js';
 
 describe('RunbookStateManager', () => {
   let testDir: string;
   let manager: RunbookStateManager;
+  let lifecycleService: ExecutionLifecycleService;
+  let sessionService: SessionService;
   const mockSteps: Step[] = [
     {
       name: '1',
@@ -23,6 +27,8 @@ describe('RunbookStateManager', () => {
   beforeEach(async () => {
     testDir = await mkdtemp(join(tmpdir(), 'ws-test-'));
     manager = new RunbookStateManager(testDir);
+    lifecycleService = new ExecutionLifecycleService(manager);
+    sessionService = new SessionService(manager);
   });
 
   afterEach(async () => {
@@ -36,7 +42,7 @@ describe('RunbookStateManager', () => {
       });
       await manager.update(child.id, { variables: { completed: true } });
 
-      const result = await manager.getChildRunbookResult(child.id);
+      const result = await lifecycleService.getChildRunbookResult(child.id);
       expect(result).toBe('pass');
     });
 
@@ -46,7 +52,7 @@ describe('RunbookStateManager', () => {
       });
       await manager.update(child.id, { variables: { stopped: true } });
 
-      const result = await manager.getChildRunbookResult(child.id);
+      const result = await lifecycleService.getChildRunbookResult(child.id);
       expect(result).toBe('fail');
     });
 
@@ -54,14 +60,14 @@ describe('RunbookStateManager', () => {
       const child = await manager.create('child.runbook.md', mockRunbook, {
         runbookPath: 'child.runbook.md',
       });
-      await manager.pushRunbook(child.id);
+      await sessionService.pushRunbook(child.id);
 
-      const result = await manager.getChildRunbookResult(child.id);
+      const result = await lifecycleService.getChildRunbookResult(child.id);
       expect(result).toBeNull();
     });
 
     it('should return pass when child state deleted', async () => {
-      const result = await manager.getChildRunbookResult('nonexistent-id');
+      const result = await lifecycleService.getChildRunbookResult('nonexistent-id');
       expect(result).toBe('pass');
     });
 
@@ -69,10 +75,10 @@ describe('RunbookStateManager', () => {
       const child = await manager.create('child.runbook.md', mockRunbook, {
         runbookPath: 'child.runbook.md',
       });
-      await manager.pushRunbook(child.id);
-      await manager.stash();
+      await sessionService.pushRunbook(child.id);
+      await sessionService.stash();
 
-      const result = await manager.getChildRunbookResult(child.id);
+      const result = await lifecycleService.getChildRunbookResult(child.id);
       expect(result).toBeNull();
     });
   });
@@ -155,145 +161,6 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  describe('Per-agent runbook stacks', () => {
-    it('pushRunbook adds to default stack when no agentId', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      await manager.pushRunbook(state.id);
-
-      const active = await manager.getActive();
-      expect(active?.id).toBe(state.id);
-    });
-
-    it('pushRunbook adds to agent-specific stack', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      await manager.pushRunbook(state.id, 'agent-001');
-
-      const active = await manager.getActive('agent-001');
-      expect(active?.id).toBe(state.id);
-
-      // Default stack should be empty
-      const defaultActive = await manager.getActive();
-      expect(defaultActive).toBeNull();
-    });
-
-    it('popRunbook removes from stack and returns new top', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
-      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
-
-      await manager.pushRunbook(parent.id);
-      await manager.pushRunbook(child.id);
-
-      const newTopId = await manager.popRunbook();
-      expect(newTopId).toBe(parent.id);
-
-      const active = await manager.getActive();
-      expect(active?.id).toBe(parent.id);
-    });
-
-    it('supports arbitrary nesting depth', async () => {
-      const wf1 = await manager.create('level1.md', mockRunbook, { runbookPath: 'level1.md' });
-      const wf2 = await manager.create('level2.md', mockRunbook, { runbookPath: 'level2.md' });
-      const wf3 = await manager.create('level3.md', mockRunbook, { runbookPath: 'level3.md' });
-      const wf4 = await manager.create('level4.md', mockRunbook, { runbookPath: 'level4.md' });
-
-      await manager.pushRunbook(wf1.id);
-      await manager.pushRunbook(wf2.id);
-      await manager.pushRunbook(wf3.id);
-      await manager.pushRunbook(wf4.id);
-
-      expect((await manager.getActive())?.id).toBe(wf4.id);
-
-      await manager.popRunbook();
-      expect((await manager.getActive())?.id).toBe(wf3.id);
-
-      await manager.popRunbook();
-      expect((await manager.getActive())?.id).toBe(wf2.id);
-
-      await manager.popRunbook();
-      expect((await manager.getActive())?.id).toBe(wf1.id);
-
-      await manager.popRunbook();
-      expect(await manager.getActive()).toBeNull();
-    });
-
-    it('parallel agents have independent stacks', async () => {
-      const main = await manager.create('main.md', mockRunbook, { runbookPath: 'main.md' });
-      const child1 = await manager.create('child1.md', mockRunbook, { runbookPath: 'child1.md' });
-      const child2 = await manager.create('child2.md', mockRunbook, { runbookPath: 'child2.md' });
-
-      await manager.pushRunbook(main.id);
-      await manager.pushRunbook(child1.id, 'agent-001');
-      await manager.pushRunbook(child2.id, 'agent-002');
-
-      // Each agent sees their own runbook
-      expect((await manager.getActive())?.id).toBe(main.id);
-      expect((await manager.getActive('agent-001'))?.id).toBe(child1.id);
-      expect((await manager.getActive('agent-002'))?.id).toBe(child2.id);
-
-      // Pop one agent doesn't affect others
-      await manager.popRunbook('agent-001');
-      expect(await manager.getActive('agent-001')).toBeNull();
-      expect((await manager.getActive('agent-002'))?.id).toBe(child2.id);
-      expect((await manager.getActive())?.id).toBe(main.id);
-    });
-  });
-
-  describe('Stash and pop operations', () => {
-    it('stash saves current runbook and removes from stack', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      await manager.pushRunbook(state.id);
-
-      const stashedId = await manager.stash();
-
-      expect(stashedId).toBe(state.id);
-      expect(await manager.getActive()).toBeNull();
-      expect(await manager.getStashedRunbookId()).toBe(state.id);
-    });
-
-    it('stash returns null when no active runbook', async () => {
-      const stashedId = await manager.stash();
-      expect(stashedId).toBeNull();
-    });
-
-    it('pop restores stashed runbook', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      await manager.pushRunbook(state.id);
-      await manager.stash();
-
-      const restored = await manager.pop();
-
-      expect(restored?.id).toBe(state.id);
-      expect((await manager.getActive())?.id).toBe(state.id);
-      expect(await manager.getStashedRunbookId()).toBeNull();
-    });
-
-    it('pop returns null when nothing stashed', async () => {
-      const restored = await manager.pop();
-      expect(restored).toBeNull();
-    });
-
-    it('stash works with agent-specific stacks', async () => {
-      const state = await manager.create('agent.md', mockRunbook, { runbookPath: 'agent.md' });
-      await manager.pushRunbook(state.id, 'agent-x');
-
-      const stashedId = await manager.stash('agent-x');
-
-      expect(stashedId).toBe(state.id);
-      expect(await manager.getActive('agent-x')).toBeNull();
-    });
-
-    it('pop restores to agent-specific stack', async () => {
-      const state = await manager.create('agent.md', mockRunbook, { runbookPath: 'agent.md' });
-      await manager.pushRunbook(state.id, 'agent-y');
-      await manager.stash('agent-y');
-
-      const restored = await manager.pop('agent-y');
-
-      expect(restored?.id).toBe(state.id);
-      expect((await manager.getActive('agent-y'))?.id).toBe(state.id);
-    });
-  });
-
   describe('Agent bindings', () => {
     it('bindAgent creates new binding', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
@@ -348,8 +215,8 @@ describe('RunbookStateManager', () => {
     it('pushPendingStep adds to queue', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
-      await manager.pushPendingStep(state.id, { stepId: { step: '1' } });
-      await manager.pushPendingStep(state.id, { stepId: { step: '2' } });
+      await lifecycleService.pushPendingStep(state.id, { stepId: { step: '1' } });
+      await lifecycleService.pushPendingStep(state.id, { stepId: { step: '2' } });
 
       const updated = await manager.load(state.id);
       expect(updated?.pendingSteps).toHaveLength(2);
@@ -357,12 +224,12 @@ describe('RunbookStateManager', () => {
 
     it('popPendingStep removes from queue in FIFO order', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      await manager.pushPendingStep(state.id, { stepId: { step: 'first' } });
-      await manager.pushPendingStep(state.id, { stepId: { step: 'second' } });
+      await lifecycleService.pushPendingStep(state.id, { stepId: { step: 'first' } });
+      await lifecycleService.pushPendingStep(state.id, { stepId: { step: 'second' } });
 
-      const first = await manager.popPendingStep(state.id);
-      const second = await manager.popPendingStep(state.id);
-      const empty = await manager.popPendingStep(state.id);
+      const first = await lifecycleService.popPendingStep(state.id);
+      const second = await lifecycleService.popPendingStep(state.id);
+      const empty = await lifecycleService.popPendingStep(state.id);
 
       expect(first?.stepId).toEqual({ step: 'first' });
       expect(second?.stepId).toEqual({ step: 'second' });
@@ -370,13 +237,13 @@ describe('RunbookStateManager', () => {
     });
 
     it('popPendingStep returns null for nonexistent runbook', async () => {
-      const result = await manager.popPendingStep('nonexistent');
+      const result = await lifecycleService.popPendingStep('nonexistent');
       expect(result).toBeNull();
     });
 
     it('pushPendingStep throws for missing runbook', async () => {
       await expect(
-        manager.pushPendingStep('nonexistent', { stepId: { step: '1' } }),
+        lifecycleService.pushPendingStep('nonexistent', { stepId: { step: '1' } }),
       ).rejects.toThrow('not found');
     });
   });
@@ -421,7 +288,7 @@ describe('RunbookStateManager', () => {
     it('setLastResult updates last result', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
-      await manager.setLastResult(state.id, 'pass');
+      await lifecycleService.setLastResult(state.id, 'pass');
 
       const updated = await manager.load(state.id);
       expect(updated?.lastResult).toBe('pass');
@@ -439,19 +306,19 @@ describe('RunbookStateManager', () => {
         prompted: true,
       });
 
-      const result = await manager.isParentPrompted(parent.id);
+      const result = await lifecycleService.isParentPrompted(parent.id);
       expect(result).toBe(true);
     });
 
     it('returns false when parent has no prompted flag', async () => {
       const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
 
-      const result = await manager.isParentPrompted(parent.id);
+      const result = await lifecycleService.isParentPrompted(parent.id);
       expect(result).toBe(false);
     });
 
     it('returns false for nonexistent parent', async () => {
-      const result = await manager.isParentPrompted('nonexistent');
+      const result = await lifecycleService.isParentPrompted('nonexistent');
       expect(result).toBe(false);
     });
   });

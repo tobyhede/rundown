@@ -5,7 +5,6 @@ import {
   type RunbookState,
   type ForContext,
   type AgentBinding,
-  type PendingStep,
   type Substep,
   type SubstepState,
   type Runbook,
@@ -24,7 +23,7 @@ function generateId(): string {
   return `wf-${date}-${random}`;
 }
 
-interface SessionData {
+export interface SessionData {
   stacks: Partial<Record<string, string[]>>; // agentId → [wf1, wf2, ...]
   defaultStack: string[]; // main agent stack (no agentId)
   stashedRunbookId?: string;
@@ -218,28 +217,6 @@ export class RunbookStateManager {
   }
 
   /**
-   * Set the last result (pass/fail) for a runbook step.
-   *
-   * @param id - The runbook state ID
-   * @param result - The result to record ('pass' or 'fail')
-   * @throws Error if the runbook with the given ID is not found
-   */
-  async setLastResult(id: string, result: 'pass' | 'fail'): Promise<void> {
-    await this.update(id, { lastResult: result });
-  }
-
-  /**
-   * Check if a parent runbook was started in prompted mode.
-   *
-   * @param parentRunbookId - The parent runbook state ID
-   * @returns True if the parent runbook has prompted flag set, false otherwise
-   */
-  async isParentPrompted(parentRunbookId: string): Promise<boolean> {
-    const parent = await this.load(parentRunbookId);
-    return parent?.prompted ?? false;
-  }
-
-  /**
    * Delete a runbook state file from disk.
    *
    * Silently ignores errors if the file does not exist.
@@ -252,82 +229,6 @@ export class RunbookStateManager {
     } catch {
       /* intentionally ignored */
     }
-  }
-
-  /**
-   * Get the currently active runbook for an agent.
-   *
-   * Returns the top runbook from the agent's stack.
-   *
-   * @param agentId - Optional agent ID; if omitted, uses the default stack
-   * @returns The active runbook state, or null if no runbook is active
-   */
-  async getActive(agentId?: string): Promise<RunbookState | null> {
-    const session = await this.loadSession();
-
-    let stack: string[];
-    if (agentId) {
-      stack = session.stacks[agentId] ?? [];
-    } else {
-      stack = session.defaultStack;
-    }
-
-    const topId = stack[stack.length - 1];
-    return topId ? await this.load(topId) : null;
-  }
-
-  /**
-   * Push a runbook onto an agent's runbook stack.
-   *
-   * Used when starting a new runbook or entering a nested/child runbook.
-   * The pushed runbook becomes the active runbook for the agent.
-   *
-   * @param id - The runbook state ID to push
-   * @param agentId - Optional agent ID; if omitted, uses the default stack
-   */
-  async pushRunbook(id: string, agentId?: string): Promise<void> {
-    const session = await this.loadSession();
-
-    if (agentId) {
-      const stack = session.stacks[agentId];
-      if (stack) {
-        stack.push(id);
-      } else {
-        session.stacks[agentId] = [id];
-      }
-    } else {
-      session.defaultStack.push(id);
-    }
-
-    await this.saveSession(session);
-  }
-
-  /**
-   * Pop a runbook from an agent's runbook stack.
-   *
-   * Used when completing or stopping a runbook. Removes the top runbook
-   * and returns the new top (parent runbook) ID if one exists.
-   *
-   * @param agentId - Optional agent ID; if omitted, uses the default stack
-   * @returns The new active runbook ID (parent), or null if the stack is empty
-   */
-  async popRunbook(agentId?: string): Promise<string | null> {
-    const session = await this.loadSession();
-
-    let stack: string[];
-    if (agentId) {
-      stack = session.stacks[agentId] ?? [];
-      stack.pop();
-      session.stacks[agentId] = stack;
-    } else {
-      stack = session.defaultStack;
-      stack.pop();
-    }
-
-    await this.saveSession(session);
-
-    // Return new top (parent runbook)
-    return stack[stack.length - 1] ?? null;
   }
 
   /**
@@ -353,40 +254,6 @@ export class RunbookStateManager {
     } catch {
       return [];
     }
-  }
-
-  /**
-   * Push a pending step onto the runbook's pending step queue.
-   *
-   * Pending steps are used to correlate Step tool dispatch with SubagentStart
-   * events in orchestration scenarios.
-   *
-   * @param id - The runbook state ID
-   * @param pending - The pending step to push (includes stepId and optional child runbook path)
-   * @throws Error if the runbook with the given ID is not found
-   */
-  async pushPendingStep(id: string, pending: PendingStep): Promise<void> {
-    const state = await this.load(id);
-    if (!state) throw new Error(`Runbook ${id} not found`);
-
-    await this.update(id, {
-      pendingSteps: [...state.pendingSteps, pending],
-    });
-  }
-
-  /**
-   * Pop the first pending step from the runbook's pending step queue.
-   *
-   * @param id - The runbook state ID
-   * @returns The first pending step, or null if the queue is empty or runbook not found
-   */
-  async popPendingStep(id: string): Promise<PendingStep | null> {
-    const state = await this.load(id);
-    if (!state || state.pendingSteps.length === 0) return null;
-
-    const [first, ...rest] = state.pendingSteps;
-    await this.update(id, { pendingSteps: rest });
-    return first;
   }
 
   /**
@@ -461,87 +328,11 @@ export class RunbookStateManager {
   }
 
   /**
-   * Stash the currently active runbook to allow temporarily switching contexts.
+   * Load the session data from disk.
    *
-   * Removes the active runbook from the agent's stack and stores its ID
-   * in the session's stashed slot. Only one runbook can be stashed at a time.
-   *
-   * @param agentId - Optional agent ID; if omitted, uses the default stack
-   * @returns The stashed runbook ID, or null if no runbook was active
+   * @returns The parsed session data, or a default empty session if the file doesn't exist
    */
-  async stash(agentId?: string): Promise<string | null> {
-    const session = await this.loadSession();
-
-    let activeId: string | undefined;
-    if (agentId) {
-      const stack = session.stacks[agentId];
-      if (!stack || stack.length === 0) return null;
-      activeId = stack[stack.length - 1];
-      stack.pop();
-    } else {
-      const stack = session.defaultStack;
-      if (stack.length === 0) return null;
-      activeId = stack[stack.length - 1];
-      stack.pop();
-    }
-
-    session.stashedRunbookId = activeId;
-    await this.saveSession(session);
-
-    return activeId;
-  }
-
-  /**
-   * Restore a previously stashed runbook to the active stack.
-   *
-   * Retrieves the stashed runbook ID and pushes it back onto the agent's
-   * stack, making it the active runbook again. Clears the stashed slot.
-   *
-   * @param agentId - Optional agent ID; if omitted, uses the default stack
-   * @returns The restored runbook state, or null if nothing was stashed or runbook not found
-   */
-  async pop(agentId?: string): Promise<RunbookState | null> {
-    const session = await this.loadSession();
-    const stashedId = session.stashedRunbookId;
-
-    if (!stashedId) return null;
-
-    const state = await this.load(stashedId);
-    if (!state) {
-      session.stashedRunbookId = undefined;
-      await this.saveSession(session);
-      return null;
-    }
-
-    // Push back to appropriate stack
-    if (agentId) {
-      const stack = session.stacks[agentId];
-      if (stack) {
-        stack.push(stashedId);
-      } else {
-        session.stacks[agentId] = [stashedId];
-      }
-    } else {
-      session.defaultStack.push(stashedId);
-    }
-
-    session.stashedRunbookId = undefined;
-    await this.saveSession(session);
-
-    return state;
-  }
-
-  /**
-   * Get the ID of the currently stashed runbook, if any.
-   *
-   * @returns The stashed runbook ID, or null if nothing is stashed
-   */
-  async getStashedRunbookId(): Promise<string | null> {
-    const session = await this.loadSession();
-    return session.stashedRunbookId ?? null;
-  }
-
-  private async loadSession(): Promise<SessionData> {
+  async loadSession(): Promise<SessionData> {
     try {
       const content = await fs.readFile(this.sessionPath, 'utf8');
       return JSON.parse(content) as SessionData;
@@ -550,30 +341,17 @@ export class RunbookStateManager {
     }
   }
 
-  private async saveSession(session: SessionData): Promise<void> {
-    await fs.mkdir(path.dirname(this.sessionPath), { recursive: true });
-    await fs.writeFile(this.sessionPath, JSON.stringify(session, null, 2));
-  }
-
   /**
-   * Get the result of a child runbook execution.
+   * Persist session data to disk.
    *
-   * Determines the result based on the child runbook's variables:
-   * - Returns 'fail' if stopped is true
-   * - Returns 'pass' if completed is true or runbook not found
-   * - Returns null if the runbook is still in progress
-   *
-   * @param childId - The child runbook state ID
-   * @returns 'pass', 'fail', or null if still in progress
+   * @param session - The session data to write
    */
-  async getChildRunbookResult(childId: string): Promise<'pass' | 'fail' | null> {
-    const child = await this.load(childId);
-    if (!child) return 'pass';
-
-    if (child.variables.stopped === true) return 'fail';
-    if (child.variables.completed === true) return 'pass';
-
-    return null;
+  async saveSession(session: SessionData): Promise<void> {
+    await fs.mkdir(path.dirname(this.sessionPath), { recursive: true });
+    await fs.writeFile(this.sessionPath, JSON.stringify(session, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
   }
 
   /**

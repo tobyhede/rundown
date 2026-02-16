@@ -5,6 +5,14 @@ const mockActorService = {
   sendAndSync: jest.fn(),
 };
 
+const mockSessionService = {
+  popRunbook: jest.fn(),
+};
+
+const mockLifecycleService = {
+  setLastResult: jest.fn(),
+};
+
 jest.unstable_mockModule('@rundown-org/core', () => {
   const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
     if (
@@ -35,6 +43,8 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     createFileProvider: jest.fn(),
     computeFileSnapshot: jest.fn(),
     RunbookActorService: jest.fn().mockImplementation(() => mockActorService),
+    SessionService: jest.fn().mockImplementation(() => mockSessionService),
+    ExecutionLifecycleService: jest.fn().mockImplementation(() => mockLifecycleService),
     ForIterationService: jest.fn().mockImplementation(() => ({
       prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
     })),
@@ -107,8 +117,6 @@ describe('runExecutionLoop', () => {
     mockManager = {
       load: jest.fn(),
       update: jest.fn(),
-      setLastResult: jest.fn(),
-      popRunbook: jest.fn(),
       updateAgentBinding: jest.fn(),
     };
 
@@ -187,7 +195,6 @@ describe('runExecutionLoop', () => {
     (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
 
     mockActorService.sendAndSync.mockResolvedValue({
-      actor: {},
       state: { id: runbookId, step: '2', status: 'running' },
       snapshot: {
         status: 'active',
@@ -249,7 +256,6 @@ describe('runExecutionLoop', () => {
     (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
 
     mockActorService.sendAndSync.mockResolvedValue({
-      actor: {},
       state: {
         id: runbookId,
         step: '1',
@@ -281,7 +287,7 @@ describe('runExecutionLoop', () => {
         message: 'Success',
       }),
     );
-    expect(mockManager.popRunbook).toHaveBeenCalled();
+    expect(mockSessionService.popRunbook).toHaveBeenCalled();
   });
 
   it('performs terminal bookkeeping when loop exhaustion completes a child runbook', async () => {
@@ -335,7 +341,7 @@ describe('runExecutionLoop', () => {
       status: 'done',
       result: 'pass',
     });
-    expect(mockManager.popRunbook).toHaveBeenCalledWith(childAgentId);
+    expect(mockSessionService.popRunbook).toHaveBeenCalledWith(childAgentId);
   });
 
   it('performs terminal bookkeeping when loop exhaustion stops a child runbook', async () => {
@@ -384,7 +390,7 @@ describe('runExecutionLoop', () => {
       status: 'done',
       result: 'fail',
     });
-    expect(mockManager.popRunbook).toHaveBeenCalledWith(childAgentId);
+    expect(mockSessionService.popRunbook).toHaveBeenCalledWith(childAgentId);
   });
 
   it('uses expanded command text in printStepBlock fallback (prompted mode, no emitter)', async () => {

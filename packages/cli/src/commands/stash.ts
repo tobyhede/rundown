@@ -1,7 +1,7 @@
 // packages/cli/src/commands/stash.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager } from '@rundown-org/core';
+import { RunbookStateManager, SessionService } from '@rundown-org/core';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -23,7 +23,8 @@ export function registerStashCommand(program: Command): void {
           const cwd = getCwd();
           const output = new OutputEmitter({ json: options.json });
           const manager = new RunbookStateManager(cwd);
-          const state = await manager.getActive(options.agent);
+          const sessionService = new SessionService(manager);
+          const state = await sessionService.getActive(options.agent);
 
           if (!state) {
             output.noActiveRunbook();
@@ -34,7 +35,7 @@ export function registerStashCommand(program: Command): void {
           const totalSteps = await getStepTotal(cwd, state.runbook);
 
           // Stash the runbook
-          await manager.stash(options.agent);
+          await sessionService.stash(options.agent);
 
           // Emit structured output - TextRenderer handles stash action specially
           output.metadata(buildMetadata(state));

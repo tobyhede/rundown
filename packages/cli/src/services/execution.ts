@@ -3,6 +3,8 @@
 import {
   type RunbookStateManager,
   RunbookActorService,
+  SessionService,
+  ExecutionLifecycleService,
   ForIterationService,
   printActionBlock,
   printStepBlock,
@@ -26,8 +28,8 @@ import {
   type LastAction,
   type ForContext,
   type DataSource,
-  isRunbookComplete as _isRunbookComplete,
-  isRunbookStopped as _isRunbookStopped,
+  isRunbookComplete,
+  isRunbookStopped,
   asTerminalSnapshotOrDefault,
 } from '@rundown-org/core';
 import { isSourced } from '@rundown-org/parser';
@@ -54,10 +56,6 @@ export type StepVariables = Record<string, unknown>;
  * Sourced from frontmatter, CLI flags, or config files.
  */
 export type TemplateVariables = Record<string, string>;
-
-// Re-export from core so existing imports from this module continue to work
-export const isRunbookComplete = _isRunbookComplete;
-export const isRunbookStopped = _isRunbookStopped;
 
 /**
  * Build per-step dynamic variables for Phase 2 expansion.
@@ -182,6 +180,8 @@ export async function runExecutionLoop(
 
   // Service for resolving FOR loop iteration values (array, file, range)
   const actorService = new RunbookActorService(manager);
+  const sessionService = new SessionService(manager);
+  const lifecycleService = new ExecutionLifecycleService(manager);
   const iterationService = new ForIterationService(manager, actorService);
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -236,7 +236,7 @@ export async function runExecutionLoop(
         } else {
           printRunbookComplete(completionMessage);
         }
-        await manager.popRunbook(agentId);
+        await sessionService.popRunbook(agentId);
         return 'done';
       }
       if (iterResult.terminal === 'stopped') {
@@ -269,7 +269,7 @@ export async function runExecutionLoop(
           printRunbookStoppedAtStep(stopPos, stopMessage);
         }
 
-        await manager.popRunbook(agentId);
+        await sessionService.popRunbook(agentId);
         return 'stopped';
       }
       // No terminal state — machine transitioned to next step after loop exit
@@ -417,7 +417,7 @@ export async function runExecutionLoop(
 
     // Store result
     const lastResult = execResult.success ? 'pass' : 'fail';
-    await manager.setLastResult(runbookId, lastResult);
+    await lifecycleService.setLastResult(runbookId, lastResult);
 
     // Capture prev state BEFORE mutation
     const prevStep = currentState.step;
@@ -507,7 +507,7 @@ export async function runExecutionLoop(
       }
 
       // Pop current runbook from stack (makes parent active if exists, or clears stack)
-      await manager.popRunbook(agentId);
+      await sessionService.popRunbook(agentId);
       return 'done';
     }
 
@@ -545,7 +545,7 @@ export async function runExecutionLoop(
       }
 
       // Pop current runbook from stack
-      await manager.popRunbook(agentId);
+      await sessionService.popRunbook(agentId);
       return 'stopped';
     }
 
