@@ -38,11 +38,5 @@
     "/import\\s+.*from\\s+['\"].*['\"]/g",
     "/require\\(['\"](.*)['\"]\\)/g"
   ],
-  "useGitignore": true,
-  "overrides": [
-    {
-      "filename": "runbooks/patterns/featured/deploy-service.runbook.md",
-      "words": ["servoce", "permisions", "permissons"]
-    }
-  ]
+  "useGitignore": true
 }

@@ -154,7 +154,6 @@ behaviour
 categorises
 
 # Test fixture words
-BADACTION
 NOTVALID
 notavar
 unknowncommand
