@@ -5,10 +5,10 @@ export default {
   collectCoverageFrom: ['src/**/*.ts'],
   coverageThreshold: {
     global: {
-      branches: 50,
-      functions: 60,
-      lines: 60,
-      statements: 60,
+      branches: 80,
+      functions: 90,
+      lines: 85,
+      statements: 85,
     },
   },
   coverageReporters: ['text', 'lcov', 'html'],

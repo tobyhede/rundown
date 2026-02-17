@@ -18,9 +18,9 @@ describe('formatTable', () => {
     expect(lines[1]).toContain('A foo');
   });
 
-  it('uppercases headers', () => {
-    const lines = formatTable([], [{ header: 'myHeader' }]);
-    expect(lines[0]).toBe('MYHEADER');
+  it('converts headers to upper case', () => {
+    const lines = formatTable([], [{ header: 'my-header' }]);
+    expect(lines[0]).toBe('MY-HEADER');
   });
 
   it('uses 2-space default separator', () => {
@@ -35,13 +35,13 @@ describe('formatTable', () => {
   });
 
   it('pads columns to max width of header vs data', () => {
-    const rows = [{ name: 'longvalue', x: '1' }];
+    const rows = [{ name: 'wide-data', x: '1' }];
     const columns: Column<(typeof rows)[0]>[] = [
       { header: 'N', key: 'name' },
       { header: 'X', key: 'x' },
     ];
     const lines = formatTable(rows, columns);
-    // Header 'N' should be padded to width of 'longvalue' (9)
+    // Header 'N' should be padded to width of 'wide-data' (9)
     expect(lines[0]).toMatch(/^N {8} {2}X$/);
   });
 
