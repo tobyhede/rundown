@@ -19,7 +19,7 @@ export default {
     '^(.{1,2}/.*).js$': '$1',
   },
   transform: {
-    '^.+.tsx?$': [
+    '^.+\\.tsx?$': [
       'ts-jest',
       {
         useESM: true,
