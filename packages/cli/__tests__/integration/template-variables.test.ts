@@ -263,7 +263,7 @@ describe('Template Variables Integration', () => {
       const events = parseNdjsonEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent?.command).toBe('rd echo DefaultTask');
+      expect(commandStartedEvent!.command).toBe('rd echo DefaultTask');
     });
   });
 

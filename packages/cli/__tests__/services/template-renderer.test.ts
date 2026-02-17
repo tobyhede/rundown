@@ -160,21 +160,24 @@ describe('substituteRunbookVariables', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
     const runbook = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { BRANCH: 'main; rm -rf /' });
-    expect(result.steps[0].command?.code).toBe("git checkout 'main; rm -rf /'");
+    expect(result.steps[0].command).toBeDefined();
+    expect(result.steps[0].command!.code).toBe("git checkout 'main; rm -rf /'");
   });
 
   it('should pass through safe values unquoted in commands', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
     const runbook = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { BRANCH: 'main' });
-    expect(result.steps[0].command?.code).toBe('git checkout main');
+    expect(result.steps[0].command).toBeDefined();
+    expect(result.steps[0].command!.code).toBe('git checkout main');
   });
 
   it('should preserve undefined variables', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
     const runbook = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, {});
-    expect(result.steps[0].command?.code).toBe('git checkout {{BRANCH}}');
+    expect(result.steps[0].command).toBeDefined();
+    expect(result.steps[0].command!.code).toBe('git checkout {{BRANCH}}');
   });
 
   it('should substitute runbook title', () => {

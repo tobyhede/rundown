@@ -225,8 +225,9 @@ describe('convertToTransitions with YES/NO', () => {
       { type: 'no', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.pass.kind).toBe('yes');
-    expect(result?.fail.kind).toBe('no');
+    expect(result).toBeDefined();
+    expect(result!.pass.kind).toBe('yes');
+    expect(result!.fail.kind).toBe('no');
   });
 
   it('should preserve pass kind in transitions', () => {
@@ -235,8 +236,9 @@ describe('convertToTransitions with YES/NO', () => {
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.pass.kind).toBe('pass');
-    expect(result?.fail.kind).toBe('fail');
+    expect(result).toBeDefined();
+    expect(result!.pass.kind).toBe('pass');
+    expect(result!.fail.kind).toBe('fail');
   });
 });
 

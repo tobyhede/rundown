@@ -204,7 +204,7 @@ describe('RunbookActorService', () => {
       expect(actor1).not.toBeNull();
 
       // Get its snapshot
-      const snapshot1 = actor1?.getPersistedSnapshot() as any;
+      const snapshot1 = actor1!.getPersistedSnapshot() as any;
 
       // Now manually modify the snapshot to have old-style flat fields
       const oldSnapshot = {
@@ -228,7 +228,7 @@ describe('RunbookActorService', () => {
       expect(actor2).not.toBeNull();
 
       // Get the migrated snapshot
-      const snapshot2 = actor2?.getPersistedSnapshot() as any;
+      const snapshot2 = actor2!.getPersistedSnapshot() as any;
       const context = snapshot2.context;
 
       // Should have forStack, not flat fields

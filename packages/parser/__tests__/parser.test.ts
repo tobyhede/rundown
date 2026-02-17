@@ -13,7 +13,7 @@ describe('Step-level runbooks', () => {
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].workflows).toEqual(['task-details.runbook.md']);
+    expect(steps[0].substeps![0].workflows).toEqual(['task-details.runbook.md']);
   });
 
   it('rejects step with both runbooks and substeps', () => {

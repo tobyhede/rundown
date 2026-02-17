@@ -120,8 +120,8 @@ runbook: ${runbook}
     expect(result.context).toBeDefined();
 
     // Find positions of content markers
-    const injectedPos = result.context?.indexOf('INJECTED CONTEXT');
-    const runbookPos = result.context?.indexOf('RUNBOOK');
+    const injectedPos = result.context!.indexOf('INJECTED CONTEXT');
+    const runbookPos = result.context!.indexOf('RUNBOOK');
 
     // Context injection should appear before gate output
     expect(injectedPos).toBeGreaterThanOrEqual(0);

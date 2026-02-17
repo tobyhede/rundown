@@ -201,8 +201,8 @@ rd echo --result pass
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
-      expect(output?.action as string).toMatch(/^RETRY/);
-      expect(output?.result).toBe(false);
+      expect(output!.action as string).toMatch(/^RETRY/);
+      expect(output!.result).toBe(false);
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);
