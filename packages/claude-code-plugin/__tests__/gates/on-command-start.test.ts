@@ -9,7 +9,7 @@ jest.unstable_mockModule('../../src/workflow/hooks/rundown.js', () => ({
   rundown: mockRundown,
 }));
 
-jest.unstable_mockModule('fs', () => ({
+jest.unstable_mockModule('node:fs', () => ({
   readFileSync: mockReadFileSync,
 }));
 

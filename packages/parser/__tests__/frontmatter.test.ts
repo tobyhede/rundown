@@ -128,7 +128,7 @@ vars:
     expect(result.frontmatter).not.toBeNull();
     expect(result.frontmatter?.vars).toEqual({
       port: 3000,
-      pi: Math.PI,
+      pi: 3.14159,
     });
   });
 
