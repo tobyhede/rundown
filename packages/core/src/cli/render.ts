@@ -11,7 +11,7 @@ type RenderableItem = Step | Substep;
  *
  * @param item - The Step or Substep to render
  * @param instanceNumber - Current instance number for step/substep display
- * @param substepNumber - Current substep number for nested substep display
+ * @param _substepNumber - Current substep number for nested substep display
  * @param showCommand - Whether to include the command code block in the output
  * @returns Markdown string suitable for CLI output
  */

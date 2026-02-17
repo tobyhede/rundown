@@ -1,4 +1,4 @@
-// packages/shared/src/logger.ts
+// packages/core/src/logger.ts
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';

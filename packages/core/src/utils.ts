@@ -1,4 +1,4 @@
-// packages/shared/src/utils.ts
+// packages/core/src/utils.ts
 import * as fs from 'node:fs/promises';
 
 /**

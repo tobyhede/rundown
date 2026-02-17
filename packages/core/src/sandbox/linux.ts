@@ -18,8 +18,8 @@ import { join } from 'node:path';
  * Build PATH with node_modules/.bin prepended.
  * This ensures local package binaries are found during command execution.
  *
- * `@param` cwd - Working directory
- * `@returns` Enhanced PATH environment variable
+ * @param cwd - Working directory
+ * @returns Enhanced PATH environment variable
  */
 function buildEnhancedPath(cwd: string): string {
   const binPath = join(cwd, 'node_modules', '.bin');

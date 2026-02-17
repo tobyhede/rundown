@@ -1,11 +1,10 @@
 // gates/plugin-path.ts
 import type { HookInput, GateResult } from '../shared/index.js';
 import * as path from 'node:path';
-import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname = path.dirname(__filename);
 
 /**
  * Plugin Path Injection Gate
@@ -15,8 +14,10 @@ const __dirname = dirname(__filename);
  * agents to properly resolve @${CLAUDE_PLUGIN_ROOT}/... file references.
  *
  * Typical usage: SubagentStop hook to inject path context when agents complete.
+ *
+ * @param _input - Hook input (unused; gate derives path from environment/file location)
+ * @returns Gate result with plugin root path as additional context
  */
-
 export function execute(_input: HookInput): Promise<GateResult> {
   // Determine plugin root:
   // 1. Use CLAUDE_PLUGIN_ROOT if set and non-empty (standard Claude Code environment)

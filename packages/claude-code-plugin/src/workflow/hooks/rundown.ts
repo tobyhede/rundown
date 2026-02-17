@@ -9,6 +9,11 @@ const require = createRequire(import.meta.url);
 // Allow injection for testing
 let execFileSyncImpl: typeof nodeExecFileSync = nodeExecFileSync;
 
+/**
+ * Replace the execFileSync implementation (for testing).
+ *
+ * @param fn - Replacement function matching the execFileSync signature
+ */
 export function setExecSync(fn: typeof nodeExecFileSync): void {
   execFileSyncImpl = fn;
 }
