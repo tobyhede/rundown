@@ -1,7 +1,6 @@
 // src/workflow/hooks/step-tracker.ts
 import type { HookInput } from '../../shared/index.js';
 import { rundown } from './rundown.js';
-import { shellEscape } from '../../shared/utils.js';
 
 export interface StepDispatchResult {
   violation?: string;
@@ -26,10 +25,8 @@ export function trackStepDispatch(input: HookInput): StepDispatchResult {
     }
 
     try {
-      // Use array-based call to rundown to prevent shell injection
-      // Also apply shellEscape for extra layer of hardening if rundown was to use a shell internally
-      const escapedDescription = shellEscape(description);
-      rundown(['run', '--step', escapedDescription], input.cwd);
+      // execFileSync passes args as an array — no shell interpretation, no escaping needed
+      rundown(['run', '--step', description], input.cwd);
       return {};
     } catch {
       return {};

@@ -103,7 +103,7 @@ describe('trackStepDispatch', () => {
       );
     });
 
-    it('escapes shell-special characters in description', () => {
+    it('passes shell-special characters unescaped (execFileSync bypasses shell)', () => {
       const mockExec = jest.fn().mockReturnValue('ok');
       setExecSync(mockExec as never);
 
@@ -114,10 +114,10 @@ describe('trackStepDispatch', () => {
 
       trackStepDispatch(input);
 
-      // shellEscape escapes double quotes, backticks, backslashes, and dollar signs
+      // execFileSync passes args as array — no shell interpretation, no escaping needed
       expect(mockExec).toHaveBeenCalledWith(
         'node',
-        expect.arrayContaining(['run', '--step', 'Deploy \\"staging\\" env \\$HOME']),
+        expect.arrayContaining(['run', '--step', 'Deploy "staging" env $HOME']),
         expect.any(Object),
       );
     });
@@ -167,8 +167,6 @@ describe('trackStepDispatch', () => {
       const result = trackStepDispatch(input);
       expect(result).toEqual({});
       expect(errorSpy).toHaveBeenCalledWith('Failed to track step dispatch:', expect.any(Error));
-
-      errorSpy.mockRestore();
     });
   });
 });
