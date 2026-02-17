@@ -1,6 +1,12 @@
 import { describe, it, expect } from '@jest/globals';
 import { TextRenderer } from '../../../src/services/renderers/text-renderer.js';
-import type { OutputWriter, DetailOutput } from '@rundown-org/core';
+import type {
+  OutputWriter,
+  DetailOutput,
+  ListOutput,
+  RunbookEventV1,
+  StepPosition,
+} from '@rundown-org/core';
 
 /**
  * Creates a mock OutputWriter that captures output for testing.
@@ -25,6 +31,28 @@ function createMockWriter(): OutputWriter & { lines: string[] } {
       lines.push(JSON.stringify(data, null, pretty ? 2 : undefined));
     },
   };
+}
+
+/** Helper to build a minimal EventEnvelope for RunbookEventV1 */
+function envelope() {
+  return {
+    v: '1' as const,
+    ts: new Date().toISOString(),
+    runbookId: 'test-id',
+    runbook: { name: 'test', path: '/test.md' },
+    seq: 1,
+  };
+}
+
+/** Row type for list rendering tests */
+interface TestRow {
+  name: string;
+  status: string;
+}
+
+/** Helper to build a StepPosition */
+function pos(current = '1', total = 3, substep?: string): StepPosition {
+  return { current, total, substep };
 }
 
 describe('TextRenderer', () => {
@@ -122,6 +150,447 @@ describe('TextRenderer', () => {
         const output = writer.lines.join('\n');
         expect(output).toContain('[circular]');
       });
+    });
+
+    describe('echo format', () => {
+      it('renders output text', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'echo',
+          data: { output: 'hello world', result: true },
+        });
+
+        expect(writer.lines).toContain('hello world');
+      });
+
+      it('renders error text', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'echo',
+          data: { error: 'something broke', result: false },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('Error:');
+        expect(output).toContain('something broke');
+      });
+    });
+
+    describe('prompt format', () => {
+      it('wraps content in markdown fences', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'prompt',
+          data: { output: 'some content' },
+        });
+
+        expect(writer.lines[0]).toBe('```');
+        expect(writer.lines[1]).toBe('some content');
+        expect(writer.lines[2]).toBe('```');
+      });
+    });
+
+    describe('check format', () => {
+      it('renders PASS with step count', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'check',
+          data: { valid: true, stats: { steps: 5, substeps: 2 } },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('PASS');
+        expect(output).toContain('5');
+      });
+
+      it('renders FAIL with error count and details', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'check',
+          data: {
+            valid: false,
+            errors: [{ line: 10, message: 'Missing step header' }, { message: 'Invalid command' }],
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('FAIL');
+        expect(output).toContain('2 errors');
+        expect(output).toContain('Line 10');
+        expect(output).toContain('Missing step header');
+        expect(output).toContain('Invalid command');
+      });
+    });
+
+    describe('scenario format', () => {
+      it('renders name, description, expected, and tags', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'scenario',
+          data: {
+            name: 'happy-path',
+            description: 'Test the happy path',
+            expected: 'COMPLETE',
+            tags: ['smoke', 'ci'],
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('happy-path');
+        expect(output).toContain('Test the happy path');
+        expect(output).toContain('COMPLETE');
+        expect(output).toContain('smoke, ci');
+      });
+    });
+
+    describe('scenario_result format', () => {
+      it('renders pass result', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'scenario_result',
+          data: { result: true, actual: 'COMPLETE' },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('COMPLETE');
+      });
+
+      it('renders fail result with expected vs actual', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'scenario_result',
+          data: { result: false, expected: 'COMPLETE', actual: 'STOPPED' },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('STOPPED');
+        expect(output).toContain('Expected: COMPLETE');
+        expect(output).toContain('Actual:   STOPPED');
+      });
+    });
+  });
+
+  describe('renderList', () => {
+    it('renders table from items and columns', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: ListOutput<TestRow> = {
+        type: 'list',
+        items: [
+          { name: 'foo', status: 'active' },
+          { name: 'bar', status: 'done' },
+        ],
+        columns: [
+          { header: 'Name', key: 'name' },
+          { header: 'Status', key: 'status' },
+        ],
+      };
+
+      renderer.render(event);
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('NAME');
+      expect(output).toContain('STATUS');
+      expect(output).toContain('foo');
+      expect(output).toContain('bar');
+    });
+
+    it('renders emptyMessage when items array is empty', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: ListOutput<TestRow> = {
+        type: 'list',
+        items: [],
+        columns: [{ header: 'Name', key: 'name' }],
+        emptyMessage: 'No items found.',
+      };
+
+      renderer.render(event);
+
+      expect(writer.lines).toContain('No items found.');
+    });
+
+    it('renders nothing when items are empty and no emptyMessage', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: ListOutput<TestRow> = {
+        type: 'list',
+        items: [],
+        columns: [{ header: 'Name', key: 'name' }],
+      };
+
+      renderer.render(event);
+
+      expect(writer.lines).toHaveLength(0);
+    });
+  });
+
+  describe('renderMessage', () => {
+    const levels = ['success', 'warning', 'error', 'info', 'dim'] as const;
+
+    for (const level of levels) {
+      it(`renders ${level} level message`, () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'message',
+          text: `A ${level} message`,
+          level,
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain(`A ${level} message`);
+      });
+    }
+  });
+
+  describe('renderError', () => {
+    it('renders error text', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      renderer.render({
+        type: 'error',
+        message: 'Something went wrong',
+      });
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('Error:');
+      expect(output).toContain('Something went wrong');
+    });
+
+    it('renders error with code', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      renderer.render({
+        type: 'error',
+        message: 'Not found',
+        code: 'ERR_NOT_FOUND',
+      });
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('Error:');
+      expect(output).toContain('Not found');
+      expect(output).toContain('Code: ERR_NOT_FOUND');
+    });
+  });
+
+  describe('renderStatus', () => {
+    it('renders stash action with position', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      renderer.render({
+        type: 'status',
+        result: true,
+        action: 'stash',
+        data: { position: pos('2', 5) },
+      });
+
+      const output = writer.lines.join('\n');
+      // printRunbookStashed renders something about stash
+      expect(output.length).toBeGreaterThan(0);
+    });
+
+    it('renders pop success with step data', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      renderer.render({
+        type: 'status',
+        result: true,
+        action: 'pop',
+        data: {
+          position: pos('1', 3),
+          step: { name: 'Build project', description: 'Run build', prompted: false },
+        },
+      });
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('Build project');
+    });
+
+    it('renders pop failure', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      renderer.render({
+        type: 'status',
+        result: false,
+        action: 'pop',
+        message: 'No stashed runbook found',
+      });
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('No stashed runbook found');
+    });
+  });
+
+  describe('execution events', () => {
+    it('renders RUNBOOK_STARTED', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: RunbookEventV1 = {
+        ...envelope(),
+        type: 'RUNBOOK_STARTED',
+        payload: {
+          prompted: false,
+          statePath: '.claude/rundown/runs/test.json',
+        },
+      };
+
+      renderer.render({ type: 'execution_event', event });
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('test');
+      expect(output).toContain('START');
+    });
+
+    it('renders STEP_ENTERED', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: RunbookEventV1 = {
+        ...envelope(),
+        type: 'STEP_ENTERED',
+        payload: {
+          position: pos('1', 3),
+          stepName: 'Install dependencies',
+          description: 'Run npm install',
+          hasCommand: true,
+          commandCode: 'npm install',
+          commandLang: 'bash',
+          isSubstep: false,
+          prompted: false,
+        },
+      };
+
+      renderer.render({ type: 'execution_event', event });
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('Install dependencies');
+    });
+
+    it('renders COMMAND_STARTED', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: RunbookEventV1 = {
+        ...envelope(),
+        type: 'COMMAND_STARTED',
+        payload: {
+          command: 'npm install',
+          displayCommand: 'npm install',
+          position: pos(),
+        },
+      };
+
+      renderer.render({ type: 'execution_event', event });
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('npm install');
+    });
+
+    it('renders STEP_TRANSITIONED', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: RunbookEventV1 = {
+        ...envelope(),
+        type: 'STEP_TRANSITIONED',
+        payload: {
+          action: 'CONTINUE',
+          from: pos('1', 3),
+          to: pos('2', 3),
+          result: true,
+        },
+      };
+
+      renderer.render({ type: 'execution_event', event });
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('CONTINUE');
+    });
+
+    it('renders POLICY_DENIED', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: RunbookEventV1 = {
+        ...envelope(),
+        type: 'POLICY_DENIED',
+        payload: {
+          command: 'rm -rf /',
+          reason: 'Blocked by policy',
+          position: pos(),
+        },
+      };
+
+      renderer.render({ type: 'execution_event', event });
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('rm -rf /');
+    });
+
+    it('renders ERROR_OCCURRED', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: RunbookEventV1 = {
+        ...envelope(),
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message: 'Command failed with exit code 1',
+          code: 'EXEC_FAILED',
+        },
+      };
+
+      renderer.render({ type: 'execution_event', event });
+
+      const output = writer.lines.join('\n');
+      expect(output).toContain('Error: Command failed with exit code 1');
+      expect(output).toContain('Code: EXEC_FAILED');
+    });
+  });
+
+  describe('flush', () => {
+    it('is a no-op', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      // Should not throw and should not produce output
+      renderer.flush();
+      expect(writer.lines).toHaveLength(0);
     });
   });
 });
