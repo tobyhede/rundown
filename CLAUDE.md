@@ -203,7 +203,10 @@ See [docs/SECURITY.md](docs/SECURITY.md) for full security policy documentation.
 
 ```bash
 npm run build         # Build all packages
-npm run test          # Run all tests (Jest)
+npm test              # Fast: unit tests, all packages in parallel
+npm run test:unit     # Same as npm test
+npm run test:integration  # Integration tests in parallel
+npm run test:all      # Full suite: unit → integration → property → perf
 npm run lint          # Lint all packages
 npm run lint:fix      # Auto-fix lint issues
 npm run format        # Format all packages

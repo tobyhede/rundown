@@ -33,7 +33,7 @@ ignored_paths: []
 # whether the project is in read-only mode
 # If set to true, all editing tools will be disabled and attempts to use them will result in an error
 # Added on 2025-04-18
-read_only: false
+read_only: true
 
 # list of tool names to exclude. We recommend not excluding any tools, see the readme for more details.
 # Below is the complete list of tools for convenience.
@@ -81,7 +81,7 @@ excluded_tools: [
   'find_file',
   'search_for_pattern',
   'replace_content',
-  'execute_shell_command  ',
+  'execute_shell_command',
   'initial_instructions',
   'onboarding',
   'check_onboarding_performed',
@@ -96,7 +96,7 @@ excluded_tools: [
   'read_memory',
   'list_memories',
   'edit_memory',
-  'delete_memory'
+  'delete_memory',
 ]
 
 # initial prompt for the project. It will always be given to the LLM upon activating the project
