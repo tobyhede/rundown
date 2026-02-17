@@ -1,10 +1,10 @@
-import { type Command } from 'commander';
-import { readFile, rm } from 'fs/promises';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync } from 'fs';
-import { basename, dirname, join } from 'path';
-import { tmpdir } from 'os';
-import { execSync } from 'child_process';
-import { fileURLToPath } from 'url';
+import type { Command } from 'commander';
+import { readFile, rm } from 'node:fs/promises';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';

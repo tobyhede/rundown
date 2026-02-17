@@ -2,9 +2,9 @@
 import { dispatch } from '../../src/dispatcher.js';
 import { Session } from '../../src/session.js';
 import type { HookInput } from '../../src/shared/index.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 describe('Synthetic Events Integration', () => {
   let testDir: string;

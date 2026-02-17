@@ -1,4 +1,4 @@
-import { type HookInput, type GateResult } from '../shared/index.js';
+import type { HookInput, GateResult } from '../shared/index.js';
 import { trackStepDispatch } from '../workflow/hooks/step-tracker.js';
 
 /**

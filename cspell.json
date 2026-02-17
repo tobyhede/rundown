@@ -1,0 +1,48 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "dictionaryDefinitions": [
+    {
+      "name": "rundown",
+      "path": "./cspell-dictionary.txt",
+      "addWords": true
+    }
+  ],
+  "dictionaries": ["rundown"],
+  "files": [
+    "packages/*/src/**/*.ts",
+    "packages/*/__tests__/**/*.ts",
+    "docs/**/*.md",
+    "runbooks/**/*.md",
+    "scripts/**",
+    "*.md",
+    "*.ts",
+    "*.js",
+    "LICENSE"
+  ],
+  "ignorePaths": [
+    "node_modules",
+    "dist",
+    "coverage",
+    "site",
+    ".worktrees",
+    "*.snap",
+    "package-lock.json",
+    "*.json",
+    "*.yaml",
+    "*.yml"
+  ],
+  "ignoreRegExpList": [
+    "fencedCode",
+    "inlineCode",
+    "/import\\s+.*from\\s+['\"].*['\"]/g",
+    "/require\\(['\"](.*)['\"]\\)/g"
+  ],
+  "useGitignore": true,
+  "overrides": [
+    {
+      "filename": "runbooks/patterns/featured/deploy-service.runbook.md",
+      "words": ["servoce", "permisions", "permissons"]
+    }
+  ]
+}

@@ -5,8 +5,8 @@ import {
   runCli,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { writeFile } from 'fs/promises';
-import { join } from 'path';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)', () => {
   let workspace: TestWorkspace;

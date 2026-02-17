@@ -1,7 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
-import * as fs from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseRunbook } from '../src/index.js';
 
 const __filename = fileURLToPath(import.meta.url);

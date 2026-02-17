@@ -18,7 +18,7 @@ type RenderableItem = Step | Substep;
 export function renderStepForCLI(
   item: Readonly<RenderableItem>,
   instanceNumber?: string,
-  substepNumber?: string,
+  _substepNumber?: string,
   showCommand?: boolean,
 ): string {
   const lines: string[] = [];

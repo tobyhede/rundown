@@ -1,8 +1,5 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import type {
-  SandboxOptions,
-  SandboxAvailability as _SandboxAvailability,
-} from '../../src/sandbox/types.js';
+import type { SandboxOptions } from '../../src/sandbox/types.js';
 
 // Mock the dynamic imports
 jest.unstable_mockModule('../../src/sandbox/linux.js', () => ({

@@ -1,9 +1,9 @@
 // packages/claude-code-plugin/__tests__/plugin-gates.integration.test.ts
 import { dispatch } from '../src/dispatcher.js';
 import type { HookInput } from '../src/shared/index.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 describe('Plugin Gate Composition Integration', () => {
   let mockPluginsDir: string;

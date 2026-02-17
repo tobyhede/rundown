@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, rm } from 'fs/promises';
-import { join } from 'path';
+import { writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   createTestWorkspace,
   runCli,

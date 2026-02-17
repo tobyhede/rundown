@@ -2,9 +2,9 @@
 import fc from 'fast-check';
 import { Session } from '../src/session.js';
 import { SessionStateSchema } from '../src/shared/index.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 // Recursively check if value contains -0 anywhere (JSON doesn't preserve -0)
 function containsNegativeZero(value: unknown): boolean {
@@ -25,7 +25,7 @@ describe('Session Property Tests', () => {
     session_id: fc.string({ minLength: 1, maxLength: 50 }).filter((s) => !s.includes('\0')),
     started_at: fc
       .date({ min: new Date('2000-01-01'), max: new Date('2100-01-01') })
-      .filter((d) => !isNaN(d.getTime()))
+      .filter((d) => !Number.isNaN(d.getTime()))
       .map((d) => d.toISOString()),
     active_command: fc.option(fc.string({ maxLength: 100 }), { nil: null }),
     active_skill: fc.option(fc.string({ maxLength: 100 }), { nil: null }),

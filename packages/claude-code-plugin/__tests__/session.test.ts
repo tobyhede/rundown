@@ -1,8 +1,8 @@
 // packages/claude-code-plugin/__tests__/session.test.ts
 import { Session } from '../src/session.js';
-import { promises as fs } from 'fs';
-import { join, dirname } from 'path';
-import { tmpdir } from 'os';
+import { promises as fs } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 
 describe('Session', () => {
   let testDir: string;

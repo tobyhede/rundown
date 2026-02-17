@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, rm, stat } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
-import { type Step, type Runbook } from '../../src/runbook/types.js';
+import type { Step, Runbook } from '../../src/runbook/types.js';
 
 describe('RunbookStateManager', () => {
   let testDir: string;
@@ -424,8 +424,8 @@ describe('RunbookStateManager', () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       // Manually save legacy state with GOTO_NEXT
-      const fs = await import('fs/promises');
-      const path = await import('path');
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
       const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
       const legacyState = {
         ...state,
@@ -441,8 +441,8 @@ describe('RunbookStateManager', () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       // Manually save legacy state with instance field
-      const fs = await import('fs/promises');
-      const path = await import('path');
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
       const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
       const legacyState = {
         ...state,
@@ -458,8 +458,8 @@ describe('RunbookStateManager', () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       // Manually save legacy state with GOTO_NEXT
-      const fs = await import('fs/promises');
-      const path = await import('path');
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
       const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
       const legacyState = {
         ...state,

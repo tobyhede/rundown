@@ -96,7 +96,7 @@ describe('FileProvider', () => {
     it('handles very long lines without truncation', async () => {
       const file = path.join(tmpDir, 'longline.txt');
       const longLine = 'a'.repeat(100000);
-      await fs.writeFile(file, longLine + '\n');
+      await fs.writeFile(file, `${longLine}\n`);
 
       const provider = await createFileProvider(file, 'text');
       const results: string[] = [];

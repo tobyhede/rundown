@@ -1,5 +1,5 @@
 // action-handler.ts
-import { type GateResult, type RundownPluginConfig, type HookInput } from './shared/index.js';
+import type { GateResult, RundownPluginConfig, HookInput } from './shared/index.js';
 
 export interface ActionResult {
   continue: boolean;

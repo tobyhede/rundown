@@ -296,7 +296,7 @@ export async function handleTerminalState(
   config: TransitionConfig,
   isComplete: boolean,
   isStopped: boolean,
-  prevState: RunbookState,
+  _prevState: RunbookState,
   positions: { prevPos: StepPosition; newPos: StepPosition },
   conditionResult: ConditionResult,
 ): Promise<'complete' | 'stopped' | 'continue'> {

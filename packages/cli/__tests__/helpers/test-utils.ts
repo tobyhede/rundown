@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, cp, readFile, writeFile, readdir, symlink } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join, dirname } from 'path';
-import { spawnSync } from 'child_process';
-import { fileURLToPath } from 'url';
+import { mkdir, mkdtemp, rm, cp, readFile, writeFile, readdir, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

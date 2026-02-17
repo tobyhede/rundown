@@ -10,8 +10,8 @@
  * @module
  */
 
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
 import type { DataSource, FileFormat } from '@rundown-org/core';
@@ -333,7 +333,7 @@ async function routeVariable(
     }
 
     sources[key] = { kind: 'file', path: canonical, format: inferFileFormat(canonical) };
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- clearing stale cross-type entry
+
     delete vars[key];
     return;
   }
@@ -361,7 +361,7 @@ async function routeVariable(
     return;
   }
   vars[key] = String(value);
-  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- clearing stale cross-type entry
+
   delete sources[key];
 }
 

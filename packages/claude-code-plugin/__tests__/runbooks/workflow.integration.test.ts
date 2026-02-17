@@ -3,11 +3,11 @@
  * Pattern: follows packages/cli/__tests__/check.test.ts structure
  */
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdir, writeFile, rm } from 'fs/promises';
-import { mkdtempSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { tmpdir } from 'os';
-import { fileURLToPath } from 'url';
+import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtempSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { runCli } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);

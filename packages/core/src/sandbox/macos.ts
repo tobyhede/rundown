@@ -7,10 +7,10 @@
  * @module
  */
 
-import { spawn } from 'child_process';
-import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'fs';
-import { tmpdir } from 'os';
-import { join, dirname } from 'path';
+import { spawn } from 'node:child_process';
+import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
 import type {
   SandboxOptions,
   SandboxExecutionResult,

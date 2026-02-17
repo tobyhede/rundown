@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   createTestWorkspace,
   runCli,
@@ -201,8 +201,8 @@ rd echo --result pass
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
-      expect(output!.action as string).toMatch(/^RETRY/);
-      expect(output!.result).toBe(false);
+      expect(output?.action as string).toMatch(/^RETRY/);
+      expect(output?.result).toBe(false);
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);
@@ -218,8 +218,8 @@ rd echo --result pass
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
-      expect(output!.action).toBe('stop'); // lowercase per CLI conventions
-      expect(output!.result).toBe(false);
+      expect(output?.action).toBe('stop'); // lowercase per CLI conventions
+      expect(output?.result).toBe(false);
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);
@@ -235,8 +235,8 @@ rd echo --result pass
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
-      expect(output!.action as string).toMatch(/^GOTO/);
-      expect(output!.result).toBe(false);
+      expect(output?.action as string).toMatch(/^GOTO/);
+      expect(output?.result).toBe(false);
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);

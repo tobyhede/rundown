@@ -1,14 +1,14 @@
 // src/runbook/state.ts
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import {
-  type RunbookState,
-  type ForContext,
-  type AgentBinding,
-  type Substep,
-  type SubstepState,
-  type Runbook,
-  type DataSource,
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import type {
+  RunbookState,
+  ForContext,
+  AgentBinding,
+  Substep,
+  SubstepState,
+  Runbook,
+  DataSource,
 } from './types.js';
 import type { StepId } from './step-id.js';
 import { RunbookStateSchema } from '../schemas.js';

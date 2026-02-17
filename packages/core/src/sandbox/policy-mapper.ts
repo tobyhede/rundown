@@ -7,10 +7,10 @@
  * @module
  */
 
-import * as path from 'path';
-import * as os from 'os';
-import { type PolicyEvaluator } from '../policy/evaluator.js';
-import { type PolicyConfig } from '../policy/schema.js';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import type { PolicyEvaluator } from '../policy/evaluator.js';
+import type { PolicyConfig } from '../policy/schema.js';
 import type { SandboxOptions } from './types.js';
 
 /**
@@ -99,7 +99,7 @@ function extractBasePath(pattern: string): string {
 
   // Get the directory portion before the glob
   const beforeGlob = pattern.substring(0, globIndex);
-  return path.dirname(beforeGlob + 'x'); // Add 'x' to handle trailing slash
+  return path.dirname(`${beforeGlob}x`); // Add 'x' to handle trailing slash
 }
 
 /**

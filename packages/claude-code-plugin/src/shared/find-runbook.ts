@@ -2,8 +2,8 @@
  * Runbook discovery utilities for gate modules.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { sanitizePathSegment } from './utils.js';
 import { parseRunbookFromFrontmatter } from './frontmatter.js';
 
@@ -56,9 +56,7 @@ export function findRunbookByFrontmatter(
       const content = fs.readFileSync(p, 'utf8');
       const runbook = parseRunbookFromFrontmatter(content);
       if (runbook) return runbook;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
 
   return undefined;

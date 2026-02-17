@@ -157,7 +157,7 @@ export function printCommandExec(command: string, writer: OutputWriter = getWrit
  * @param message - Optional completion message to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printRunbookComplete(message?: string, writer: OutputWriter = getWriter()): void {
+export function printRunbookComplete(_message?: string, writer: OutputWriter = getWriter()): void {
   writer.writeLine(`Runbook:  ${success('COMPLETE')}`);
 }
 
@@ -169,7 +169,7 @@ export function printRunbookComplete(message?: string, writer: OutputWriter = ge
  * @param message - Optional stop message to display
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printRunbookStopped(message?: string, writer: OutputWriter = getWriter()): void {
+export function printRunbookStopped(_message?: string, writer: OutputWriter = getWriter()): void {
   writer.writeLine(`Runbook:  ${failure('STOP')}`);
 }
 
@@ -183,8 +183,8 @@ export function printRunbookStopped(message?: string, writer: OutputWriter = get
  * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printRunbookStoppedAtStep(
-  pos: StepPosition,
-  message?: string,
+  _pos: StepPosition,
+  _message?: string,
   writer: OutputWriter = getWriter(),
 ): void {
   writer.writeLine(`Runbook:  ${failure('STOP')}`);

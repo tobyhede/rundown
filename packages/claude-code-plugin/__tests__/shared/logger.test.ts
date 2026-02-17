@@ -1,7 +1,7 @@
 // __tests__/shared/logger.test.ts
-import * as fs from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { logger } from '../../src/shared/logger.js';
 
 describe('logger', () => {

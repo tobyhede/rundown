@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, rm } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
-import { type Step, type Runbook } from '../../src/runbook/types.js';
+import type { Step, Runbook } from '../../src/runbook/types.js';
 
 function mockActor(snapshot: { value: string; context: Record<string, unknown> }) {
   return { getPersistedSnapshot: () => snapshot } as any;
@@ -91,7 +91,7 @@ describe('RunbookActorService', () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const result = await actorService.initializeState(state.id, mockSteps);
       expect(result).not.toBeNull();
-      expect(result!.step).toBe('1');
+      expect(result?.step).toBe('1');
     });
   });
 
@@ -106,12 +106,12 @@ describe('RunbookActorService', () => {
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
 
       expect(result).not.toBeNull();
-      expect(result!.state).toBeDefined();
-      expect(result!.state.id).toBe(state.id);
-      expect(result!.snapshot).toBeDefined();
+      expect(result?.state).toBeDefined();
+      expect(result?.state.id).toBe(state.id);
+      expect(result?.snapshot).toBeDefined();
 
       // Snapshot should have expected XState shape
-      const snap = result!.snapshot as { status: string; value: unknown };
+      const snap = result?.snapshot as { status: string; value: unknown };
       expect(typeof snap.status).toBe('string');
       expect(snap).toHaveProperty('value');
     });
@@ -204,7 +204,7 @@ describe('RunbookActorService', () => {
       expect(actor1).not.toBeNull();
 
       // Get its snapshot
-      const snapshot1 = actor1!.getPersistedSnapshot() as any;
+      const snapshot1 = actor1?.getPersistedSnapshot() as any;
 
       // Now manually modify the snapshot to have old-style flat fields
       const oldSnapshot = {
@@ -228,7 +228,7 @@ describe('RunbookActorService', () => {
       expect(actor2).not.toBeNull();
 
       // Get the migrated snapshot
-      const snapshot2 = actor2!.getPersistedSnapshot() as any;
+      const snapshot2 = actor2?.getPersistedSnapshot() as any;
       const context = snapshot2.context;
 
       // Should have forStack, not flat fields

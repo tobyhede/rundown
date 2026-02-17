@@ -26,8 +26,8 @@ import {
   validateAgentBoundOutput,
   validateErrorOutput,
 } from '../helpers/schema-validator.js';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 describe('CLI JSON Output Schema Validation', () => {
   let workspace: TestWorkspace;
@@ -64,9 +64,7 @@ describe('CLI JSON Output Schema Validation', () => {
           if (start >= 0) {
             return JSON.parse(potentialJson.slice(start));
           }
-        } catch {
-          continue;
-        }
+        } catch {}
       }
       // Try to find any JSON object in the output
       const jsonMatch = stdout.match(/\{[\s\S]*\}|\[[\s\S]*\]/g);

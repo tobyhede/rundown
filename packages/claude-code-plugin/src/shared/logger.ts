@@ -1,7 +1,7 @@
 // packages/claude-code-plugin/src/shared/logger.ts
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import { tmpdir } from 'os';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import { tmpdir } from 'node:os';
 
 /**
  * Log severity levels for rundown plugin logging.
@@ -87,7 +87,7 @@ async function writeLog(entry: LogEntry): Promise<void> {
 
   try {
     await ensureLogDir();
-    const line = JSON.stringify(entry) + '\n';
+    const line = `${JSON.stringify(entry)}\n`;
     await fs.appendFile(getLogFilePath(), line, 'utf-8');
   } catch {
     // Silently fail - logging should never break the hook
@@ -101,7 +101,7 @@ async function writeLog(entry: LogEntry): Promise<void> {
 async function writeLogAlways(entry: LogEntry): Promise<void> {
   try {
     await ensureLogDir();
-    const line = JSON.stringify(entry) + '\n';
+    const line = `${JSON.stringify(entry)}\n`;
     await fs.appendFile(getLogFilePath(), line, 'utf-8');
   } catch {
     // Silently fail - logging should never break the hook

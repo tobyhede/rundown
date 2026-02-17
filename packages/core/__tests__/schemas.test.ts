@@ -186,6 +186,7 @@ describe('Action schema-derived type', () => {
       ActionSchema.parse({
         type: 'RETRY',
         max: 3,
+        // biome-ignore lint/suspicious/noThenProperty: testing schema with legitimate 'then' field
         then: { type: 'STOP', message: 'Failed after retries' },
       }),
     ).toThrow();

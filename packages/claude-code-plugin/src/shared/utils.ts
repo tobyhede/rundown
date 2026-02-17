@@ -1,6 +1,6 @@
 // packages/claude-code-plugin/src/shared/utils.ts
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 
 /**
  * Check if a file exists at the given path.

@@ -16,8 +16,8 @@ jest.unstable_mockModule('fs', () => ({
 
 // Import after mocking
 const { SeatbeltSandbox } = await import('../../src/sandbox/macos.js');
-const { spawn } = await import('child_process');
-const { existsSync, writeFileSync, unlinkSync } = await import('fs');
+const { spawn } = await import('node:child_process');
+const { existsSync, writeFileSync, unlinkSync } = await import('node:fs');
 
 describe('SeatbeltSandbox', () => {
   const originalPlatform = process.platform;

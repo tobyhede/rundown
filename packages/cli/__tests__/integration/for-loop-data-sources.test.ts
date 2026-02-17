@@ -5,8 +5,8 @@ import {
   parseJsonEvents,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 describe('FOR loop data source integration', () => {
   let workspace: TestWorkspace;

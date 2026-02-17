@@ -282,7 +282,7 @@ describe('start command', () => {
       });
 
       expect(parentState).toBeTruthy();
-      const agentBindings = parentState!.agentBindings as Record<string, unknown>;
+      const agentBindings = parentState?.agentBindings as Record<string, unknown>;
       const agentBinding = agentBindings['test-agent-123'];
       expect((agentBinding as Record<string, unknown>).childRunbookId).toBe(childId);
     });

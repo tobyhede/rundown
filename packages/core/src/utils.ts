@@ -1,5 +1,5 @@
 // packages/shared/src/utils.ts
-import * as fs from 'fs/promises';
+import * as fs from 'node:fs/promises';
 
 /**
  * Check if a file exists at the given path.

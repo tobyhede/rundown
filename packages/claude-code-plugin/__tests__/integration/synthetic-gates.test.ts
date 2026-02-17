@@ -1,9 +1,9 @@
 // packages/claude-code-plugin/__tests__/integration/synthetic-gates.test.ts
 import { dispatch } from '../../src/dispatcher.js';
 import type { HookInput } from '../../src/shared/index.js';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 describe('synthetic event gates integration', () => {
   let testDir: string;
@@ -120,8 +120,8 @@ runbook: ${runbook}
     expect(result.context).toBeDefined();
 
     // Find positions of content markers
-    const injectedPos = result.context!.indexOf('INJECTED CONTEXT');
-    const runbookPos = result.context!.indexOf('RUNBOOK');
+    const injectedPos = result.context?.indexOf('INJECTED CONTEXT');
+    const runbookPos = result.context?.indexOf('RUNBOOK');
 
     // Context injection should appear before gate output
     expect(injectedPos).toBeGreaterThanOrEqual(0);

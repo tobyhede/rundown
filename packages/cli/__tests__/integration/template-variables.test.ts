@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, mkdir, rm } from 'fs/promises';
-import { join } from 'path';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   createTestWorkspace,
   runCli,
@@ -263,7 +263,7 @@ describe('Template Variables Integration', () => {
       const events = parseNdjsonEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent!.command).toBe('rd echo DefaultTask');
+      expect(commandStartedEvent?.command).toBe('rd echo DefaultTask');
     });
   });
 

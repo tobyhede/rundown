@@ -32,8 +32,14 @@ jobs:
       - name: Format check
         run: npm run format:check
 
-      - name: Lint
-        run: npm run lint
+      - name: Spell check
+        run: npm run spellcheck
+
+      - name: Fast lint (Biome)
+        run: npm run lint:fast
+
+      - name: Type-checked lint (ESLint)
+        run: npm run lint:typed
 
       - name: Test with coverage
         run: npm run test:coverage

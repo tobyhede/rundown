@@ -1,8 +1,8 @@
 // workflow/hooks/rundown.ts
 // Helper for executing rundown CLI from installed dependency
 
-import { createRequire } from 'module';
-import { execFileSync as nodeExecFileSync, type ExecFileSyncOptions } from 'child_process';
+import { createRequire } from 'node:module';
+import { execFileSync as nodeExecFileSync, type ExecFileSyncOptions } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
 

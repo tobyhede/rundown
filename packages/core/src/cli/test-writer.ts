@@ -28,7 +28,7 @@ export class TestWriter implements OutputWriter {
   }
 
   writeLine(text = '', stream: OutputStream = 'stdout'): void {
-    this.output.push({ text: text + '\n', stream });
+    this.output.push({ text: `${text}\n`, stream });
   }
 
   writeLines(lines: string[], stream: OutputStream = 'stdout'): void {

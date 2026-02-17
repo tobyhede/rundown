@@ -2,11 +2,11 @@
 // Shared test utilities for claude-code-plugin tests
 
 import { jest } from '@jest/globals';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
-import { spawnSync } from 'child_process';
-import { fileURLToPath } from 'url';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import type { HookInput, RundownPluginConfig, SessionState } from '../../src/shared/index.js';
 
 const __filename = fileURLToPath(import.meta.url);

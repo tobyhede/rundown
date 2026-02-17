@@ -72,7 +72,7 @@ export class RunbookActorService {
     // migration, so other nested properties (e.g. snapshot.children) remain
     // aliased to the original. This is safe because we never mutate them.
     // Snapshot migration deals with untyped persisted data — any is unavoidable
-    /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
+    /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
     const rawSnapshot = state.snapshot as any;
     let snapshot = rawSnapshot;
     if (rawSnapshot?.context && !rawSnapshot.context.forStack) {
@@ -110,7 +110,7 @@ export class RunbookActorService {
         snapshot.context = { ...ctx, forStack: [] };
       }
     }
-    /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
+    /* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
 
     const actor = createActor(machine, {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -138,7 +138,7 @@ export class RunbookActorService {
     actor: AnyActorRef,
     steps: Step[],
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const snapshot = actor.getPersistedSnapshot() as any;
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const rawValue: unknown = snapshot.value;

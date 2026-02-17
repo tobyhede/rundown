@@ -47,7 +47,7 @@ export interface FileProvider {
  */
 export async function createFileProvider(
   filePath: string,
-  format: FileFormat,
+  _format: FileFormat,
   options?: { skipLines?: number },
 ): Promise<FileProvider> {
   const stream = fs.createReadStream(filePath, { encoding: 'utf-8' });

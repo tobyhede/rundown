@@ -1,8 +1,8 @@
 // packages/claude-code-plugin/__tests__/context.test.ts
 import { discoverContextFile, injectContext } from '../src/context.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 describe('Context Injection', () => {
   let testDir: string;

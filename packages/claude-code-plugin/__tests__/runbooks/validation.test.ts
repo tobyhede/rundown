@@ -4,9 +4,9 @@
  * Pattern: similar to packages/cli/__tests__/check.test.ts but without CLI
  */
 import { describe, it, expect } from '@jest/globals';
-import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
-import { join, dirname, relative } from 'path';
-import { fileURLToPath } from 'url';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { join, dirname, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseRunbookDocument, validateRunbook } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);

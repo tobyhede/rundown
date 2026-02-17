@@ -92,7 +92,6 @@ export class SessionService {
       if (!existing || existing.length === 0) return null;
       existing.pop();
       if (existing.length === 0) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete session.stacks[agentId];
       }
       parentRunbook = existing[existing.length - 1] ?? null;
@@ -127,7 +126,6 @@ export class SessionService {
       if (!stack || stack.length === 0) return null;
       activeId = stack.pop();
       if (stack.length === 0) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete session.stacks[agentId];
       }
     } else {

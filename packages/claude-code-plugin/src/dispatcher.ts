@@ -13,7 +13,7 @@ import { handleAction } from './action-handler.js';
 import { Session } from './session.js';
 import { getWorkflowContext } from './workflow/context.js';
 import { minimatch } from 'minimatch';
-import path from 'path';
+import path from 'node:path';
 import { detectSyntheticEvents } from './synthetic-events/detector.js';
 import { isSyntheticEvent } from './synthetic-events/types.js';
 
@@ -254,7 +254,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
   const workflowContext = getWorkflowContext(input.cwd);
   if (workflowContext) {
     accumulatedContext = accumulatedContext
-      ? accumulatedContext + '\n\n' + workflowContext
+      ? `${accumulatedContext}\n\n${workflowContext}`
       : workflowContext;
   }
 
@@ -307,7 +307,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
       // Accumulate context from synthetic events (avoid leading newlines)
       if (syntheticResult.context) {
         accumulatedContext = accumulatedContext
-          ? accumulatedContext + '\n\n' + syntheticResult.context
+          ? `${accumulatedContext}\n\n${syntheticResult.context}`
           : syntheticResult.context;
       }
 
@@ -405,7 +405,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
     const actionResult = handleAction(action, result, config, input);
 
     if (actionResult.context) {
-      accumulatedContext += '\n' + actionResult.context;
+      accumulatedContext += `\n${actionResult.context}`;
     }
 
     if (!actionResult.continue) {

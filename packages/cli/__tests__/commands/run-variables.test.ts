@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile } from 'fs/promises';
-import { join } from 'path';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
 
 describe('rd run --var and --var-file', () => {

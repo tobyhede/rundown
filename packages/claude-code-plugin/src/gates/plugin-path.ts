@@ -1,8 +1,8 @@
 // gates/plugin-path.ts
-import { type HookInput, type GateResult } from '../shared/index.js';
-import * as path from 'path';
-import { dirname } from 'path';
-import { fileURLToPath } from 'url';
+import type { HookInput, GateResult } from '../shared/index.js';
+import * as path from 'node:path';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

@@ -10,13 +10,29 @@
     "build": "npm run build -w packages/parser && npm run build -w packages/core && npm run build -w packages/cli && npm run build -w packages/claude-code-plugin && npm run build -w packages/mcp",
     "build:site": "npm run build -w site",
     "build:all": "npm run build && npm run build -w site",
-    "test": "npm run test -w packages/parser && npm run test -w packages/core && npm run test -w packages/cli && npm run test -w packages/claude-code-plugin && npm run test -w packages/mcp",
+    "test": "npm run test:unit",
+    "test:unit": "run-p test:unit:*",
+    "test:unit:parser": "npm run test:unit -w packages/parser",
+    "test:unit:core": "npm run test:unit -w packages/core",
+    "test:unit:cli": "npm run test:unit -w packages/cli",
+    "test:unit:plugin": "npm run test:unit -w packages/claude-code-plugin",
+    "test:integration": "run-p test:integration:*",
+    "test:integration:cli": "npm run test:integration -w packages/cli",
+    "test:integration:plugin": "npm run test:integration -w packages/claude-code-plugin",
+    "test:property": "npm run test:property -w packages/claude-code-plugin",
+    "test:perf": "npm run test:perf -w packages/claude-code-plugin",
+    "test:all": "run-s test:unit test:integration test:property test:perf",
     "test:pw": "npm run test -w site",
     "test:coverage": "npm run test:coverage -w packages/parser && npm run test:coverage -w packages/core && npm run test:coverage -w packages/cli && npm run test:coverage -w packages/claude-code-plugin && npm run test:coverage -w packages/mcp",
     "format": "biome format --write .",
     "format:check": "biome check --formatter-enabled=true --linter-enabled=false .",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "spellcheck": "cspell --no-progress .",
+    "lint:fast": "biome lint .",
+    "lint:fast:fix": "biome lint --write .",
+    "lint:typed": "eslint .",
+    "lint:typed:fix": "eslint . --fix",
+    "lint": "npm run lint:fast && npm run lint:typed",
+    "lint:fix": "npm run lint:fast:fix && npm run lint:typed:fix",
     "cli": "node packages/cli/dist/cli.js",
     "changeset": "changeset",
     "version": "changeset version",
@@ -26,15 +42,20 @@
     "verify:claude:npm": "./scripts/verify-install.sh npm"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx,json,css}": "biome format --write --no-errors-on-unmatched"
+    "*.{ts,tsx,js,jsx,json,css}": [
+      "biome format --write --no-errors-on-unmatched",
+      "biome lint --no-errors-on-unmatched"
+    ]
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.14",
+    "cspell": "^8.17.0",
     "@changesets/cli": "^2.29.8",
     "eslint": "^9.17.0",
     "globals": "^16.0.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
+    "npm-run-all2": "^7.0.2",
     "typescript-eslint": "^8.19.1"
   }
 }
