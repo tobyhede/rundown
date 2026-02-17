@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFileSync } from 'fs';
+import { writeFileSync } from 'node:fs';
 import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
 
 /**

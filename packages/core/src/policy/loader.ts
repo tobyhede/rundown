@@ -9,8 +9,8 @@
 
 import { lilconfig, lilconfigSync, type LilconfigResult } from 'lilconfig';
 import * as yaml from 'js-yaml';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { type PolicyConfig, parsePolicy, safeParsePolicyConfig, DEFAULT_POLICY } from './schema.js';
 
 /**
@@ -20,7 +20,7 @@ import { type PolicyConfig, parsePolicy, safeParsePolicyConfig, DEFAULT_POLICY }
  * @param content - File content
  * @returns Parsed YAML object
  */
-function yamlLoader(filepath: string, content: string): unknown {
+function yamlLoader(_filepath: string, content: string): unknown {
   return yaml.load(content);
 }
 
@@ -360,7 +360,7 @@ export function loadPolicyFromFileSync(filepath: string): PolicyLoadResult {
     config = yaml.load(content);
   } else if (ext === '.js' || ext === '.cjs') {
     // Note: .mjs requires async import
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+
     const module = require(absolutePath) as { default?: unknown };
     config = module.default ?? module;
   } else {

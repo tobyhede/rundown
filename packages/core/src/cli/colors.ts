@@ -148,7 +148,6 @@ export function colorizeStatus(status: string): string {
     case 'stopped':
     case 'failed':
       return failure(status);
-    case 'inactive':
     default:
       return dim(status);
   }

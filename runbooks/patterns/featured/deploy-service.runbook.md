@@ -47,7 +47,7 @@ scenarios:
 
 # Deploy Service
 
-Deploy a servoce to production.
+Deploy a service to production.
 Uses a mix of prompt context and commands.
 Commands are automatically executed, and the exit code determines `pass` or `fail`.
 
@@ -55,9 +55,9 @@ Commands are automatically executed, and the exit code determines `pass` or `fai
 The `rd echo` command simulates real commands.
 The `--result` flag controls the result of the simulated command.
 
-### 1.1 Verify required permisions
+### 1.1 Verify required permissions
 ```bash
-rd echo npm run deploy:check:permissons
+rd echo npm run deploy:check:permissions
 ```
 
 ### 1.2 Verify environment configuration

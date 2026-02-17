@@ -1,7 +1,7 @@
 // packages/claude-code-plugin/src/shared/config.ts
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import { type RundownPluginConfig, type GateConfig } from './types.js';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import type { RundownPluginConfig, GateConfig } from './types.js';
 import { fileExists } from './utils.js';
 import { logger } from './logger.js';
 

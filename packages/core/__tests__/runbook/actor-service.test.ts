@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, rm } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
-import { type Step, type Runbook } from '../../src/runbook/types.js';
+import type { Step, Runbook } from '../../src/runbook/types.js';
 
 function mockActor(snapshot: { value: string; context: Record<string, unknown> }) {
   return { getPersistedSnapshot: () => snapshot } as any;
@@ -91,7 +91,7 @@ describe('RunbookActorService', () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       const result = await actorService.initializeState(state.id, mockSteps);
       expect(result).not.toBeNull();
-      expect(result!.step).toBe('1');
+      expect(result?.step).toBe('1');
     });
   });
 
@@ -106,12 +106,12 @@ describe('RunbookActorService', () => {
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
 
       expect(result).not.toBeNull();
-      expect(result!.state).toBeDefined();
-      expect(result!.state.id).toBe(state.id);
-      expect(result!.snapshot).toBeDefined();
+      expect(result?.state).toBeDefined();
+      expect(result?.state.id).toBe(state.id);
+      expect(result?.snapshot).toBeDefined();
 
       // Snapshot should have expected XState shape
-      const snap = result!.snapshot as { status: string; value: unknown };
+      const snap = result?.snapshot as { status: string; value: unknown };
       expect(typeof snap.status).toBe('string');
       expect(snap).toHaveProperty('value');
     });
@@ -380,11 +380,11 @@ describe('RunbookActorService', () => {
 
       // Verify forStack with array source is set
       expect(updated.forStack).toHaveLength(1);
-      expect(updated.forStack![0].source).toEqual({
+      expect(updated.forStack?.[0].source).toEqual({
         kind: 'array',
         items: ['x', 'y', 'z'],
       });
-      expect(updated.forStack![0].currentValue).toBe('y');
+      expect(updated.forStack?.[0].currentValue).toBe('y');
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
@@ -429,8 +429,8 @@ describe('RunbookActorService', () => {
 
       // Verify forStack with file source is set
       expect(updated.forStack).toHaveLength(1);
-      expect(updated.forStack![0].source.kind).toBe('file');
-      expect(updated.forStack![0].source).toEqual({
+      expect(updated.forStack?.[0].source.kind).toBe('file');
+      expect(updated.forStack?.[0].source).toEqual({
         kind: 'file',
         path: '/tmp/data.txt',
         format: 'text',
@@ -440,8 +440,8 @@ describe('RunbookActorService', () => {
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
       expect(loaded?.forStack).toHaveLength(1);
-      expect(loaded?.forStack![0].source.kind).toBe('file');
-      expect(loaded?.forStack![0].source).toEqual({
+      expect(loaded?.forStack?.[0].source.kind).toBe('file');
+      expect(loaded?.forStack?.[0].source).toEqual({
         kind: 'file',
         path: '/tmp/data.txt',
         format: 'text',

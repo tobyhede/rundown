@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
-import * as path from 'path';
-import * as fs from 'fs/promises';
-import * as os from 'os';
+import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 
 // Mock only what is necessary and external to the logic we want to test
 jest.unstable_mockModule('../src/context.js', () => ({

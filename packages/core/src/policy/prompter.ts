@@ -8,7 +8,7 @@
  */
 
 import { confirm, select } from '@inquirer/prompts';
-import { type PolicyEvaluator } from './evaluator.js';
+import type { PolicyEvaluator } from './evaluator.js';
 
 /**
  * Permission types that can be prompted.

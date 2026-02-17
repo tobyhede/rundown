@@ -1,5 +1,5 @@
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import type { Command } from 'commander';
 import { parseRunbookDocument, validateRunbook, type Step } from '@rundown-org/parser';
 import { OutputEmitter } from '../services/output-emitter.js';

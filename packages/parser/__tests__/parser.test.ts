@@ -42,7 +42,7 @@ Do work.
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].workflows).toEqual([
+    expect(steps[0].substeps?.[0].workflows).toEqual([
       'runbook-a.runbook.md',
       'runbook-b.runbook.md',
     ]);
@@ -65,7 +65,7 @@ describe('parseRunbook with substep runbooks', () => {
 
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].workflows).toEqual(['review.runbook.md', 'security.runbook.md']);
+    expect(steps[0].substeps?.[0].workflows).toEqual(['review.runbook.md', 'security.runbook.md']);
   });
 });
 
@@ -269,7 +269,7 @@ describe('substep with prompts', () => {
 This is the implicit prompt text.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps![0].prompt).toBe('This is the implicit prompt text.');
+    expect(steps[0].substeps?.[0].prompt).toBe('This is the implicit prompt text.');
   });
 });
 
@@ -290,22 +290,22 @@ Do work.
 More work.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps![0].transitions?.pass).toEqual({
+    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(steps[0].substeps![0].transitions?.fail).toEqual({
+    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP', message: 'BLOCKED' },
     });
-    expect(steps[0].substeps![1].transitions?.pass).toEqual({
+    expect(steps[0].substeps?.[1].transitions?.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'COMPLETE' },
     });
-    expect(steps[0].substeps![1].transitions?.fail).toEqual({
+    expect(steps[0].substeps?.[1].transitions?.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'GOTO', target: { step: '1', substep: '1' } },
@@ -322,12 +322,12 @@ More work.
 Do work.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps![0].transitions?.pass).toEqual({
+    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(steps[0].substeps![0].transitions?.fail).toEqual({
+    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP' },
@@ -348,7 +348,7 @@ describe('substep GOTO validation', () => {
 - FAIL: STOP
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps![0].transitions?.fail).toEqual({
+    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'GOTO', target: { step: '1', substep: '2' } },
@@ -384,7 +384,7 @@ npm run lint
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].command?.code).toBe('npm run lint');
+    expect(steps[0].substeps?.[0].command?.code).toBe('npm run lint');
   });
 
   it('rejects multiple code blocks in substep', () => {
@@ -542,10 +542,10 @@ Handle cleanup`;
 
     const steps = parseRunbook(md);
     expect(steps[0].substeps).toHaveLength(2);
-    expect(steps[0].substeps![0]).toMatchObject({
+    expect(steps[0].substeps?.[0]).toMatchObject({
       id: '1',
     });
-    expect(steps[0].substeps![1]).toMatchObject({
+    expect(steps[0].substeps?.[1]).toMatchObject({
       id: 'Cleanup',
     });
   });

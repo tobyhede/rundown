@@ -128,7 +128,7 @@ describe('Policy Schema', () => {
       expect(result.success).toBe(false);
       expect(result.data).toBeUndefined();
       expect(result.errors).toBeDefined();
-      expect(result.errors!.length).toBeGreaterThan(0);
+      expect(result.errors?.length).toBeGreaterThan(0);
     });
   });
 

@@ -1,8 +1,8 @@
 // packages/claude-code-plugin/__tests__/builtin-gates.test.ts
 import { executeBuiltinGate } from '../src/gate-loader.js';
 import type { HookInput } from '../src/shared/index.js';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

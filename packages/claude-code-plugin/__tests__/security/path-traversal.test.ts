@@ -11,9 +11,9 @@ import {
 import { discoverContextFile } from '../../src/context.js';
 import { execute as executeSkillStart } from '../../src/gates/on-skill-start.js';
 import { createMockConfig, createMockHookInput } from '../helpers/test-utils.js';
-import * as path from 'path';
-import * as fs from 'fs/promises';
-import { tmpdir } from 'os';
+import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 describe('Path Jail Security', () => {
   const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;

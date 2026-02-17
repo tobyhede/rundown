@@ -1,7 +1,7 @@
 // __tests__/perf/hook-performance.test.ts
 // Performance budget tests for hook processing
 
-import * as path from 'path';
+import * as path from 'node:path';
 import {
   dispatch,
   shouldProcessHook,

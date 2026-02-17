@@ -1,6 +1,6 @@
 // packages/claude-code-plugin/src/shared/utils.ts
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 
 /**
  * Check if a file exists at the given path.
@@ -52,6 +52,9 @@ export function safeJoin(base: string, ...segments: string[]): string {
 /**
  * Sanitize a string to be used as a filename or path segment.
  * Removes path separators and parent directory references.
+ *
+ * @param segment - The raw string to sanitize
+ * @returns Sanitized string safe for use as a path segment
  */
 export function sanitizePathSegment(segment: string): string {
   return segment
@@ -62,6 +65,9 @@ export function sanitizePathSegment(segment: string): string {
 /**
  * Escapes a string for safe use in a shell command.
  * Primarily handles double quotes, backticks and dollar signs for use inside double quotes.
+ *
+ * @param str - The string to escape
+ * @returns Shell-safe escaped string
  */
 export function shellEscape(str: string): string {
   return str.replace(/(["`\\$])/g, '\\$1');

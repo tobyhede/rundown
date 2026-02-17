@@ -4,11 +4,11 @@ import {
   getAllStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { join, dirname, basename } from 'path';
-import { fileURLToPath } from 'url';
+import { join, dirname, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { extractRawFrontmatter } from '../../src/helpers/extract-raw-frontmatter.js';
 import { parseScenarios, type Scenario, type Scenarios } from '../../src/schemas/scenarios.js';
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

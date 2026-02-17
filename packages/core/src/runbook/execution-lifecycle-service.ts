@@ -48,6 +48,9 @@ export class ExecutionLifecycleService {
    * @param id - The runbook state ID
    * @param pending - The pending step to push (includes stepId and optional child runbook path)
    * @throws Error if the runbook with the given ID is not found
+   * @remarks This method uses a load-then-update pattern. It is safe under
+   * Rundown's single-process-per-runbook execution model but would need an
+   * atomic update if concurrent access were introduced.
    */
   async pushPendingStep(id: string, pending: PendingStep): Promise<void> {
     const state = await this.manager.load(id);
@@ -63,6 +66,8 @@ export class ExecutionLifecycleService {
    *
    * @param id - The runbook state ID
    * @returns The first pending step, or null if the queue is empty or runbook not found
+   * @remarks Uses load-then-update; safe under single-process execution.
+   * See {@link pushPendingStep} for details.
    */
   async popPendingStep(id: string): Promise<PendingStep | null> {
     const state = await this.manager.load(id);

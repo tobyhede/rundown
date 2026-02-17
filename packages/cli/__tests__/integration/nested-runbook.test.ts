@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
-import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 describe('Nested Runbook Integration', () => {
   let workspace: TestWorkspace;

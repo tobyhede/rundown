@@ -1,10 +1,10 @@
 // packages/claude-code-plugin/__tests__/integration.test.ts
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
-import { join, dirname } from 'path';
-import { promises as fs } from 'fs';
-import { tmpdir } from 'os';
-import { fileURLToPath } from 'url';
+import { exec, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { join, dirname } from 'node:path';
+import { promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

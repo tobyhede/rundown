@@ -1,6 +1,6 @@
-import { spawn } from 'child_process';
-import * as path from 'path';
-import { type PolicyEvaluator, type PolicyPrompter, type PolicyDecision } from '../policy/index.js';
+import { spawn } from 'node:child_process';
+import * as path from 'node:path';
+import type { PolicyEvaluator, PolicyPrompter, PolicyDecision } from '../policy/index.js';
 import { executeWithSandbox, isSandboxAvailable } from '../sandbox/index.js';
 import { policyToSandboxOptions } from '../sandbox/policy-mapper.js';
 

@@ -173,7 +173,7 @@ const SAFE_SHELL_VALUE = /^(?!-)(?!.*\.\.)[a-zA-Z0-9_./-]+$/;
 export function shellEscapeValue(value: string): string {
   if (value === '') return "''";
   if (SAFE_SHELL_VALUE.test(value)) return value;
-  return "'" + value.replace(/'/g, "'\\''") + "'";
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /**

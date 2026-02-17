@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import path from 'path';
+import path from 'node:path';
 import { getBundledRunbooksPath } from '../../src/helpers/bundled-runbooks.js';
 
 describe('getBundledRunbooksPath', () => {

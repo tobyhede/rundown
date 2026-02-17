@@ -4,9 +4,9 @@
  * Flattens the category structure for simpler resolution.
  * Detects filename collisions to prevent silent overwrites.
  */
-import { cpSync, mkdirSync, readdirSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { cpSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

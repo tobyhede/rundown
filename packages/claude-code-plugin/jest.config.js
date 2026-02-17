@@ -7,10 +7,10 @@ export default {
   coverageReporters: ['text', 'lcov', 'html'],
   coverageThreshold: {
     global: {
-      branches: 40,
-      functions: 50,
-      lines: 50,
-      statements: 50,
+      branches: 75,
+      functions: 90,
+      lines: 85,
+      statements: 85,
     },
     './src/dispatcher.ts': {
       branches: 80,

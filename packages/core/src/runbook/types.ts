@@ -54,7 +54,7 @@ export type { Runbook } from '@rundown-org/parser';
  */
 export type { StepId } from '@rundown-org/parser';
 
-import { type StepId } from '@rundown-org/parser';
+import type { StepId } from '@rundown-org/parser';
 
 /**
  * JSON primitive value (string, number, boolean, or null).

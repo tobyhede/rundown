@@ -98,7 +98,7 @@ describe('Synthetic Event Registry Coverage', () => {
         const hasExpectedEvent = events.some((e) => e.syntheticEvent === syntheticType);
         expect(hasExpectedEvent).toBe(true);
 
-        events.forEach((e) => detectedEvents.add(e.syntheticEvent));
+        for (const e of events) detectedEvents.add(e.syntheticEvent);
       });
     }
 

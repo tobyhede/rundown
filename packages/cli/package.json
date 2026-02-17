@@ -15,6 +15,8 @@
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js && node scripts/copy-runbooks.js",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "test:unit": "NODE_OPTIONS='--experimental-vm-modules' jest --maxWorkers=2 --testPathIgnorePatterns='integration'",
+    "test:integration": "NODE_OPTIONS='--experimental-vm-modules' jest --maxWorkers=2 --testPathPattern='integration'",
     "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
     "clean": "rm -rf dist"
   },

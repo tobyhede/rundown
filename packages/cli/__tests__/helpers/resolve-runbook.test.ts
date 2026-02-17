@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { resolveRunbookFile, parseIdentifier } from '../../src/helpers/resolve-runbook.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 describe('resolveRunbookFile', () => {
   let testDir: string;

@@ -8,7 +8,7 @@
  */
 
 import { parse } from 'shell-quote';
-import * as path from 'path';
+import * as path from 'node:path';
 
 /**
  * Parsed command with executable name and full command string.
@@ -251,11 +251,12 @@ export function extractDollarSubstitutions(command: string, depth = 0): string[]
  */
 function extractRecursiveMatches(command: string, regex: RegExp, depth: number): string[] {
   const executables: string[] = [];
-  let match;
+  let match: RegExpExecArray | null = null;
 
   // Reset regex index for safety if it has the global flag
   if (regex.global) regex.lastIndex = 0;
 
+  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = regex.exec(command)) !== null) {
     const nestedContent = match[1];
     const nestedExecutables = extractAllExecutables(nestedContent, depth);

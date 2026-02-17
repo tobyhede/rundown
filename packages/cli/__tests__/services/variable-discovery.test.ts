@@ -9,9 +9,9 @@ import {
   getBuiltinVariables,
   resolveVariables,
 } from '../../src/services/variable-discovery.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 describe('parseVarFlag', () => {
   it('should parse key=value format', () => {

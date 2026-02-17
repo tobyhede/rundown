@@ -102,7 +102,7 @@ export class OutputEmitter {
    */
   list<T, U = T>(items: T[], columns: ColumnDef<T>[], options?: ListOptions<T, U>): void {
     // Cast to OutputEvent since ListOutput<T, U> has compatible runtime shape
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const event: ListOutput<any, any> = {
       type: 'list',
       items,

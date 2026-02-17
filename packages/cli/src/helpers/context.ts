@@ -1,7 +1,7 @@
 // packages/cli/src/helpers/context.ts
 
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { parseRunbook, countNumberedSteps } from '@rundown-org/core';
 import { resolveRunbookFile } from './resolve-runbook.js';
 

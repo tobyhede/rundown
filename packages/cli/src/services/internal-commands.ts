@@ -6,7 +6,7 @@
  * underlying logic without spawning a child process.
  */
 
-import { type ExecutionResult } from '@rundown-org/core';
+import type { ExecutionResult } from '@rundown-org/core';
 import { executeEchoLogic, toExecutionResult } from '../helpers/echo-command.js';
 
 /**

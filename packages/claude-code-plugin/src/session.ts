@@ -1,5 +1,5 @@
-import { promises as fs } from 'fs';
-import { dirname, join } from 'path';
+import { promises as fs } from 'node:fs';
+import { dirname, join } from 'node:path';
 import {
   type SessionState,
   type SessionStateArrayKey,

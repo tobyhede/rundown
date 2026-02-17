@@ -1,9 +1,9 @@
 // packages/claude-code-plugin/__tests__/gate-loader.test.ts
 import { executeShellCommand, executeGate, loadPluginGate } from '../src/gate-loader.js';
 import type { GateConfig, HookInput } from '../src/shared/index.js';
-import * as os from 'os';
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import * as os from 'node:os';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 
 describe('Gate Loader - Shell Commands', () => {
   test('executes shell command and returns exit code', async () => {

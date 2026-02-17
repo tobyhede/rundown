@@ -76,7 +76,7 @@ describe('Subscriber method binding', () => {
           output.push(text);
         },
         writeLines: (lines: string[]) => {
-          lines.forEach((l) => output.push(l));
+          for (const l of lines) output.push(l);
         },
         writeError: (text: string) => {
           output.push(text);
@@ -114,7 +114,7 @@ describe('Subscriber method binding', () => {
           output.push(text);
         },
         writeLines: (lines: string[]) => {
-          lines.forEach((l) => output.push(l));
+          for (const l of lines) output.push(l);
         },
         writeError: (text: string) => {
           output.push(text);

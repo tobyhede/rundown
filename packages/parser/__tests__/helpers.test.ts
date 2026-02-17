@@ -225,6 +225,7 @@ describe('convertToTransitions with YES/NO', () => {
       { type: 'no', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
+    expect(result).toBeDefined();
     expect(result!.pass.kind).toBe('yes');
     expect(result!.fail.kind).toBe('no');
   });
@@ -235,6 +236,7 @@ describe('convertToTransitions with YES/NO', () => {
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
+    expect(result).toBeDefined();
     expect(result!.pass.kind).toBe('pass');
     expect(result!.fail.kind).toBe('fail');
   });
@@ -881,7 +883,7 @@ describe('convertToTransitions aggregation conflicts', () => {
     ];
     const result = convertToTransitions(conditionals);
     expect(result).not.toBeNull();
-    expect(result!.all).toBe(true);
+    expect(result?.all).toBe(true);
   });
 
   it('accepts valid PASS ANY + FAIL ALL (optimistic)', () => {
@@ -891,7 +893,7 @@ describe('convertToTransitions aggregation conflicts', () => {
     ];
     const result = convertToTransitions(conditionals);
     expect(result).not.toBeNull();
-    expect(result!.all).toBe(false);
+    expect(result?.all).toBe(false);
   });
 
   it('defaults to all=true with only PASS modifier ALL', () => {
@@ -900,7 +902,7 @@ describe('convertToTransitions aggregation conflicts', () => {
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result!.all).toBe(true);
+    expect(result?.all).toBe(true);
   });
 
   it('defaults to all=false with only PASS modifier ANY', () => {
@@ -909,7 +911,7 @@ describe('convertToTransitions aggregation conflicts', () => {
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result!.all).toBe(false);
+    expect(result?.all).toBe(false);
   });
 
   it('defaults to all=true with only FAIL modifier ANY', () => {
@@ -918,7 +920,7 @@ describe('convertToTransitions aggregation conflicts', () => {
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result!.all).toBe(true);
+    expect(result?.all).toBe(true);
   });
 
   it('defaults to all=false with only FAIL modifier ALL', () => {
@@ -927,7 +929,7 @@ describe('convertToTransitions aggregation conflicts', () => {
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result!.all).toBe(false);
+    expect(result?.all).toBe(false);
   });
 
   it('returns null for empty conditionals array', () => {
@@ -940,7 +942,7 @@ describe('convertToTransitions aggregation conflicts', () => {
     ];
     const result = convertToTransitions(conditionals);
     expect(result).not.toBeNull();
-    expect(result!.fail.action).toEqual({ type: 'STOP' });
+    expect(result?.fail.action).toEqual({ type: 'STOP' });
   });
 
   it('provides default CONTINUE for missing pass action', () => {
@@ -949,7 +951,7 @@ describe('convertToTransitions aggregation conflicts', () => {
     ];
     const result = convertToTransitions(conditionals);
     expect(result).not.toBeNull();
-    expect(result!.pass.action).toEqual({ type: 'CONTINUE' });
+    expect(result?.pass.action).toEqual({ type: 'CONTINUE' });
   });
 });
 

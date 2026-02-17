@@ -2,7 +2,7 @@ import { fromMarkdown } from 'mdast-util-from-markdown';
 import { visit } from 'unist-util-visit';
 import type { Node } from 'unist';
 import type { Code, Heading, ListItem, Paragraph, PhrasingContent } from 'mdast';
-import { type Step, type Substep, type Runbook, type Command, type ForClause } from './ast.js';
+import type { Step, Substep, Runbook, Command, ForClause } from './ast.js';
 import { type ParsedConditional, RunbookSyntaxError } from './types.js';
 import {
   extractStepHeader,
@@ -159,7 +159,7 @@ export function parseRunbookDocument(
           .join('\n')
           .trim();
         if (contentWithoutRunbooks) {
-          promptText += contentWithoutRunbooks + '\n';
+          promptText += `${contentWithoutRunbooks}\n`;
         }
       }
 
@@ -316,7 +316,7 @@ export function parseRunbookDocument(
       const text = extractText(paragraphNode);
 
       if (inPreamble) {
-        preamble += text + '\n';
+        preamble += `${text}\n`;
         return;
       }
 
@@ -372,7 +372,7 @@ export function parseRunbookDocument(
                   `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`,
                 );
               }
-              currentStep.pendingSubstep.promptText += line.trim() + '\n';
+              currentStep.pendingSubstep.promptText += `${line.trim()}\n`;
               currentStep.pendingSubstep.hasSeenPromptText = true;
             } else {
               if (currentStep.hasSeenContent) {
@@ -385,7 +385,7 @@ export function parseRunbookDocument(
                   `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`,
                 );
               }
-              implicitText += line.trim() + '\n';
+              implicitText += `${line.trim()}\n`;
               currentStep.hasSeenPromptText = true;
             }
           }
@@ -485,7 +485,7 @@ export function parseRunbookDocument(
             );
           }
           // Only add content after validation passes
-          currentStep.pendingSubstep.content += ' - ' + text + '\n';
+          currentStep.pendingSubstep.content += ` - ${text}\n`;
           // Mark content seen if runbook list
           if (isRunbookRef) {
             currentStep.pendingSubstep.hasSeenContent = true;
@@ -504,7 +504,7 @@ export function parseRunbookDocument(
             );
           }
           // Only add content after validation passes
-          const itemText = ' - ' + text + '\n';
+          const itemText = ` - ${text}\n`;
           currentStep.content += itemText;
           if (!isRunbookRef) {
             implicitText += itemText;

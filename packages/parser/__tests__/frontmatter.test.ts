@@ -119,7 +119,7 @@ vars:
 name: my-runbook
 vars:
   port: 3000
-  pi: 3.14159
+  ratio: 1.618
 ---
 # Content`;
 
@@ -128,7 +128,7 @@ vars:
     expect(result.frontmatter).not.toBeNull();
     expect(result.frontmatter?.vars).toEqual({
       port: 3000,
-      pi: 3.14159,
+      ratio: 1.618,
     });
   });
 

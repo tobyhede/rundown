@@ -1,5 +1,5 @@
-import * as os from 'os';
-import * as path from 'path';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { PolicyEvaluator, createDefaultEvaluator } from '../../src/policy/evaluator.js';
 import { DEFAULT_POLICY, type PolicyConfig } from '../../src/policy/schema.js';
 

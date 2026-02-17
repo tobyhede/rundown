@@ -67,7 +67,7 @@ export async function resolveForValue(fc: ForContext): Promise<ResolvedIteration
           try {
             currentValue = JSON.parse(value) as JsonValue;
           } catch (cause) {
-            const truncated = value.length > 120 ? value.substring(0, 120) + '...' : value;
+            const truncated = value.length > 120 ? `${value.substring(0, 120)}...` : value;
             throw new Error(
               `Failed to parse JSONL at ${fc.source.path} line ${String(fc.iteration)}: ${truncated}`,
               { cause },

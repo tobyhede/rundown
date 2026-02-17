@@ -13,10 +13,17 @@ import { handleAction } from './action-handler.js';
 import { Session } from './session.js';
 import { getWorkflowContext } from './workflow/context.js';
 import { minimatch } from 'minimatch';
-import path from 'path';
+import path from 'node:path';
 import { detectSyntheticEvents } from './synthetic-events/detector.js';
 import { isSyntheticEvent } from './synthetic-events/types.js';
 
+/**
+ * Determine whether a hook event should be processed based on enabled-tool/agent filters.
+ *
+ * @param input - Hook input containing the event and tool/agent metadata
+ * @param hookConfig - Hook configuration with optional enabled_tools/enabled_agents lists
+ * @returns true if the hook should be processed, false if filtered out
+ */
 export function shouldProcessHook(input: HookInput, hookConfig: HookConfig): boolean {
   const hookEvent = input.hook_event_name;
 
@@ -39,9 +46,15 @@ export function shouldProcessHook(input: HookInput, hookConfig: HookConfig): boo
   return true;
 }
 
+/**
+ * Result returned by the dispatch pipeline.
+ */
 export interface DispatchResult {
+  /** Accumulated context to inject into the conversation */
   context?: string;
+  /** If set, the hook blocked execution with this reason */
   blockReason?: string;
+  /** If set, the hook stopped execution with this message */
   stopMessage?: string;
 }
 
@@ -230,6 +243,16 @@ async function updateSessionState(input: HookInput): Promise<void> {
   }
 }
 
+/**
+ * Main dispatch pipeline for hook events.
+ *
+ * Runs context injection, synthetic event detection, and configured gates in sequence.
+ * Accumulates context from all sources and short-circuits on block/stop actions.
+ *
+ * @param input - Hook input describing the event and its metadata
+ * @returns Dispatch result with accumulated context and optional block/stop directives
+ * @throws Error if gate execution fails unexpectedly
+ */
 export async function dispatch(input: HookInput): Promise<DispatchResult> {
   const hookEvent = input.hook_event_name;
   const cwd = input.cwd;
@@ -254,7 +277,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
   const workflowContext = getWorkflowContext(input.cwd);
   if (workflowContext) {
     accumulatedContext = accumulatedContext
-      ? accumulatedContext + '\n\n' + workflowContext
+      ? `${accumulatedContext}\n\n${workflowContext}`
       : workflowContext;
   }
 
@@ -307,7 +330,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
       // Accumulate context from synthetic events (avoid leading newlines)
       if (syntheticResult.context) {
         accumulatedContext = accumulatedContext
-          ? accumulatedContext + '\n\n' + syntheticResult.context
+          ? `${accumulatedContext}\n\n${syntheticResult.context}`
           : syntheticResult.context;
       }
 
@@ -405,7 +428,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
     const actionResult = handleAction(action, result, config, input);
 
     if (actionResult.context) {
-      accumulatedContext += '\n' + actionResult.context;
+      accumulatedContext += `\n${actionResult.context}`;
     }
 
     if (!actionResult.continue) {

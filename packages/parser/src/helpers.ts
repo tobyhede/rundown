@@ -1,5 +1,5 @@
 import { RunbookSyntaxError, type ParsedConditional, type AggregationModifier } from './types.js';
-import { type Action, type Transitions } from './schemas.js';
+import type { Action, Transitions } from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
 import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 import type { ForClause } from './ast.js';
@@ -256,7 +256,7 @@ export function parseForClause(text: string): ForClause | null {
   // Try to parse a bound value (positive integer only, capped at MAX_FOR_BOUND)
   const parseBound = (s: string): number | null => {
     const num = parseInt(s, 10);
-    if (!isNaN(num) && String(num) === s && num > 0 && num <= MAX_FOR_BOUND) return num;
+    if (!Number.isNaN(num) && String(num) === s && num > 0 && num <= MAX_FOR_BOUND) return num;
     return null;
   };
 

@@ -1,7 +1,7 @@
 // packages/cli/src/services/discovery.ts
 
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { extractFrontmatter, nameFromFilename } from '@rundown-org/parser';
 import { getBundledRunbooksPath } from '../helpers/bundled-runbooks.js';
 
@@ -105,10 +105,7 @@ export async function scanDirectory(
               description: frontmatter?.description,
               tags: frontmatter?.tags,
             });
-          } catch {
-            // Skip files that can't be read or parsed
-            continue;
-          }
+          } catch {}
         }
       }
     } catch {

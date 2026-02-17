@@ -10,16 +10,16 @@
  * @module
  */
 
-import { spawn, spawnSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * Build PATH with node_modules/.bin prepended.
  * This ensures local package binaries are found during command execution.
  *
- * `@param` cwd - Working directory
- * `@returns` Enhanced PATH environment variable
+ * @param cwd - Working directory
+ * @returns Enhanced PATH environment variable
  */
 function buildEnhancedPath(cwd: string): string {
   const binPath = join(cwd, 'node_modules', '.bin');
@@ -239,7 +239,7 @@ export class LandlockSandbox implements SandboxImplementation {
       };
 
       // wrapperPath is guaranteed to be set at this point (checked at start of execute method)
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+
       const child = spawn(this.wrapperPath!, args, {
         cwd: options.cwd,
         stdio: 'inherit',

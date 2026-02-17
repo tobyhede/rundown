@@ -286,7 +286,7 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
  * @param config - Transition configuration
  * @param isComplete - Whether runbook is complete
  * @param isStopped - Whether runbook is stopped
- * @param prevState - State before transition (for correct retryCount in messages)
+ * @param _prevState - State before transition (for correct retryCount in messages)
  * @param positions - Prev and new position objects
  * @param conditionResult - Result of condition evaluation (for message)
  * @returns 'complete', 'stopped', or 'continue'
@@ -296,7 +296,7 @@ export async function handleTerminalState(
   config: TransitionConfig,
   isComplete: boolean,
   isStopped: boolean,
-  prevState: RunbookState,
+  _prevState: RunbookState,
   positions: { prevPos: StepPosition; newPos: StepPosition },
   conditionResult: ConditionResult,
 ): Promise<'complete' | 'stopped' | 'continue'> {

@@ -5,8 +5,8 @@ import {
   readSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 describe('Parallel Runbooks Integration', () => {
   let workspace: TestWorkspace;

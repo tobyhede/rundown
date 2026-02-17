@@ -20,7 +20,23 @@
     }
   },
   "linter": {
-    "enabled": false
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "noUnusedVariables": "off",
+        "noUnusedImports": "warn"
+      },
+      "style": {
+        "useConst": "error",
+        "useNodejsImportProtocol": "error",
+        "noNonNullAssertion": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "off",
+        "noTemplateCurlyInString": "off"
+      }
+    }
   },
   "assist": {
     "actions": {
@@ -30,6 +46,6 @@
     }
   },
   "files": {
-    "includes": ["**", "!dist/**", "!coverage/**", "!site/**", "!.worktree/**", "!*.snap"]
+    "includes": ["**", "!dist", "!coverage", "!site", "!.worktree", "!.worktrees", "!**/*.snap"]
   }
 }
