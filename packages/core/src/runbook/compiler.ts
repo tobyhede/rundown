@@ -380,13 +380,26 @@ function appendIterationResult(iterationResult: 'pass' | 'fail') {
   };
 }
 
-function buildLoopControlAssign(actionType: 'NEXT' | 'BREAK', iterationResult: 'pass' | 'fail') {
+/** Build assign action for substep-to-parent transition with iteration result. */
+function buildSubstepToParentAssign(
+  stepName: string,
+  iterationResult: 'pass' | 'fail',
+  actionType: 'CONTINUE' | 'NEXT' | 'BREAK',
+  isPassThrough?: boolean,
+): TransitionEntry {
   return {
-    iterationResults: appendIterationResult(iterationResult),
-    lastAction: { type: actionType },
-    lastMessage: undefined as string | undefined,
-    retryCount: 0,
-    substep: undefined as string | undefined,
+    target: formatStateId(stepName),
+    actions: assign({
+      iterationResults: isPassThrough
+        ? (undefined as ('pass' | 'fail')[] | undefined)
+        : ({ context }: { context: RunbookContext }) => {
+            const results = context.iterationResults ?? [];
+            return [...results, iterationResult];
+          },
+      lastAction: { type: actionType },
+      lastMessage: undefined as string | undefined,
+      substep: undefined as string | undefined,
+    }),
   };
 }
 
@@ -667,8 +680,8 @@ function buildParentStateConfig(
           lastAction: { type: 'RETRY' as const },
           parentRetryCount: ({ context }: { context: RunbookContext }) =>
             context.parentRetryCount + 1,
-          // Keep retryCount in sync for downstream consumers that surface retry progress
-          // but currently only read context.retryCount.
+          // Increment both counters: parentRetryCount tracks parent-level exhaustion,
+          // retryCount is exposed to the execution layer (actor-service) for visibility.
           retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
           retryMax: transition.retry,
           forStack: [] as readonly ForContext[],
@@ -780,23 +793,18 @@ function buildActionTransition(
       if (isLastSubstep && currentStep) {
         const isImplicit = !currentStep.forClause;
 
-        return {
-          target: formatStateId(stepName),
-          actions: assign({
-            iterationResults:
-              isImplicit && !currentStep.transitions
-                ? (undefined as ('pass' | 'fail')[] | undefined)
-                : appendIterationResult(iterationResult),
-            lastAction: { type: 'CONTINUE' as const },
-            lastMessage: undefined as string | undefined,
-            substep: undefined as string | undefined,
-          }),
-        };
+        return buildSubstepToParentAssign(
+          stepName,
+          iterationResult,
+          'CONTINUE',
+          isImplicit && !currentStep.transitions,
+        );
       }
 
       // Non-last substep CONTINUE: advance to next sibling substep
       // FOR loops aggregate once per iteration at the parent state (last substep),
       // not per substep, so only implicit (non-FOR) aggregate steps accumulate here.
+      // FOR loops accumulate one result per iteration (at last substep), not per substep
       const shouldAccumulate = !!(
         currentStep?.substeps?.length &&
         !currentStep.forClause &&
@@ -925,10 +933,7 @@ function buildActionTransition(
         return { target: 'STOPPED', actions: assign({ lastAction: { type: 'NEXT' as const } }) };
       }
       const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
-      return {
-        target: formatStateId(stepName),
-        actions: assign(buildLoopControlAssign('NEXT', iterationResult)),
-      };
+      return buildSubstepToParentAssign(stepName, iterationResult, 'NEXT', false);
     }
 
     case 'BREAK': {
@@ -937,10 +942,7 @@ function buildActionTransition(
         return { target: 'STOPPED', actions: assign({ lastAction: { type: 'BREAK' as const } }) };
       }
       const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
-      return {
-        target: formatStateId(stepName),
-        actions: assign(buildLoopControlAssign('BREAK', iterationResult)),
-      };
+      return buildSubstepToParentAssign(stepName, iterationResult, 'BREAK', false);
     }
   }
 }
