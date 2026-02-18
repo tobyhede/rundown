@@ -539,7 +539,7 @@ function buildParentExitAssign(
 }
 
 /**
- * Build the `always` (eventless) transition configuration for a parent aggregation state.
+ * Build the `always` (event-less) transition configuration for a parent aggregation state.
  *
  * Parent states are intermediate states that a step's last substep transitions to after
  * completing. The parent state then immediately (via `always`) routes to the correct
