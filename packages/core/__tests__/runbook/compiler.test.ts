@@ -4315,6 +4315,78 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('step::3');
     });
 
+    it('parent GOTO to non-first implicit substep does not reuse prior aggregation results', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Source with mixed outcomes',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: {
+              kind: 'fail' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '2', substep: '2' } },
+            },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Source check 1',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+            {
+              id: '2',
+              description: 'Source check 2',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Target implicit step',
+          transitions: {
+            all: true,
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '3' } },
+            },
+            fail: {
+              kind: 'fail' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '4' } },
+            },
+          },
+          substeps: [
+            { id: '1', description: 'Target check 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Target check 2', transitions: DEFAULT_TRANSITIONS },
+          ],
+        },
+        { name: '3', description: 'Pass handler', transitions: DEFAULT_TRANSITIONS },
+        { name: '4', description: 'Fail handler', transitions: DEFAULT_TRANSITIONS },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1
+      actor.send({ type: 'FAIL' }); // 1.2 -> parent FAIL -> GOTO 2.2
+      expect(actor.getSnapshot().value).toBe('step::2::2');
+
+      actor.send({ type: 'PASS' }); // 2.2 -> parent PASS ALL -> should route to 3
+      expect(actor.getSnapshot().value).toBe('step::3');
+    });
+
     it('PASS ANY: CONTINUE advances when any passes', () => {
       const steps: Step[] = [
         {
@@ -4647,6 +4719,57 @@ echo "processing"
 
       // Second attempt: fail -> parent -> exhausted (retryCount >= 1) -> STOPPED
       actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
+    it('parent retry exhausts after configured attempts across multiple substeps', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Multi-substep retry',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Check 1',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+            {
+              id: '2',
+              description: 'Check 2',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+          ],
+        },
+        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'FAIL' }); // 1.1 -> 1.2
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      actor.send({ type: 'FAIL' }); // 1.2 -> parent -> retry #1
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      actor.send({ type: 'FAIL' }); // 1.1 -> 1.2
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      actor.send({ type: 'FAIL' }); // 1.2 -> parent -> retries exhausted
       expect(actor.getSnapshot().value).toBe('STOPPED');
     });
 

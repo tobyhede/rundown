@@ -504,6 +504,9 @@ function buildParentExitAssign(
       return assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
+        ...(targetStep?.substeps?.length && targetStep.transitions
+          ? { iterationResults: [] as ('pass' | 'fail')[] }
+          : {}),
         lastAction: buildGotoLastAction(parentAction.target),
       });
     }
@@ -645,7 +648,7 @@ function buildParentStateConfig(
 
   // Aggregation guards (Cases A & B: steps with explicit transitions)
   if (hasTransitions) {
-    const parentTransitions = parentStep.transitions!;
+    const parentTransitions = parentStep.transitions;
     const passTarget = resolveActionTarget(parentTransitions.pass.action, stepName, steps);
     const failTarget = resolveActionTarget(parentTransitions.fail.action, stepName, steps);
 
@@ -779,7 +782,6 @@ function buildActionTransition(
             : {}),
           lastAction: { type: 'CONTINUE' as const },
           lastMessage: undefined as string | undefined,
-          retryCount: 0,
           substep: extractSubstepFromStateId(target),
         }),
       };
