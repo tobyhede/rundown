@@ -5,6 +5,12 @@ import { compileRunbookToMachine, MAX_FILE_ITERATIONS } from '../../src/runbook/
 import type { Step } from '../../src/runbook/types.js';
 
 describe('runbook compiler', () => {
+  const DEFAULT_TRANSITIONS = {
+    all: true,
+    pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+    fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+  };
+
   describe('static step compilation', () => {
     it('generates discrete states for substeps', () => {
       const steps: Step[] = [
@@ -1946,12 +1952,6 @@ describe('runbook compiler', () => {
       expect(ctx.iterationResults).toEqual([]);
     });
   });
-
-  const DEFAULT_TRANSITIONS = {
-    all: true,
-    pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-    fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-  };
 
   describe('implicit 1..1 loop model', () => {
     it('non-FOR step with substeps creates implicit ForContext on entry', () => {
@@ -4771,6 +4771,132 @@ echo "processing"
 
       actor.send({ type: 'FAIL' }); // 1.2 -> parent -> retries exhausted
       expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
+    it('cross-step substep GOTO resets parentRetryCount before target parent retries', () => {
+      const substepContinueTransitions = {
+        all: true,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      };
+
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Source with parent retry',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Jump to target',
+              transitions: {
+                all: true,
+                pass: {
+                  kind: 'pass' as const,
+                  retry: 0,
+                  action: { type: 'GOTO' as const, target: { step: '2', substep: '2' } },
+                },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+            {
+              id: '2',
+              description: 'Fail to trigger parent retry',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Target with parent retry',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            { id: '1', description: 'Target 1', transitions: substepContinueTransitions },
+            { id: '2', description: 'Target 2', transitions: substepContinueTransitions },
+          ],
+        },
+        { name: '3', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'FAIL' }); // 1.1 -> 1.2
+      actor.send({ type: 'FAIL' }); // 1.2 -> parent retry #1 -> 1.1
+      expect(actor.getSnapshot().context.parentRetryCount).toBe(1);
+
+      actor.send({ type: 'PASS' }); // 1.1 -> GOTO 2.2 (bypass parent)
+      expect(actor.getSnapshot().value).toBe('step::2::2');
+      expect(actor.getSnapshot().context.parentRetryCount).toBe(0);
+
+      actor.send({ type: 'FAIL' }); // 2.2 -> parent should retry, not exhaust
+      expect(actor.getSnapshot().value).toBe('step::2::1');
+    });
+
+    it('cross-step GOTO event resets parentRetryCount before target parent retries', () => {
+      const substepContinueTransitions = {
+        all: true,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      };
+
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Source with parent retry',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            { id: '1', description: 'Source 1', transitions: substepContinueTransitions },
+            { id: '2', description: 'Source 2', transitions: substepContinueTransitions },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Target with parent retry',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            { id: '1', description: 'Target 1', transitions: substepContinueTransitions },
+            { id: '2', description: 'Target 2', transitions: substepContinueTransitions },
+          ],
+        },
+        { name: '3', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'FAIL' }); // 1.1 -> 1.2
+      actor.send({ type: 'FAIL' }); // 1.2 -> parent retry #1 -> 1.1
+      expect(actor.getSnapshot().context.parentRetryCount).toBe(1);
+
+      actor.send({ type: 'GOTO', target: { step: '2', substep: '2' } });
+      expect(actor.getSnapshot().value).toBe('step::2::2');
+      expect(actor.getSnapshot().context.parentRetryCount).toBe(0);
+
+      actor.send({ type: 'FAIL' }); // 2.2 -> parent should retry, not exhaust
+      expect(actor.getSnapshot().value).toBe('step::2::1');
     });
 
     it('parent COMPLETE action forces early completion', () => {

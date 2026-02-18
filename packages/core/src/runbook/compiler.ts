@@ -349,6 +349,7 @@ function buildSimpleGotoAssign(options: {
   resolvedSubstepId: GotoAssignValue<string | undefined>;
   isGotoToSelf: boolean;
   preserveForContext?: boolean;
+  preserveParentRetryCount?: boolean;
 }): AssignAction {
   return assign({
     lastAction: ({ event }: { event: RunbookEvent }) => {
@@ -356,6 +357,9 @@ function buildSimpleGotoAssign(options: {
         ? options.lastAction({ event })
         : options.lastAction;
     },
+    parentRetryCount: options.preserveParentRetryCount
+      ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
+      : 0,
     retryCount: options.isGotoToSelf
       ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
       : 0,
@@ -367,6 +371,23 @@ function buildSimpleGotoAssign(options: {
           iterationResults: undefined as ('pass' | 'fail')[] | undefined,
         }),
   });
+}
+
+function appendIterationResult(iterationResult: 'pass' | 'fail') {
+  return ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] => {
+    const results = context.iterationResults ?? [];
+    return [...results, iterationResult];
+  };
+}
+
+function buildLoopControlAssign(actionType: 'NEXT' | 'BREAK', iterationResult: 'pass' | 'fail') {
+  return {
+    iterationResults: appendIterationResult(iterationResult),
+    lastAction: { type: actionType },
+    lastMessage: undefined as string | undefined,
+    retryCount: 0,
+    substep: undefined as string | undefined,
+  };
 }
 
 /**
@@ -646,6 +667,8 @@ function buildParentStateConfig(
           lastAction: { type: 'RETRY' as const },
           parentRetryCount: ({ context }: { context: RunbookContext }) =>
             context.parentRetryCount + 1,
+          // Keep retryCount in sync for downstream consumers that surface retry progress
+          // but currently only read context.retryCount.
           retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
           retryMax: transition.retry,
           forStack: [] as readonly ForContext[],
@@ -751,10 +774,10 @@ function buildActionTransition(
 
       // Check if we're at the last substep of a step with substeps
       const isLastSubstep = isLastSubstepOfStep(stepName, substepId, steps);
+      const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
 
       // If at last substep, route to parent aggregation state
       if (isLastSubstep && currentStep) {
-        const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
         const isImplicit = !currentStep.forClause;
 
         return {
@@ -763,10 +786,7 @@ function buildActionTransition(
             iterationResults:
               isImplicit && !currentStep.transitions
                 ? (undefined as ('pass' | 'fail')[] | undefined)
-                : ({ context }: { context: RunbookContext }) => {
-                    const results = context.iterationResults ?? [];
-                    return [...results, iterationResult];
-                  },
+                : appendIterationResult(iterationResult),
             lastAction: { type: 'CONTINUE' as const },
             lastMessage: undefined as string | undefined,
             substep: undefined as string | undefined,
@@ -775,6 +795,8 @@ function buildActionTransition(
       }
 
       // Non-last substep CONTINUE: advance to next sibling substep
+      // FOR loops aggregate once per iteration at the parent state (last substep),
+      // not per substep, so only implicit (non-FOR) aggregate steps accumulate here.
       const shouldAccumulate = !!(
         currentStep?.substeps?.length &&
         !currentStep.forClause &&
@@ -786,11 +808,7 @@ function buildActionTransition(
         actions: assign({
           ...(shouldAccumulate
             ? {
-                iterationResults: ({ context }: { context: RunbookContext }) => {
-                  const results = context.iterationResults ?? [];
-                  const result: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
-                  return [...results, result];
-                },
+                iterationResults: appendIterationResult(iterationResult),
               }
             : {}),
           lastAction: { type: 'CONTINUE' as const },
@@ -867,6 +885,10 @@ function buildActionTransition(
                 : ([] as ('pass' | 'fail')[]);
             },
             lastAction: buildGotoLastAction(action.target),
+            parentRetryCount:
+              targetStepObj.name === stepName
+                ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
+                : 0,
             retryCount: isGotoToSelf
               ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
               : 0,
@@ -892,6 +914,7 @@ function buildActionTransition(
           resolvedSubstepId,
           isGotoToSelf,
           preserveForContext: isIntraLoopGoto,
+          preserveParentRetryCount: isGotoToSelf || isIntraLoopGoto,
         }),
       };
     }
@@ -904,16 +927,7 @@ function buildActionTransition(
       const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
       return {
         target: formatStateId(stepName),
-        actions: assign({
-          iterationResults: ({ context }: { context: RunbookContext }) => {
-            const results = context.iterationResults ?? [];
-            return [...results, iterationResult];
-          },
-          lastAction: { type: 'NEXT' as const },
-          lastMessage: undefined as string | undefined,
-          retryCount: 0,
-          substep: undefined as string | undefined,
-        }),
+        actions: assign(buildLoopControlAssign('NEXT', iterationResult)),
       };
     }
 
@@ -925,16 +939,7 @@ function buildActionTransition(
       const iterationResult: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
       return {
         target: formatStateId(stepName),
-        actions: assign({
-          iterationResults: ({ context }: { context: RunbookContext }) => {
-            const results = context.iterationResults ?? [];
-            return [...results, iterationResult];
-          },
-          lastAction: { type: 'BREAK' as const },
-          lastMessage: undefined as string | undefined,
-          retryCount: 0,
-          substep: undefined as string | undefined,
-        }),
+        actions: assign(buildLoopControlAssign('BREAK', iterationResult)),
       };
     }
   }
@@ -1133,6 +1138,10 @@ export function compileRunbookToMachine(
                   ...(at !== undefined && { at }),
                 };
               },
+              parentRetryCount:
+                target.stepName === config.stepName
+                  ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
+                  : 0,
               retryCount: 0,
               substep: ({ event }: { event: RunbookEvent }) =>
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
@@ -1153,6 +1162,7 @@ export function compileRunbookToMachine(
               resolvedSubstepId: ({ event }: { event: RunbookEvent }) =>
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
               isGotoToSelf,
+              preserveParentRetryCount: isGotoToSelf,
             }),
       };
     });
