@@ -23,6 +23,8 @@ export const MAX_FILE_ITERATIONS = 10_000;
 export interface RunbookContext {
   /** Current retry count for the active step */
   retryCount: number;
+  /** Retry count for parent-step aggregation retries (separate from substep retryCount). */
+  parentRetryCount: number;
   /** Maximum retries allowed for current RETRY action (source of truth for retry limits) */
   retryMax?: number;
   /** Current substep ID within the active step */
@@ -478,6 +480,7 @@ function buildParentExitAssign(
 ): AssignAction {
   const baseAssign = {
     retryCount: 0,
+    parentRetryCount: 0,
     substep: extractSubstepFromStateId(exitTarget),
   };
 
@@ -501,11 +504,17 @@ function buildParentExitAssign(
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
         });
       }
+      const targetHasSubsteps = !!targetStep?.substeps?.length;
+      const targetHasAggregationTransitions = !!targetStep?.transitions;
       return assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
-        ...(targetStep?.substeps?.length && targetStep.transitions
-          ? { iterationResults: [] as ('pass' | 'fail')[] }
+        ...(targetHasSubsteps
+          ? {
+              iterationResults: targetHasAggregationTransitions
+                ? ([] as ('pass' | 'fail')[])
+                : (undefined as ('pass' | 'fail')[] | undefined),
+            }
           : {}),
         lastAction: buildGotoLastAction(parentAction.target),
       });
@@ -614,12 +623,13 @@ function buildParentStateConfig(
     const exhausted = {
       guard: ({ context }: { context: RunbookContext }) =>
         branchGuard({ context }) &&
-        (transition.retry <= 0 || context.retryCount >= transition.retry),
+        (transition.retry <= 0 || context.parentRetryCount >= transition.retry),
       target,
       actions: [
         buildParentExitAssign(transition.action, target, steps, sources),
         assign({
           retryCount: 0,
+          parentRetryCount: 0,
           retryMax: transition.retry > 0 ? transition.retry : undefined,
         }),
       ],
@@ -630,10 +640,12 @@ function buildParentStateConfig(
     return [
       {
         guard: ({ context }: { context: RunbookContext }) =>
-          branchGuard({ context }) && context.retryCount < transition.retry,
+          branchGuard({ context }) && context.parentRetryCount < transition.retry,
         target: firstSubstepStateId,
         actions: assign({
           lastAction: { type: 'RETRY' as const },
+          parentRetryCount: ({ context }: { context: RunbookContext }) =>
+            context.parentRetryCount + 1,
           retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
           retryMax: transition.retry,
           forStack: [] as readonly ForContext[],
@@ -671,6 +683,7 @@ function buildParentStateConfig(
     const exitAssign: Record<string, unknown> = {
       forStack: [] as readonly ForContext[],
       retryCount: 0,
+      parentRetryCount: 0,
       substep: extractSubstepFromStateId(nextTarget),
     };
 
@@ -1187,6 +1200,7 @@ export function compileRunbookToMachine(
     initial: allStates.length > 0 ? allStates[0].id : 'step::1',
     context: {
       retryCount: 0,
+      parentRetryCount: 0,
       retryMax: undefined,
       substep: undefined,
       variables: {},
