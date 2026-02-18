@@ -71,17 +71,35 @@ type AssignAction = (...args: never[]) => unknown;
 type TransitionConfig = TransitionEntry | TransitionEntry[];
 
 /**
- * Internal state configuration entry used to track all XState states during compilation.
- * Parent aggregation states (isParentState=true) are built via buildParentStateConfig.
+ * Child/leaf state configuration — represents a concrete substep or simple step.
  */
-interface StateConfig {
+interface ChildStateConfig {
   id: string;
   stepName: string;
   substepId?: string;
   transitions: Transitions;
-  isParentState?: boolean;
-  parentStep?: Step;
+  isParentState?: false;
 }
+
+/**
+ * Parent aggregation state configuration — represents a transient step that
+ * aggregates substep results via `always` transitions.
+ */
+interface ParentStateConfig {
+  id: string;
+  stepName: string;
+  substepId?: string;
+  transitions: Transitions;
+  isParentState: true;
+  parentStep: Step;
+}
+
+/**
+ * Internal state configuration entry used to track all XState states during compilation.
+ * Discriminated on `isParentState` so that `parentStep` is guaranteed present
+ * when `isParentState` is `true`.
+ */
+type StateConfig = ChildStateConfig | ParentStateConfig;
 
 /**
  * DEFAULT Transitions according to RUNDOWN-SPEC 1.0.0
@@ -522,17 +540,17 @@ function buildParentExitAssign(
     case 'GOTO': {
       const targetStep = steps.find((s) => s.name === parentAction.target.step);
       if (targetStep?.substeps?.length && targetStep.forClause) {
+        const forClause = targetStep.forClause;
         return assign({
           ...baseAssign,
-          forStack: [
-            createForContext(
-              targetStep.name,
-              targetStep.forClause,
-              parentAction.target.at !== undefined ? Number(parentAction.target.at) : undefined,
-              false,
-              sources,
-            ),
-          ],
+          forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] => {
+            const iteration = resolveAtValueRuntime(
+              parentAction.target.at,
+              forClause.start,
+              context.forStack,
+            );
+            return [createForContext(targetStep.name, forClause, iteration, false, sources)];
+          },
           iterationResults: [] as ('pass' | 'fail')[],
           lastAction: buildGotoLastAction(parentAction.target),
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
@@ -597,19 +615,16 @@ function buildParentExitAssign(
  * - Case C: FOR step without transitions — loop-back guard + unconditional exit
  * - Case D: Non-FOR step without transitions — unconditional pass-through
  *
- * @param config - The parent state config (must have isParentState=true)
+ * @param config - The parent state config (discriminated by isParentState=true)
  * @param steps - The full steps array
  * @param sources - Optional data sources for GOTO to FOR step initialization
  * @returns XState state config with `always` transitions
  */
 function buildParentStateConfig(
-  config: StateConfig,
+  config: ParentStateConfig,
   steps: Step[],
   sources?: Readonly<Record<string, DataSource>>,
 ): { always: unknown; entry?: unknown } {
-  if (!config.parentStep) {
-    throw new Error('parentStep required for parent state config');
-  }
   const parentStep = config.parentStep;
   const stepName = config.stepName;
   const hasFor = !!parentStep.forClause;
@@ -662,8 +677,6 @@ function buildParentStateConfig(
       actions: [
         buildParentExitAssign(transition.action, target, steps, sources),
         assign({
-          retryCount: 0,
-          parentRetryCount: 0,
           retryMax: transition.retry > 0 ? transition.retry : undefined,
         }),
       ],
@@ -1005,6 +1018,9 @@ export function compileRunbookToMachine(
     }
   });
 
+  // Pre-filter GOTO targets once (skip parent states — they are transient)
+  const gotoTargets = allStates.filter((t) => !t.isParentState);
+
   // Build the machine states
   allStates.forEach((config) => {
     if (config.isParentState) {
@@ -1056,8 +1072,7 @@ export function compileRunbookToMachine(
         }
       : {};
 
-    // Build per-state GOTO transitions (skip parent states — they are transient)
-    const gotoTargets = allStates.filter((t) => !t.isParentState);
+    // Build per-state GOTO transitions
     const buildGotoTransitionsForState = gotoTargets.map((target) => {
       // Compute isGotoToSelf at build time since target and config are known
       const isGotoToSelf = target.id === config.id;
