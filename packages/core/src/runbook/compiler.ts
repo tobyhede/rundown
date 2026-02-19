@@ -1163,13 +1163,17 @@ export function compileRunbookToMachine(
                 stepInfo.implicit,
                 options?.sources,
               ),
-            iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
+            iterationResults: ({
+              context,
+            }: {
+              context: RunbookContext;
+            }): ('pass' | 'fail')[] | undefined =>
               initIterationResults(
                 context.forStack,
                 context.iterationResults,
                 stepInfo.step.name,
-                true,
-              ) ?? [],
+                !stepInfo.implicit || !!stepInfo.step.transitions,
+              ),
           }),
         }
       : {};
