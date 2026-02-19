@@ -44,6 +44,8 @@ export function registerStopCommand(program: Command): void {
           try {
             steps = [...getRunbookFromState(state, cwd)];
           } catch (err) {
+            // Pop the broken runbook from the session so users can recover
+            await sessionService.popRunbook(options.agent);
             output.error(`Runbook state error: ${(err as Error).message}`, 'STATE_ERROR');
             output.flush();
             process.exit(1);
@@ -59,6 +61,20 @@ export function registerStopCommand(program: Command): void {
             output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
             output.flush();
             process.exit(1);
+          }
+
+          // Persist STOP metadata so historical state accurately reflects termination
+          await manager.update(state.id, {
+            lastAction: { type: 'STOP' },
+            lastResult: 'fail',
+          });
+
+          // Update parent agent binding before popping (mirrors pass/fail behavior)
+          if (options.agent && state.parentRunbookId) {
+            await manager.updateAgentBinding(state.parentRunbookId, options.agent, {
+              status: 'done',
+              result: 'fail',
+            });
           }
 
           await sessionService.popRunbook(options.agent);
