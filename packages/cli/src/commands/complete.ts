@@ -69,6 +69,14 @@ export function registerCompleteCommand(program: Command): void {
             process.exit(1);
           }
 
+          // Update parent agent binding before popping (mirrors pass/fail behavior)
+          if (options.agent && state.parentRunbookId) {
+            await manager.updateAgentBinding(state.parentRunbookId, options.agent, {
+              status: 'done',
+              result: 'pass',
+            });
+          }
+
           await sessionService.popRunbook(options.agent);
 
           // Emit structured output - renderer decides format
