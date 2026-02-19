@@ -49,6 +49,7 @@ export function registerStopCommand(program: Command): void {
             output.error(`Runbook state error: ${(err as Error).message}`, 'STATE_ERROR');
             output.flush();
             process.exit(1);
+            return; // Defensive: guards against mocked process.exit in tests
           }
 
           const actorService = new RunbookActorService(manager);
@@ -61,6 +62,7 @@ export function registerStopCommand(program: Command): void {
             output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
             output.flush();
             process.exit(1);
+            return; // Defensive: guards against mocked process.exit in tests
           }
 
           // Persist STOP metadata so historical state accurately reflects termination
@@ -71,10 +73,15 @@ export function registerStopCommand(program: Command): void {
 
           // Update parent agent binding before popping (mirrors pass/fail behavior)
           if (options.agent && state.parentRunbookId) {
-            await manager.updateAgentBinding(state.parentRunbookId, options.agent, {
-              status: 'done',
-              result: 'fail',
-            });
+            try {
+              await manager.updateAgentBinding(state.parentRunbookId, options.agent, {
+                status: 'done',
+                result: 'fail',
+              });
+            } catch {
+              // Non-fatal: parent state may be missing or corrupt.
+              // Proceed with popRunbook so session stack stays consistent.
+            }
           }
 
           await sessionService.popRunbook(options.agent);
@@ -85,6 +92,7 @@ export function registerStopCommand(program: Command): void {
           output.flush();
 
           process.exit(1);
+          return; // Defensive: guards against mocked process.exit in tests
         },
         { json: options.json },
       );

@@ -359,7 +359,11 @@ function createForContext(
     end = forClause.end;
   }
 
-  const iteration = resolveAtValue(atValue, start);
+  let iteration = resolveAtValue(atValue, start);
+  // Clamp explicit AT values against array bounds to prevent out-of-range iterations
+  if (source.kind === 'array' && end !== undefined) {
+    iteration = Math.max(start, Math.min(iteration, end));
+  }
   const currentValue = undefined; // Resolved by ForIterationService before execution
   return {
     stepId: stepName,

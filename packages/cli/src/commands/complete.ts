@@ -57,6 +57,7 @@ export function registerCompleteCommand(program: Command): void {
             output.error(`Runbook state error: ${(err as Error).message}`, 'STATE_ERROR');
             output.flush();
             process.exit(1);
+            return; // Defensive: guards against mocked process.exit in tests
           }
 
           const actorService = new RunbookActorService(manager);
@@ -69,6 +70,7 @@ export function registerCompleteCommand(program: Command): void {
             output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
             output.flush();
             process.exit(1);
+            return; // Defensive: guards against mocked process.exit in tests
           }
 
           // Persist COMPLETE metadata so historical state accurately reflects completion
@@ -79,10 +81,15 @@ export function registerCompleteCommand(program: Command): void {
 
           // Update parent agent binding before popping (mirrors pass/fail behavior)
           if (options.agent && state.parentRunbookId) {
-            await manager.updateAgentBinding(state.parentRunbookId, options.agent, {
-              status: 'done',
-              result: 'pass',
-            });
+            try {
+              await manager.updateAgentBinding(state.parentRunbookId, options.agent, {
+                status: 'done',
+                result: 'pass',
+              });
+            } catch {
+              // Non-fatal: parent state may be missing or corrupt.
+              // Proceed with popRunbook so session stack stays consistent.
+            }
           }
 
           await sessionService.popRunbook(options.agent);
