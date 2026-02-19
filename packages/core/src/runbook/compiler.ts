@@ -152,6 +152,29 @@ function buildGotoLastAction(target: StepId): LastAction {
 }
 
 /**
+ * Build a lastAction function that extracts GOTO target info from an event.
+ *
+ * Returns a function compatible with XState assign that produces a
+ * {@link LastAction} from a GOTO event, or `undefined` for non-GOTO events.
+ * Reuses {@link buildGotoLastAction} internally.
+ *
+ * @param fallbackSubstepId - Substep ID to use when the event doesn't specify one
+ * @returns A function suitable for use as a lastAction assign value
+ */
+function buildGotoLastActionFromEvent(
+  fallbackSubstepId: string | undefined,
+): (args: { event: RunbookEvent }) => LastAction | undefined {
+  return ({ event }) => {
+    if (event.type !== 'GOTO') return undefined;
+    return buildGotoLastAction({
+      step: event.target.step,
+      substep: event.target.substep ?? fallbackSubstepId,
+      at: event.target.at,
+    });
+  };
+}
+
+/**
  * Check if a state represents the first substep of a step with substeps.
  * Returns step info with either the explicit forClause or a synthetic { start: 1, end: 1 }.
  *
@@ -336,6 +359,63 @@ function createForContext(
     source,
     currentValue,
   };
+}
+
+/**
+ * Initialise the forStack for a transition into a FOR step.
+ *
+ * If the topmost context already targets `targetStepName` (intra-loop GOTO),
+ * the existing stack is preserved. Otherwise a fresh single-entry stack is
+ * created via {@link createForContext}.
+ *
+ * @param currentForStack - The current forStack from machine context
+ * @param targetStepName - The step name being entered
+ * @param forClause - The FOR clause of the target step
+ * @param atValue - Optional AT value from a GOTO action
+ * @param implicit - Whether the FOR loop is implicit (no explicit FOR clause)
+ * @param sources - Optional data sources for sourced FOR loops
+ * @returns The forStack to assign
+ */
+function initForStack(
+  currentForStack: readonly ForContext[],
+  targetStepName: string,
+  forClause: ForClause,
+  atValue: number | string | undefined,
+  implicit: boolean,
+  sources?: Readonly<Record<string, DataSource>>,
+): readonly ForContext[] {
+  const top = peekForStack(currentForStack);
+  if (top?.stepId === targetStepName) {
+    return currentForStack;
+  }
+  const iteration = resolveAtValueRuntime(atValue, forClause.start, currentForStack);
+  return [createForContext(targetStepName, forClause, iteration, implicit, sources)];
+}
+
+/**
+ * Initialise iterationResults for a transition into a FOR step.
+ *
+ * If the topmost context already targets `targetStepName` (intra-loop GOTO),
+ * the existing results are preserved. Otherwise returns a fresh empty array
+ * when aggregation is needed, or `undefined` when it is not.
+ *
+ * @param currentForStack - The current forStack from machine context
+ * @param currentResults - The current iterationResults from machine context
+ * @param targetStepName - The step name being entered
+ * @param needsAggregation - Whether this step needs aggregation results
+ * @returns The iterationResults to assign
+ */
+function initIterationResults(
+  currentForStack: readonly ForContext[],
+  currentResults: ('pass' | 'fail')[] | undefined,
+  targetStepName: string,
+  needsAggregation: boolean,
+): ('pass' | 'fail')[] | undefined {
+  const top = peekForStack(currentForStack);
+  if (top?.stepId === targetStepName) {
+    return currentResults;
+  }
+  return needsAggregation ? [] : undefined;
 }
 
 /**
@@ -533,14 +613,15 @@ function buildParentExitAssign(
         const forClause = targetStep.forClause;
         return assign({
           ...baseAssign,
-          forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] => {
-            const iteration = resolveAtValueRuntime(
-              parentAction.target.at,
-              forClause.start,
+          forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] =>
+            initForStack(
               context.forStack,
-            );
-            return [createForContext(targetStep.name, forClause, iteration, false, sources)];
-          },
+              targetStep.name,
+              forClause,
+              parentAction.target.at,
+              false,
+              sources,
+            ),
           iterationResults: [] as ('pass' | 'fail')[],
           lastAction: buildGotoLastAction(parentAction.target),
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
@@ -916,36 +997,26 @@ function buildActionTransition(
         return {
           target: targetStateId,
           actions: assign({
-            forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] => {
-              // Intra-loop GOTO: preserve existing forStack
-              const top = peekForStack(context.forStack);
-              if (top?.stepId === targetStepObj.name) {
-                return context.forStack;
-              }
-              // Cross-loop or fresh entry: create new context with runtime AT resolution
-              const iteration = resolveAtValueRuntime(
-                action.target.at,
-                forClause.start,
+            forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] =>
+              initForStack(
                 context.forStack,
-              );
-              return [
-                createForContext(targetStepObj.name, forClause, iteration, isImplicit, sources),
-              ];
-            },
+                targetStepObj.name,
+                forClause,
+                action.target.at,
+                isImplicit,
+                sources,
+              ),
             iterationResults: ({
               context,
             }: {
               context: RunbookContext;
-            }): ('pass' | 'fail')[] | undefined => {
-              // Intra-loop GOTO: preserve existing results
-              const top = peekForStack(context.forStack);
-              if (top?.stepId === targetStepObj.name) {
-                return context.iterationResults;
-              }
-              return isImplicit && !targetStepObj.transitions
-                ? undefined
-                : ([] as ('pass' | 'fail')[]);
-            },
+            }): ('pass' | 'fail')[] | undefined =>
+              initIterationResults(
+                context.forStack,
+                context.iterationResults,
+                targetStepObj.name,
+                !isImplicit || !!targetStepObj.transitions,
+              ),
             lastAction: buildGotoLastAction(action.target),
             parentRetryCount:
               targetStepObj.name === stepName
@@ -1083,32 +1154,22 @@ export function compileRunbookToMachine(
     const entryActions = stepInfo
       ? {
           entry: assign({
-            forStack: ({ context }: { context: RunbookContext }) => {
-              const top = peekForStack(context.forStack);
-              // Loop-back: preserve current context
-              if (top?.stepId === stepInfo.step.name) {
-                return context.forStack;
-              }
-              // Fresh entry: push new context
-              return [
-                createForContext(
-                  stepInfo.step.name,
-                  stepInfo.forClause,
-                  undefined,
-                  stepInfo.implicit,
-                  options?.sources,
-                ),
-              ];
-            },
-            iterationResults: ({ context }: { context: RunbookContext }) => {
-              const top = peekForStack(context.forStack);
-              // Loop-back: preserve accumulated results
-              if (top?.stepId === stepInfo.step.name) {
-                return context.iterationResults ?? ([] as ('pass' | 'fail')[]);
-              }
-              // Fresh entry: always reset
-              return [] as ('pass' | 'fail')[];
-            },
+            forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] =>
+              initForStack(
+                context.forStack,
+                stepInfo.step.name,
+                stepInfo.forClause,
+                undefined,
+                stepInfo.implicit,
+                options?.sources,
+              ),
+            iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
+              initIterationResults(
+                context.forStack,
+                context.iterationResults,
+                stepInfo.step.name,
+                true,
+              ) ?? [],
           }),
         }
       : {};
@@ -1140,7 +1201,6 @@ export function compileRunbookToMachine(
         target: target.id,
         actions: forStepForTarget
           ? assign({
-              // FOR step entry via GOTO event: initialize or preserve FOR context
               forStack: ({
                 context,
                 event,
@@ -1149,53 +1209,27 @@ export function compileRunbookToMachine(
                 event: RunbookEvent;
               }): readonly ForContext[] => {
                 if (event.type !== 'GOTO') return [];
-                // Intra-loop GOTO: preserve existing forStack
-                const top = peekForStack(context.forStack);
-                if (top?.stepId === forStepForTarget.step.name) {
-                  return context.forStack;
-                }
-                // Cross-loop or fresh entry: create new context with runtime AT resolution
-                const iteration = resolveAtValueRuntime(
-                  event.target.at,
-                  forStepForTarget.forClause.start,
+                return initForStack(
                   context.forStack,
+                  forStepForTarget.step.name,
+                  forStepForTarget.forClause,
+                  event.target.at,
+                  forStepForTarget.implicit,
+                  options?.sources,
                 );
-                return [
-                  createForContext(
-                    forStepForTarget.step.name,
-                    forStepForTarget.forClause,
-                    iteration,
-                    forStepForTarget.implicit,
-                    options?.sources,
-                  ),
-                ];
               },
               iterationResults: ({
                 context,
               }: {
                 context: RunbookContext;
-              }): ('pass' | 'fail')[] | undefined => {
-                // Intra-loop GOTO: preserve existing results
-                const top = peekForStack(context.forStack);
-                if (top?.stepId === forStepForTarget.step.name) {
-                  return context.iterationResults;
-                }
-                return forStepForTarget.implicit && !forStepForTarget.step.transitions
-                  ? undefined
-                  : ([] as ('pass' | 'fail')[]);
-              },
-              lastAction: ({ event }: { event: RunbookEvent }): LastAction | undefined => {
-                if (event.type !== 'GOTO') return undefined;
-                const step = event.target.step;
-                const substep = event.target.substep ?? target.substepId;
-                const at = event.target.at as number | `{{${string}}}` | undefined;
-                return {
-                  type: 'GOTO' as const,
-                  target: step,
-                  ...(substep && { substep }),
-                  ...(at !== undefined && { at }),
-                };
-              },
+              }): ('pass' | 'fail')[] | undefined =>
+                initIterationResults(
+                  context.forStack,
+                  context.iterationResults,
+                  forStepForTarget.step.name,
+                  !forStepForTarget.implicit || !!forStepForTarget.step.transitions,
+                ),
+              lastAction: buildGotoLastActionFromEvent(target.substepId),
               parentRetryCount:
                 target.stepName === config.stepName
                   ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
@@ -1205,18 +1239,7 @@ export function compileRunbookToMachine(
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
             })
           : buildSimpleGotoAssign({
-              lastAction: ({ event }: { event: RunbookEvent }): LastAction | undefined => {
-                if (event.type !== 'GOTO') return undefined;
-                const step = event.target.step;
-                const substep = event.target.substep ?? target.substepId;
-                const at = event.target.at as number | `{{${string}}}` | undefined;
-                return {
-                  type: 'GOTO' as const,
-                  target: step,
-                  ...(substep && { substep }),
-                  ...(at !== undefined && { at }),
-                };
-              },
+              lastAction: buildGotoLastActionFromEvent(target.substepId),
               resolvedSubstepId: ({ event }: { event: RunbookEvent }) =>
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
               isGotoToSelf,
