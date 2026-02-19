@@ -56,8 +56,14 @@ export type RunbookEvent =
   | { type: 'FAIL' }
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
-  | { type: 'STOP'; message?: string }
-  | { type: 'COMPLETE'; message?: string };
+  | {
+      type: 'STOP' /** Optional human-readable reason for aborting the runbook */;
+      message?: string;
+    }
+  | {
+      type: 'COMPLETE' /** Optional human-readable reason for early completion */;
+      message?: string;
+    };
 
 /**
  * XState transition configuration returned by transition builder functions.
