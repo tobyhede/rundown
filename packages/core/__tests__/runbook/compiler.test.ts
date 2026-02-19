@@ -5001,6 +5001,25 @@ echo "processing"
 
       const machine = compileRunbookToMachine(steps);
       expect(machine.config.states).toHaveProperty('step::1::1::fail-retry');
+
+      // Behavioral: retry 3 times then CONTINUE to parent aggregation
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'FAIL' }); // retry 1/3
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.retryCount).toBe(1);
+
+      actor.send({ type: 'FAIL' }); // retry 2/3
+      expect(actor.getSnapshot().context.retryCount).toBe(2);
+
+      actor.send({ type: 'FAIL' }); // retry 3/3
+      expect(actor.getSnapshot().context.retryCount).toBe(3);
+
+      // Exhausted → CONTINUE to parent aggregation → parent FAIL (all: true) → STOPPED
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().context.retryCount).toBe(0);
     });
 
     it('retry state is transient and never observable in snapshots', () => {
@@ -5049,7 +5068,7 @@ echo "processing"
       expect(stateKeys.some((k) => k.includes('retry'))).toBe(false);
     });
 
-    it('dual retry: both PASS and FAIL retry states operate independently', () => {
+    it('dual retry: PASS and FAIL retry states share retryCount budget', () => {
       const steps: Step[] = [
         {
           name: '1',
