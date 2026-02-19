@@ -4934,4 +4934,172 @@ echo "processing"
       expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'COMPLETE' });
     });
   });
+
+  describe('retry state architecture', () => {
+    it('creates fail-retry state when FAIL has retry > 0', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: {
+              kind: 'fail' as const,
+              retry: 2,
+              action: { type: 'GOTO' as const, target: { step: '2' } },
+            },
+          },
+        },
+        { name: '2', description: 'Step 2', transitions: DEFAULT_TRANSITIONS },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const config = machine.config;
+      expect(config.states).toHaveProperty('step::1::fail-retry');
+      expect(config.states).not.toHaveProperty('step::1::pass-retry');
+    });
+
+    it('creates pass-retry state when PASS has retry > 0', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 2, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      expect(machine.config.states).toHaveProperty('step::1::pass-retry');
+      expect(machine.config.states).not.toHaveProperty('step::1::fail-retry');
+    });
+
+    it('creates retry state for substep with retry > 0', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 3, action: { type: 'CONTINUE' as const } },
+              },
+            },
+          ],
+          transitions: DEFAULT_TRANSITIONS,
+        },
+        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      expect(machine.config.states).toHaveProperty('step::1::1::fail-retry');
+
+      // Behavioral: retry 3 times then CONTINUE to parent aggregation
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'FAIL' }); // retry 1/3
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.retryCount).toBe(1);
+
+      actor.send({ type: 'FAIL' }); // retry 2/3
+      expect(actor.getSnapshot().context.retryCount).toBe(2);
+
+      actor.send({ type: 'FAIL' }); // retry 3/3
+      expect(actor.getSnapshot().context.retryCount).toBe(3);
+
+      // Exhausted → CONTINUE to parent aggregation → parent FAIL (all: true) → STOPPED
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().context.retryCount).toBe(0);
+    });
+
+    it('retry state is transient and never observable in snapshots', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } },
+          },
+        },
+        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      const snapshots: string[] = [];
+      actor.subscribe((snapshot) => {
+        const value = snapshot.value;
+        snapshots.push(typeof value === 'string' ? value : JSON.stringify(value));
+      });
+
+      actor.send({ type: 'FAIL' }); // retry 1/2
+      actor.send({ type: 'FAIL' }); // retry 2/2
+      actor.send({ type: 'FAIL' }); // exhausted → STOP
+
+      expect(snapshots.every((v) => !v.includes('retry'))).toBe(true);
+    });
+
+    it('does not create retry states when retry = 0', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const stateKeys = Object.keys(machine.config.states ?? {});
+      expect(stateKeys.some((k) => k.includes('retry'))).toBe(false);
+    });
+
+    it('dual retry: PASS and FAIL retry states share retryCount budget', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 1, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+          },
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+
+      // Verify both retry states exist
+      expect(machine.config.states).toHaveProperty('step::1::pass-retry');
+      expect(machine.config.states).toHaveProperty('step::1::fail-retry');
+
+      // Behavioral: FAIL retry then PASS exhausts (shared retryCount)
+      const actor = createActor(machine);
+      actor.start();
+
+      // FAIL retry 1/1: retryCount 0 < 1 → retry
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1');
+      expect(actor.getSnapshot().context.retryCount).toBe(1);
+
+      // PASS exhausted: retryCount 1 < 1 is false → execute exhausted (COMPLETE)
+      // (retryCount is shared, so FAIL's increment carries over to PASS)
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('COMPLETE');
+    });
+  });
 });
