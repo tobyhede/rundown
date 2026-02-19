@@ -400,7 +400,13 @@ function initForStack(
   if (top?.stepId === targetStepName) {
     return currentForStack;
   }
-  const iteration = resolveAtValueRuntime(atValue, forClause.start, currentForStack);
+  // Only resolve AT when explicitly provided; otherwise let createForContext
+  // use its own clamped start (important for sourced array loops where
+  // forClause.start may exceed the array length).
+  const iteration =
+    atValue !== undefined
+      ? resolveAtValueRuntime(atValue, forClause.start, currentForStack)
+      : undefined;
   return [createForContext(targetStepName, forClause, iteration, implicit, sources)];
 }
 
