@@ -66,6 +66,15 @@ interface TransitionEntry {
   entry?: unknown;
   [key: string]: unknown;
 }
+
+/** XState `always` transition configuration within parent aggregation states. */
+interface AlwaysTransition {
+  guard?: (args: { context: RunbookContext }) => boolean;
+  target?: string | null;
+  actions?: unknown;
+  [key: string]: unknown;
+}
+
 /** XState action returned by assign() — opaque function type. */
 type AssignAction = (...args: never[]) => unknown;
 type TransitionConfig = TransitionEntry | TransitionEntry[];
@@ -448,28 +457,9 @@ function buildTransition(
   const resultKind: 'pass' | 'fail' = kind === 'pass' || kind === 'yes' ? 'pass' : 'fail';
 
   if (retry > 0) {
-    // Has retry: [retry guard -> stay, exhausted -> action]
-    const exhaustedTransition = buildActionTransition(
-      action,
-      stepName,
-      substepId,
-      steps,
-      resultKind,
-      sources,
-    );
-    const retryGuard: TransitionEntry = {
-      guard: ({ context }: { context: RunbookContext }) => context.retryCount < retry,
-      actions: assign({
-        lastAction: { type: 'RETRY' as const },
-        retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
-        retryMax: retry,
-      }),
-      target: currentStateId,
-    };
-    const exhaustedEntries: TransitionEntry[] = Array.isArray(exhaustedTransition)
-      ? exhaustedTransition
-      : [exhaustedTransition];
-    return [retryGuard, ...exhaustedEntries];
+    // Route to transient retry state — it handles guard + exhausted logic
+    const retryStateId = `${currentStateId}::${resultKind}-retry`;
+    return { target: retryStateId };
   }
 
   // No retry: execute action directly
@@ -624,7 +614,7 @@ function buildParentStateConfig(
   config: ParentStateConfig,
   steps: Step[],
   sources?: Readonly<Record<string, DataSource>>,
-): { always: unknown; entry?: unknown } {
+): { always: AlwaysTransition[]; entry?: unknown } {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
   const hasFor = !!parentStep.forClause;
@@ -633,11 +623,6 @@ function buildParentStateConfig(
   const firstSubstep = parentStep.substeps?.[0];
   const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
 
-  interface AlwaysTransition {
-    guard?: (args: { context: RunbookContext }) => boolean;
-    target: string;
-    actions: unknown;
-  }
   const always: AlwaysTransition[] = [];
 
   // Loop-back guard (Cases A & C: FOR steps)
@@ -748,6 +733,62 @@ function buildParentStateConfig(
   }
 
   return { always };
+}
+
+/**
+ * Build configuration for a transient retry state.
+ *
+ * Uses `always` transitions to evaluate retry guard synchronously:
+ * if retryCount < retry, self-transition back to step with increment;
+ * otherwise, execute the exhausted action via `buildActionTransition`.
+ *
+ * @param transition - The transition object with retry count and exhausted action
+ * @param currentStateId - The state ID to loop back to on retry
+ * @param stepName - Step name for the exhausted action builder
+ * @param substepId - Substep ID for the exhausted action builder
+ * @param steps - All parsed steps
+ * @param resultKind - 'pass' or 'fail' for iteration result recording
+ * @param sources - Optional data sources
+ * @returns XState state config with `always` transitions
+ */
+function buildRetryStateConfig(
+  transition: { kind: string; retry: number; action: Action },
+  currentStateId: string,
+  stepName: string,
+  substepId: string | undefined,
+  steps: Step[],
+  resultKind: 'pass' | 'fail',
+  sources?: Readonly<Record<string, DataSource>>,
+): { always: AlwaysTransition[] } {
+  const exhaustedTransition = buildActionTransition(
+    transition.action,
+    stepName,
+    substepId,
+    steps,
+    resultKind,
+    sources,
+  );
+  const rawEntries = Array.isArray(exhaustedTransition)
+    ? exhaustedTransition
+    : [exhaustedTransition];
+  const exhaustedEntries: AlwaysTransition[] = rawEntries.map(
+    (entry): AlwaysTransition => ({ target: entry.target, actions: entry.actions }),
+  );
+
+  return {
+    always: [
+      {
+        guard: ({ context }: { context: RunbookContext }) => context.retryCount < transition.retry,
+        target: currentStateId,
+        actions: assign({
+          lastAction: { type: 'RETRY' as const },
+          retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
+          retryMax: transition.retry,
+        }),
+      },
+      ...exhaustedEntries,
+    ],
+  };
 }
 
 /**
@@ -1215,6 +1256,30 @@ export function compileRunbookToMachine(
         GOTO: buildGotoTransitionsForState,
       },
     };
+
+    // Register retry states for transitions with retry > 0
+    if (config.transitions.pass.retry > 0) {
+      states[`${config.id}::pass-retry`] = buildRetryStateConfig(
+        config.transitions.pass,
+        config.id,
+        config.stepName,
+        config.substepId,
+        steps,
+        'pass',
+        options?.sources,
+      );
+    }
+    if (config.transitions.fail.retry > 0) {
+      states[`${config.id}::fail-retry`] = buildRetryStateConfig(
+        config.transitions.fail,
+        config.id,
+        config.stepName,
+        config.substepId,
+        steps,
+        'fail',
+        options?.sources,
+      );
+    }
   });
 
   return setup({
