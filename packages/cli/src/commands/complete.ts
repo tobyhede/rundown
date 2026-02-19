@@ -67,19 +67,23 @@ export function registerCompleteCommand(program: Command): void {
             message,
           });
           if (!syncResult) {
+            await sessionService.popRunbook(options.agent);
             output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
             output.flush();
             process.exit(1);
             return; // Defensive: guards against mocked process.exit in tests
           }
 
-          // Persist COMPLETE metadata so historical state accurately reflects completion
-          await manager.update(state.id, {
-            lastAction: { type: 'COMPLETE' },
-            lastResult: 'pass',
-          });
+          // Best-effort metadata and binding updates — popRunbook must run regardless
+          try {
+            await manager.update(state.id, {
+              lastAction: { type: 'COMPLETE' },
+              lastResult: 'pass',
+            });
+          } catch {
+            // Non-fatal: actor already persisted terminal state via sendAndSync
+          }
 
-          // Update parent agent binding before popping (mirrors pass/fail behavior)
           if (options.agent && state.parentRunbookId) {
             try {
               await manager.updateAgentBinding(state.parentRunbookId, options.agent, {
@@ -88,7 +92,6 @@ export function registerCompleteCommand(program: Command): void {
               });
             } catch {
               // Non-fatal: parent state may be missing or corrupt.
-              // Proceed with popRunbook so session stack stays consistent.
             }
           }
 
