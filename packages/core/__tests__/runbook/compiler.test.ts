@@ -5050,6 +5050,7 @@ echo "processing"
       actor.send({ type: 'FAIL' }); // retry 2/2
       actor.send({ type: 'FAIL' }); // exhausted → STOP
 
+      expect(snapshots.length).toBeGreaterThan(0);
       expect(snapshots.every((v) => !v.includes('retry'))).toBe(true);
     });
 
@@ -5100,6 +5101,173 @@ echo "processing"
       // (retryCount is shared, so FAIL's increment carries over to PASS)
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('COMPLETE');
+    });
+  });
+
+  describe('STOP event', () => {
+    it('transitions to STOPPED from any step', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+        {
+          name: '2',
+          description: 'Step 2',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'STOP', message: 'abort now' });
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe('STOPPED');
+      expect(snap.context.lastAction).toEqual({ type: 'STOP' });
+      expect(snap.context.lastMessage).toBe('abort now');
+      expect(snap.context.variables).toEqual(expect.objectContaining({ stopped: true }));
+    });
+
+    it('transitions to STOPPED from a substep', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Parent',
+          substeps: [
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
+          ],
+        },
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Start at substep 1.1, send STOP
+      actor.send({ type: 'STOP' });
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe('STOPPED');
+      expect(snap.context.lastAction).toEqual({ type: 'STOP' });
+      expect(snap.context.variables).toEqual(expect.objectContaining({ stopped: true }));
+    });
+
+    it('carries message through to context.lastMessage', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'STOP', message: 'emergency halt' });
+      expect(actor.getSnapshot().context.lastMessage).toBe('emergency halt');
+    });
+
+    it('handles STOP without message', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'STOP' });
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe('STOPPED');
+      expect(snap.context.lastMessage).toBeUndefined();
+    });
+  });
+
+  describe('COMPLETE event', () => {
+    it('transitions to COMPLETE from any step', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+        {
+          name: '2',
+          description: 'Step 2',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'COMPLETE', message: 'done early' });
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe('COMPLETE');
+      expect(snap.context.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(snap.context.lastMessage).toBe('done early');
+      expect(snap.context.variables).toEqual(expect.objectContaining({ completed: true }));
+    });
+
+    it('transitions to COMPLETE from a substep', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Parent',
+          substeps: [
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
+          ],
+        },
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'COMPLETE' });
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe('COMPLETE');
+      expect(snap.context.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(snap.context.variables).toEqual(expect.objectContaining({ completed: true }));
+    });
+
+    it('carries message through to context.lastMessage', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'COMPLETE', message: 'all checks passed' });
+      expect(actor.getSnapshot().context.lastMessage).toBe('all checks passed');
+    });
+
+    it('handles COMPLETE without message', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Step 1',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ];
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'COMPLETE' });
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe('COMPLETE');
+      expect(snap.context.lastMessage).toBeUndefined();
     });
   });
 });

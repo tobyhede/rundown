@@ -184,7 +184,7 @@ describe('output format integration tests', () => {
     it('prints metadata and stopped message', async () => {
       const result = runCli('stop', workspace);
 
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
       expect(result.stdout).toContain('STOP');
       expect(result.stdout).toContain('simple.runbook.md');
     });

@@ -300,7 +300,7 @@ export async function handleTerminalState(
   positions: { prevPos: StepPosition; newPos: StepPosition },
   conditionResult: ConditionResult,
 ): Promise<'complete' | 'stopped' | 'continue'> {
-  const { output, manager, sessionService, state, steps, agentId } = ctx;
+  const { output, manager, sessionService, state, agentId } = ctx;
   const { prevPos, newPos } = positions;
 
   /**
@@ -339,11 +339,6 @@ export async function handleTerminalState(
     if (!check) continue;
 
     if (type === 'complete') {
-      await manager.update(state.id, {
-        step: steps[steps.length - 1].name,
-        variables: { ...state.variables, completed: true },
-      });
-
       output.complete(conditionResult.message, newPos);
       output.flush();
 
@@ -352,8 +347,6 @@ export async function handleTerminalState(
     }
 
     // type === 'stopped' (only other possibility)
-    await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
-
     // stopped uses prevPos for output
     output.stopped(conditionResult.message, prevPos);
     output.flush();

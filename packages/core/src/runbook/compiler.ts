@@ -48,12 +48,16 @@ export interface RunbookContext {
  * - FAIL: Mark the current step as failed, triggering the FAIL transition
  * - RETRY: Increment retry count and re-enter the current step
  * - GOTO: Jump directly to a specific step by ID
+ * - STOP: Abort the runbook, transitioning to STOPPED final state
+ * - COMPLETE: Force early completion, transitioning to COMPLETE final state
  */
 export type RunbookEvent =
   | { type: 'PASS' }
   | { type: 'FAIL' }
   | { type: 'RETRY' }
-  | { type: 'GOTO'; target: StepId };
+  | { type: 'GOTO'; target: StepId }
+  | { type: 'STOP'; message?: string }
+  | { type: 'COMPLETE'; message?: string };
 
 /**
  * XState transition configuration returned by transition builder functions.
@@ -1282,6 +1286,22 @@ export function compileRunbookToMachine(
           target: config.id,
         },
         GOTO: buildGotoTransitionsForState,
+        STOP: {
+          target: 'STOPPED',
+          actions: assign({
+            lastAction: { type: 'STOP' as const },
+            lastMessage: ({ event }: { event: RunbookEvent }) =>
+              event.type === 'STOP' ? event.message : undefined,
+          }),
+        },
+        COMPLETE: {
+          target: 'COMPLETE',
+          actions: assign({
+            lastAction: { type: 'COMPLETE' as const },
+            lastMessage: ({ event }: { event: RunbookEvent }) =>
+              event.type === 'COMPLETE' ? event.message : undefined,
+          }),
+        },
       },
     };
 

@@ -232,13 +232,13 @@ describe('stop command', () => {
     await workspace.cleanup();
   });
 
-  it('deletes active runbook state', async () => {
+  it('preserves runbook state after stop', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
     runCli('stop', workspace);
 
     const states = await listRunbookStates(workspace);
-    expect(states).toHaveLength(0);
+    expect(states).toHaveLength(1);
   });
 
   it('clears active runbook', async () => {

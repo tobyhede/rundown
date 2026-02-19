@@ -1,7 +1,12 @@
 // packages/cli/src/commands/complete.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService } from '@rundown-org/core';
+import {
+  RunbookStateManager,
+  SessionService,
+  RunbookActorService,
+  type Step,
+} from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -30,8 +35,8 @@ export function registerCompleteCommand(program: Command): void {
     .action(async (message: string | undefined, options: { agent?: string; json?: boolean }) => {
       await withErrorHandling(
         async () => {
-          const output = new OutputEmitter({ json: options.json });
           const cwd = getCwd();
+          const output = new OutputEmitter({ json: options.json });
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
           const state = await sessionService.getActive(options.agent);
@@ -42,17 +47,32 @@ export function registerCompleteCommand(program: Command): void {
             return;
           }
 
-          // Emit metadata
-          output.metadata(buildMetadata(state));
+          // Route through XState actor
+          let steps: Step[];
+          try {
+            steps = [...getRunbookFromState(state, cwd)];
+          } catch (err) {
+            output.error(`Runbook state error: ${(err as Error).message}`, 'STATE_ERROR');
+            output.flush();
+            process.exit(1);
+          }
 
-          const steps = getRunbookFromState(state, cwd);
-          await manager.update(state.id, {
-            step: steps[steps.length - 1].name,
-            variables: { ...state.variables, completed: true },
+          const actorService = new RunbookActorService(manager);
+
+          const syncResult = await actorService.sendAndSync(state.id, steps, {
+            type: 'COMPLETE',
+            message,
           });
+          if (!syncResult) {
+            output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
+            output.flush();
+            process.exit(1);
+          }
+
           await sessionService.popRunbook(options.agent);
 
-          // Emit completion
+          // Emit structured output - renderer decides format
+          output.metadata(buildMetadata(state));
           output.complete(message ?? 'Runbook completed successfully');
           output.flush();
         },
