@@ -20,6 +20,7 @@ import { registerScenariosCommand } from './commands/scenarios.js';
 import { setColorEnabled } from '@rundown-org/core';
 import { initializePolicyContext, parsePolicyCliOptions } from './services/policy-context.js';
 import { outputCommandSchema } from './services/schema-service.js';
+import { EXIT_COMMAND_ERROR } from './helpers/exit-codes.js';
 
 // Handle --schema flag early, before Commander parses arguments
 // This allows schema output without requiring command arguments
@@ -29,11 +30,11 @@ if (process.argv.includes('--schema')) {
   const commandName = args.join(' ');
   if (commandName) {
     const success = outputCommandSchema(commandName);
-    process.exit(success ? 0 : 1);
+    process.exit(success ? 0 : EXIT_COMMAND_ERROR);
   } else {
     console.error('Usage: rd <command> --schema');
     console.error('Example: rd status --schema');
-    process.exit(1);
+    process.exit(EXIT_COMMAND_ERROR);
   }
 }
 

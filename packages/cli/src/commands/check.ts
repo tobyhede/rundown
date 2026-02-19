@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import type { Command } from 'commander';
 import { parseRunbookDocument, validateRunbook, type Step } from '@rundown-org/parser';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { EXIT_COMMAND_ERROR, EXIT_RUNBOOK_FAILED } from '../helpers/exit-codes.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 
 function countSubsteps(steps: readonly Step[]): number {
@@ -37,7 +38,7 @@ export function registerCheckCommand(program: Command): void {
           'check',
         );
         output.flush();
-        process.exit(1);
+        process.exit(EXIT_COMMAND_ERROR);
       }
 
       try {
@@ -57,7 +58,7 @@ export function registerCheckCommand(program: Command): void {
             'check',
           );
           output.flush();
-          process.exit(1);
+          process.exit(EXIT_RUNBOOK_FAILED);
         }
 
         const stepCount = runbook.steps.length;
@@ -83,7 +84,7 @@ export function registerCheckCommand(program: Command): void {
           'check',
         );
         output.flush();
-        process.exit(1);
+        process.exit(EXIT_COMMAND_ERROR);
       }
     });
 }

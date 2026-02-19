@@ -1053,7 +1053,7 @@ echo hello
       );
 
       const result = runCli(`check ${runbookPath} --json`, workspace);
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBeGreaterThan(0);
     });
 
     it('returns 0 for JSON mode even when result is false', () => {

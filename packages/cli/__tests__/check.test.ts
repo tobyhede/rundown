@@ -93,7 +93,7 @@ Missing step 2.
   it('outputs FAIL for non-existent file', () => {
     const result = runCli('check /nonexistent/path/runbook.md', workspace);
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(2);
     expect(result.stderr || result.stdout).toContain('FAIL');
     expect(result.stderr || result.stdout).toMatch(/not found|does not exist/i);
   });

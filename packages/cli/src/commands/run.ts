@@ -19,6 +19,7 @@ import {
   type ExecutionEventEmitter,
 } from '@rundown-org/core';
 import { isSourced, type ForClause } from '@rundown-org/parser';
+import { EXIT_COMMAND_ERROR, EXIT_RUNBOOK_FAILED } from '../helpers/exit-codes.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
@@ -113,7 +114,7 @@ export function registerRunCommand(program: Command): void {
             if (!state) {
               output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
               output.flush();
-              process.exit(1);
+              process.exit(EXIT_COMMAND_ERROR);
             }
 
             const stepId = parseStepIdFromString(options.step);
@@ -126,7 +127,7 @@ export function registerRunCommand(program: Command): void {
                 },
               );
               output.flush();
-              process.exit(1);
+              process.exit(EXIT_COMMAND_ERROR);
             }
 
             const pendingStep: PendingStep = {
@@ -163,7 +164,7 @@ export function registerRunCommand(program: Command): void {
                 },
               );
               output.flush();
-              process.exit(1);
+              process.exit(EXIT_COMMAND_ERROR);
             }
 
             // Load raw markdown and collect variables
@@ -195,7 +196,7 @@ export function registerRunCommand(program: Command): void {
                 runbook: file,
               });
               output.flush();
-              process.exit(1);
+              process.exit(EXIT_COMMAND_ERROR);
             }
 
             const runbookPath = path.relative(cwd, filePath);
@@ -243,7 +244,7 @@ export function registerRunCommand(program: Command): void {
             output.flush();
 
             if (result === 'stopped') {
-              process.exit(1);
+              process.exit(EXIT_RUNBOOK_FAILED);
             }
             return;
           }
@@ -254,7 +255,7 @@ export function registerRunCommand(program: Command): void {
             if (!state) {
               output.error('No active runbook', 'NO_ACTIVE_RUNBOOK');
               output.flush();
-              process.exit(1);
+              process.exit(EXIT_COMMAND_ERROR);
             }
 
             const pending = await lifecycleService.popPendingStep(state.id);
@@ -263,7 +264,7 @@ export function registerRunCommand(program: Command): void {
                 agent: options.agent,
               });
               output.flush();
-              process.exit(1);
+              process.exit(EXIT_COMMAND_ERROR);
             }
 
             await manager.bindAgent(state.id, options.agent, pending.stepId);
@@ -286,7 +287,7 @@ export function registerRunCommand(program: Command): void {
                   runbook: pending.runbook,
                 });
                 output.flush();
-                process.exit(1);
+                process.exit(EXIT_COMMAND_ERROR);
               }
 
               // Load raw child markdown and collect variables
@@ -317,7 +318,7 @@ export function registerRunCommand(program: Command): void {
                   runbook: pending.runbook,
                 });
                 output.flush();
-                process.exit(1);
+                process.exit(EXIT_COMMAND_ERROR);
               }
 
               // Inherit prompted flag from parent runbook
@@ -369,7 +370,7 @@ export function registerRunCommand(program: Command): void {
               output.flush();
 
               if (result === 'stopped') {
-                process.exit(1);
+                process.exit(EXIT_RUNBOOK_FAILED);
               }
             }
             return;
@@ -378,7 +379,7 @@ export function registerRunCommand(program: Command): void {
           if (!file && !options.step && !options.agent) {
             output.error('Runbook file, --step, or --agent option required', 'INVALID_SYNTAX');
             output.flush();
-            process.exit(1);
+            process.exit(EXIT_COMMAND_ERROR);
           }
         } catch (error) {
           if (isNodeError(error) && error.code === 'ENOENT') {
@@ -392,7 +393,7 @@ export function registerRunCommand(program: Command): void {
             output.error(getErrorMessage(error), 'UNKNOWN_ERROR');
           }
           output.flush();
-          process.exit(1);
+          process.exit(EXIT_COMMAND_ERROR);
         }
       },
     );

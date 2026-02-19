@@ -80,7 +80,7 @@ name: no-scenarios
 
       const result = runCli('scenario ls no-scenarios.runbook.md', workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('No scenarios');
     });
   });
@@ -100,7 +100,7 @@ name: no-scenarios
     it('shows error for non-existent scenario', async () => {
       const result = runCli('scenario show test-runbook.runbook.md nonexistent', workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('not found');
       expect(result.stderr).toContain('SCENARIO_NOT_FOUND');
     });

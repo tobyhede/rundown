@@ -2,6 +2,7 @@
 
 import type { Command } from 'commander';
 import { getCwd } from '../helpers/context.js';
+import { EXIT_COMMAND_ERROR } from '../helpers/exit-codes.js';
 import { DEFAULT_RESULT_SEQUENCE, executeEchoLogic } from '../helpers/echo-command.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 
@@ -73,7 +74,7 @@ export function registerEchoCommand(program: Command): void {
             'echo',
           );
           output.flush();
-          process.exit(1);
+          process.exit(EXIT_COMMAND_ERROR);
         }
       },
     );

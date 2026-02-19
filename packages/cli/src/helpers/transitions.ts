@@ -25,6 +25,7 @@ import {
   asTerminalSnapshotOrDefault,
 } from '@rundown-org/core';
 import { getRunbookFromState } from './runbook-loader.js';
+import { EXIT_RUNBOOK_FAILED } from './exit-codes.js';
 import {
   runExecutionLoop,
   formatActionForDisplay,
@@ -352,7 +353,7 @@ export async function handleTerminalState(
     output.flush();
 
     await applySideEffects(config.onStopped, config.lastResult);
-    process.exit(1);
+    process.exit(EXIT_RUNBOOK_FAILED);
     return 'stopped'; // Explicit return for clarity (process.exit never returns)
   }
 
@@ -411,7 +412,7 @@ export async function handleAgentBinding(
         retryEmitter,
       );
       output.flush();
-      if (loopResult === 'stopped') process.exit(1);
+      if (loopResult === 'stopped') process.exit(EXIT_RUNBOOK_FAILED);
       return true;
     } finally {
       actor.stop();
@@ -438,7 +439,7 @@ export async function handleAgentBinding(
         gotoEmitter,
       );
       output.flush();
-      if (loopResult === 'stopped') process.exit(1);
+      if (loopResult === 'stopped') process.exit(EXIT_RUNBOOK_FAILED);
       return true;
     } finally {
       actor.stop();
@@ -589,7 +590,7 @@ export async function executeTransition(
     output.flush();
 
     if (loopResult === 'stopped') {
-      process.exit(1);
+      process.exit(EXIT_RUNBOOK_FAILED);
     }
   } finally {
     actor.stop();

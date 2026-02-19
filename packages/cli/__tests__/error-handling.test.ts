@@ -25,7 +25,7 @@ This doesn't have proper ## headers
 
       const result = runCli('run invalid.md', workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr.toLowerCase()).toContain('syntax error');
     });
 
@@ -34,7 +34,7 @@ This doesn't have proper ## headers
 
       const result = runCli('run empty.md', workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr.toLowerCase()).toContain('syntax error');
     });
   });
@@ -43,7 +43,7 @@ This doesn't have proper ## headers
     it('handles missing runbook file', async () => {
       const result = runCli('run nonexistent.md', workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('not found');
     });
   });
@@ -81,7 +81,7 @@ This doesn't have proper ## headers
 
       const result = runCli('run --step invalid-format', workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('Invalid step ID');
     });
   });

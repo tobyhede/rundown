@@ -66,14 +66,14 @@ describe('start command', () => {
     it('fails if file does not exist', async () => {
       const result = runCli('run runbooks/nonexistent.md', workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('not found');
     });
 
     it('fails if no file argument provided', async () => {
       const result = runCli('run', workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('required');
     });
 
@@ -142,7 +142,7 @@ describe('start command', () => {
       runCli('stop', workspace);
 
       const result = runCli('run --step 2', workspace);
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('No active runbook');
     });
 
@@ -151,7 +151,7 @@ describe('start command', () => {
       // Use '123abc' which starts with digit but contains letters - invalid format
       const result = runCli('run --step 123abc', workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('Invalid step ID');
     });
 
@@ -232,7 +232,7 @@ describe('start command', () => {
 
       // Try to bind another agent
       const result = runCli('run --agent agent2', workspace);
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('No pending step');
     });
 
@@ -240,7 +240,7 @@ describe('start command', () => {
       runCli('stop', workspace);
 
       const result = runCli('run --agent test-agent', workspace);
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('No active runbook');
     });
 

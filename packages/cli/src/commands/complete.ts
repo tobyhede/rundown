@@ -10,6 +10,7 @@ import {
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { EXIT_COMMAND_ERROR } from '../helpers/exit-codes.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
@@ -56,7 +57,7 @@ export function registerCompleteCommand(program: Command): void {
             await sessionService.popRunbook(options.agent);
             output.error(`Runbook state error: ${(err as Error).message}`, 'STATE_ERROR');
             output.flush();
-            process.exit(1);
+            process.exit(EXIT_COMMAND_ERROR);
             return; // Defensive: guards against mocked process.exit in tests
           }
 
@@ -70,7 +71,7 @@ export function registerCompleteCommand(program: Command): void {
             await sessionService.popRunbook(options.agent);
             output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
             output.flush();
-            process.exit(1);
+            process.exit(EXIT_COMMAND_ERROR);
             return; // Defensive: guards against mocked process.exit in tests
           }
 

@@ -721,3 +721,34 @@ Error: Runbook file not found: missing.runbook.md
   "code": "RUNBOOK_NOT_FOUND"
 }
 ```
+
+## Exit Codes
+
+The CLI uses a three-tier exit code convention:
+
+| Code | Name | Meaning |
+|------|------|---------|
+| `0` | Success | Command and runbook both succeeded |
+| `1` | Runbook Failed | Command succeeded; runbook was stopped or failed |
+| `2` | Command Error | CLI command itself failed (file not found, invalid args, engine error) |
+
+### Examples by command
+
+| Command | Scenario | Exit Code |
+|---------|----------|-----------|
+| `rd run file.md` | Runbook completes successfully | `0` |
+| `rd run file.md` | Runbook stops (STOP transition) | `1` |
+| `rd run missing.md` | File not found | `2` |
+| `rd stop` | Active runbook stopped | `1` |
+| `rd stop` | No active runbook | `0` |
+| `rd complete` | Active runbook completed | `0` |
+| `rd check file.md` | No validation errors | `0` |
+| `rd check file.md` | Validation errors found | `1` |
+| `rd check missing.md` | File not found | `2` |
+| `rd pass` / `rd fail` | Triggers STOP | `1` |
+| `rd goto 999` | Step not found | `2` |
+| `rd echo --result fail` | Echo returns fail | `1` |
+| `rd scenario run f s` | Scenario passes | `0` |
+| `rd scenario run f s` | Scenario fails | `1` |
+
+**Note:** `rd echo` is exempt from the convention — it propagates its own configurable exit code via `result.exitCode`.

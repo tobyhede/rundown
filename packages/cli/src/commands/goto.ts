@@ -13,6 +13,7 @@ import {
 import { getCwd } from '../helpers/context.js';
 import { runExecutionLoop } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
+import { EXIT_COMMAND_ERROR, EXIT_RUNBOOK_FAILED } from '../helpers/exit-codes.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
@@ -51,7 +52,7 @@ export function registerGotoCommand(program: Command): void {
               },
             );
             output.flush();
-            process.exit(1);
+            process.exit(EXIT_COMMAND_ERROR);
           }
 
           let steps: Step[];
@@ -60,7 +61,7 @@ export function registerGotoCommand(program: Command): void {
           } catch (err) {
             output.error(`Runbook state error: ${(err as Error).message}`, 'STATE_ERROR');
             output.flush();
-            process.exit(1);
+            process.exit(EXIT_COMMAND_ERROR);
           }
 
           // Validate step exists
@@ -71,7 +72,7 @@ export function registerGotoCommand(program: Command): void {
               available: steps.map((s) => s.name),
             });
             output.flush();
-            process.exit(1);
+            process.exit(EXIT_COMMAND_ERROR);
           }
 
           // Validate AT - target must be a FOR step
@@ -84,7 +85,7 @@ export function registerGotoCommand(program: Command): void {
                 { step: target.step, at: target.at },
               );
               output.flush();
-              process.exit(1);
+              process.exit(EXIT_COMMAND_ERROR);
             }
           }
 
@@ -100,7 +101,7 @@ export function registerGotoCommand(program: Command): void {
                 },
               );
               output.flush();
-              process.exit(1);
+              process.exit(EXIT_COMMAND_ERROR);
             }
             const substepExists = step.substeps.some((s) => s.id === target.substep);
             if (!substepExists) {
@@ -109,7 +110,7 @@ export function registerGotoCommand(program: Command): void {
                 available: step.substeps.map((s) => s.id),
               });
               output.flush();
-              process.exit(1);
+              process.exit(EXIT_COMMAND_ERROR);
             }
           }
 
@@ -125,7 +126,7 @@ export function registerGotoCommand(program: Command): void {
           if (!syncResult) {
             output.error('Failed to initialize runbook engine', 'ENGINE_INIT_FAILED');
             output.flush();
-            process.exit(1);
+            process.exit(EXIT_COMMAND_ERROR);
           }
 
           // Update lastAction and CLEAR lastResult (prevent stale PASS/FAIL leaking)
@@ -176,7 +177,7 @@ export function registerGotoCommand(program: Command): void {
           output.flush();
 
           if (loopResult === 'stopped') {
-            process.exit(1);
+            process.exit(EXIT_RUNBOOK_FAILED);
           }
         },
         { json: options.json },

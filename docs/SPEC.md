@@ -174,3 +174,15 @@ scenarios:
 7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
 9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.
+
+## 9. CLI Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Runbook failed (stopped, validation errors, scenario mismatch) |
+| `2` | Command error (file not found, invalid args, parse crash) |
+
+10. **Stop Semantics**: `rd stop` exits `1` — the command succeeded; the runbook failed.
+11. **Check Semantics**: Validation errors exit `1`; file-not-found/parse errors exit `2`.
+12. **Echo Exempt**: `rd echo` propagates its own configurable exit code.

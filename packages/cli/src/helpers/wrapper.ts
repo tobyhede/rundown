@@ -1,5 +1,6 @@
 import { isNodeError, getErrorMessage, RundownError, Errors } from '@rundown-org/core';
 import { RunbookSyntaxError } from '@rundown-org/parser';
+import { EXIT_COMMAND_ERROR } from './exit-codes.js';
 
 /**
  * Options for error handling behavior.
@@ -47,7 +48,7 @@ function toRundownError(error: unknown): RundownError {
  * Wraps an async function with standardized error handling for CLI commands.
  *
  * Catches errors, converts them to RundownError, and outputs appropriate
- * error messages before exiting with code 1.
+ * error messages before exiting with code 2 (command error).
  *
  * @param fn - Async function to execute with error handling
  * @param options - Error display options
@@ -67,6 +68,6 @@ export async function withErrorHandling(
       console.error(rundownError.toCliString(options.verbose));
     }
 
-    process.exit(1);
+    process.exit(EXIT_COMMAND_ERROR);
   }
 }

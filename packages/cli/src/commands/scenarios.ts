@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
+import { EXIT_COMMAND_ERROR, EXIT_RUNBOOK_FAILED } from '../helpers/exit-codes.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -77,7 +78,7 @@ async function loadScenarios(file: string, output: OutputEmitter): Promise<Loade
   if (!filePath) {
     output.error(`Runbook file not found: ${file}`, 'RUNBOOK_NOT_FOUND');
     output.flush();
-    process.exit(1);
+    process.exit(EXIT_COMMAND_ERROR);
   }
 
   const content = await readFile(filePath, 'utf-8');
@@ -86,7 +87,7 @@ async function loadScenarios(file: string, output: OutputEmitter): Promise<Loade
   if (!frontmatter) {
     output.error('No frontmatter found in this runbook', 'VALIDATION_ERROR');
     output.flush();
-    process.exit(1);
+    process.exit(EXIT_COMMAND_ERROR);
   }
 
   const { scenarios, errors } = parseScenarios(frontmatter);
@@ -97,13 +98,13 @@ async function loadScenarios(file: string, output: OutputEmitter): Promise<Loade
       output.message(`  - ${error}`, 'error');
     }
     output.flush();
-    process.exit(1);
+    process.exit(EXIT_COMMAND_ERROR);
   }
 
   if (!scenarios || Object.keys(scenarios).length === 0) {
     output.error('No scenarios defined in this runbook', 'VALIDATION_ERROR');
     output.flush();
-    process.exit(1);
+    process.exit(EXIT_COMMAND_ERROR);
   }
 
   const name = (frontmatter.name as string | undefined) ?? file;
@@ -126,7 +127,7 @@ async function handleList(file: string, json?: boolean): Promise<void> {
   } catch (error) {
     output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
     output.flush();
-    process.exit(1);
+    process.exit(EXIT_COMMAND_ERROR);
   }
 }
 
@@ -145,7 +146,7 @@ async function handleShow(file: string, scenarioName: string, json?: boolean): P
   } catch (error) {
     output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
     output.flush();
-    process.exit(1);
+    process.exit(EXIT_COMMAND_ERROR);
   }
 }
 
@@ -191,7 +192,7 @@ function showScenarioDetails(name: string, scenarios: Scenarios, output: OutputE
       available: Object.keys(scenarios),
     });
     output.flush();
-    process.exit(1);
+    process.exit(EXIT_COMMAND_ERROR);
   }
 
   const scenario = scenarios[name];
@@ -263,7 +264,7 @@ async function runScenario(
       available: Object.keys(scenarios),
     });
     output.flush();
-    process.exit(1);
+    process.exit(EXIT_COMMAND_ERROR);
   }
 
   const scenario = scenarios[scenarioName];
@@ -374,7 +375,7 @@ async function runScenario(
     output.flush();
 
     if (!passed) {
-      process.exit(1);
+      process.exit(EXIT_RUNBOOK_FAILED);
     }
   } finally {
     // 7. Cleanup temp directory

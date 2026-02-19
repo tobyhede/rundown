@@ -44,6 +44,16 @@ rundown prompt <content> # Output content in markdown fences
 
 The `rd` command is an alias for `rundown`.
 
+### Exit Codes
+
+| Code | Name | Meaning |
+|------|------|---------|
+| `0` | Success | Command and runbook both succeeded |
+| `1` | Runbook Failed | Command succeeded; runbook was stopped or failed |
+| `2` | Command Error | CLI command itself failed (file not found, invalid args, engine error) |
+
+`rd echo` is exempt — it propagates its own configurable exit code.
+
 ## Template Variables
 
 Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time.

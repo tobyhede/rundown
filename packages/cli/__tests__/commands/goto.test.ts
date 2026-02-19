@@ -58,7 +58,7 @@ describe('goto command', () => {
     it('rejects invalid step numbers', async () => {
       const result = runCli(['goto', '999'], workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr.length).toBeGreaterThan(0);
     });
 
@@ -72,7 +72,7 @@ describe('goto command', () => {
     it('rejects AT on non-FOR step', async () => {
       const result = runCli(['goto', '2 AT 5'], workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('INVALID_AT_TARGET');
     });
   });
