@@ -613,15 +613,16 @@ function buildParentExitAssign(
         const forClause = targetStep.forClause;
         return assign({
           ...baseAssign,
-          forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] =>
-            initForStack(
-              context.forStack,
-              targetStep.name,
-              forClause,
+          // Parent exit always creates fresh ForContext — never preserve an
+          // exhausted stack (initForStack's intra-loop check is wrong here).
+          forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] => {
+            const iteration = resolveAtValueRuntime(
               parentAction.target.at,
-              false,
-              sources,
-            ),
+              forClause.start,
+              context.forStack,
+            );
+            return [createForContext(targetStep.name, forClause, iteration, false, sources)];
+          },
           iterationResults: [] as ('pass' | 'fail')[],
           lastAction: buildGotoLastAction(parentAction.target),
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
