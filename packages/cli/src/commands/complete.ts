@@ -52,6 +52,8 @@ export function registerCompleteCommand(program: Command): void {
           try {
             steps = [...getRunbookFromState(state, cwd)];
           } catch (err) {
+            // Pop the broken runbook from the session so users can recover
+            await sessionService.popRunbook(options.agent);
             output.error(`Runbook state error: ${(err as Error).message}`, 'STATE_ERROR');
             output.flush();
             process.exit(1);
@@ -68,6 +70,12 @@ export function registerCompleteCommand(program: Command): void {
             output.flush();
             process.exit(1);
           }
+
+          // Persist COMPLETE metadata so historical state accurately reflects completion
+          await manager.update(state.id, {
+            lastAction: { type: 'COMPLETE' },
+            lastResult: 'pass',
+          });
 
           // Update parent agent binding before popping (mirrors pass/fail behavior)
           if (options.agent && state.parentRunbookId) {

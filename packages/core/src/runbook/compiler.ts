@@ -57,11 +57,13 @@ export type RunbookEvent =
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
   | {
-      type: 'STOP' /** Optional human-readable reason for aborting the runbook */;
+      type: 'STOP';
+      /** Optional human-readable reason for aborting the runbook */
       message?: string;
     }
   | {
-      type: 'COMPLETE' /** Optional human-readable reason for early completion */;
+      type: 'COMPLETE';
+      /** Optional human-readable reason for early completion */
       message?: string;
     };
 
