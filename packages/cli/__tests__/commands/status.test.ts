@@ -7,8 +7,7 @@ import {
   readSession,
   readRunbookState,
   listRunbookStates,
-  writeSession,
-  getActiveState,
+  type TestWorkspace,
 } from '../helpers/test-utils.js';
 
 describe('status command', () => {
