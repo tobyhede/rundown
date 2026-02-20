@@ -73,7 +73,15 @@ This doesn't have proper ## headers
     it('shows help on unknown command', async () => {
       const result = runCli('unknowncommand', workspace);
 
+      expect(result.exitCode).toBe(2);
       expect(result.stderr.length).toBeGreaterThan(0);
+    });
+
+    it('returns command error code for invalid options', async () => {
+      const result = runCli('run --bogus', workspace);
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/unknown option/i);
     });
 
     it('shows specific error for invalid step format', async () => {

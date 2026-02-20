@@ -1,5 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { Command } from 'commander';
 import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import { registerEchoCommand } from '../../src/commands/echo.js';
+import { OutputEmitter } from '../../src/services/output-emitter.js';
+import { EXIT_COMMAND_ERROR } from '../../src/helpers/exit-codes.js';
 
 describe('echo command', () => {
   let workspace: TestWorkspace;
@@ -60,6 +64,43 @@ describe('echo command', () => {
       const result = runCli('echo --result maybe npm install', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('Invalid result');
+    });
+
+    it('emits command error exit code in JSON payload on unexpected exceptions', async () => {
+      const cwdSpy = jest.spyOn(process, 'cwd').mockImplementation(() => {
+        throw new Error('boom');
+      });
+      const detailSpy = jest.spyOn(OutputEmitter.prototype, 'detail');
+      const flushSpy = jest
+        .spyOn(OutputEmitter.prototype, 'flush')
+        .mockImplementation(() => undefined);
+      const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+        throw new Error('process.exit');
+      }) as never);
+
+      try {
+        const program = new Command();
+        registerEchoCommand(program);
+
+        await expect(program.parseAsync(['node', 'rd', 'echo', '--json', 'hello'])).rejects.toThrow(
+          'process.exit',
+        );
+
+        expect(detailSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            result: false,
+            error: 'boom',
+            exitCode: EXIT_COMMAND_ERROR,
+          }),
+          'echo',
+        );
+        expect(exitSpy).toHaveBeenCalledWith(EXIT_COMMAND_ERROR);
+      } finally {
+        cwdSpy.mockRestore();
+        detailSpy.mockRestore();
+        flushSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
     });
   });
 });

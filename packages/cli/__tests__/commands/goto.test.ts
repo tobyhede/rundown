@@ -65,7 +65,7 @@ describe('goto command', () => {
     it('requires step number argument', async () => {
       const result = runCli('goto', workspace);
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('missing required argument');
     });
 

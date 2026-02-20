@@ -69,7 +69,7 @@ export function registerEchoCommand(program: Command): void {
             {
               result: false,
               error: message,
-              exitCode: 1,
+              exitCode: EXIT_COMMAND_ERROR,
             },
             'echo',
           );

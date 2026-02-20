@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // packages/cli/src/cli.ts
 
-import { Command } from 'commander';
+import { Command, CommanderError } from 'commander';
 import { registerRunCommand } from './commands/run.js';
 import { registerGotoCommand } from './commands/goto.js';
 import { registerPassCommand } from './commands/pass.js';
@@ -92,4 +92,20 @@ registerPruneCommand(program);
 registerPromptCommand(program);
 registerScenariosCommand(program);
 
-program.parse();
+function enableExitOverride(command: Command): void {
+  command.exitOverride();
+  for (const subcommand of command.commands) {
+    enableExitOverride(subcommand);
+  }
+}
+
+enableExitOverride(program);
+
+try {
+  await program.parseAsync();
+} catch (error) {
+  if (error instanceof CommanderError) {
+    process.exit(error.code === 'commander.helpDisplayed' ? 0 : EXIT_COMMAND_ERROR);
+  }
+  throw error;
+}
