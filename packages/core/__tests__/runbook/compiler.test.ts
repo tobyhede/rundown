@@ -3715,6 +3715,51 @@ echo "processing"
       actor.stop();
     });
 
+    it('clamps GOTO AT iteration to array bounds', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Start',
+          transitions: {
+            all: true,
+            pass: {
+              kind: 'pass',
+              retry: 0,
+              action: { type: 'GOTO', target: { step: '2', at: 99 } },
+            },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+        {
+          name: '2',
+          description: 'Loop step',
+          forClause: { start: 1, variable: 'item', source: 'items' },
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [{ id: '1', description: 'Process', transitions: DEFAULT_TRANSITIONS }],
+        },
+      ];
+      const sources = {
+        items: { kind: 'array' as const, items: ['a', 'b', 'c'] },
+      };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      // GOTO 2 AT 99 → iteration should be clamped to array length (3)
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::2::1');
+      const top = actor.getSnapshot().context.forStack[0];
+      expect(top.iteration).toBe(3); // clamped from 99 to items.length
+      expect(top.start).toBe(1);
+      expect(top.end).toBe(3);
+
+      actor.stop();
+    });
+
     it('rejects undefined source variable', () => {
       const steps = createRunbook(`
 ## 1. Process items
