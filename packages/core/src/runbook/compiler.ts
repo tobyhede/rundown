@@ -994,10 +994,8 @@ function buildContinueTransition(
     );
   }
 
-  // Non-last substep CONTINUE: advance to next sibling substep
-  // FOR loops aggregate once per iteration at the parent state (last substep),
-  // not per substep, so only implicit (non-FOR) aggregate steps accumulate here.
-  // FOR loops accumulate one result per iteration (at last substep), not per substep
+  // Non-last substep CONTINUE: advance to next sibling substep.
+  // FOR loops accumulate once per iteration at the parent state, not per substep.
   const shouldAccumulate = !!(
     currentStep?.substeps?.length &&
     !currentStep.forClause &&
@@ -1095,7 +1093,7 @@ function buildGotoTransition(
     };
   }
 
-  const resolvedSubstepId = target.substep ?? targetStepObj.substeps?.[0]?.id;
+  const resolvedSubstepId = target.substep;
 
   const computedTarget = formatStateId(targetStepObj.name, resolvedSubstepId);
   const currentStateId = formatStateId(stepName, substepId);
@@ -1118,14 +1116,15 @@ function buildGotoTransition(
 }
 
 /**
- * Build XState transition config from a terminal Action.
+ * Build XState transition config by dispatching on Action type
+ * (CONTINUE, GOTO, NEXT, BREAK, COMPLETE, STOP).
  */
 function buildActionTransition(
   action: Action,
   stepName: string,
   substepId: string | undefined,
   steps: Step[],
-  kind?: 'pass' | 'fail',
+  kind: 'pass' | 'fail',
   sources?: Readonly<Record<string, DataSource>>,
 ): TransitionConfig {
   const resultKind: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';

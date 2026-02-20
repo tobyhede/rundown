@@ -137,6 +137,7 @@ export async function computeFileSnapshot(filePath: string, line: number): Promi
  * @param filePath - Absolute path to the file
  * @param snapshot - Persisted snapshot to validate
  * @throws Error if drift is detected (file changed since snapshot)
+ * @throws I/O errors (ENOENT, EACCES) from stat or computeFingerprint
  */
 export async function validateFileSnapshot(
   filePath: string,
@@ -155,7 +156,8 @@ export async function validateFileSnapshot(
     if (currentFingerprint !== snapshot.fingerprint) {
       throw new Error(`File drift detected: ${filePath} content changed (fingerprint mismatch)`);
     }
-    // Fingerprint matches — content is identical, safe to resume
+    // Fingerprint matches — first FINGERPRINT_BYTES are identical.
+    // Changes beyond that window (with identical size) may go undetected.
     return;
   }
 
