@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { Command } from 'commander';
 import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
-import { registerEchoCommand } from '../../src/commands/echo.js';
+import { collect, registerEchoCommand } from '../../src/commands/echo.js';
 import { OutputEmitter } from '../../src/services/output-emitter.js';
 import { EXIT_COMMAND_ERROR } from '../../src/helpers/exit-codes.js';
 
@@ -19,6 +19,11 @@ describe('echo command', () => {
   it('exists and shows help', () => {
     const result = runCli('echo --help', workspace);
     expect(result.stdout).toContain('Echo command');
+  });
+
+  it('collect appends repeated result values', () => {
+    expect(collect('pass', [])).toEqual(['pass']);
+    expect(collect('fail', ['pass'])).toEqual(['pass', 'fail']);
   });
 
   describe('result sequence', () => {

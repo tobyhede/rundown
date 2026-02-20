@@ -33,6 +33,34 @@ echo done
     expect(steps[1].name).toBe('2');
   });
 
+  it('applies templateVars when runbookSrc contains placeholders', () => {
+    const runbookSrc = `# Templated Runbook
+
+## 1. Deploy {{Service}}
+- PASS: COMPLETE
+
+\`\`\`bash
+echo {{Service}}
+\`\`\`
+`;
+
+    const state: Partial<RunbookState> = {
+      id: 'templated-id',
+      runbook: 'templated.runbook.md',
+      runbookSrc,
+      templateVars: {
+        Service: 'api-server',
+      },
+      sources: {},
+    };
+
+    const steps = getRunbookFromState(state as RunbookState, '/unused');
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].description).toContain('Deploy api-server');
+    expect(steps[0].command?.code).toContain('echo api-server');
+  });
+
   it('should throw when runbookSrc is missing (corrupted state)', () => {
     const state: Partial<RunbookState> = {
       id: 'corrupted-id',
