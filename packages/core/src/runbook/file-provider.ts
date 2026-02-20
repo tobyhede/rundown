@@ -150,16 +150,16 @@ export async function validateFileSnapshot(
     );
   }
 
-  if (stat.mtimeMs !== snapshot.mtimeMs) {
-    // mtime changed but size same — check fingerprint if available
-    if (snapshot.fingerprint) {
-      const currentFingerprint = await computeFingerprint(filePath, stat.size);
-      if (currentFingerprint !== snapshot.fingerprint) {
-        throw new Error(`File drift detected: ${filePath} content changed (fingerprint mismatch)`);
-      }
-      // Fingerprint matches despite mtime change — likely a touch or backup, allow resume
-      return;
+  if (snapshot.fingerprint) {
+    const currentFingerprint = await computeFingerprint(filePath, stat.size);
+    if (currentFingerprint !== snapshot.fingerprint) {
+      throw new Error(`File drift detected: ${filePath} content changed (fingerprint mismatch)`);
     }
+    // Fingerprint matches — content is identical, safe to resume
+    return;
+  }
+
+  if (stat.mtimeMs !== snapshot.mtimeMs) {
     throw new Error(`File drift detected: ${filePath} modification time changed`);
   }
 }
