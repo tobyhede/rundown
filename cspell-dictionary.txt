@@ -17,6 +17,9 @@ Subcategorize
 
 # Libraries and tools
 biome
+stryker
+mutator
+mutants
 biomejs
 changesets
 changeset

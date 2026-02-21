@@ -12,3 +12,7 @@ coverage/
 .claude-docker/
 logs/
 docs/plans/
+
+# Stryker mutation testing
+reports/
+.stryker-tmp/

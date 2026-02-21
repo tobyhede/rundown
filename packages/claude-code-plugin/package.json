@@ -38,6 +38,7 @@
     "test:ci": "NODE_OPTIONS='--experimental-vm-modules' jest --ci --coverage --maxWorkers=2",
     "test:perf": "NODE_OPTIONS='--experimental-vm-modules' jest --maxWorkers=2 --testPathPattern=perf",
     "test:smoke": "bash scripts/smoke-test.sh",
+    "test:mutate": "stryker run",
     "clean": "rm -rf dist",
     "lint": "eslint src/**/*.ts __tests__/**/*.ts"
   },
