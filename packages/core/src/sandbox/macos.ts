@@ -124,7 +124,7 @@ function getScriptDirectory(): string | null {
  */
 function generateSeatbeltProfile(options: SandboxOptions): string {
   // Escape paths for Seatbelt (handle special characters)
-  const escapePath = (p: string): string => p.replace(/"/g, '\\"');
+  const escapePath = (p: string): string => p.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
   // Build read-only path rules from policy
   const readOnlyRules = options.readOnlyPaths
