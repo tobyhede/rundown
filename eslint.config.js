@@ -10,10 +10,12 @@ export default tseslint.config(
       '**/dist/**',
       '**/coverage/**',
       '**/*.js',
+      '**/*.mjs',
       '**/*.d.ts',
       'site/**',
       '.worktree/**',
       '.worktrees/**',
+      '**/.stryker-tmp/**',
     ],
   },
 

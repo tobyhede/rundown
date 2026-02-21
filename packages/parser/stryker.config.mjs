@@ -6,7 +6,6 @@ const config = {
   testRunnerNodeArgs: ['--experimental-vm-modules'],
   checkers: [],
   mutate: ['src/**/*.ts', '!src/**/*.d.ts', '!src/index.ts'],
-  inPlace: true,
   coverageAnalysis: 'perTest',
   incremental: true,
   incrementalFile: 'reports/stryker-incremental.json',
