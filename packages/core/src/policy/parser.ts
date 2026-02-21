@@ -236,9 +236,30 @@ export function extractBacktickCommands(command: string, depth = 0): string[] {
  * @returns Array of executable names found inside $(...)
  */
 export function extractDollarSubstitutions(command: string, depth = 0): string[] {
-  // Greedy regex for $(...) to handle nesting by capturing outermost first
-  const dollarRegex = /\$\((.*)\)/g;
-  return extractRecursiveMatches(command, dollarRegex, depth);
+  // Use balanced parenthesis counting instead of regex to avoid ReDoS
+  // and correctly handle nested $(...) substitutions
+  const executables: string[] = [];
+  let i = 0;
+  while (i < command.length - 1) {
+    if (command[i] === '$' && command[i + 1] === '(') {
+      let level = 1;
+      let j = i + 2;
+      while (j < command.length && level > 0) {
+        if (command[j] === '(') level++;
+        else if (command[j] === ')') level--;
+        j++;
+      }
+      if (level === 0) {
+        const nestedContent = command.slice(i + 2, j - 1);
+        const nestedExecutables = extractAllExecutables(nestedContent, depth);
+        executables.push(...nestedExecutables);
+        i = j;
+        continue;
+      }
+    }
+    i++;
+  }
+  return executables;
 }
 
 /**
