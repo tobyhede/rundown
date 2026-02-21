@@ -11,3 +11,4 @@ coverage/
 .claude/rundown/session.json
 .claude-docker/
 logs/
+docs/plans/

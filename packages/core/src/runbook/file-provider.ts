@@ -137,6 +137,7 @@ export async function computeFileSnapshot(filePath: string, line: number): Promi
  * @param filePath - Absolute path to the file
  * @param snapshot - Persisted snapshot to validate
  * @throws Error if drift is detected (file changed since snapshot)
+ * @throws I/O errors (ENOENT, EACCES) from stat or computeFingerprint
  */
 export async function validateFileSnapshot(
   filePath: string,
@@ -150,16 +151,17 @@ export async function validateFileSnapshot(
     );
   }
 
-  if (stat.mtimeMs !== snapshot.mtimeMs) {
-    // mtime changed but size same — check fingerprint if available
-    if (snapshot.fingerprint) {
-      const currentFingerprint = await computeFingerprint(filePath, stat.size);
-      if (currentFingerprint !== snapshot.fingerprint) {
-        throw new Error(`File drift detected: ${filePath} content changed (fingerprint mismatch)`);
-      }
-      // Fingerprint matches despite mtime change — likely a touch or backup, allow resume
-      return;
+  if (snapshot.fingerprint) {
+    const currentFingerprint = await computeFingerprint(filePath, stat.size);
+    if (currentFingerprint !== snapshot.fingerprint) {
+      throw new Error(`File drift detected: ${filePath} content changed (fingerprint mismatch)`);
     }
+    // Fingerprint matches — first FINGERPRINT_BYTES are identical.
+    // Changes beyond that window (with identical size) may go undetected.
+    return;
+  }
+
+  if (stat.mtimeMs !== snapshot.mtimeMs) {
     throw new Error(`File drift detected: ${filePath} modification time changed`);
   }
 }
