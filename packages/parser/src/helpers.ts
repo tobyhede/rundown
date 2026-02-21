@@ -125,7 +125,11 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
   const firstName = words[0];
 
   // Strip trailing separator characters (like '.', ':', etc.) from the name
-  const strippedName = firstName.replace(/[.:\u2014\u2192)\-]+$/, '');
+  // Manual right-trim loop avoids polynomial regex backtracking (CodeQL alert)
+  const TRAILING_SEPARATORS = new Set(['.', ':', '\u2014', '\u2192', ')', '-']);
+  let end = firstName.length;
+  while (end > 0 && TRAILING_SEPARATORS.has(firstName[end - 1])) end--;
+  const strippedName = firstName.slice(0, end);
 
   if (!strippedName || !NAMED_IDENTIFIER_PATTERN.test(strippedName)) return null;
   if (isReservedWord(strippedName)) return null;
@@ -244,7 +248,14 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
  * @returns Parsed variable and range string, or null if not a named FOR clause
  */
 function parseNamedForPrefix(rest: string): { variable: string; rangeStr: string } | null {
-  const spaceIdx = rest.indexOf(' ');
+  // Scan for first space or tab (indexOf(' ') misses tabs)
+  let spaceIdx = -1;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === ' ' || rest[i] === '\t') {
+      spaceIdx = i;
+      break;
+    }
+  }
   if (spaceIdx <= 0) return null;
 
   const candidate = rest.slice(0, spaceIdx);
