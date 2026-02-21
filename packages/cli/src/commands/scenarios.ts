@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parse as shellParse } from 'shell-quote';
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
@@ -314,7 +315,9 @@ async function runScenario(
       const rdMatch = /^rd\s+(.*)$/.exec(cmd);
       try {
         if (rdMatch) {
-          const args = rdMatch[1].split(/\s+/).filter(Boolean);
+          const args = shellParse(rdMatch[1]).filter(
+            (entry): entry is string => typeof entry === 'string',
+          );
           execFileSync('node', [CLI_PATH, ...args], {
             cwd: tmpDir,
             encoding: 'utf-8',

@@ -47,7 +47,7 @@ describe('Integration Tests', () => {
 
   /** Execute CLI command without shell interpolation to prevent command injection */
   function execCli(...args: string[]): Promise<{ stdout: string; stderr: string }> {
-    return execFileAsync('node', [cliPath, ...args]);
+    return execFileAsync('node', [cliPath, ...args], { timeout: 10_000 });
   }
 
   beforeEach(async () => {

@@ -7,6 +7,7 @@
  * @module
  */
 
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -313,10 +314,7 @@ export class SeatbeltSandbox implements SandboxImplementation {
   async execute(command: string, options: SandboxOptions): Promise<SandboxExecutionResult> {
     // Generate profile
     const profile = generateSeatbeltProfile(options);
-    const profilePath = join(
-      tmpdir(),
-      `rundown-sandbox-${String(Date.now())}-${Math.random().toString(36).slice(2)}.sb`,
-    );
+    const profilePath = join(tmpdir(), `rundown-sandbox-${randomUUID()}.sb`);
 
     try {
       // Write profile to temp file

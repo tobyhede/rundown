@@ -245,8 +245,20 @@ export function extractDollarSubstitutions(command: string, depth = 0): string[]
       let level = 1;
       let j = i + 2;
       while (j < command.length && level > 0) {
-        if (command[j] === '(') level++;
-        else if (command[j] === ')') level--;
+        if (command[j] === '(' || command[j] === ')') {
+          // Count preceding backslashes to detect escaped parentheses
+          let bs = 0;
+          let k = j - 1;
+          while (k >= i + 2 && command[k] === '\\') {
+            bs++;
+            k--;
+          }
+          if (bs % 2 === 0) {
+            // Unescaped parenthesis
+            if (command[j] === '(') level++;
+            else level--;
+          }
+        }
         j++;
       }
       if (level === 0) {
