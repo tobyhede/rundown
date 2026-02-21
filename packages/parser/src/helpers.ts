@@ -72,6 +72,9 @@ export interface ParsedSubstepHeader {
  * @param text - The text to strip separators from
  * @returns The text with leading separators and whitespace removed
  */
+/** Characters to strip from trailing position of named step identifiers. */
+const TRAILING_SEPARATORS = new Set(['.', ':', '\u2014', '\u2192', ')', '-']);
+
 export function stripSeparator(text: string): string {
   return text.replace(/^[.:—→\-)\s]+/, '').trim();
 }
@@ -126,7 +129,6 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
 
   // Strip trailing separator characters (like '.', ':', etc.) from the name
   // Manual right-trim loop avoids polynomial regex backtracking (CodeQL alert)
-  const TRAILING_SEPARATORS = new Set(['.', ':', '\u2014', '\u2192', ')', '-']);
   let end = firstName.length;
   while (end > 0 && TRAILING_SEPARATORS.has(firstName[end - 1])) end--;
   const strippedName = firstName.slice(0, end);

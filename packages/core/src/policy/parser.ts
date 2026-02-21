@@ -241,7 +241,10 @@ export function extractDollarSubstitutions(command: string, depth = 0): string[]
   const executables: string[] = [];
   let i = 0;
   while (i < command.length - 1) {
-    if (command[i] === '$' && command[i + 1] === '(') {
+    // Match $( but not $$( — double-dollar is PID expansion, not command substitution.
+    // Note: $((...)) arithmetic and $(...) inside single quotes are conservatively
+    // detected as substitutions, producing safe false positives.
+    if (command[i] === '$' && command[i + 1] === '(' && (i === 0 || command[i - 1] !== '$')) {
       let level = 1;
       let j = i + 2;
       while (j < command.length && level > 0) {
@@ -263,6 +266,7 @@ export function extractDollarSubstitutions(command: string, depth = 0): string[]
       }
       if (level === 0) {
         const nestedContent = command.slice(i + 2, j - 1);
+        // Recursively extract executables from the substitution content
         const nestedExecutables = extractAllExecutables(nestedContent, depth);
         executables.push(...nestedExecutables);
         i = j;

@@ -124,8 +124,16 @@ function getScriptDirectory(): string | null {
  * @returns Seatbelt profile content
  */
 function generateSeatbeltProfile(options: SandboxOptions): string {
-  // Escape paths for Seatbelt (handle special characters)
-  const escapePath = (p: string): string => p.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // Escape paths for Seatbelt (handle special characters).
+  // Order matters: backslashes first, then quotes, then control chars
+  // to prevent C-string truncation or Seatbelt parser confusion.
+  const escapePath = (p: string): string =>
+    p
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\0/g, '\\0')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r');
 
   // Build read-only path rules from policy
   const readOnlyRules = options.readOnlyPaths

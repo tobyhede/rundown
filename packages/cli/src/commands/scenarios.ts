@@ -315,9 +315,15 @@ async function runScenario(
       const rdMatch = /^rd\s+(.*)$/.exec(cmd);
       try {
         if (rdMatch) {
-          const args = shellParse(rdMatch[1]).filter(
-            (entry): entry is string => typeof entry === 'string',
-          );
+          const parsed = shellParse(rdMatch[1]);
+          const hasOperators = parsed.some((entry) => typeof entry !== 'string');
+          if (hasOperators) {
+            throw new Error(
+              `Unsupported shell operators in scenario command: ${cmd}. ` +
+                'Split into separate commands instead of using &&, ||, |, etc.',
+            );
+          }
+          const args = parsed as string[];
           execFileSync('node', [CLI_PATH, ...args], {
             cwd: tmpDir,
             encoding: 'utf-8',
