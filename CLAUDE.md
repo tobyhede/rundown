@@ -212,6 +212,8 @@ npm run lint:fix      # Auto-fix lint issues
 npm run format        # Format all packages
 npm run format:check  # Check formatting
 npm run spellcheck    # Check spelling across all packages
+npm run test:mutate   # Mutation testing (all packages, sequential)
+npm run test:mutate:parser  # Mutation testing for parser only
 npm run test:property # Property-based tests
 npm run test:perf     # Performance benchmarks
 ```
