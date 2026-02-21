@@ -8,8 +8,7 @@ describe('Session', () => {
   let testDir: string;
 
   beforeEach(async () => {
-    testDir = join(tmpdir(), `rundown-test-session-${String(Date.now())}`);
-    await fs.mkdir(testDir, { recursive: true });
+    testDir = await fs.mkdtemp(join(tmpdir(), 'rundown-test-session-'));
   });
 
   afterEach(async () => {
