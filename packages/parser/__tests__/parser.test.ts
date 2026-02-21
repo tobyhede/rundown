@@ -743,6 +743,19 @@ npm test
       );
     });
 
+    it('allows runbook list item after transitions in substep', () => {
+      const md = `## 1 Step
+
+### 1.1 Sub
+- PASS: CONTINUE
+- FAIL: STOP
+
+- task.runbook.md
+`;
+      const steps = parseRunbook(md);
+      expect(steps[0].substeps?.[0].workflows).toEqual(['task.runbook.md']);
+    });
+
     it('rejects list items after content in step', () => {
       const md = `## 1 Step
 
@@ -893,51 +906,6 @@ echo hi
       expect(() => parseRunbook(md)).toThrow(/FOR is only valid on steps.*not substeps/);
     });
   });
-
-  describe('list-based transition ordering in substep after transitions', () => {
-    it('rejects non-runbook list item after transitions in substep', () => {
-      const md = `## 1 Step
-
-### 1.1 Sub
-- PASS: CONTINUE
-- FAIL: STOP
-
-- regular list item
-`;
-      expect(() => parseRunbook(md)).toThrow(
-        /Prompt text must appear before code blocks or runbooks/,
-      );
-    });
-
-    it('allows runbook list item after transitions in substep', () => {
-      const md = `## 1 Step
-
-### 1.1 Sub
-- PASS: CONTINUE
-- FAIL: STOP
-
-- task.runbook.md
-`;
-      const steps = parseRunbook(md);
-      expect(steps[0].substeps?.[0].workflows).toEqual(['task.runbook.md']);
-    });
-  });
-
-  describe('list-based transition ordering at step level', () => {
-    it('rejects non-runbook list item after content at step level', () => {
-      const md = `## 1 Step
-
-\`\`\`bash
-npm test
-\`\`\`
-
-- regular list item
-`;
-      expect(() => parseRunbook(md)).toThrow(
-        /Prompt text must appear before code blocks, substeps, or runbooks/,
-      );
-    });
-  });
 });
 
 describe('substep content filtering', () => {
@@ -1006,17 +974,18 @@ Review the tasks carefully.
   });
 });
 
-describe('inline code extraction', () => {
-  it('uses double-backtick wrapping for inline code containing backticks', () => {
-    const md = '## 1. Check `` `template` ``\n- PASS: COMPLETE\n';
+describe('extractText and inline code', () => {
+  it('uses double-backtick wrapping for code containing backtick character', () => {
+    const md = '## 1. Use `` ` `` carefully\n- PASS: COMPLETE\n';
     const steps = parseRunbook(md);
-    expect(steps[0].description).toContain('``');
+    expect(steps[0].description).toBe('Use `` ` `` carefully');
   });
 
-  it('wraps inline code with single backticks when no backtick in value', () => {
-    const md = '## 1. Run `npm test`\n- PASS: COMPLETE\n';
+  it('uses single-backtick wrapping for code without backtick character', () => {
+    const md = '## 1. Run `test`\n- PASS: COMPLETE\n';
     const steps = parseRunbook(md);
-    expect(steps[0].description).toBe('Run `npm test`');
+    expect(steps[0].description).toBe('Run `test`');
+    expect(steps[0].description).not.toContain('``');
   });
 
   it('extracts text from emphasis nodes in headings', () => {
@@ -1138,25 +1107,6 @@ This is the preamble description.
 `;
     const doc = parseRunbookDocument(md);
     expect(doc.name).toBeUndefined();
-  });
-});
-
-describe('extractText edge cases', () => {
-  it('uses double-backtick wrapping for code containing backtick character', () => {
-    // In markdown, `` ` `` is inline code with value "`"
-    const md = '## 1. Use `` ` `` carefully\n- PASS: COMPLETE\n';
-    const steps = parseRunbook(md);
-    // If wrapping works correctly, backtick in value → double-backtick wrapping
-    expect(steps[0].description).toBe('Use `` ` `` carefully');
-  });
-
-  it('single-backtick wrapping for code without backtick character', () => {
-    const md = '## 1. Run `test`\n- PASS: COMPLETE\n';
-    const steps = parseRunbook(md);
-    // No backtick in value → single-backtick wrapping
-    expect(steps[0].description).toBe('Run `test`');
-    // Ensure it's NOT double-backtick wrapped
-    expect(steps[0].description).not.toContain('``');
   });
 });
 
@@ -1471,7 +1421,7 @@ Do iteration.
     expect(steps[0].substeps![0].transitions?.pass.action).toEqual({ type: 'NEXT' });
   });
 
-  it('H3 header with unparseable format is ignored when only content', () => {
+  it('H3 header with unparsable format is ignored when only content', () => {
     // H3 that doesn't match substep pattern — hasSeenContent becomes true
     // but no substep is created
     const md = `## 1 Step
