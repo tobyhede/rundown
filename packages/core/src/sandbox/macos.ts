@@ -7,6 +7,7 @@
  * @module
  */
 
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -123,8 +124,16 @@ function getScriptDirectory(): string | null {
  * @returns Seatbelt profile content
  */
 function generateSeatbeltProfile(options: SandboxOptions): string {
-  // Escape paths for Seatbelt (handle special characters)
-  const escapePath = (p: string): string => p.replace(/"/g, '\\"');
+  // Escape paths for Seatbelt (handle special characters).
+  // Order matters: backslashes first, then quotes, then control chars
+  // to prevent C-string truncation or Seatbelt parser confusion.
+  const escapePath = (p: string): string =>
+    p
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\0/g, '\\0')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r');
 
   // Build read-only path rules from policy
   const readOnlyRules = options.readOnlyPaths
@@ -313,10 +322,7 @@ export class SeatbeltSandbox implements SandboxImplementation {
   async execute(command: string, options: SandboxOptions): Promise<SandboxExecutionResult> {
     // Generate profile
     const profile = generateSeatbeltProfile(options);
-    const profilePath = join(
-      tmpdir(),
-      `rundown-sandbox-${String(Date.now())}-${Math.random().toString(36).slice(2)}.sb`,
-    );
+    const profilePath = join(tmpdir(), `rundown-sandbox-${randomUUID()}.sb`);
 
     try {
       // Write profile to temp file

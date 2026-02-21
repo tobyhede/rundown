@@ -33,7 +33,27 @@ interface Props {
 type Status = 'idle' | 'booting' | 'loading' | 'ready' | 'running' | 'error';
 
 function parseRdArgs(cmd: string): string[] {
-  const parts = cmd.split(' ');
+  // Dynamic import would complicate React component — use inline mini-parser
+  // that handles quoted strings (sufficient for predefined scenario commands)
+  const parts: string[] = [];
+  let i = 0;
+  while (i < cmd.length) {
+    // Skip whitespace
+    while (i < cmd.length && (cmd[i] === ' ' || cmd[i] === '\t')) i++;
+    if (i >= cmd.length) break;
+    if (cmd[i] === '"' || cmd[i] === "'") {
+      const quote = cmd[i];
+      i++;
+      let token = '';
+      while (i < cmd.length && cmd[i] !== quote) { token += cmd[i]; i++; }
+      if (i < cmd.length) i++; // skip closing quote
+      parts.push(token);
+    } else {
+      let token = '';
+      while (i < cmd.length && cmd[i] !== ' ' && cmd[i] !== '\t') { token += cmd[i]; i++; }
+      parts.push(token);
+    }
+  }
   return parts[0] === 'rd' ? parts.slice(1) : parts;
 }
 

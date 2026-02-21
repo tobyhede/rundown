@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
@@ -168,7 +169,7 @@ export class Session {
   private async save(state: SessionState): Promise<void> {
     await fs.mkdir(dirname(this.stateFile), { recursive: true });
     // Use unique temp file to avoid race conditions during concurrent writes
-    const temp = `${this.stateFile}.${Math.random().toString(36).slice(2)}.tmp`;
+    const temp = `${this.stateFile}.${randomUUID()}.tmp`;
 
     try {
       // Write to temp file

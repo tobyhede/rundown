@@ -1,5 +1,5 @@
 // packages/claude-code-plugin/__tests__/integration.test.ts
-import { exec, spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, dirname } from 'node:path';
 import { promises as fs } from 'node:fs';
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // Helper function to run hook dispatch safely using stdin
 async function runHookDispatch(
@@ -45,6 +45,11 @@ describe('Integration Tests', () => {
   let testDir: string;
   let cliPath: string;
 
+  /** Execute CLI command without shell interpolation to prevent command injection */
+  function execCli(...args: string[]): Promise<{ stdout: string; stderr: string }> {
+    return execFileAsync('node', [cliPath, ...args], { timeout: 10_000 });
+  }
+
   beforeEach(async () => {
     testDir = await fs.mkdtemp(join(tmpdir(), 'rundown-test-integration-'));
     cliPath = join(__dirname, '../dist/cli.js');
@@ -56,17 +61,15 @@ describe('Integration Tests', () => {
 
   describe('Session Management', () => {
     test('set and get command', async () => {
-      await execAsync(`node ${cliPath} session set active_command /execute ${testDir}`);
-      const { stdout } = await execAsync(`node ${cliPath} session get active_command ${testDir}`);
+      await execCli('session', 'set', 'active_command', '/execute', testDir);
+      const { stdout } = await execCli('session', 'get', 'active_command', testDir);
       expect(stdout.trim()).toBe('/execute');
     });
 
     test('append and check contains', async () => {
-      await execAsync(`node ${cliPath} session append file_extensions ts ${testDir}`);
+      await execCli('session', 'append', 'file_extensions', 'ts', testDir);
 
-      const result = await execAsync(
-        `node ${cliPath} session contains file_extensions ts ${testDir}`,
-      )
+      const result = await execCli('session', 'contains', 'file_extensions', 'ts', testDir)
         .then(() => true)
         .catch(() => false);
 
@@ -74,10 +77,10 @@ describe('Integration Tests', () => {
     });
 
     test('clear removes state', async () => {
-      await execAsync(`node ${cliPath} session set active_command /plan ${testDir}`);
-      await execAsync(`node ${cliPath} session clear ${testDir}`);
+      await execCli('session', 'set', 'active_command', '/plan', testDir);
+      await execCli('session', 'clear', testDir);
 
-      const { stdout } = await execAsync(`node ${cliPath} session get active_command ${testDir}`);
+      const { stdout } = await execCli('session', 'get', 'active_command', testDir);
       expect(stdout.trim()).toBe('');
     });
   });
@@ -94,14 +97,10 @@ describe('Integration Tests', () => {
       const { code } = await runHookDispatch(cliPath, hookInput);
       expect(code).toBe(0);
 
-      const { stdout: files } = await execAsync(
-        `node ${cliPath} session get edited_files ${testDir}`,
-      );
+      const { stdout: files } = await execCli('session', 'get', 'edited_files', testDir);
       expect(files).toContain('main.ts');
 
-      const containsTs = await execAsync(
-        `node ${cliPath} session contains file_extensions ts ${testDir}`,
-      )
+      const containsTs = await execCli('session', 'contains', 'file_extensions', 'ts', testDir)
         .then(() => true)
         .catch(() => false);
       expect(containsTs).toBe(true);
@@ -116,7 +115,7 @@ describe('Integration Tests', () => {
       const { code } = await runHookDispatch(cliPath, input);
       expect(code).toBe(0);
 
-      const { stdout } = await execAsync(`node ${cliPath} session get active_command ${testDir}`);
+      const { stdout } = await execCli('session', 'get', 'active_command', testDir);
       expect(stdout.trim()).toBe('execute');
     });
 
@@ -130,7 +129,7 @@ describe('Integration Tests', () => {
       const { code } = await runHookDispatch(cliPath, input);
       expect(code).toBe(0);
 
-      const { stdout } = await execAsync(`node ${cliPath} session get active_skill ${testDir}`);
+      const { stdout } = await execCli('session', 'get', 'active_skill', testDir);
       expect(stdout.trim()).toBe('executing-plans');
     });
   });
@@ -142,14 +141,14 @@ describe('Integration Tests', () => {
       await fs.writeFile(stateFile, '{invalid json', 'utf-8');
 
       // Should reinitialize and work
-      await execAsync(`node ${cliPath} session set active_command /plan ${testDir}`);
-      const { stdout } = await execAsync(`node ${cliPath} session get active_command ${testDir}`);
+      await execCli('session', 'set', 'active_command', '/plan', testDir);
+      const { stdout } = await execCli('session', 'get', 'active_command', testDir);
       expect(stdout.trim()).toBe('/plan');
     });
 
     test('rejects invalid session keys', async () => {
       try {
-        await execAsync(`node ${cliPath} session get invalid_key ${testDir}`);
+        await execCli('session', 'get', 'invalid_key', testDir);
         throw new Error('Should have thrown error');
       } catch (error: any) {
         if (error.message === 'Should have thrown error') throw error;
@@ -159,7 +158,7 @@ describe('Integration Tests', () => {
 
     test('rejects invalid array keys for append', async () => {
       try {
-        await execAsync(`node ${cliPath} session append invalid_key value ${testDir}`);
+        await execCli('session', 'append', 'invalid_key', 'value', testDir);
         throw new Error('Should have thrown error');
       } catch (error: any) {
         if (error.message === 'Should have thrown error') throw error;

@@ -72,6 +72,9 @@ export interface ParsedSubstepHeader {
  * @param text - The text to strip separators from
  * @returns The text with leading separators and whitespace removed
  */
+/** Characters to strip from trailing position of named step identifiers. */
+const TRAILING_SEPARATORS = new Set(['.', ':', '\u2014', '\u2192', ')', '-']);
+
 export function stripSeparator(text: string): string {
   return text.replace(/^[.:—→\-)\s]+/, '').trim();
 }
@@ -125,7 +128,10 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
   const firstName = words[0];
 
   // Strip trailing separator characters (like '.', ':', etc.) from the name
-  const strippedName = firstName.replace(/[.:—→\-)]+$/, '');
+  // Manual right-trim loop avoids polynomial regex backtracking (CodeQL alert)
+  let end = firstName.length;
+  while (end > 0 && TRAILING_SEPARATORS.has(firstName[end - 1])) end--;
+  const strippedName = firstName.slice(0, end);
 
   if (!strippedName || !NAMED_IDENTIFIER_PATTERN.test(strippedName)) return null;
   if (isReservedWord(strippedName)) return null;
@@ -208,10 +214,16 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
     const remainder = afterDot.slice(spaceIndex + 1).trim();
     if (remainder) {
       // Check for agent suffix: "description (agent-type)"
-      const agentMatch = /^(.+?)\s+\(([^)]+)\)$/.exec(remainder);
-      if (agentMatch) {
-        description = agentMatch[1].trim() || undefined;
-        agentType = agentMatch[2].trim();
+      // Uses lastIndexOf to avoid ReDoS from (.+?)\s+ backtracking
+      const lastParenOpen = remainder.lastIndexOf(' (');
+      if (lastParenOpen > 0 && remainder.endsWith(')')) {
+        const possibleAgent = remainder.slice(lastParenOpen + 2, -1).trim();
+        if (possibleAgent) {
+          description = remainder.slice(0, lastParenOpen).trim() || undefined;
+          agentType = possibleAgent;
+        } else {
+          description = remainder;
+        }
       } else if (remainder.startsWith('(') && remainder.endsWith(')')) {
         // Just agent, no description: "(agent-type)"
         agentType = remainder.slice(1, -1).trim();
@@ -227,6 +239,48 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
     description: description ?? '',
     agentType,
   };
+}
+
+/**
+ * Parse the "variable IN rest" prefix from a FOR clause without regex.
+ *
+ * Avoids ReDoS by using indexOf for whitespace boundaries instead of \s+ patterns.
+ *
+ * @param rest - The text after "FOR " (e.g., "batch IN 1 TO 10")
+ * @returns Parsed variable and range string, or null if not a named FOR clause
+ */
+function parseNamedForPrefix(rest: string): { variable: string; rangeStr: string } | null {
+  // Scan for first space or tab (indexOf(' ') misses tabs)
+  let spaceIdx = -1;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === ' ' || rest[i] === '\t') {
+      spaceIdx = i;
+      break;
+    }
+  }
+  if (spaceIdx <= 0) return null;
+
+  const candidate = rest.slice(0, spaceIdx);
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(candidate)) return null;
+
+  // Skip whitespace after identifier
+  let pos = spaceIdx;
+  while (pos < rest.length && (rest[pos] === ' ' || rest[pos] === '\t')) pos++;
+
+  // Check for 'IN' keyword
+  if (rest.slice(pos, pos + 2) !== 'IN') return null;
+  pos += 2;
+
+  // Must be followed by whitespace
+  if (pos >= rest.length || (rest[pos] !== ' ' && rest[pos] !== '\t')) return null;
+
+  // Skip whitespace after IN
+  while (pos < rest.length && (rest[pos] === ' ' || rest[pos] === '\t')) pos++;
+
+  const rangeStr = rest.slice(pos);
+  if (!rangeStr) return null;
+
+  return { variable: candidate, rangeStr };
 }
 
 /**
@@ -264,11 +318,12 @@ export function parseForClause(text: string): ForClause | null {
   // Pattern 2: FOR variable IN count (start defaults to 1)
   // Pattern 5: FOR variable IN {{ source }} (all items)
   // Pattern 6: FOR variable IN start TO end OF {{ source }} (windowed source)
-  const namedMatch = /^([a-zA-Z_][a-zA-Z0-9_]*)\s+IN\s+(.+)$/.exec(rest);
-  if (namedMatch) {
-    const variable = namedMatch[1];
+  // Manual parsing to avoid ReDoS from \s+IN\s+ backtracking
+  const namedParsed = parseNamedForPrefix(rest);
+  if (namedParsed) {
+    const variable = namedParsed.variable;
     if (isReservedWord(variable)) return null;
-    const rangeStr = namedMatch[2].trim();
+    const rangeStr = namedParsed.rangeStr;
 
     // Source pattern: {{ source }} (spaces optional)
     const sourceMatch = /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}$/.exec(rangeStr);
@@ -406,10 +461,14 @@ function parseRetryWithArgs(rest: string): { retry: number; action: Action } | n
   let retry = 1;
   let remaining = rest;
 
-  const numberMatch = /^(\d+)(?:\s+(.*))?$/.exec(remaining);
-  if (numberMatch) {
-    retry = parseInt(numberMatch[1], 10);
-    remaining = (numberMatch[2] || '').trim();
+  // Parse leading digits manually to avoid ReDoS from (\d+)(?:\s+(.*))? backtracking
+  let digitEnd = 0;
+  while (digitEnd < remaining.length && remaining[digitEnd] >= '0' && remaining[digitEnd] <= '9') {
+    digitEnd++;
+  }
+  if (digitEnd > 0 && (digitEnd >= remaining.length || /\s/.test(remaining[digitEnd]))) {
+    retry = parseInt(remaining.slice(0, digitEnd), 10);
+    remaining = remaining.slice(digitEnd).trimStart();
   }
 
   if (!remaining) {

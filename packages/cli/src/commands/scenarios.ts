@@ -3,8 +3,9 @@ import { readFile, rm } from 'node:fs/promises';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parse as shellParse } from 'shell-quote';
 import { parseScenarios, type Scenario, type Scenarios } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
@@ -310,15 +311,34 @@ async function runScenario(
         output.message('', 'info');
       }
 
-      // Replace 'rd ' with actual CLI path to avoid shell alias issues
-      const actualCmd = cmd.replace(/^rd\s+/, `node ${CLI_PATH} `);
+      // Route 'rd' commands through execFileSync to avoid shell injection
+      const rdMatch = /^rd\s+(.*)$/.exec(cmd);
       try {
-        execSync(actualCmd, {
-          cwd: tmpDir,
-          encoding: 'utf-8',
-          stdio: runQuiet ? 'pipe' : 'inherit',
-          env: { ...process.env, RUNDOWN_LOG: '0' },
-        });
+        if (rdMatch) {
+          const parsed = shellParse(rdMatch[1]);
+          const hasOperators = parsed.some((entry) => typeof entry !== 'string');
+          if (hasOperators) {
+            throw new Error(
+              `Unsupported shell operators in scenario command: ${cmd}. ` +
+                'Split into separate commands instead of using &&, ||, |, etc.',
+            );
+          }
+          const args = parsed as string[];
+          execFileSync('node', [CLI_PATH, ...args], {
+            cwd: tmpDir,
+            encoding: 'utf-8',
+            stdio: runQuiet ? 'pipe' : 'inherit',
+            env: { ...process.env, RUNDOWN_LOG: '0' },
+          });
+        } else {
+          // Non-rd commands are author-defined scenario commands — inherently trusted
+          execSync(cmd, {
+            cwd: tmpDir,
+            encoding: 'utf-8',
+            stdio: runQuiet ? 'pipe' : 'inherit',
+            env: { ...process.env, RUNDOWN_LOG: '0' },
+          });
+        }
       } catch {
         // Command may exit non-zero for STOP scenarios, which is expected
       }
