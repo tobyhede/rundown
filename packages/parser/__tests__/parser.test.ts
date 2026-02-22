@@ -974,6 +974,10 @@ Review the tasks carefully.
   });
 });
 
+// Tests extractText branches not covered by 'inline code preservation' above:
+// double-backtick wrapping (value contains backtick), negative single-backtick
+// assertion, and non-text node types (emphasis, strong). Intentional overlap
+// for mutation coverage of lines 32-51 in parser.ts.
 describe('extractText and inline code', () => {
   it('uses double-backtick wrapping for code containing backtick character', () => {
     const md = '## 1. Use `` ` `` carefully\n- PASS: COMPLETE\n';
@@ -1312,7 +1316,7 @@ Some text but no steps.
     expect(doc.steps).toHaveLength(1);
   });
 
-  it('rejects text after substep at step level', () => {
+  it('parses text after substep as a new step', () => {
     const md = `## 1 Step
 
 ### 1.1 Sub
@@ -1322,11 +1326,11 @@ Do sub work.
 
 ## 2 Step
 
-Text after substep at step level - but this is a new step.
+Text in the second step.
 `;
     const steps = parseRunbook(md);
     expect(steps).toHaveLength(2);
-    expect(steps[1].prompt).toBe('Text after substep at step level - but this is a new step.');
+    expect(steps[1].prompt).toBe('Text in the second step.');
   });
 
   it('code block in substep sets hasSeenContent correctly', () => {
