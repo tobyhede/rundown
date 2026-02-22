@@ -40,6 +40,7 @@ export {
   AvailableRunbooksListSchema,
   // Check schemas
   CheckValidationErrorSchema,
+  CheckValidationWarningSchema,
   RunbookStatsSchema,
   CheckResponseSchema,
   // Scenario schemas
@@ -73,6 +74,7 @@ export {
   type AvailableRunbookEntry,
   type ListResponse,
   type CheckValidationError,
+  type CheckValidationWarning,
   type RunbookStats,
   type CheckResponse,
   type ScenarioEntry,

@@ -352,12 +352,15 @@ export class TextRenderer implements OutputRenderer {
    * Render runbook check/validation result.
    *
    * Formats as "PASS: N steps, M substeps" or "FAIL: N errors".
+   * Warnings are not included in the summary line but are rendered as
+   * separate lines below the summary when present.
    */
   private renderCheckDetail(data: Record<string, unknown>): void {
-    const { valid, stats, errors } = data as {
+    const { valid, stats, errors, warnings } = data as {
       valid?: boolean;
       stats?: { steps?: number; substeps?: number };
       errors?: { line?: number; message: string }[];
+      warnings?: { line?: number; message: string }[];
     };
 
     if (valid) {
@@ -376,6 +379,13 @@ export class TextRenderer implements OutputRenderer {
       for (const err of errors) {
         const linePrefix = err.line ? `Line ${String(err.line)}: ` : '';
         this.writer.writeLine(`  ${linePrefix}${err.message}`);
+      }
+    }
+
+    if (warnings && warnings.length > 0) {
+      for (const w of warnings) {
+        const linePrefix = w.line ? `Line ${String(w.line)}: ` : '';
+        this.writer.writeLine(warning(`  ${linePrefix}${w.message}`));
       }
     }
   }

@@ -90,6 +90,24 @@ Missing step 2.
     expect(output).toMatch(/sequentially|sequential/i);
   });
 
+  it('outputs PASS with warnings for GOTO self runbook', () => {
+    const runbookPath = path.join(workspace.cwd, 'goto-self.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `## 1 Step
+- FAIL: GOTO 1
+
+Do something.
+`,
+    );
+
+    const result = runCli(`check ${runbookPath}`, workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('PASS:');
+    expect(result.stdout).toContain('GOTO self');
+  });
+
   it('outputs FAIL for non-existent file', () => {
     const result = runCli('check /nonexistent/path/runbook.md', workspace);
 

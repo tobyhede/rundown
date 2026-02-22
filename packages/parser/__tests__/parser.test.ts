@@ -793,8 +793,8 @@ echo batch
 });
 
 describe('parser ordering enforcement', () => {
-  describe('paragraph-based transitions after content in substep', () => {
-    it('rejects paragraph transition after prompt text in substep', () => {
+  describe('paragraph text containing transition-like content in substep', () => {
+    it('treats transition-like paragraph text as prompt in substep', () => {
       const md = `## 1 Step
 
 ### 1.1 Sub
@@ -804,12 +804,15 @@ Prompt text here.
 PASS: CONTINUE
 FAIL: STOP
 `;
-      expect(() => parseRunbook(md)).toThrow(
-        /Substep 1\.1.*Transitions must appear immediately after the substep header, before any content/,
-      );
+      // Paragraph-style transitions are now treated as prompt text
+      const steps = parseRunbook(md);
+      const sub = steps[0].substeps?.[0];
+      expect(sub?.transitions).toBeUndefined();
+      expect(sub?.prompt).toContain('Prompt text here.');
+      expect(sub?.prompt).toContain('PASS: CONTINUE');
     });
 
-    it('rejects paragraph transition after code block in substep', () => {
+    it('rejects paragraph text after code block in substep', () => {
       const md = `## 1 Step
 
 ### 1.1 Sub
@@ -820,14 +823,15 @@ echo hi
 
 PASS: CONTINUE
 `;
+      // Paragraph text (even if it looks like a transition) after code block is rejected as ordering violation
       expect(() => parseRunbook(md)).toThrow(
-        /Substep 1\.1.*Transitions must appear immediately after the substep header, before any content/,
+        /Substep 1\.1.*Prompt text must appear before code blocks or runbooks/,
       );
     });
   });
 
-  describe('paragraph-based transitions after content at step level', () => {
-    it('rejects paragraph transition after prompt text in step', () => {
+  describe('paragraph text containing transition-like content at step level', () => {
+    it('treats transition-like paragraph text as prompt in step', () => {
       const md = `## 1 Step
 
 Some prompt text.
@@ -835,12 +839,14 @@ Some prompt text.
 PASS: CONTINUE
 FAIL: STOP
 `;
-      expect(() => parseRunbook(md)).toThrow(
-        /Step 1.*Transitions must appear immediately after the step header, before any content/,
-      );
+      // Paragraph-style transitions are now treated as prompt text
+      const steps = parseRunbook(md);
+      expect(steps[0].transitions).toBeUndefined();
+      expect(steps[0].prompt).toContain('Some prompt text.');
+      expect(steps[0].prompt).toContain('PASS: CONTINUE');
     });
 
-    it('rejects paragraph transition after code block in step', () => {
+    it('rejects paragraph text after code block in step', () => {
       const md = `## 1 Step
 
 \`\`\`bash
@@ -849,8 +855,9 @@ npm test
 
 PASS: CONTINUE
 `;
+      // Paragraph text (even if it looks like a transition) after code block is rejected as ordering violation
       expect(() => parseRunbook(md)).toThrow(
-        /Step 1.*Transitions must appear immediately after the step header, before any content/,
+        /Step 1.*Prompt text must appear before code blocks, substeps, or runbooks/,
       );
     });
   });
@@ -1246,7 +1253,7 @@ Single line of text.
 });
 
 describe('paragraph conditional edge cases', () => {
-  it('accepts paragraph-style transitions immediately after step header', () => {
+  it('treats paragraph-style transitions as prompt text', () => {
     const md = `## 1 Step
 
 PASS: CONTINUE
@@ -1255,12 +1262,14 @@ FAIL: STOP
 Do the work.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
-    expect(steps[0].transitions?.fail.action).toEqual({ type: 'STOP' });
-    expect(steps[0].prompt).toBe('Do the work.');
+    // Paragraph-style transitions are not parsed as transitions — they become prompt text
+    expect(steps[0].transitions).toBeUndefined();
+    expect(steps[0].prompt).toContain('PASS: CONTINUE');
+    expect(steps[0].prompt).toContain('FAIL: STOP');
+    expect(steps[0].prompt).toContain('Do the work.');
   });
 
-  it('accepts paragraph-style transitions immediately after substep header', () => {
+  it('treats paragraph-style transitions in substeps as prompt text', () => {
     const md = `## 1 Step
 
 ### 1.1 Sub
@@ -1272,8 +1281,10 @@ Do substep work.
 `;
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
-    expect(sub?.transitions?.pass.action).toEqual({ type: 'CONTINUE' });
-    expect(sub?.prompt).toBe('Do substep work.');
+    // Paragraph-style transitions are not parsed as transitions — they become prompt text
+    expect(sub?.transitions).toBeUndefined();
+    expect(sub?.prompt).toContain('PASS: CONTINUE');
+    expect(sub?.prompt).toContain('Do substep work.');
   });
 });
 

@@ -322,7 +322,7 @@ export const AvailableRunbooksListSchema = z
 // ============================================================================
 
 /**
- * Syntax error from runbook validation (check command).
+ * Validation error from runbook validation (check command).
  */
 export const CheckValidationErrorSchema = z
   .object({
@@ -346,6 +346,18 @@ export const RunbookStatsSchema = z
   .describe('Runbook statistics');
 
 /**
+ * Validation warning from runbook validation (check command).
+ */
+export const CheckValidationWarningSchema = z
+  .object({
+    /** Human-readable warning message */
+    message: z.string().describe('Warning message'),
+    /** Line number where warning occurred (if applicable) */
+    line: z.number().optional().describe('Line number where warning occurred'),
+  })
+  .describe('Validation warning entry');
+
+/**
  * Check response schema.
  */
 export const CheckResponseSchema = z
@@ -354,6 +366,11 @@ export const CheckResponseSchema = z
     valid: z.boolean().describe('Whether the runbook is valid'),
     /** List of validation errors (empty if valid) */
     errors: z.array(CheckValidationErrorSchema).describe('List of validation errors'),
+    /** List of validation warnings */
+    warnings: z
+      .array(CheckValidationWarningSchema)
+      .optional()
+      .describe('List of validation warnings'),
     /** Runbook statistics (only present when valid) */
     stats: RunbookStatsSchema.optional().describe('Runbook statistics'),
   })
@@ -604,6 +621,9 @@ export type ListResponse = ActiveRunbookEntry[] | AvailableRunbookEntry[];
 
 /** Validation error from check command */
 export type CheckValidationError = z.infer<typeof CheckValidationErrorSchema>;
+
+/** Validation warning from check command */
+export type CheckValidationWarning = z.infer<typeof CheckValidationWarningSchema>;
 
 /** Runbook statistics */
 export type RunbookStats = z.infer<typeof RunbookStatsSchema>;

@@ -26,7 +26,7 @@ This is the runbook content.`;
     expect(result.content.trim()).toBe('# Content\nThis is the runbook content.');
   });
 
-  it('extracts valid YAML with only required name field', () => {
+  it('extracts valid YAML with only name field', () => {
     const markdown = `---
 name: simple-runbook
 ---
@@ -278,7 +278,7 @@ More content after horizontal rule`;
     expect(result.content).toContain('More content after horizontal rule');
   });
 
-  it('returns null frontmatter for missing name field', () => {
+  it('returns valid frontmatter when name field is missing', () => {
     const markdown = `---
 description: no name field here
 version: 1.0.0
@@ -287,8 +287,11 @@ version: 1.0.0
 
     const result = extractFrontmatter(markdown);
 
-    expect(result.frontmatter).toBeNull();
-    // Content is still stripped of frontmatter
+    // Name is now optional — frontmatter is valid without it
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBeUndefined();
+    expect(result.frontmatter?.description).toBe('no name field here');
+    expect(result.frontmatter?.version).toBe('1.0.0');
     expect(result.content.trim()).toBe('# Content');
   });
 

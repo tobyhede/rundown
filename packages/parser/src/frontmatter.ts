@@ -5,7 +5,7 @@ import { z } from 'zod';
  * Runbook frontmatter metadata
  */
 export interface RunbookFrontmatter {
-  name: string; // Required: runbook identifier
+  name?: string; // Optional: runbook identifier
   description?: string; // Optional: for listing
   version?: string; // Optional: semantic version
   author?: string; // Optional
@@ -22,8 +22,9 @@ export const RunbookFrontmatterSchema = z
   .object({
     name: z
       .string()
-      .min(1, 'Name is required')
-      .regex(/^[a-z0-9-]+$/i, 'Name must contain only alphanumeric characters and hyphens'),
+      .min(1)
+      .regex(/^[a-z0-9-]+$/i, 'Name must contain only alphanumeric characters and hyphens')
+      .optional(),
     description: z.string().optional(),
     version: z.string().optional(),
     author: z.string().optional(),
@@ -47,7 +48,7 @@ export type RunbookFrontmatterType = z.infer<typeof RunbookFrontmatterSchema>;
  * Frontmatter requirements:
  * - Must be at the start of the file
  * - Must be enclosed in --- delimiters
- * - Must be valid YAML with a 'name' field conforming to RunbookFrontmatterSchema
+ * - Must be valid YAML conforming to RunbookFrontmatterSchema
  * - Unknown fields are preserved via .passthrough()
  *
  * Note: When validation fails, content is still stripped of frontmatter.

@@ -15,6 +15,8 @@ Formal BNF-style grammar for Rundown runbook syntax. See [SPEC.md](./SPEC.md) fo
 | `x \| y` | Choice (x or y) |
 | `"text"` | Literal text |
 | `x ...` | One or more of x |
+| `positive_integer` | Integer > 0 (1, 2, 3, ...) |
+| `ws` | Horizontal whitespace (space or tab) |
 
 ---
 
@@ -50,18 +52,18 @@ where substep is:
     [{ code_block  | runbooks }]
 
 where substep_id is:
-  integer                              -- short form (parent prefix omitted)
-  | parent_ref "." { integer | name }  -- qualified form
+  positive_integer                              -- short form (parent prefix omitted)
+  | parent_ref "." { positive_integer | name }  -- qualified form
 
 where parent_ref is:
-  integer    -- for static parent
-  | name     -- for named parent
+  positive_integer    -- for static parent
+  | name              -- for named parent
 
 where step-identifier is:
-  integer | name
+  positive_integer | name
 
 where substep-identifier is:
-  step-identifier "." ( integer | name )
+  step-identifier "." ( positive_integer | name )
 
 where name is:
   [A-Za-z_][A-Za-z0-9_]*
@@ -83,6 +85,8 @@ where runbooks is:
 where transition is:
   - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result
 
+Transitions must appear as list items with the `-` bullet prefix (a dash followed by a space). Paragraph-style transitions (without prefix) are not valid.
+
 where result is:
   action | RETRY [ count ] [ action ]
 
@@ -97,32 +101,34 @@ where target is:
   | substep-identifier [ "AT" index ]
 
 where index is:
-  integer | "{{" variable_name "}}"
+  positive_integer | "{{" [ ws ] variable_name [ ws ] "}}"
 
 where for_clause is:
   "- FOR" [ variable_name "IN" ] range
   | "- FOR" variable_name "IN" source_ref
-  | "- FOR" variable_name "IN" integer "TO" integer "OF" source_ref
+  | "- FOR" variable_name "IN" positive_integer "TO" positive_integer "OF" source_ref
 
 where source_ref is:
-  "{{" variable_name "}}"              -- references a named data source
+  "{{" [ ws ] variable_name [ ws ] "}}"    -- references a named data source
 
 where range is:
-  integer                              -- implicit start (1), end is integer
-  | integer "TO" integer               -- explicit start and end
-  | integer "TO" "{{" variable_name "}}"  -- variable end bound
-  | "{{" variable_name "}}" "TO" integer  -- variable start bound
-  | "{{" variable_name "}}" "TO" "{{" variable_name "}}"  -- variable both bounds
-  | "{{" variable_name "}}"            -- count-only with template variable
+  positive_integer                              -- implicit start (1), end is integer
+  | positive_integer "TO" positive_integer      -- explicit start and end
+  | positive_integer "TO" "{{" [ ws ] variable_name [ ws ] "}}"  -- variable end bound
+  | "{{" [ ws ] variable_name [ ws ] "}}" "TO" positive_integer  -- variable start bound
+  | "{{" [ ws ] variable_name [ ws ] "}}" "TO" "{{" [ ws ] variable_name [ ws ] "}}"  -- variable both bounds
+  | "{{" [ ws ] variable_name [ ws ] "}}"            -- count-only with template variable
 
-Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result). Source references in `FOR var IN {{ source }}` and `... OF {{ source }}` are NOT expanded — they are parsed as data source identifiers resolved at runtime.
+Whitespace inside `{{ }}` delimiters is optional.
+
+Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal positive integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result). Source references in `FOR var IN {{ source }}` and `... OF {{ source }}` are NOT expanded — they are parsed as data source identifiers resolved at runtime.
 
 where variable_name is:
   [a-zA-Z_][a-zA-Z0-9_]*
 
 where frontmatter is:
   "---"
-    "name:" slug
+    [ "name:" slug ]
     [ "description:" text ]
     [ "version:" text ]
     [ "author:" text ]
@@ -130,6 +136,8 @@ where frontmatter is:
     [ "vars:" vars_map ]
     [ scenarios ]
   "---"
+
+Additional fields beyond those listed are preserved in the parsed frontmatter (open schema). This allows forward-compatible extensions and user-defined metadata.
 
 where slug is:
   [a-z0-9-]+
@@ -264,3 +272,5 @@ STOP and COMPLETE accept optional messages. Include a message only when it provi
 | `bash`, `sh`, `shell`  | Execute; exit 0=PASS, non-zero=FAIL |
 | `{language} prompt`    | Output only  |
 | other / none           | Output only  |
+
+Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
