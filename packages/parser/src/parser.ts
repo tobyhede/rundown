@@ -322,43 +322,10 @@ export function parseRunbookDocument(
 
       if (currentStep) {
         const lines = text.split('\n');
-        let hasConditional = false;
 
         for (const line of lines) {
-          const conditional = parseConditional(line);
-          if (conditional) {
-            if (currentStep.pendingSubstep) {
-              // Reject transitions after prompt text or content (header-adjacent requirement)
-              if (
-                currentStep.pendingSubstep.hasSeenPromptText ||
-                currentStep.pendingSubstep.hasSeenContent
-              ) {
-                const stepLabel = currentStep.name;
-                const lineNum = node.position?.start.line
-                  ? ` (line ${String(node.position.start.line)})`
-                  : '';
-                throw new RunbookSyntaxError(
-                  `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`,
-                );
-              }
-              currentStep.pendingSubstep.pendingConditionals.push(conditional);
-              currentStep.pendingSubstep.hasSeenTransitions = true;
-            } else {
-              // Reject transitions after prompt text or content (header-adjacent requirement)
-              if (currentStep.hasSeenPromptText || currentStep.hasSeenContent) {
-                const stepLabel = currentStep.name;
-                const lineNum = node.position?.start.line
-                  ? ` (line ${String(node.position.start.line)})`
-                  : '';
-                throw new RunbookSyntaxError(
-                  `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`,
-                );
-              }
-              pendingConditionals.push(conditional);
-              currentStep.hasSeenTransitions = true;
-            }
-            hasConditional = true;
-          } else if (line.trim()) {
+          if (line.trim()) {
+            // Paragraphs are always treated as prompt text — transitions must use bullet-prefix (list items)
             // Check ordering - text must come before content (code blocks, runbooks)
             if (currentStep.pendingSubstep) {
               // In substeps: text cannot appear after code blocks/runbooks
@@ -389,10 +356,6 @@ export function parseRunbookDocument(
               currentStep.hasSeenPromptText = true;
             }
           }
-        }
-
-        if (hasConditional) {
-          return;
         }
       }
     }
@@ -525,7 +488,8 @@ export function parseRunbookDocument(
   }
 
   if (!options?.skipValidation) {
-    const errors = validateRunbook(steps);
+    const diagnostics = validateRunbook(steps);
+    const errors = diagnostics.filter((d) => d.severity === 'error');
     if (errors.length > 0) {
       // For backwards compatibility, throw the first error
       throw new RunbookSyntaxError(errors[0].message);

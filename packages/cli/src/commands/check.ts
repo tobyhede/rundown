@@ -45,7 +45,9 @@ export function registerCheckCommand(program: Command): void {
         const runbook = parseRunbookDocument(content, path.basename(resolvedPath), {
           skipValidation: true,
         });
-        const errors = validateRunbook(runbook.steps);
+        const diagnostics = validateRunbook(runbook.steps);
+        const errors = diagnostics.filter((d) => d.severity === 'error');
+        const warnings = diagnostics.filter((d) => d.severity === 'warning');
 
         if (errors.length > 0) {
           // Emit structured data - renderer handles formatting
@@ -53,6 +55,7 @@ export function registerCheckCommand(program: Command): void {
             {
               valid: false,
               errors: errors.map((e) => ({ line: e.line, message: e.message })),
+              warnings: warnings.map((w) => ({ line: w.line, message: w.message })),
             },
             'check',
           );
@@ -68,6 +71,7 @@ export function registerCheckCommand(program: Command): void {
           {
             valid: true,
             errors: [],
+            warnings: warnings.map((w) => ({ line: w.line, message: w.message })),
             stats: { steps: stepCount, substeps: substepCount },
           },
           'check',

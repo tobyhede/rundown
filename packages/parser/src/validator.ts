@@ -2,13 +2,26 @@ import { StepSchema, ActionSchema } from './schemas.js';
 import type { Step, Action } from './ast.js';
 
 /**
- * Represents a validation error found during runbook analysis.
+ * Represents a validation diagnostic found during runbook analysis.
  */
-export interface ValidationError {
-  /** Source line number where the error was detected, if available */
+export interface ValidationDiagnostic {
+  /** Severity level: 'error' for invalid constructs, 'warning' for suspicious patterns */
+  readonly severity: 'error' | 'warning';
+  /** Source line number where the diagnostic was detected, if available */
   readonly line?: number;
-  /** Human-readable error description */
+  /** Human-readable diagnostic description */
   readonly message: string;
+}
+
+/** @deprecated Use ValidationDiagnostic */
+export type ValidationError = ValidationDiagnostic;
+
+function error(line: number | undefined, message: string): ValidationDiagnostic {
+  return { severity: 'error', line, message };
+}
+
+function warn(line: number | undefined, message: string): ValidationDiagnostic {
+  return { severity: 'warning', line, message };
 }
 
 /**
@@ -33,16 +46,14 @@ function getErrorContext(step: Step, substepId?: string): string {
  * - Schema validation for each step structure
  *
  * @param steps - Readonly array of parsed Step objects to validate
- * @returns Array of ValidationError objects, empty if runbook is valid
+ * @returns Array of ValidationDiagnostic objects, empty if runbook is valid
  */
-export function validateRunbook(steps: readonly Step[]): ValidationError[] {
-  const errors: ValidationError[] = [];
+export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] {
+  const diagnostics: ValidationDiagnostic[] = [];
 
   if (steps.length === 0) {
     return [
-      {
-        message: "Runbook must contain at least one step (heading starting with '##')",
-      },
+      error(undefined, "Runbook must contain at least one step (heading starting with '##')"),
     ];
   }
 
@@ -50,10 +61,12 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
   for (const step of steps) {
     const result = StepSchema.safeParse(step);
     if (!result.success) {
-      errors.push({
-        line: step.line,
-        message: `Step ${step.name} failed schema validation: ${result.error.issues.map((i) => i.message).join(', ')}`,
-      });
+      diagnostics.push(
+        error(
+          step.line,
+          `Step ${step.name} failed schema validation: ${result.error.issues.map((i) => i.message).join(', ')}`,
+        ),
+      );
     }
   }
 
@@ -69,10 +82,12 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
         if (/^\d+$/.test(step.name)) {
           const stepNum = parseInt(step.name, 10);
           if (stepNum !== expectedNum) {
-            errors.push({
-              line: step.line,
-              message: `Numeric steps must be sequential. Expected step ${String(expectedNum)}, found step ${String(stepNum)}.`,
-            });
+            diagnostics.push(
+              error(
+                step.line,
+                `Numeric steps must be sequential. Expected step ${String(expectedNum)}, found step ${String(stepNum)}.`,
+              ),
+            );
           }
           expectedNum++;
         }
@@ -89,20 +104,21 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
 
     const contentCount = [hasCommand, hasSubsteps, hasRunbooks].filter(Boolean).length;
     if (contentCount > 1) {
-      errors.push({
-        line: step.line,
-        message: `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps, Runbook List}.`,
-      });
+      diagnostics.push(
+        error(
+          step.line,
+          `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps, Runbook List}.`,
+        ),
+      );
     }
 
     // FOR step validation
     if (step.forClause) {
       // FOR steps must have substeps
       if (!hasSubsteps) {
-        errors.push({
-          line: step.line,
-          message: `FOR step "${step.name}" must have at least one substep`,
-        });
+        diagnostics.push(
+          error(step.line, `FOR step "${step.name}" must have at least one substep`),
+        );
       }
 
       // Parent FOR step must not use NEXT/BREAK in its own transitions
@@ -111,26 +127,30 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
           step.transitions.pass.action.type === 'NEXT' ||
           step.transitions.pass.action.type === 'BREAK'
         ) {
-          errors.push({
-            line: step.line,
-            message: `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
-          });
+          diagnostics.push(
+            error(
+              step.line,
+              `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
+            ),
+          );
         }
         if (
           step.transitions.fail.action.type === 'NEXT' ||
           step.transitions.fail.action.type === 'BREAK'
         ) {
-          errors.push({
-            line: step.line,
-            message: `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
-          });
+          diagnostics.push(
+            error(
+              step.line,
+              `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
+            ),
+          );
         }
       }
     }
 
     if (step.transitions) {
-      validateAction(step.transitions.pass.action, undefined, steps, step, errors);
-      validateAction(step.transitions.fail.action, undefined, steps, step, errors);
+      validateAction(step.transitions.pass.action, undefined, steps, step, diagnostics);
+      validateAction(step.transitions.fail.action, undefined, steps, step, diagnostics);
     }
 
     if (step.substeps) {
@@ -139,21 +159,23 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
         const sHasRunbooks = substep.workflows !== undefined && substep.workflows.length > 0;
 
         if (sHasCommand && sHasRunbooks) {
-          errors.push({
-            line: step.line,
-            message: `Substep ${step.name}.${substep.id}: Violates Exclusivity Rule. A substep must have either a Body or a Runbook List, but not both.`,
-          });
+          diagnostics.push(
+            error(
+              step.line,
+              `Substep ${step.name}.${substep.id}: Violates Exclusivity Rule. A substep must have either a Body or a Runbook List, but not both.`,
+            ),
+          );
         }
 
         if (substep.transitions) {
-          validateAction(substep.transitions.pass.action, substep.id, steps, step, errors);
-          validateAction(substep.transitions.fail.action, substep.id, steps, step, errors);
+          validateAction(substep.transitions.pass.action, substep.id, steps, step, diagnostics);
+          validateAction(substep.transitions.fail.action, substep.id, steps, step, diagnostics);
         }
       }
     }
   }
 
-  return errors;
+  return diagnostics;
 }
 
 /**
@@ -163,7 +185,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationError[] {
  * @param targetStepObj - The resolved target step
  * @param targetStep - The target step name (for error messages)
  * @param currentStepObj - The step containing the GOTO (for error line)
- * @param errors - Array to which validation errors are appended (mutated)
+ * @param diagnostics - Array to which validation diagnostics are appended (mutated)
  * @returns True if valid (or no AT), false if invalid AT target
  */
 function validateGotoAtTarget(
@@ -171,14 +193,16 @@ function validateGotoAtTarget(
   targetStepObj: Step,
   targetStep: string,
   currentStepObj: Step,
-  errors: ValidationError[],
+  diagnostics: ValidationDiagnostic[],
 ): boolean {
   if ('at' in action.target && action.target.at !== undefined) {
     if (!targetStepObj.forClause) {
-      errors.push({
-        line: currentStepObj.line,
-        message: `GOTO AT is only valid when the target step has a FOR clause (step "${targetStep}" has no FOR)`,
-      });
+      diagnostics.push(
+        error(
+          currentStepObj.line,
+          `GOTO AT is only valid when the target step has a FOR clause (step "${targetStep}" has no FOR)`,
+        ),
+      );
       return false;
     }
   }
@@ -198,22 +222,24 @@ function validateGotoAtTarget(
  * @param currentSubstepId - ID of the current substep, or undefined if at step level
  * @param steps - All steps in the runbook, used for GOTO target resolution
  * @param currentStepObj - The Step containing this action, used for context and error reporting
- * @param errors - Array to which validation errors are appended (mutated)
+ * @param diagnostics - Array to which validation diagnostics are appended (mutated)
  */
 export function validateAction(
   action: Action,
   currentSubstepId: string | undefined,
   steps: readonly Step[],
   currentStepObj: Step,
-  errors: ValidationError[],
+  diagnostics: ValidationDiagnostic[],
 ): void {
   const result = ActionSchema.safeParse(action);
   if (!result.success) {
     const context = getErrorContext(currentStepObj, currentSubstepId);
-    errors.push({
-      line: currentStepObj.line,
-      message: `Step ${context}: Action validation failed: ${result.error.issues.map((i) => i.message).join(', ')}`,
-    });
+    diagnostics.push(
+      error(
+        currentStepObj.line,
+        `Step ${context}: Action validation failed: ${result.error.issues.map((i) => i.message).join(', ')}`,
+      ),
+    );
     return;
   }
 
@@ -221,18 +247,22 @@ export function validateAction(
   if (action.type === 'NEXT' || action.type === 'BREAK') {
     // Must be in a substep (currentSubstepId defined)
     if (!currentSubstepId) {
-      errors.push({
-        line: currentStepObj.line,
-        message: `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`,
-      });
+      diagnostics.push(
+        error(
+          currentStepObj.line,
+          `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`,
+        ),
+      );
       return;
     }
     // Parent step must have a FOR clause
     if (!currentStepObj.forClause) {
-      errors.push({
-        line: currentStepObj.line,
-        message: `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`,
-      });
+      diagnostics.push(
+        error(
+          currentStepObj.line,
+          `${action.type} is only valid within substeps of a FOR step (found in step "${currentStepObj.name}")`,
+        ),
+      );
     }
     return;
   }
@@ -246,34 +276,55 @@ export function validateAction(
       const namedStep = steps.find((s) => s.name === targetStep);
       if (!namedStep) {
         const context = getErrorContext(currentStepObj, currentSubstepId);
-        errors.push({
-          line: currentStepObj.line,
-          message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`,
-        });
+        diagnostics.push(
+          error(
+            currentStepObj.line,
+            `Step ${context}: GOTO target step "${targetStep}" does not exist.`,
+          ),
+        );
         return;
       }
 
-      if (!validateGotoAtTarget(action, namedStep, targetStep, currentStepObj, errors)) return;
+      if (!validateGotoAtTarget(action, namedStep, targetStep, currentStepObj, diagnostics)) return;
 
       if (targetSubstep) {
         if (!namedStep.substeps || namedStep.substeps.length === 0) {
           const context = getErrorContext(currentStepObj, currentSubstepId);
-          errors.push({
-            line: currentStepObj.line,
-            message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`,
-          });
+          diagnostics.push(
+            error(
+              currentStepObj.line,
+              `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`,
+            ),
+          );
           return;
         }
 
         const substepExists = namedStep.substeps.some((s) => s.id === targetSubstep);
         if (!substepExists) {
           const context = getErrorContext(currentStepObj, currentSubstepId);
-          errors.push({
-            line: currentStepObj.line,
-            message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`,
-          });
+          diagnostics.push(
+            error(
+              currentStepObj.line,
+              `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`,
+            ),
+          );
           return;
         }
+      }
+
+      // Self-loop detection for named steps
+      if (
+        targetStep === currentStepObj.name &&
+        targetSubstep === currentSubstepId &&
+        action.target.at === undefined
+      ) {
+        const context = getErrorContext(currentStepObj, currentSubstepId);
+        diagnostics.push(
+          warn(
+            currentStepObj.line,
+            `Step ${context}: GOTO self without RETRY may loop indefinitely`,
+          ),
+        );
       }
       return;
     }
@@ -285,32 +336,39 @@ export function validateAction(
 
     if (!targetStepObj) {
       const context = getErrorContext(currentStepObj, currentSubstepId);
-      errors.push({
-        line: currentStepObj.line,
-        message: `Step ${context}: GOTO target step "${targetStep}" does not exist.`,
-      });
+      diagnostics.push(
+        error(
+          currentStepObj.line,
+          `Step ${context}: GOTO target step "${targetStep}" does not exist.`,
+        ),
+      );
       return;
     }
 
-    if (!validateGotoAtTarget(action, targetStepObj, targetStep, currentStepObj, errors)) return;
+    if (!validateGotoAtTarget(action, targetStepObj, targetStep, currentStepObj, diagnostics))
+      return;
 
     if (targetSubstep) {
       if (!targetStepObj.substeps || targetStepObj.substeps.length === 0) {
         const context = getErrorContext(currentStepObj, currentSubstepId);
-        errors.push({
-          line: currentStepObj.line,
-          message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`,
-        });
+        diagnostics.push(
+          error(
+            currentStepObj.line,
+            `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - step "${targetStep}" has no substeps.`,
+          ),
+        );
         return;
       }
 
       const substepExists = targetStepObj.substeps.some((s) => s.id === targetSubstep);
       if (!substepExists) {
         const context = getErrorContext(currentStepObj, currentSubstepId);
-        errors.push({
-          line: currentStepObj.line,
-          message: `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`,
-        });
+        diagnostics.push(
+          error(
+            currentStepObj.line,
+            `Step ${context}: GOTO ${targetStep}.${targetSubstep} invalid - substep does not exist.`,
+          ),
+        );
         return;
       }
     }
@@ -323,10 +381,9 @@ export function validateAction(
       action.target.at === undefined
     ) {
       const context = getErrorContext(currentStepObj, currentSubstepId);
-      errors.push({
-        line: currentStepObj.line,
-        message: `Step ${context}: GOTO self creates infinite loop (use RETRY instead)`,
-      });
+      diagnostics.push(
+        warn(currentStepObj.line, `Step ${context}: GOTO self without RETRY may loop indefinitely`),
+      );
       return;
     }
   }

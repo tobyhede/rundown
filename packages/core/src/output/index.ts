@@ -100,9 +100,11 @@ export {
 // Check schemas
 export {
   CheckValidationErrorSchema,
+  CheckValidationWarningSchema,
   RunbookStatsSchema,
   CheckResponseSchema,
   type CheckValidationError,
+  type CheckValidationWarning,
   type RunbookStats,
   type CheckResponse,
 } from './schema.js';

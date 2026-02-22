@@ -174,12 +174,11 @@ More description`;
 
   it('round-trips runbook with substeps', () => {
     const original = `## 1. Dispatch reviewers
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
 
 ### 1.1 First reviewer (code-review-agent)
 ### 1.2 Second reviewer (code-agent)
-
-PASS ALL: CONTINUE
-FAIL ANY: STOP
 
 ## 2. Complete`;
 
@@ -200,17 +199,15 @@ FAIL ANY: STOP
 
   it('round-trips runbook with GOTO substep targets', () => {
     const original = `## 1. First step
-
-PASS: GOTO 2.1
-FAIL: STOP
+- PASS: GOTO 2.1
+- FAIL: STOP
 
 ## 2. Target step
 
 ### 2.1 First substep
 ### 2.2 Second substep
-
-PASS ALL: CONTINUE
-FAIL ANY: STOP`;
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP`;
 
     const parsed1 = parseRunbook(original);
     expect(parsed1[0].transitions?.pass).toEqual({

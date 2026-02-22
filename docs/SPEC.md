@@ -60,6 +60,8 @@ Executes a command or displays a prompt. Max one code block per step.
 | `bash prompt`, `prompt` | Display | Output only. Not executed. |
 | `json`, etc. | Display | Output only. |
 
+Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
+
 *   **Environment**: Inherits parent environment.
 *   **CWD**: Project root.
 *   **Stdio**: Inherited.
@@ -88,6 +90,8 @@ Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
 | **Result** | `PASS` (`YES`), `FAIL` (`NO`) | Outcome of the step's body. |
 | **Aggregation** | `ALL`, `ANY` | For substeps/runbooks. Default: `PASS ALL`, `FAIL ANY`. |
 
+Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` (pessimistic — any failure stops), or `PASS ANY` with `FAIL ALL` (optimistic — only total failure stops). Non-complementary combinations are invalid because they create evaluation gaps (ALL/ALL) or overlaps (ANY/ANY).
+
 **Defaults**:
 *   If only `PASS` defined: `FAIL` -> `STOP`.
 *   If only `FAIL` defined: `PASS` -> `CONTINUE`.
@@ -104,6 +108,8 @@ Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
 | `RETRY [N] [Act]` | Any | Retry N times (default 1), then perform Action. |
 | `NEXT` | FOR Substep | Skip to next iteration. |
 | `BREAK` | FOR Substep | Exit loop immediately. |
+
+GOTO targeting the containing step (self-reference) without an AT qualifier may create an infinite loop. Use RETRY for bounded re-execution.
 
 **GOTO Syntax**:
 *   `GOTO 3`: Jump to Step 3.
