@@ -214,6 +214,9 @@ npm run format:check  # Check formatting
 npm run spellcheck    # Check spelling across all packages
 npm run test:mutate   # Mutation testing (all packages, sequential)
 npm run test:mutate:parser  # Mutation testing for parser only
+npm run test:mutate:core    # Mutation testing for core only
+npm run test:mutate:cli     # Mutation testing for cli only
+npm run test:mutate:plugin  # Mutation testing for plugin only
 npm run test:property # Property-based tests
 npm run test:perf     # Performance benchmarks
 ```

@@ -1018,7 +1018,7 @@ describe('regex boundaries and runbook patterns', () => {
     expect(steps[0].workflows).toBeUndefined();
   });
 
-  it('does not match runbook ref starting with a dot', () => {
+  it('does not match bare .runbook.md without a filename prefix', () => {
     const md = `## 1 Step
 - PASS: CONTINUE
 - FAIL: STOP
@@ -1026,8 +1026,8 @@ describe('regex boundaries and runbook patterns', () => {
 - .runbook.md
 `;
     const steps = parseRunbook(md);
-    // ".runbook.md" has no prefix before .runbook.md so the regex requires
-    // at least one non-whitespace char as a filename prefix
+    // ".runbook.md" alone has no prefix — \S+ in the regex must capture at
+    // least one char before the ".runbook.md" suffix, so this cannot match.
     expect(steps[0].workflows).toBeUndefined();
   });
 

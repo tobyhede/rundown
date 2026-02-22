@@ -14,5 +14,5 @@ logs/
 docs/plans/
 
 # Stryker mutation testing
-reports/
-.stryker-tmp/
+packages/*/reports/
+packages/*/.stryker-tmp/
