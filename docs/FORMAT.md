@@ -16,6 +16,7 @@ Formal BNF-style grammar for Rundown runbook syntax. See [SPEC.md](./SPEC.md) fo
 | `"text"` | Literal text |
 | `x ...` | One or more of x |
 | `positive_integer` | Integer > 0 (1, 2, 3, ...) |
+| `ws` | Horizontal whitespace (space or tab) |
 
 ---
 
@@ -84,7 +85,7 @@ where runbooks is:
 where transition is:
   - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result
 
-Transitions must appear as list items with the `- ` bullet prefix. Paragraph-style transitions (without prefix) are not valid.
+Transitions must appear as list items with the `-` bullet prefix (a dash followed by a space). Paragraph-style transitions (without prefix) are not valid.
 
 where result is:
   action | RETRY [ count ] [ action ]
@@ -120,7 +121,7 @@ where range is:
 
 Whitespace inside `{{ }}` delimiters is optional.
 
-Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result). Source references in `FOR var IN {{ source }}` and `... OF {{ source }}` are NOT expanded — they are parsed as data source identifiers resolved at runtime.
+Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal positive integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result). Source references in `FOR var IN {{ source }}` and `... OF {{ source }}` are NOT expanded — they are parsed as data source identifiers resolved at runtime.
 
 where variable_name is:
   [a-zA-Z_][a-zA-Z0-9_]*

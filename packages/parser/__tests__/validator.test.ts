@@ -165,6 +165,7 @@ describe('validator strict rules', () => {
       // Should have at least an exclusivity error + GOTO self warning
       expect(diagnostics.length).toBeGreaterThan(1);
       expect(filterErrors(diagnostics).length).toBeGreaterThan(0);
+      expect(filterWarnings(diagnostics).length).toBeGreaterThan(0);
     });
 
     it('includes line numbers in validation diagnostics', () => {
