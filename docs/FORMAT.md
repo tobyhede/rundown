@@ -113,10 +113,10 @@ where source_ref is:
 where range is:
   positive_integer                              -- implicit start (1), end is integer
   | positive_integer "TO" positive_integer      -- explicit start and end
-  | positive_integer "TO" "{{" variable_name "}}"  -- variable end bound
-  | "{{" variable_name "}}" "TO" positive_integer  -- variable start bound
-  | "{{" variable_name "}}" "TO" "{{" variable_name "}}"  -- variable both bounds
-  | "{{" variable_name "}}"            -- count-only with template variable
+  | positive_integer "TO" "{{" [ ws ] variable_name [ ws ] "}}"  -- variable end bound
+  | "{{" [ ws ] variable_name [ ws ] "}}" "TO" positive_integer  -- variable start bound
+  | "{{" [ ws ] variable_name [ ws ] "}}" "TO" "{{" [ ws ] variable_name [ ws ] "}}"  -- variable both bounds
+  | "{{" [ ws ] variable_name [ ws ] "}}"            -- count-only with template variable
 
 Whitespace inside `{{ }}` delimiters is optional.
 

@@ -322,7 +322,7 @@ export const AvailableRunbooksListSchema = z
 // ============================================================================
 
 /**
- * Syntax error from runbook validation (check command).
+ * Validation error from runbook validation (check command).
  */
 export const CheckValidationErrorSchema = z
   .object({
@@ -346,7 +346,7 @@ export const RunbookStatsSchema = z
   .describe('Runbook statistics');
 
 /**
- * Syntax warning from runbook validation (check command).
+ * Validation warning from runbook validation (check command).
  */
 export const CheckValidationWarningSchema = z
   .object({

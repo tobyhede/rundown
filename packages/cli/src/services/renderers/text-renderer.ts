@@ -351,7 +351,8 @@ export class TextRenderer implements OutputRenderer {
   /**
    * Render runbook check/validation result.
    *
-   * Formats as "PASS: N steps, M substeps" or "FAIL: N errors".
+   * Formats as "PASS: N steps, M substeps, W warnings" or "FAIL: N errors, W warnings".
+   * Warnings are rendered below the pass/fail summary when present.
    */
   private renderCheckDetail(data: Record<string, unknown>): void {
     const { valid, stats, errors, warnings } = data as {
