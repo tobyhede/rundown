@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseRunbook } from '../src/index.js';
+import { parseRunbook, parseRunbookDocument } from '../src/index.js';
 
 describe('Step-level runbooks', () => {
   it('parses runbook list in substep', () => {
@@ -743,6 +743,19 @@ npm test
       );
     });
 
+    it('allows runbook list item after transitions in substep', () => {
+      const md = `## 1 Step
+
+### 1.1 Sub
+- PASS: CONTINUE
+- FAIL: STOP
+
+- task.runbook.md
+`;
+      const steps = parseRunbook(md);
+      expect(steps[0].substeps?.[0].workflows).toEqual(['task.runbook.md']);
+    });
+
     it('rejects list items after content in step', () => {
       const md = `## 1 Step
 
@@ -776,5 +789,669 @@ echo batch
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
     expect(steps[0].substeps).toHaveLength(1);
+  });
+});
+
+describe('parser ordering enforcement', () => {
+  describe('paragraph-based transitions after content in substep', () => {
+    it('rejects paragraph transition after prompt text in substep', () => {
+      const md = `## 1 Step
+
+### 1.1 Sub
+
+Prompt text here.
+
+PASS: CONTINUE
+FAIL: STOP
+`;
+      expect(() => parseRunbook(md)).toThrow(
+        /Substep 1\.1.*Transitions must appear immediately after the substep header, before any content/,
+      );
+    });
+
+    it('rejects paragraph transition after code block in substep', () => {
+      const md = `## 1 Step
+
+### 1.1 Sub
+
+\`\`\`bash
+echo hi
+\`\`\`
+
+PASS: CONTINUE
+`;
+      expect(() => parseRunbook(md)).toThrow(
+        /Substep 1\.1.*Transitions must appear immediately after the substep header, before any content/,
+      );
+    });
+  });
+
+  describe('paragraph-based transitions after content at step level', () => {
+    it('rejects paragraph transition after prompt text in step', () => {
+      const md = `## 1 Step
+
+Some prompt text.
+
+PASS: CONTINUE
+FAIL: STOP
+`;
+      expect(() => parseRunbook(md)).toThrow(
+        /Step 1.*Transitions must appear immediately after the step header, before any content/,
+      );
+    });
+
+    it('rejects paragraph transition after code block in step', () => {
+      const md = `## 1 Step
+
+\`\`\`bash
+npm test
+\`\`\`
+
+PASS: CONTINUE
+`;
+      expect(() => parseRunbook(md)).toThrow(
+        /Step 1.*Transitions must appear immediately after the step header, before any content/,
+      );
+    });
+  });
+
+  describe('FOR clause ordering violations', () => {
+    it('rejects duplicate FOR clause', () => {
+      const md = `## 1 Step
+- FOR x IN 1 TO 3
+- FOR y IN 1 TO 5
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+`;
+      expect(() => parseRunbook(md)).toThrow(/has multiple FOR clauses.*only one is allowed/);
+    });
+
+    it('rejects FOR after transitions', () => {
+      const md = `## 1 Step
+- PASS: CONTINUE
+- FAIL: STOP
+- FOR x IN 1 TO 3
+`;
+      expect(() => parseRunbook(md)).toThrow(/FOR clause must appear before transitions/);
+    });
+
+    it('rejects FOR after prompt text', () => {
+      const md = `## 1 Step
+
+Some prompt text.
+
+- FOR x IN 1 TO 3
+`;
+      expect(() => parseRunbook(md)).toThrow(/FOR clause must appear before content/);
+    });
+
+    it('rejects FOR after code block content', () => {
+      const md = `## 1 Step
+
+\`\`\`bash
+echo hi
+\`\`\`
+
+- FOR x IN 1 TO 3
+`;
+      expect(() => parseRunbook(md)).toThrow(/FOR clause must appear before content/);
+    });
+
+    it('rejects FOR in substep', () => {
+      const md = `## 1 Step
+
+### 1.1 Sub
+- FOR x IN 1 TO 3
+`;
+      expect(() => parseRunbook(md)).toThrow(/FOR is only valid on steps.*not substeps/);
+    });
+  });
+});
+
+describe('substep content filtering', () => {
+  it('filters runbook references from substep prompt, preserves text', () => {
+    const md = `## 1 Step
+
+### 1.1 Sub
+- PASS: CONTINUE
+- FAIL: STOP
+
+Review the following items.
+
+- task.runbook.md
+`;
+    const steps = parseRunbook(md);
+    const sub = steps[0].substeps?.[0];
+    expect(sub?.prompt).toBe('Review the following items.');
+    expect(sub?.workflows).toEqual(['task.runbook.md']);
+  });
+
+  it('returns empty prompt when substep has only runbook references', () => {
+    const md = `## 1 Step
+
+### 1.1 Sub
+- PASS: CONTINUE
+- FAIL: STOP
+
+- alpha.runbook.md
+- beta.runbook.md
+`;
+    const steps = parseRunbook(md);
+    const sub = steps[0].substeps?.[0];
+    expect(sub?.prompt).toBeUndefined();
+    expect(sub?.workflows).toEqual(['alpha.runbook.md', 'beta.runbook.md']);
+  });
+
+  it('preserves prompt text alongside runbook refs in substep', () => {
+    const md = `## 1 Step
+
+### 1.1 Sub
+- PASS: CONTINUE
+- FAIL: STOP
+
+Review the tasks carefully.
+
+- setup.runbook.md
+- deploy.runbook.md
+`;
+    const steps = parseRunbook(md);
+    const sub = steps[0].substeps?.[0];
+    expect(sub?.prompt).toContain('Review the tasks carefully.');
+    expect(sub?.workflows).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
+  });
+
+  it('filters runbook refs at step level and populates workflows', () => {
+    const md = `## 1 Step
+- PASS: CONTINUE
+- FAIL: STOP
+
+- deploy.runbook.md
+- verify.runbook.md
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].workflows).toEqual(['deploy.runbook.md', 'verify.runbook.md']);
+    expect(steps[0].prompt).toBeUndefined();
+  });
+});
+
+// Tests extractText branches not covered by 'inline code preservation' above:
+// double-backtick wrapping (value contains backtick), negative single-backtick
+// assertion, and non-text node types (emphasis, strong). Intentional overlap
+// for mutation coverage of lines 32-51 in parser.ts.
+describe('extractText and inline code', () => {
+  it('uses double-backtick wrapping for code containing backtick character', () => {
+    const md = '## 1. Use `` ` `` carefully\n- PASS: COMPLETE\n';
+    const steps = parseRunbook(md);
+    expect(steps[0].description).toBe('Use `` ` `` carefully');
+  });
+
+  it('uses single-backtick wrapping for code without backtick character', () => {
+    const md = '## 1. Run `test`\n- PASS: COMPLETE\n';
+    const steps = parseRunbook(md);
+    expect(steps[0].description).toBe('Run `test`');
+    expect(steps[0].description).not.toContain('``');
+  });
+
+  it('extracts text from emphasis nodes in headings', () => {
+    const md = '## 1. Run the *important* task\n- PASS: COMPLETE\n';
+    const steps = parseRunbook(md);
+    expect(steps[0].description).toBe('Run the important task');
+  });
+
+  it('extracts text from strong nodes in headings', () => {
+    const md = '## 1. Run the **critical** task\n- PASS: COMPLETE\n';
+    const steps = parseRunbook(md);
+    expect(steps[0].description).toBe('Run the critical task');
+  });
+});
+
+describe('regex boundaries and runbook patterns', () => {
+  it('does not match runbook ref with trailing text', () => {
+    const md = `## 1 Step
+- PASS: CONTINUE
+- FAIL: STOP
+
+- task.runbook.md extra text
+`;
+    const steps = parseRunbook(md);
+    // "task.runbook.md extra text" should NOT be parsed as a runbook ref
+    expect(steps[0].workflows).toBeUndefined();
+  });
+
+  it('does not match bare .runbook.md without a filename prefix', () => {
+    const md = `## 1 Step
+- PASS: CONTINUE
+- FAIL: STOP
+
+- .runbook.md
+`;
+    const steps = parseRunbook(md);
+    // ".runbook.md" alone has no prefix — \S+ in the regex must capture at
+    // least one char before the ".runbook.md" suffix, so this cannot match.
+    expect(steps[0].workflows).toBeUndefined();
+  });
+
+  it('matches simple runbook ref', () => {
+    const md = `## 1 Step
+- PASS: CONTINUE
+- FAIL: STOP
+
+- simple.runbook.md
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].workflows).toEqual(['simple.runbook.md']);
+  });
+
+  it('matches path-like runbook ref', () => {
+    const md = `## 1 Step
+- PASS: CONTINUE
+- FAIL: STOP
+
+- path/to/complex-name.runbook.md
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].workflows).toEqual(['path/to/complex-name.runbook.md']);
+  });
+
+  it('does not treat .runbook.md.txt as a runbook ref', () => {
+    const md = `## 1 Step
+- PASS: CONTINUE
+- FAIL: STOP
+
+- task.runbook.md.txt
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].workflows).toBeUndefined();
+  });
+});
+
+describe('parseRunbookDocument metadata', () => {
+  it('uses first H1 as title and ignores subsequent H1s', () => {
+    const md = `# First Title
+
+# Second Title
+
+## 1 Step
+- PASS: COMPLETE
+`;
+    const doc = parseRunbookDocument(md);
+    expect(doc.title).toBe('First Title');
+  });
+
+  it('captures preamble description from text between H1 and first step', () => {
+    const md = `# My Runbook
+
+This is the preamble description.
+
+## 1 Step
+- PASS: COMPLETE
+`;
+    const doc = parseRunbookDocument(md);
+    expect(doc.description).toBe('This is the preamble description.');
+  });
+
+  it('returns undefined description when no preamble text', () => {
+    const md = `## 1 Step
+- PASS: COMPLETE
+`;
+    const doc = parseRunbookDocument(md);
+    expect(doc.description).toBeUndefined();
+  });
+
+  it('derives name from filename when no frontmatter name', () => {
+    const md = `## 1 Step
+- PASS: COMPLETE
+`;
+    const doc = parseRunbookDocument(md, 'my-runbook.md');
+    expect(doc.name).toBe('my-runbook.md');
+  });
+
+  it('returns undefined name when no frontmatter and no filename', () => {
+    const md = `## 1 Step
+- PASS: COMPLETE
+`;
+    const doc = parseRunbookDocument(md);
+    expect(doc.name).toBeUndefined();
+  });
+});
+
+describe('H1 step detection regex', () => {
+  it('rejects H1 starting with multi-digit number followed by dot', () => {
+    const md = '# 12. Step that uses H1\n';
+    expect(() => parseRunbook(md)).toThrow(/H1 headers.*cannot be used as step headers/);
+  });
+
+  it('rejects H1 starting with number followed by closing paren', () => {
+    const md = '# 1) Step that uses H1\n';
+    expect(() => parseRunbook(md)).toThrow(/H1 headers.*cannot be used as step headers/);
+  });
+
+  it('rejects H1 starting with number followed by colon', () => {
+    const md = '# 1: Step that uses H1\n';
+    expect(() => parseRunbook(md)).toThrow(/H1 headers.*cannot be used as step headers/);
+  });
+
+  it('rejects H1 starting with number followed by dash', () => {
+    const md = '# 1- Step that uses H1\n';
+    expect(() => parseRunbook(md)).toThrow(/H1 headers.*cannot be used as step headers/);
+  });
+
+  it('rejects H1 starting with number followed by space', () => {
+    const md = '# 1 Step that uses H1\n';
+    expect(() => parseRunbook(md)).toThrow(/H1 headers.*cannot be used as step headers/);
+  });
+
+  it('allows H1 that does not look like a step', () => {
+    const md = `# My Runbook Title
+
+## 1 Step
+- PASS: COMPLETE
+`;
+    const doc = parseRunbookDocument(md);
+    expect(doc.title).toBe('My Runbook Title');
+  });
+});
+
+describe('finalizeStep coverage', () => {
+  it('builds prompt from implicit text only', () => {
+    const md = `## 1 Step
+- PASS: COMPLETE
+
+This is implicit prompt text.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBe('This is implicit prompt text.');
+  });
+
+  it('returns undefined prompt when no text provided', () => {
+    const md = `## 1 Step
+- PASS: COMPLETE
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBeUndefined();
+  });
+
+  it('returns undefined substeps when step has no substeps', () => {
+    const md = `## 1 Step
+- PASS: COMPLETE
+
+Do the work.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toBeUndefined();
+  });
+
+  it('returns substeps array when step has substeps', () => {
+    const md = `## 1 Step
+
+### 1.1 Sub
+- PASS: COMPLETE
+
+Do work.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps![0].id).toBe('1');
+  });
+
+  it('returns undefined workflows when step has no runbook refs', () => {
+    const md = `## 1 Step
+- PASS: COMPLETE
+
+Just text.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].workflows).toBeUndefined();
+  });
+});
+
+// Intentional overlap with 'substep content filtering' above: these tests add
+// stronger negative assertions (not.toContain) and trim verification to kill
+// surviving mutants in the split/filter/join logic at parser.ts lines 155-163.
+describe('content filtering detail', () => {
+  it('filters runbook lines from substep content while keeping non-runbook lines', () => {
+    const md = `## 1 Step
+
+### 1.1 Sub
+- PASS: CONTINUE
+- FAIL: STOP
+
+Check the items.
+
+- setup.runbook.md
+`;
+    const steps = parseRunbook(md);
+    const sub = steps[0].substeps?.[0];
+    // Prompt should contain the text but NOT the runbook line
+    expect(sub?.prompt).toContain('Check the items.');
+    expect(sub?.prompt).not.toContain('setup.runbook.md');
+    expect(sub?.workflows).toEqual(['setup.runbook.md']);
+  });
+
+  it('trims whitespace from filtered content', () => {
+    const md = `## 1 Step
+
+### 1.1 Sub
+- PASS: CONTINUE
+
+Single line of text.
+
+- task.runbook.md
+`;
+    const steps = parseRunbook(md);
+    const sub = steps[0].substeps?.[0];
+    // Prompt should be trimmed
+    expect(sub?.prompt).toBe('Single line of text.');
+  });
+});
+
+describe('paragraph conditional edge cases', () => {
+  it('accepts paragraph-style transitions immediately after step header', () => {
+    const md = `## 1 Step
+
+PASS: CONTINUE
+FAIL: STOP
+
+Do the work.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
+    expect(steps[0].transitions?.fail.action).toEqual({ type: 'STOP' });
+    expect(steps[0].prompt).toBe('Do the work.');
+  });
+
+  it('accepts paragraph-style transitions immediately after substep header', () => {
+    const md = `## 1 Step
+
+### 1.1 Sub
+
+PASS: CONTINUE
+FAIL: STOP
+
+Do substep work.
+`;
+    const steps = parseRunbook(md);
+    const sub = steps[0].substeps?.[0];
+    expect(sub?.transitions?.pass.action).toEqual({ type: 'CONTINUE' });
+    expect(sub?.prompt).toBe('Do substep work.');
+  });
+});
+
+describe('parser edge cases for mutation coverage', () => {
+  it('ignores code blocks outside any step', () => {
+    const md = `# Title
+
+\`\`\`bash
+echo outside
+\`\`\`
+
+## 1 Step
+- PASS: COMPLETE
+`;
+    const doc = parseRunbookDocument(md);
+    expect(doc.steps).toHaveLength(1);
+    expect(doc.steps[0].command).toBeUndefined();
+  });
+
+  it('parses markdown with no steps at all and skipValidation', () => {
+    const md = `# Just a title
+
+Some text but no steps.
+`;
+    const doc = parseRunbookDocument(md, undefined, { skipValidation: true });
+    expect(doc.steps).toHaveLength(0);
+    expect(doc.title).toBe('Just a title');
+  });
+
+  it('runs validation by default and throws for invalid runbooks', () => {
+    const md = `## 1 Step
+- PASS: GOTO 99
+- FAIL: STOP
+`;
+    expect(() => parseRunbookDocument(md)).toThrow();
+  });
+
+  it('skips validation when skipValidation is true', () => {
+    const md = `## 1 Step
+- PASS: GOTO 99
+- FAIL: STOP
+`;
+    const doc = parseRunbookDocument(md, undefined, { skipValidation: true });
+    expect(doc.steps).toHaveLength(1);
+  });
+
+  it('parses text after substep as a new step', () => {
+    const md = `## 1 Step
+
+### 1.1 Sub
+- PASS: CONTINUE
+
+Do sub work.
+
+## 2 Step
+
+Text in the second step.
+`;
+    const steps = parseRunbook(md);
+    expect(steps).toHaveLength(2);
+    expect(steps[1].prompt).toBe('Text in the second step.');
+  });
+
+  it('code block in substep sets hasSeenContent correctly', () => {
+    const md = `## 1 Step
+
+### 1.1 Sub
+- PASS: CONTINUE
+
+\`\`\`bash
+echo hello
+\`\`\`
+
+### 1.2 Another Sub
+- PASS: COMPLETE
+
+Do other work.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(2);
+    expect(steps[0].substeps![0].command?.code).toBe('echo hello');
+    expect(steps[0].substeps![1].prompt).toBe('Do other work.');
+  });
+
+  it('preserves prompt text across multiple paragraphs in step', () => {
+    const md = `## 1 Step
+- PASS: COMPLETE
+
+Line one.
+
+Line two.
+
+\`\`\`bash
+npm test
+\`\`\`
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toContain('Line one.');
+    expect(steps[0].prompt).toContain('Line two.');
+  });
+
+  it('carries pending conditionals from substep to substep', () => {
+    const md = `## 1 Step
+
+### 1.1 First
+- PASS: CONTINUE
+- FAIL: STOP
+
+Do first.
+
+### 1.2 Second
+- PASS: COMPLETE
+- FAIL: STOP
+
+Do second.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(2);
+    expect(steps[0].substeps![0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
+    expect(steps[0].substeps![1].transitions?.pass.action).toEqual({ type: 'COMPLETE' });
+  });
+
+  it('handles step with only transitions and no other content', () => {
+    const md = `## 1 Step
+- PASS: CONTINUE
+- FAIL: STOP
+
+## 2 Step
+- PASS: COMPLETE
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBeUndefined();
+    expect(steps[0].command).toBeUndefined();
+    expect(steps[0].substeps).toBeUndefined();
+    expect(steps[0].workflows).toBeUndefined();
+    expect(steps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
+  });
+
+  it('validates NEXT usage in substep context with FOR clause', () => {
+    const md = `## 1 Step
+- FOR i IN 1 TO 3
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+### 1.1 Sub
+- PASS: NEXT
+- FAIL: STOP
+
+Do iteration.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].forClause).toEqual({ variable: 'i', start: 1, end: 3 });
+    expect(steps[0].substeps![0].transitions?.pass.action).toEqual({ type: 'NEXT' });
+  });
+
+  it('H3 header with unparsable format is ignored when only content', () => {
+    // H3 that doesn't match substep pattern — hasSeenContent becomes true
+    // but no substep is created
+    const md = `## 1 Step
+
+### Random notes
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toBeUndefined();
+  });
+
+  it('list items in preamble are not processed as step content', () => {
+    const md = `# Title
+
+Here is a list:
+- Item one
+- Item two
+
+## 1 Step
+- PASS: COMPLETE
+`;
+    const doc = parseRunbookDocument(md);
+    expect(doc.steps).toHaveLength(1);
+    expect(doc.description).toContain('Here is a list:');
   });
 });

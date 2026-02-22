@@ -120,6 +120,26 @@ We use Jest for testing the core packages and the CLI.
 npm run test
 ```
 
+### Mutation Testing
+
+We use [Stryker Mutator](https://stryker-mutator.io/) to assess test quality. Mutation testing introduces small code changes (mutants) and verifies that tests detect them. Surviving mutants indicate weak assertions.
+
+```bash
+# Run mutation tests for all packages (sequential, CPU-intensive)
+npm run test:mutate
+
+# Run for a single package
+npm run test:mutate:parser
+npm run test:mutate:core
+npm run test:mutate:cli
+npm run test:mutate:plugin
+
+# Run directly in a package directory
+cd packages/parser && npx stryker run
+```
+
+Reports are generated in each package's `reports/mutation/` directory. Stryker uses incremental mode, so subsequent runs are faster. Mutation testing is CPU-intensive (5-30 min per package) and is not part of the standard CI pipeline — it runs via a separate `mutation.yml` workflow on manual trigger or weekly schedule.
+
 ### End-to-End Tests (Site)
 
 We use Playwright for testing the interactive runbook runner in the browser.
@@ -167,6 +187,7 @@ GitHub Actions runs on all pull requests and pushes to `main`:
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
 | `ci.yml` | PRs and pushes to main | Builds, lints, and tests across Node.js 18, 20, and 22 |
+| `mutation.yml` | Manual dispatch or weekly schedule | Runs Stryker mutation testing per package |
 | `release.yml` | Pushes to main | Handles npm publishing via Changesets |
 
 ### CI Pipeline Steps
