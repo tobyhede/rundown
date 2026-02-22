@@ -1018,7 +1018,7 @@ describe('regex boundaries and runbook patterns', () => {
     expect(steps[0].workflows).toBeUndefined();
   });
 
-  it('does not match runbook ref with leading whitespace in name', () => {
+  it('does not match runbook ref starting with a dot', () => {
     const md = `## 1 Step
 - PASS: CONTINUE
 - FAIL: STOP
@@ -1026,7 +1026,8 @@ describe('regex boundaries and runbook patterns', () => {
 - .runbook.md
 `;
     const steps = parseRunbook(md);
-    // ".runbook.md" starts with dot, not \\S+ match - should not be a runbook ref
+    // ".runbook.md" has no prefix before .runbook.md so the regex requires
+    // at least one non-whitespace char as a filename prefix
     expect(steps[0].workflows).toBeUndefined();
   });
 
@@ -1204,6 +1205,9 @@ Just text.
   });
 });
 
+// Intentional overlap with 'substep content filtering' above: these tests add
+// stronger negative assertions (not.toContain) and trim verification to kill
+// surviving mutants in the split/filter/join logic at parser.ts lines 155-163.
 describe('content filtering detail', () => {
   it('filters runbook lines from substep content while keeping non-runbook lines', () => {
     const md = `## 1 Step
