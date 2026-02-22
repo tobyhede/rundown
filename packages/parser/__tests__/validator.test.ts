@@ -1,8 +1,8 @@
 import { describe, it, expect } from '@jest/globals';
 import { validateRunbook, type Step, type ValidationDiagnostic } from '../src/index.js';
 
-const errors = (d: ValidationDiagnostic[]) => d.filter((x) => x.severity === 'error');
-const warnings = (d: ValidationDiagnostic[]) => d.filter((x) => x.severity === 'warning');
+const filterErrors = (d: ValidationDiagnostic[]) => d.filter((x) => x.severity === 'error');
+const filterWarnings = (d: ValidationDiagnostic[]) => d.filter((x) => x.severity === 'warning');
 
 describe('validator strict rules', () => {
   const mockStep = (overrides: Partial<Step>): Step => ({
@@ -24,9 +24,9 @@ describe('validator strict rules', () => {
         }),
       ];
       const diagnostics = validateRunbook(steps);
-      expect(errors(diagnostics)).toHaveLength(0);
+      expect(filterErrors(diagnostics)).toHaveLength(0);
       expect(
-        warnings(diagnostics).some((w) =>
+        filterWarnings(diagnostics).some((w) =>
           w.message.includes('GOTO self without RETRY may loop indefinitely'),
         ),
       ).toBe(true);
@@ -53,9 +53,9 @@ describe('validator strict rules', () => {
         }),
       ];
       const diagnostics = validateRunbook(steps);
-      expect(errors(diagnostics)).toHaveLength(0);
+      expect(filterErrors(diagnostics)).toHaveLength(0);
       expect(
-        warnings(diagnostics).some((w) =>
+        filterWarnings(diagnostics).some((w) =>
           w.message.includes('GOTO self without RETRY may loop indefinitely'),
         ),
       ).toBe(true);
@@ -81,9 +81,10 @@ describe('validator strict rules', () => {
           substeps: [{ id: '1', description: 'Sub1' }],
         },
       ];
-      const errors = validateRunbook(steps as any[]);
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors[0].message).toContain('NonExistent');
+      const diagnostics = validateRunbook(steps as any[]);
+      const errorDiagnostics = filterErrors(diagnostics);
+      expect(errorDiagnostics.length).toBeGreaterThan(0);
+      expect(errorDiagnostics[0].message).toContain('NonExistent');
     });
   });
 
@@ -163,7 +164,7 @@ describe('validator strict rules', () => {
       const diagnostics = validateRunbook(steps);
       // Should have at least an exclusivity error + GOTO self warning
       expect(diagnostics.length).toBeGreaterThan(1);
-      expect(errors(diagnostics).length).toBeGreaterThan(0);
+      expect(filterErrors(diagnostics).length).toBeGreaterThan(0);
     });
 
     it('includes line numbers in validation diagnostics', () => {
@@ -223,9 +224,10 @@ describe('validator strict rules', () => {
           },
         },
       ];
-      const errors = validateRunbook(steps as any[]);
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors[0].message).toContain('NonExistent');
+      const diagnostics = validateRunbook(steps as any[]);
+      const errorDiagnostics = filterErrors(diagnostics);
+      expect(errorDiagnostics.length).toBeGreaterThan(0);
+      expect(errorDiagnostics[0].message).toContain('NonExistent');
     });
 
     it('validates GOTO to named substep', () => {
@@ -254,9 +256,10 @@ describe('validator strict rules', () => {
 
   describe('empty runbook', () => {
     it('rejects empty steps array', () => {
-      const errors = validateRunbook([]);
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors[0].message).toContain('at least one step');
+      const diagnostics = validateRunbook([]);
+      const errorDiagnostics = filterErrors(diagnostics);
+      expect(errorDiagnostics.length).toBeGreaterThan(0);
+      expect(errorDiagnostics[0].message).toContain('at least one step');
     });
   });
 
@@ -503,9 +506,9 @@ describe('validator strict rules', () => {
         },
       ];
       const diagnostics = validateRunbook(steps);
-      expect(errors(diagnostics)).toHaveLength(0);
+      expect(filterErrors(diagnostics)).toHaveLength(0);
       expect(
-        warnings(diagnostics).some((w) =>
+        filterWarnings(diagnostics).some((w) =>
           w.message.includes('GOTO self without RETRY may loop indefinitely'),
         ),
       ).toBe(true);
@@ -529,9 +532,9 @@ describe('validator strict rules', () => {
         },
       ];
       const diagnostics = validateRunbook(steps);
-      expect(errors(diagnostics)).toHaveLength(0);
+      expect(filterErrors(diagnostics)).toHaveLength(0);
       expect(
-        warnings(diagnostics).some((w) =>
+        filterWarnings(diagnostics).some((w) =>
           w.message.includes('GOTO self without RETRY may loop indefinitely'),
         ),
       ).toBe(true);
@@ -559,7 +562,7 @@ describe('validator strict rules', () => {
       ];
       const diagnostics = validateRunbook(steps);
       expect(
-        errors(diagnostics).some((e) =>
+        filterErrors(diagnostics).some((e) =>
           e.message.includes('GOTO AT is only valid when the target step has a FOR clause'),
         ),
       ).toBe(true);
