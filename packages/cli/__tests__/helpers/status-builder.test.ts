@@ -8,7 +8,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   countNumberedSteps: jest.fn().mockReturnValue(5),
 }));
 
-type RunbookState = import('@rundown-org/core').RunbookState;
+import type { RunbookState } from '@rundown-org/core';
 
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
