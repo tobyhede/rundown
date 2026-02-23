@@ -35,7 +35,13 @@ function getFilesSync(dir: string): string[] {
  */
 function loadPatternsWithScenariosSync(): { file: string; scenarios: Scenarios }[] {
   const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
-  const allFiles = getFilesSync(patternsDir);
+  let allFiles: string[];
+  try {
+    allFiles = getFilesSync(patternsDir);
+  } catch {
+    // Directory may not exist in sandboxed environments (e.g. Stryker)
+    return [];
+  }
   const results: { file: string; scenarios: Scenarios }[] = [];
 
   for (const filePath of allFiles) {
