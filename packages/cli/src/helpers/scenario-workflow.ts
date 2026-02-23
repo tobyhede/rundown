@@ -8,7 +8,7 @@
  */
 
 import { readFile, rm } from 'node:fs/promises';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, execSync } from 'node:child_process';
@@ -274,11 +274,7 @@ export async function executeScenario(
         // Get most recently modified state file
         const latestFile = stateFiles
           .map((f) => ({ name: f, path: join(runsDir, f) }))
-          .sort((a, b) => {
-            const statA = readFileSync(a.path, 'utf-8');
-            const statB = readFileSync(b.path, 'utf-8');
-            return statB.length - statA.length; // Simple heuristic: longer = more recent
-          })[0];
+          .sort((a, b) => statSync(b.path).mtimeMs - statSync(a.path).mtimeMs)[0];
 
         const stateContent = readFileSync(latestFile.path, 'utf-8');
         const state = JSON.parse(stateContent) as {

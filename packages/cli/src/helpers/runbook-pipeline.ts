@@ -23,6 +23,8 @@ import {
   type ExecutionEventEmitter,
   type Runbook,
   type DataSource,
+  type StepId,
+  STATE_DIR,
 } from '@rundown-org/core';
 import { isSourced, type ForClause } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
@@ -117,7 +119,7 @@ function emitRunbookStarted(
     title: runbookState.title,
     description: runbookState.description,
     prompted,
-    statePath: `.claude/rundown/runs/${runbookState.id}.json`,
+    statePath: `${STATE_DIR}/${runbookState.id}.json`,
   });
 }
 
@@ -223,26 +225,38 @@ export async function queueStep(
 }
 
 /**
- * Mode 2: Start a runbook from a prepared file.
+ * Shared launch logic for starting a runbook (or child runbook).
+ *
+ * Creates state, initializes actor, pushes to session, sets up emitter,
+ * and runs the execution loop. Used by both `startRunbook` and `bindAgent`.
  *
  * @param ctx - Pipeline context
  * @param prepared - Prepared runbook data
- * @param options - Start options
+ * @param options - Launch options including optional parent context
  * @returns RunbookStartResult
  */
-export async function startRunbook(
+async function launchRunbook(
   ctx: RunPipelineContext,
   prepared: PreparedRunbook,
-  options: { file: string; prompted?: boolean; agentId?: string },
+  options: {
+    runbookName: string;
+    prompted: boolean;
+    agentId?: string;
+    parentRunbookId?: string;
+    parentStepId?: StepId;
+    afterInit?: (stateId: string) => Promise<void>;
+  },
 ): Promise<RunbookStartResult> {
   const { output, manager, actorService, sessionService, cwd } = ctx;
   const { filePath, rawContent, runbook, mergedVariables, sources } = prepared;
 
   const runbookPath = path.relative(cwd, filePath);
-  const state = await manager.create(options.file, runbook, {
+  const state = await manager.create(options.runbookName, runbook, {
     runbookPath,
     prompted: options.prompted,
     agentId: options.agentId,
+    parentRunbookId: options.parentRunbookId,
+    parentStepId: options.parentStepId,
     runbookSrc: rawContent,
     templateVars: mergedVariables,
     sources,
@@ -250,6 +264,11 @@ export async function startRunbook(
 
   // Initialize actor state (populates forStack for first step)
   await actorService.initializeState(state.id, [...runbook.steps]);
+
+  // Optional post-init hook (e.g., updateAgentBinding for child runbooks)
+  if (options.afterInit) {
+    await options.afterInit(state.id);
+  }
 
   await sessionService.pushRunbook(state.id, options.agentId);
 
@@ -265,7 +284,7 @@ export async function startRunbook(
   const emitter = createBridgedEmitter(state, output);
 
   // Emit RUNBOOK_STARTED
-  emitRunbookStarted(emitter, state, !!options.prompted);
+  emitRunbookStarted(emitter, state, options.prompted);
 
   // Run execution loop
   const loopResult = await runExecutionLoop(
@@ -273,12 +292,32 @@ export async function startRunbook(
     state.id,
     [...runbook.steps],
     cwd,
-    !!options.prompted,
+    options.prompted,
     options.agentId,
     emitter,
   );
 
   return { ok: true, loopResult };
+}
+
+/**
+ * Mode 2: Start a runbook from a prepared file.
+ *
+ * @param ctx - Pipeline context
+ * @param prepared - Prepared runbook data
+ * @param options - Start options
+ * @returns RunbookStartResult
+ */
+export async function startRunbook(
+  ctx: RunPipelineContext,
+  prepared: PreparedRunbook,
+  options: { file: string; prompted?: boolean; agentId?: string },
+): Promise<RunbookStartResult> {
+  return launchRunbook(ctx, prepared, {
+    runbookName: options.file,
+    prompted: !!options.prompted,
+    agentId: options.agentId,
+  });
 }
 
 /**
@@ -294,7 +333,7 @@ export async function bindAgent(
   agentId: string,
   varOpts: VarOptions,
 ): Promise<AgentBindResult> {
-  const { output, manager, actorService, sessionService, lifecycleService, cwd } = ctx;
+  const { output, manager, sessionService, lifecycleService, cwd } = ctx;
 
   const state = await sessionService.getActive();
   if (!state) {
@@ -343,54 +382,20 @@ export async function bindAgent(
       };
     }
 
-    const { filePath, rawContent, runbook, mergedVariables, sources } = prepResult.prepared;
+    // Use prompted flag directly from parent state (already loaded)
+    const parentPrompted = state.prompted ?? false;
 
-    // Inherit prompted flag from parent runbook
-    const parentState = await manager.load(state.id);
-    const parentPrompted = parentState?.prompted ?? false;
-
-    const childRunbookPath = path.relative(cwd, filePath);
-    const childState = await manager.create(pending.runbook, runbook, {
-      runbookPath: childRunbookPath,
+    return launchRunbook(ctx, prepResult.prepared, {
+      runbookName: pending.runbook,
+      prompted: parentPrompted,
       agentId,
       parentRunbookId: state.id,
       parentStepId: pending.stepId,
-      prompted: parentPrompted,
-      runbookSrc: rawContent,
-      templateVars: mergedVariables,
-      sources,
+      afterInit: (childStateId) =>
+        manager.updateAgentBinding(state.id, agentId, {
+          childRunbookId: childStateId,
+        }),
     });
-
-    // Initialize actor state (populates forStack for first step)
-    await actorService.initializeState(childState.id, [...runbook.steps]);
-
-    await manager.updateAgentBinding(state.id, agentId, {
-      childRunbookId: childState.id,
-    });
-
-    await sessionService.pushRunbook(childState.id, agentId);
-
-    // Update lastAction
-    await manager.update(childState.id, { lastAction: { type: 'START' } });
-
-    // Create emitter for CHILD runbook
-    const emitter = createBridgedEmitter(childState, output);
-
-    // Emit RUNBOOK_STARTED for child
-    emitRunbookStarted(emitter, childState, parentPrompted);
-
-    // Run execution loop
-    const loopResult = await runExecutionLoop(
-      manager,
-      childState.id,
-      [...runbook.steps],
-      cwd,
-      parentPrompted,
-      agentId,
-      emitter,
-    );
-
-    return { ok: true, loopResult };
   }
 
   return { ok: true };

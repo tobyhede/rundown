@@ -13,7 +13,7 @@ import type {
 import type { StepId } from './step-id.js';
 import { RunbookStateSchema } from '../schemas.js';
 
-const STATE_DIR = '.claude/rundown/runs';
+export const STATE_DIR = '.claude/rundown/runs';
 const SESSION_FILE = '.claude/rundown/session.json';
 
 function generateId(): string {

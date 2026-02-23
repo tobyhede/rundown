@@ -7,6 +7,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
   parseStepIdFromString: jest.fn(),
+  STATE_DIR: '.claude/rundown/runs',
 }));
 
 // Mock @rundown-org/parser
