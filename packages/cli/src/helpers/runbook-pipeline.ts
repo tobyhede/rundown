@@ -41,7 +41,9 @@ import {
  * Variable options from CLI flags.
  */
 export interface VarOptions {
+  /** Path to a YAML file containing variable definitions */
   varFile?: string;
+  /** Inline key=value variable overrides (repeatable) */
   var?: string[];
 }
 
@@ -49,11 +51,17 @@ export interface VarOptions {
  * Context for running the pipeline.
  */
 export interface RunPipelineContext {
+  /** Output emitter for rendering status and error messages */
   output: OutputEmitter;
+  /** State manager for persisting runbook state changes */
   manager: RunbookStateManager;
+  /** Actor service for managing XState actor lifecycle */
   actorService: RunbookActorService;
+  /** Session service for tracking active/stashed runbooks */
   sessionService: SessionService;
+  /** Lifecycle service for managing pending steps and transitions */
   lifecycleService: ExecutionLifecycleService;
+  /** Current working directory for file resolution */
   cwd: string;
 }
 
@@ -61,10 +69,15 @@ export interface RunPipelineContext {
  * A fully prepared runbook ready for state creation.
  */
 export interface PreparedRunbook {
+  /** Absolute path to the resolved runbook file */
   filePath: string;
+  /** Raw markdown content of the runbook file */
   rawContent: string;
+  /** Parsed and variable-substituted runbook AST */
   runbook: Runbook;
+  /** Merged template variables from all sources */
   mergedVariables: Record<string, string>;
+  /** Resolved data sources for FOR loop iteration */
   sources: Record<string, DataSource>;
 }
 

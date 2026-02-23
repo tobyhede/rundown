@@ -269,6 +269,44 @@ describe('startRunbook', () => {
     expect(mockInitState).toHaveBeenCalled();
     expect(mockPushRunbook).toHaveBeenCalled();
   });
+  it('initializes substeps when first step has substeps', async () => {
+    const mockInitSubsteps = jest.fn<any>().mockResolvedValue(undefined);
+    const mockUpdate = jest.fn<any>().mockResolvedValue(undefined);
+    const mockCreate = jest.fn<any>().mockResolvedValue({
+      id: 'sub-id',
+      title: 'Sub Test',
+    });
+
+    runExecutionLoop.mockResolvedValue('done');
+
+    const ctx = {
+      output: { flush: jest.fn() } as any,
+      manager: {
+        create: mockCreate,
+        update: mockUpdate,
+        initializeSubsteps: mockInitSubsteps,
+      } as any,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      lifecycleService: {} as any,
+      cwd: '/test',
+    };
+
+    const substeps = [{ id: 'a' }, { id: 'b' }];
+    const prepared = {
+      filePath: '/test/runbook.md',
+      rawContent: '# Test',
+      runbook: { steps: [makeStep({ substeps })] } as any,
+      mergedVariables: {},
+      sources: {},
+    };
+
+    const result = await startRunbook(ctx as any, prepared, { file: 'runbook.md' });
+
+    expect(result.ok).toBe(true);
+    expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps);
+    expect(mockUpdate).toHaveBeenCalledWith('sub-id', { substep: 'a' });
+  });
 });
 
 describe('bindAgent', () => {
@@ -332,5 +370,63 @@ describe('bindAgent', () => {
       expect(result.loopResult).toBeUndefined(); // No child runbook, no loop
     }
     expect(mockBindAgent).toHaveBeenCalledWith('test-id', 'agent-1', { step: '2' });
+  });
+
+  it('starts child runbook when pending step has runbook', async () => {
+    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2');
+    resolveRunbookFile.mockResolvedValue('/test/child.runbook.md');
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({ steps: [makeStep()] } as any);
+    runExecutionLoop.mockResolvedValue('done');
+
+    const mockBindAgentFn = jest.fn<any>().mockResolvedValue(undefined);
+    const mockCreate = jest.fn<any>().mockResolvedValue({
+      id: 'child-id',
+      title: 'Child',
+    });
+    const mockUpdateAgentBinding = jest.fn<any>().mockResolvedValue(undefined);
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as any,
+      manager: {
+        bindAgent: mockBindAgentFn,
+        create: mockCreate,
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        updateAgentBinding: mockUpdateAgentBinding,
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+      } as any,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: {
+        getActive: jest.fn<any>().mockResolvedValue({ id: 'parent-id', prompted: true }),
+        pushRunbook: jest.fn<any>().mockResolvedValue(undefined),
+      },
+      lifecycleService: {
+        popPendingStep: jest.fn<any>().mockResolvedValue({
+          stepId: { step: '2' },
+          runbook: 'child.runbook.md',
+        }),
+      },
+      cwd: '/test',
+    };
+
+    const result = await bindAgent(ctx as any, 'agent-1', {});
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.loopResult).toBe('done');
+    }
+    expect(mockCreate).toHaveBeenCalledWith(
+      'child.runbook.md',
+      expect.anything(),
+      expect.objectContaining({
+        agentId: 'agent-1',
+        parentRunbookId: 'parent-id',
+        prompted: true,
+      }),
+    );
+    expect(mockUpdateAgentBinding).toHaveBeenCalledWith('parent-id', 'agent-1', {
+      childRunbookId: 'child-id',
+    });
   });
 });

@@ -28,12 +28,19 @@ import { getRunbookFromState } from './runbook-loader.js';
  * Context for executing a goto operation.
  */
 export interface GotoContext {
+  /** Output emitter for rendering status and error messages */
   output: OutputEmitter;
+  /** State manager for persisting runbook state changes */
   manager: RunbookStateManager;
+  /** Actor service for managing XState actor lifecycle */
   actorService: RunbookActorService;
+  /** Session service for tracking active/stashed runbooks */
   sessionService: SessionService;
+  /** Current active runbook state */
   state: RunbookState;
+  /** Parsed steps from the active runbook */
   steps: Step[];
+  /** Current working directory for file resolution */
   cwd: string;
 }
 

@@ -198,6 +198,30 @@ describe('buildActiveStatus', () => {
     expect(formatActionForDisplay).toHaveBeenCalledWith({ type: 'RETRY' }, 1, 3);
   });
 
+  it('maps lastResult pass to result true', () => {
+    const state = makeState({
+      lastAction: { type: 'CONTINUE' },
+      retryCount: 0,
+      lastResult: 'pass',
+    });
+    const steps = [makeStep({ name: '1' })];
+
+    getRunbookFromState.mockReturnValue(steps);
+    buildMetadata.mockReturnValue({
+      file: 'test.runbook.md',
+      state: '.claude/rundown/runs/test-id.json',
+    });
+    (
+      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
+    ).mockReturnValue(1);
+    getStepRetryMax.mockReturnValue(0);
+    formatActionForDisplay.mockReturnValue('CONTINUE');
+
+    const result = buildActiveStatus(state, '/test');
+
+    expect(result.lastAction).toEqual({ action: 'CONTINUE', result: true });
+  });
+
   it('includes pending steps when present', () => {
     const state = makeState({
       pendingSteps: [{ stepId: { step: '2' } }] as any,
