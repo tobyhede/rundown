@@ -38,8 +38,11 @@ function loadPatternsWithScenariosSync(): { file: string; scenarios: Scenarios }
   let allFiles: string[];
   try {
     allFiles = getFilesSync(patternsDir);
-  } catch {
-    // Directory may not exist in sandboxed environments (e.g. Stryker)
+  } catch (err: unknown) {
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    console.warn(`Warning: failed to load patterns: ${err instanceof Error ? err.message : err}`);
     return [];
   }
   const results: { file: string; scenarios: Scenarios }[] = [];

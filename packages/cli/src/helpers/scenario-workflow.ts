@@ -254,8 +254,12 @@ export async function executeScenario(
             env: { ...process.env, RUNDOWN_LOG: '0' },
           });
         }
-      } catch {
-        // Command may exit non-zero for STOP scenarios, which is expected
+      } catch (err: unknown) {
+        // Non-zero exits are expected for STOP scenarios.
+        // Log unexpected errors (not ExecSyncError) for debugging.
+        if (err instanceof Error && !('status' in err)) {
+          console.warn(`Scenario command error: ${err.message}`);
+        }
       }
     }
 

@@ -102,8 +102,14 @@ export function registerRunCommand(program: Command): void {
               agentId: options.agent,
             });
 
+            if (!result.ok) {
+              output.error(result.error, result.code, result.details);
+              output.flush();
+              process.exit(1);
+            }
+
             output.flush();
-            if (result.ok && result.loopResult === 'stopped') {
+            if (result.loopResult === 'stopped') {
               process.exit(1);
             }
             return;
