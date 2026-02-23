@@ -33,7 +33,7 @@ export function registerStatusCommand(program: Command): void {
 
         // Case 1: No active runbook and nothing stashed
         if (!state && !stashedId) {
-          output.detail(buildInactiveStatus(), 'status');
+          output.detail(buildInactiveStatus() as unknown as Record<string, unknown>, 'status');
           output.flush();
           return;
         }
@@ -42,7 +42,10 @@ export function registerStatusCommand(program: Command): void {
         if (stashedId && !state) {
           const stashed = await manager.load(stashedId);
           if (stashed) {
-            output.detail(buildStashedStatus(stashed, cwd), 'status');
+            output.detail(
+              buildStashedStatus(stashed, cwd) as unknown as Record<string, unknown>,
+              'status',
+            );
             output.flush();
           }
           return;
@@ -55,7 +58,13 @@ export function registerStatusCommand(program: Command): void {
         }
 
         // Case 3: Active runbook
-        output.detail(buildActiveStatus(state, cwd, stashedId ?? undefined), 'status');
+        output.detail(
+          buildActiveStatus(state, cwd, stashedId ?? undefined) as unknown as Record<
+            string,
+            unknown
+          >,
+          'status',
+        );
         output.flush();
       });
     });

@@ -41,7 +41,7 @@ export interface StatusOutputData {
   /** Current position in runbook */
   position?: {
     current: string;
-    total: string | number;
+    total: number;
     substep?: string;
   };
   /** Current step details */
@@ -52,8 +52,6 @@ export interface StatusOutputData {
   lastAction?: ActionBlockData;
   pending?: string[];
   agents?: Record<string, { step: string; status: string; result?: string }>;
-  // Index signature for Record<string, unknown> compatibility
-  [key: string]: unknown;
 }
 
 /**
@@ -82,7 +80,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
     stashed: true,
     file: metadata.file,
     state: metadata.state,
-    ...(metadata.prompted && { prompted: metadata.prompted }),
+    ...(metadata.prompted != null && { prompted: metadata.prompted }),
     position: {
       current: stashedState.step,
       total: totalSteps,
@@ -135,7 +133,7 @@ export function buildActiveStatus(
     stashed: !!stashedId,
     file: metadata.file,
     state: metadata.state,
-    ...(metadata.prompted && { prompted: metadata.prompted }),
+    ...(metadata.prompted != null && { prompted: metadata.prompted }),
     position: {
       current: displayStep,
       total: totalSteps,

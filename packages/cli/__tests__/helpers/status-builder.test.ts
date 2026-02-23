@@ -8,6 +8,8 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   countNumberedSteps: jest.fn().mockReturnValue(5),
 }));
 
+type RunbookState = import('@rundown-org/core').RunbookState;
+
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
   getRunbookFromState: jest.fn(),
@@ -30,7 +32,7 @@ const { buildInactiveStatus, buildStashedStatus, buildActiveStatus } = await imp
   '../../src/helpers/status-builder'
 );
 
-function makeState(overrides: Partial<any> = {}): any {
+function makeState(overrides: Partial<RunbookState> = {}): any {
   return {
     id: 'test-id',
     runbook: 'test.runbook.md',
@@ -48,7 +50,7 @@ function makeState(overrides: Partial<any> = {}): any {
   } as any;
 }
 
-function makeStep(overrides: Partial<any> = {}): any {
+function makeStep(overrides: Partial<Record<string, unknown>> = {}): any {
   return {
     name: '1',
     description: 'First Step',

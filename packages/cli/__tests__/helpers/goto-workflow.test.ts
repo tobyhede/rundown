@@ -14,7 +14,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  runExecutionLoop: jest.fn().mockResolvedValue('completed'),
+  runExecutionLoop: jest.fn().mockResolvedValue('done'),
 }));
 
 // Mock runbook-loader

@@ -15,6 +15,9 @@ export const ScenarioSchema = z.object({
 
   /** Expected terminal state: COMPLETE or STOP */
   result: z.enum(['COMPLETE', 'STOP']),
+
+  /** Optional tags for categorizing scenarios */
+  tags: z.array(z.string()).optional(),
 });
 
 /**

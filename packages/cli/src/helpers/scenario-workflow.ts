@@ -99,12 +99,11 @@ export function buildScenarioListRows(
   scenarios: Scenarios,
 ): { name: string; expected: string; description: string; tags: string }[] {
   return Object.entries(scenarios).map(([name, scenario]) => {
-    const scenarioWithTags = scenario as { tags?: string[] };
     return {
       name,
       expected: scenario.result,
       description: scenario.description ?? '',
-      tags: scenarioWithTags.tags?.join(', ') ?? '',
+      tags: scenario.tags?.join(', ') ?? '',
     };
   });
 }
@@ -136,7 +135,7 @@ export function buildScenarioDetail(
     description: scenario.description,
     expected: scenario.result,
     commands: scenario.commands,
-    tags: (scenario as { tags?: string[] }).tags,
+    tags: scenario.tags,
   };
 }
 
@@ -148,15 +147,13 @@ export function buildScenarioDetail(
  */
 export function extractReferencedRunbooks(scenario: Scenario): string[] {
   const referenced: string[] = [];
-  const runbookPattern = /(\S+\.runbook\.md)/g;
+  const runbookPattern = /(?:^|[\s])([^\s=]+\.runbook\.md)/g;
 
   for (const cmd of scenario.commands) {
-    const matches = cmd.match(runbookPattern);
-    if (matches) {
-      for (const match of matches) {
-        if (!referenced.includes(match)) {
-          referenced.push(match);
-        }
+    for (const match of cmd.matchAll(runbookPattern)) {
+      const ref = match[1];
+      if (!referenced.includes(ref)) {
+        referenced.push(ref);
       }
     }
   }
