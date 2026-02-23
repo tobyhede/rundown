@@ -22,9 +22,13 @@ import type { OutputEmitter } from '../services/output-emitter.js';
  * A loaded runbook with its scenarios.
  */
 export interface LoadedRunbook {
+  /** Absolute path to the runbook source file. */
   filePath: string;
+  /** Display name from frontmatter or derived from filename. */
   name: string;
+  /** Optional description from frontmatter. */
   description?: string;
+  /** Parsed scenario definitions from the runbook. */
   scenarios: Scenarios;
 }
 
@@ -39,9 +43,13 @@ export type ScenarioLoadResult =
  * Result of running a scenario.
  */
 export interface ScenarioRunResult {
+  /** Whether the scenario produced the expected outcome. */
   passed: boolean;
+  /** Name of the scenario that was executed. */
   scenario: string;
+  /** Expected final state (e.g. "complete", "stopped"). */
   expected: string;
+  /** Actual final state observed after execution. */
   actual: string;
 }
 
@@ -83,8 +91,9 @@ export async function loadScenarios(file: string, cwd: string): Promise<Scenario
     return { ok: false, error: 'No scenarios defined in this runbook', code: 'VALIDATION_ERROR' };
   }
 
-  const name = (frontmatter.name as string | undefined) ?? file;
-  const description = frontmatter.description as string | undefined;
+  const name = (typeof frontmatter.name === 'string' ? frontmatter.name : undefined) ?? file;
+  const description =
+    typeof frontmatter.description === 'string' ? frontmatter.description : undefined;
 
   return { ok: true, loaded: { filePath, name, description, scenarios } };
 }
@@ -187,10 +196,10 @@ export async function executeScenario(
 
   // Create isolated temp workspace
   const tmpDir = mkdtempSync(join(tmpdir(), 'rd-scenario-'));
-  const runbooksDir = join(tmpDir, '.claude', 'rundown', 'runbooks');
-  mkdirSync(runbooksDir, { recursive: true });
 
   try {
+    const runbooksDir = join(tmpDir, '.claude', 'rundown', 'runbooks');
+    mkdirSync(runbooksDir, { recursive: true });
     // Copy runbook and any referenced child runbooks
     copyFileSync(filePath, join(runbooksDir, runbookFilename));
 
@@ -200,8 +209,16 @@ export async function executeScenario(
       if (ref !== runbookFilename) {
         try {
           copyFileSync(join(sourceDir, ref), join(runbooksDir, ref));
-        } catch {
-          // Referenced file may not exist, which is fine
+        } catch (err: unknown) {
+          if (
+            !(
+              err instanceof Error &&
+              'code' in err &&
+              (err as NodeJS.ErrnoException).code === 'ENOENT'
+            )
+          ) {
+            throw err;
+          }
         }
       }
     }
@@ -252,11 +269,11 @@ export async function executeScenario(
           });
         }
       } catch (err: unknown) {
-        // Non-zero exits are expected for STOP scenarios.
-        // Log unexpected errors (not ExecSyncError) for debugging.
+        // Re-throw non-exec errors (e.g. unsupported shell operators)
         if (err instanceof Error && !('status' in err)) {
-          console.warn(`Scenario command error: ${err.message}`);
+          throw err;
         }
+        // Non-zero exit codes are expected for STOP/FAIL scenarios — continue
       }
     }
 

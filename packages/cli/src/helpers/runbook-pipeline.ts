@@ -88,10 +88,12 @@ export type StepQueueResult =
   | { ok: true; stepId: string; runbook?: string }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> };
 
+/** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
   | { ok: true; loopResult: 'done' | 'stopped' | 'waiting' }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> };
 
+/** Result of binding an agent to a child runbook via {@link bindAgent}. */
 export type AgentBindResult =
   | { ok: true; loopResult?: 'done' | 'stopped' | 'waiting' }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> };
@@ -187,7 +189,16 @@ export async function prepareRunbook(
   const runbook = substituteRunbookVariables(rawRunbook, mergedVariables);
 
   // Validate sourced FOR clauses reference defined data sources
-  validateSources(runbook.steps, sources);
+  try {
+    validateSources(runbook.steps, sources);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      code: 'VALIDATION_ERROR',
+      details: { runbook: file },
+    };
+  }
 
   if (runbook.steps.length === 0) {
     return {

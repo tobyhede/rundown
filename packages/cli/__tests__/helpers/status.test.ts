@@ -42,6 +42,11 @@ describe('getStatus', () => {
     expect(getStatus(state, null, 'run-7')).toBe('stashed');
   });
 
+  it('prioritizes stashed over stopped', () => {
+    const state = makeState('run-X', { stopped: true });
+    expect(getStatus(state, null, 'run-X')).toBe('stashed');
+  });
+
   it('prioritizes completed over stopped', () => {
     const state = makeState('run-8', { completed: true, stopped: true });
     expect(getStatus(state, null, null)).toBe('complete');

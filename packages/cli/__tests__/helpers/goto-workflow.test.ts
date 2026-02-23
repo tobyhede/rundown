@@ -45,7 +45,13 @@ function makeStep(overrides: Partial<any> = {}): any {
 }
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  jest.resetAllMocks();
+  // Re-establish default mock implementations after reset
+  (core.stepIdToString as jest.Mock).mockImplementation((id: { step: string; substep?: string }) =>
+    id.substep ? `${id.step}.${id.substep}` : id.step,
+  );
+  (core.countNumberedSteps as jest.Mock).mockReturnValue(3);
+  (runExecutionLoop as jest.Mock).mockResolvedValue('done');
 });
 
 describe('validateGotoTarget', () => {
@@ -154,6 +160,20 @@ describe('validateGotoTarget', () => {
     }
   });
 
+  it('accepts self-referencing GOTO as valid target', () => {
+    (
+      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+    ).mockReturnValue({ step: '1' });
+
+    const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
+    const result = validateGotoTarget('1', steps);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.target).toEqual({ step: '1' });
+    }
+  });
+
   it('accepts valid substep', () => {
     (
       core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
@@ -226,13 +246,9 @@ describe('executeGoto', () => {
       expect(result.loopResult).toBe('done');
     }
     expect(mockOutput.action).toHaveBeenCalled();
-    expect(mockManager.update).toHaveBeenCalledWith(
-      'test-id',
-      expect.objectContaining({
-        lastAction: { type: 'GOTO', target: '2' },
-        lastResult: undefined,
-      }),
-    );
+    const updateArg = (mockManager.update as jest.Mock).mock.calls[0][1];
+    expect(updateArg).toHaveProperty('lastResult', undefined);
+    expect(updateArg).toHaveProperty('lastAction', { type: 'GOTO', target: '2' });
   });
 
   it('returns stopped when execution loop stops', async () => {

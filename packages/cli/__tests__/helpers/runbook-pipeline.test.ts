@@ -54,6 +54,14 @@ const core = await import('@rundown-org/core');
 const parser = await import('@rundown-org/parser');
 const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook');
 const { runExecutionLoop } = await import('../../src/services/execution');
+const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
+const { extractVarsFromMarkdown, resolveVariables } = await import(
+  '../../src/services/variable-discovery'
+);
+const { substituteRunbookVariables, expandForClauseVariables } = await import(
+  '../../src/services/template-renderer'
+);
+const fsPromises = await import('node:fs/promises');
 const { validateSources, prepareRunbook, queueStep, startRunbook, bindAgent } = await import(
   '../../src/helpers/runbook-pipeline'
 );
@@ -71,7 +79,15 @@ function makeStep(overrides: Partial<any> = {}): any {
 }
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  jest.resetAllMocks();
+  // Re-establish default mock implementations after reset
+  (runExecutionLoop as jest.Mock).mockResolvedValue('done');
+  (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
+  (extractVarsFromMarkdown as jest.Mock).mockReturnValue({});
+  (resolveVariables as jest.Mock).mockResolvedValue({ vars: {}, sources: {} });
+  (substituteRunbookVariables as jest.Mock).mockImplementation((runbook: unknown) => runbook);
+  (expandForClauseVariables as jest.Mock).mockImplementation((content: string) => content);
+  (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS: CONTINUE');
 });
 
 describe('validateSources', () => {
@@ -142,6 +158,24 @@ describe('prepareRunbook', () => {
     if (result.ok) {
       expect(result.prepared.filePath).toBe('/test/good.md');
       expect(result.prepared.runbook.steps).toHaveLength(1);
+    }
+  });
+
+  it('returns error when validateSources throws', async () => {
+    resolveRunbookFile.mockResolvedValue('/test/sourced.md');
+    (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({
+      steps: [makeStep({ forClause: { source: 'missing' } })],
+    } as any);
+
+    const result = await prepareRunbook('sourced.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('missing');
     }
   });
 });

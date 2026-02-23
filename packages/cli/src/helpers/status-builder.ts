@@ -49,8 +49,11 @@ export interface StatusOutputData {
     name: string;
     description?: string;
   };
+  /** Most recent action taken (pass, fail, goto). */
   lastAction?: ActionBlockData;
+  /** Pending transition labels awaiting user input. */
   pending?: string[];
+  /** Active child agents keyed by agent name. */
   agents?: Record<string, { step: string; status: string; result?: string }>;
 }
 

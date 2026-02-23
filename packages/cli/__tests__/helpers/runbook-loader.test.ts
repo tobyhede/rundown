@@ -64,6 +64,7 @@ Deploy to {{ env }}.
 
     expect(steps).toHaveLength(1);
     expect(steps[0].name).toBe('1');
+    expect(steps[0].prompt).toContain('staging');
   });
 
   it('should not attempt disk fallback', () => {

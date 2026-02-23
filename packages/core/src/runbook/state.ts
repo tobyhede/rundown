@@ -13,6 +13,7 @@ import type {
 import type { StepId } from './step-id.js';
 import { RunbookStateSchema } from '../schemas.js';
 
+/** Directory path (relative to project root) where runbook execution state files are stored. */
 export const STATE_DIR = '.claude/rundown/runs';
 const SESSION_FILE = '.claude/rundown/session.json';
 
