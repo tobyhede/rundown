@@ -190,6 +190,33 @@ GitHub Actions runs on all pull requests and pushes to `main`:
 | `mutation.yml` | Manual dispatch or weekly schedule | Runs Stryker mutation testing per package |
 | `release.yml` | Pushes to main | Handles npm publishing via Changesets |
 
+### Dependency Management
+
+[Dependabot](https://docs.github.com/en/code-security/dependabot) is configured in `.github/dependabot.yml` to keep dependencies current automatically:
+
+| Ecosystem | Schedule | Grouping | PR Limit |
+|-----------|----------|----------|----------|
+| npm | Weekly | Minor + patch updates grouped | 10 |
+| GitHub Actions | Weekly | None (majors are infrequent) | 5 |
+
+The npm entry covers the entire monorepo workspace via the root `package-lock.json`. Minor and patch updates are grouped into a single PR to reduce noise; major version bumps arrive as individual PRs so breaking changes can be reviewed separately.
+
+**Reviewing Dependabot PRs:**
+- CI runs automatically on every Dependabot PR (build, lint, test)
+- Check the changelog/release notes linked in the PR description for breaking changes
+- Major bumps may require code changes — review carefully before merging
+
+### Security Scanning
+
+Two workflows scan for vulnerabilities and feed results into the GitHub Security tab:
+
+| Workflow | Schedule | What it scans |
+|----------|----------|---------------|
+| `osv-scanner.yml` | Daily + on lockfile changes | Known vulnerabilities in npm dependencies (via [OSV](https://osv.dev/)) |
+| `codeql.yml` | Weekly + on PRs to main | Static analysis of TypeScript/JavaScript source for security issues |
+
+Both upload SARIF results, so findings appear under **Security > Code scanning alerts** on GitHub. No contributor action is needed unless an alert is assigned to you.
+
 ### CI Pipeline Steps
 
 1. `npm ci` - Install dependencies

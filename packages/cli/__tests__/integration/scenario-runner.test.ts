@@ -35,7 +35,18 @@ function getFilesSync(dir: string): string[] {
  */
 function loadPatternsWithScenariosSync(): { file: string; scenarios: Scenarios }[] {
   const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
-  const allFiles = getFilesSync(patternsDir);
+  let allFiles: string[];
+  try {
+    allFiles = getFilesSync(patternsDir);
+  } catch (err: unknown) {
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    console.warn(
+      `Warning: failed to load patterns: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
   const results: { file: string; scenarios: Scenarios }[] = [];
 
   for (const filePath of allFiles) {

@@ -16,7 +16,7 @@ Formal BNF-style grammar for Rundown runbook syntax. See [SPEC.md](./SPEC.md) fo
 | `"text"` | Literal text |
 | `x ...` | One or more of x |
 | `positive_integer` | Integer > 0 (1, 2, 3, ...) |
-| `ws` | Horizontal whitespace (space or tab) |
+| `ws` | One or more horizontal whitespace characters (space or tab) |
 
 ---
 
@@ -112,7 +112,7 @@ where source_ref is:
   "{{" [ ws ] variable_name [ ws ] "}}"    -- references a named data source
 
 where range is:
-  positive_integer                              -- implicit start (1), end is integer
+  positive_integer                              -- implicit start (1), end is positive_integer
   | positive_integer "TO" positive_integer      -- explicit start and end
   | positive_integer "TO" "{{" [ ws ] variable_name [ ws ] "}}"  -- variable end bound
   | "{{" [ ws ] variable_name [ ws ] "}}" "TO" positive_integer  -- variable start bound
@@ -124,7 +124,7 @@ Whitespace inside `{{ }}` delimiters is optional.
 Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal positive integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result). Source references in `FOR var IN {{ source }}` and `... OF {{ source }}` are NOT expanded — they are parsed as data source identifiers resolved at runtime.
 
 where variable_name is:
-  [a-zA-Z_][a-zA-Z0-9_]*
+  `[a-zA-Z_][a-zA-Z0-9_]*`
 
 where frontmatter is:
   "---"

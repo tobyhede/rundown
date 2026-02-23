@@ -45,6 +45,28 @@ echo done
     }).toThrow('State file corrupted-id is missing runbookSrc');
   });
 
+  it('should substitute templateVars when present in state', () => {
+    const runbookSrc = `# Template Runbook
+
+## 1. Deploy
+- PASS: COMPLETE
+
+Deploy to {{ env }}.
+`;
+    const state: Partial<RunbookState> = {
+      id: 'template-id',
+      runbook: 'template.runbook.md',
+      runbookSrc,
+      templateVars: { env: 'staging' },
+    };
+
+    const steps = getRunbookFromState(state as RunbookState, '/unused');
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].name).toBe('1');
+    expect(steps[0].prompt).toContain('staging');
+  });
+
   it('should not attempt disk fallback', () => {
     const state: Partial<RunbookState> = {
       id: 'missing-src-id',

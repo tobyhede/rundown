@@ -385,7 +385,7 @@ export class TextRenderer implements OutputRenderer {
     if (warnings && warnings.length > 0) {
       for (const w of warnings) {
         const linePrefix = w.line ? `Line ${String(w.line)}: ` : '';
-        this.writer.writeLine(warning(`  ${linePrefix}${w.message}`));
+        this.writer.writeLine(warning(`  Warning: ${linePrefix}${w.message}`));
       }
     }
   }

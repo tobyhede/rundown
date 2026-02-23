@@ -83,8 +83,7 @@ describe('validator strict rules', () => {
       ];
       const diagnostics = validateRunbook(steps as any[]);
       const errorDiagnostics = filterErrors(diagnostics);
-      expect(errorDiagnostics.length).toBeGreaterThan(0);
-      expect(errorDiagnostics[0].message).toContain('NonExistent');
+      expect(errorDiagnostics.some((d) => d.message.includes('NonExistent'))).toBe(true);
     });
   });
 
@@ -227,8 +226,7 @@ describe('validator strict rules', () => {
       ];
       const diagnostics = validateRunbook(steps as any[]);
       const errorDiagnostics = filterErrors(diagnostics);
-      expect(errorDiagnostics.length).toBeGreaterThan(0);
-      expect(errorDiagnostics[0].message).toContain('NonExistent');
+      expect(errorDiagnostics.some((d) => d.message.includes('NonExistent'))).toBe(true);
     });
 
     it('validates GOTO to named substep', () => {
@@ -259,8 +257,7 @@ describe('validator strict rules', () => {
     it('rejects empty steps array', () => {
       const diagnostics = validateRunbook([]);
       const errorDiagnostics = filterErrors(diagnostics);
-      expect(errorDiagnostics.length).toBeGreaterThan(0);
-      expect(errorDiagnostics[0].message).toContain('at least one step');
+      expect(errorDiagnostics.some((d) => d.message.includes('at least one step'))).toBe(true);
     });
   });
 
