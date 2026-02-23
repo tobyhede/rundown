@@ -32,17 +32,17 @@ describe('getStatus', () => {
     expect(getStatus(state, null, null)).toBe('inactive');
   });
 
-  it('prioritises active over stashed', () => {
+  it('prioritizes active over stashed', () => {
     const state = makeState('run-6');
     expect(getStatus(state, { id: 'run-6' }, 'run-6')).toBe('active');
   });
 
-  it('prioritises stashed over completed', () => {
+  it('prioritizes stashed over completed', () => {
     const state = makeState('run-7', { completed: true });
     expect(getStatus(state, null, 'run-7')).toBe('stashed');
   });
 
-  it('prioritises completed over stopped', () => {
+  it('prioritizes completed over stopped', () => {
     const state = makeState('run-8', { completed: true, stopped: true });
     expect(getStatus(state, null, null)).toBe('complete');
   });
