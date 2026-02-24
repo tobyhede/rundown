@@ -5575,5 +5575,269 @@ echo "processing"
       expect(snapshot.context.iterationResults).toEqual(['fail']);
       expect(snapshot.context.substepResults).toEqual(['pass', 'fail']);
     });
+
+    it('FOR with FAIL ANY: RETRY 2 BREAK retries twice then breaks', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              fail: { kind: 'fail' as const, retry: 2, action: { type: 'BREAK' as const } },
+            },
+          },
+          description: 'Loop with RETRY on fail',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: FAIL → iteration retry 1
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(1);
+
+      // Retry 1: FAIL → iteration retry 2
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(2);
+
+      // Retry 2 exhausted: FAIL → BREAK (terminal action)
+      actor.send({ type: 'FAIL' });
+
+      // After BREAK: only 1 iteration (the failed one), step-level PASS ALL fails → STOP
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+    });
+
+    it('FOR with FAIL ANY: RETRY 1 CONTINUE retries once then continues', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: {
+            start: 1,
+            end: 2,
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              fail: { kind: 'fail' as const, retry: 1, action: { type: 'CONTINUE' as const } },
+            },
+          },
+          description: 'Loop with RETRY 1 CONTINUE on fail',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: FAIL → retry
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(1);
+
+      // Retry exhausted: FAIL → CONTINUE (terminal action), advance to iteration 2
+      actor.send({ type: 'FAIL' });
+
+      // iterationRetryCount resets on iteration advance
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(0);
+
+      // Iteration 2: PASS → CONTINUE, loop ends
+      actor.send({ type: 'PASS' });
+
+      // iterationResults: [fail] (iteration 1 from loop-back); iteration 2 computed inline as pass
+      // Step-level PASS ALL: [fail, pass] → fail → STOP
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+    });
+
+    it('FOR iteration-level retry succeeds on second attempt', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: {
+            start: 1,
+            end: 2,
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              fail: { kind: 'fail' as const, retry: 2, action: { type: 'BREAK' as const } },
+            },
+          },
+          description: 'Loop with RETRY on fail',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: FAIL → retry
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(1);
+
+      // Retry 1: PASS → iteration passes, advance to iteration 2
+      actor.send({ type: 'PASS' });
+
+      // iterationRetryCount resets on iteration advance
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(0);
+
+      // Iteration 2: PASS → loop ends
+      actor.send({ type: 'PASS' });
+
+      // All iterations passed → step-level PASS ALL: [pass, pass] → CONTINUE → step 2
+      expect(actor.getSnapshot().value).toBe('step::2');
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+    });
+
+    it('FOR iterationRetryCount resets between iterations', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              fail: { kind: 'fail' as const, retry: 1, action: { type: 'CONTINUE' as const } },
+            },
+          },
+          description: 'Loop with RETRY 1 CONTINUE',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: FAIL → retry
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(1);
+
+      // Retry: PASS → iteration passes, advance to iteration 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(0);
+
+      // Iteration 2: FAIL → retry (counter starts from 0 again)
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(1);
+
+      // Retry: PASS → iteration passes, advance to iteration 3
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(0);
+
+      // Iteration 3: PASS → loop ends
+      actor.send({ type: 'PASS' });
+
+      // iterationResults: [pass, pass] (loop-backed); iteration 3 computed inline as pass
+      // Step-level PASS ALL: all pass → CONTINUE → step 2
+      expect(actor.getSnapshot().value).toBe('step::2');
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+    });
   });
 });

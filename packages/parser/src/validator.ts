@@ -139,22 +139,6 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
             ),
           );
         }
-        if (step.forClause.transitions.pass.retry > 0) {
-          diagnostics.push(
-            error(
-              step.line,
-              `FOR-level PASS transition in step "${step.name}" uses RETRY; RETRY is not yet supported on iteration-level transitions`,
-            ),
-          );
-        }
-        if (step.forClause.transitions.fail.retry > 0) {
-          diagnostics.push(
-            error(
-              step.line,
-              `FOR-level FAIL transition in step "${step.name}" uses RETRY; RETRY is not yet supported on iteration-level transitions`,
-            ),
-          );
-        }
       }
 
       // Parent FOR step must not use NEXT/BREAK in its own transitions

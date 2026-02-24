@@ -25,6 +25,8 @@ export interface RunbookContext {
   retryCount: number;
   /** Retry count for parent-step aggregation retries (separate from substep retryCount). */
   parentRetryCount: number;
+  /** Retry count for iteration-level retries within FOR loops (separate from retryCount and parentRetryCount). */
+  iterationRetryCount: number;
   /** Maximum retries allowed for current RETRY action (source of truth for retry limits) */
   retryMax?: number;
   /** Current substep ID within the active step */
@@ -492,6 +494,7 @@ function buildSimpleGotoAssign(options: {
       : {
           forStack: [] as readonly ForContext[],
           iterationResults: undefined as ('pass' | 'fail')[] | undefined,
+          iterationRetryCount: 0,
         }),
   });
 }
@@ -635,6 +638,7 @@ function buildParentExitAssign(
   const baseAssign = {
     retryCount: 0,
     parentRetryCount: 0,
+    iterationRetryCount: 0,
     substep: extractSubstepFromStateId(exitTarget),
   };
 
@@ -757,8 +761,38 @@ function buildParentStateConfig(
     return false;
   };
 
-  // Loop-back guard (Cases A & C: FOR steps)
+  type GuardFn = (args: { context: RunbookContext }) => boolean;
+
+  // FOR iteration guards — order matters: retry → loop-back → aggregation
   if (hasFor) {
+    // Iteration-level retry: re-run same iteration's substeps before applying terminal action
+    const pushIterationRetry = (
+      kind: 'pass' | 'fail',
+      transition: { retry: number; action: Action },
+    ): void => {
+      if (transition.retry <= 0) return;
+      always.push({
+        guard: ({ context }: { context: RunbookContext }) => {
+          const iterResult = computeIterationResult(context);
+          return iterResult === kind && context.iterationRetryCount < transition.retry;
+        },
+        target: firstSubstepStateId,
+        actions: assign({
+          iterationRetryCount: ({ context }: { context: RunbookContext }) =>
+            context.iterationRetryCount + 1,
+          // Reset retryCount so substep-level retries start fresh on re-run
+          retryCount: 0,
+          retryMax: transition.retry,
+          lastAction: { type: 'RETRY' as const },
+          substepResults: [] as ('pass' | 'fail')[],
+          substep: firstSubstep?.id,
+        }),
+      });
+    };
+    pushIterationRetry('pass', forTransitions.pass);
+    pushIterationRetry('fail', forTransitions.fail);
+
+    // Loop-back: advance to next iteration
     always.push({
       guard: ({ context }: { context: RunbookContext }) => {
         if (context.lastAction?.type === 'BREAK') return false;
@@ -773,19 +807,17 @@ function buildParentStateConfig(
           if (!top) return context.forStack;
           return [{ ...top, iteration: nextIteration(top), currentValue: undefined }];
         },
-        // Aggregate substepResults into a single iteration result, append to iterationResults
         iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] => {
           const results = context.iterationResults ?? [];
           return [...results, computeIterationResult(context)];
         },
         substepResults: [] as ('pass' | 'fail')[],
         retryCount: 0,
+        iterationRetryCount: 0,
         substep: firstSubstep?.id,
       }),
     });
   }
-
-  type GuardFn = (args: { context: RunbookContext }) => boolean;
 
   // Build retry-aware transition entries for one aggregated outcome branch.
   const buildOutcomeEntries = (
@@ -824,6 +856,7 @@ function buildParentStateConfig(
           forStack: [] as readonly ForContext[],
           iterationResults: [] as ('pass' | 'fail')[],
           substepResults: [] as ('pass' | 'fail')[],
+          iterationRetryCount: 0,
           lastMessage: undefined as string | undefined,
           substep: firstSubstep?.id,
         }),
@@ -860,6 +893,7 @@ function buildParentStateConfig(
       forStack: [] as readonly ForContext[],
       retryCount: 0,
       parentRetryCount: 0,
+      iterationRetryCount: 0,
       substep: extractSubstepFromStateId(nextTarget),
     };
 
@@ -1168,6 +1202,7 @@ function buildGotoTransition(
         retryCount: isGotoToSelf
           ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
           : 0,
+        iterationRetryCount: 0,
         substep: resolvedSubstepId,
         ...(!isImplicit
           ? {
@@ -1424,6 +1459,7 @@ export function compileRunbookToMachine(
                   ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
                   : 0,
               retryCount: 0,
+              iterationRetryCount: 0,
               substep: ({ event }: { event: RunbookEvent }) =>
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
               ...(!forStepForTarget.implicit
@@ -1518,6 +1554,7 @@ export function compileRunbookToMachine(
     context: {
       retryCount: 0,
       parentRetryCount: 0,
+      iterationRetryCount: 0,
       retryMax: undefined,
       substep: undefined,
       variables: {},

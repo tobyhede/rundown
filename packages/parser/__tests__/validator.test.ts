@@ -712,7 +712,7 @@ describe('validator strict rules', () => {
         ).toBe(true);
       });
 
-      it('rejects FOR with RETRY on iteration-level transitions', () => {
+      it('accepts FOR with RETRY on iteration-level transitions', () => {
         const steps: Step[] = [
           {
             name: '1',
@@ -740,13 +740,7 @@ describe('validator strict rules', () => {
         ];
         const diagnostics = validateRunbook(steps);
         const errors = filterErrors(diagnostics);
-        expect(
-          errors.some(
-            (e) =>
-              e.message.includes('FOR-level PASS transition') &&
-              e.message.includes('RETRY is not yet supported'),
-          ),
-        ).toBe(true);
+        expect(errors).toHaveLength(0);
       });
     });
   });
