@@ -120,7 +120,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         );
       }
 
-      // FOR iteration-level transitions must only use CONTINUE or BREAK
+      // FOR iteration-level transitions must only use CONTINUE or BREAK, no RETRY
       if (step.forClause.transitions) {
         const allowedActions = ['CONTINUE', 'BREAK'];
         if (!allowedActions.includes(step.forClause.transitions.pass.action.type)) {
@@ -136,6 +136,22 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
             error(
               step.line,
               `FOR-level FAIL transition in step "${step.name}" uses ${step.forClause.transitions.fail.action.type}; only CONTINUE or BREAK are allowed`,
+            ),
+          );
+        }
+        if (step.forClause.transitions.pass.retry > 0) {
+          diagnostics.push(
+            error(
+              step.line,
+              `FOR-level PASS transition in step "${step.name}" uses RETRY; RETRY is not yet supported on iteration-level transitions`,
+            ),
+          );
+        }
+        if (step.forClause.transitions.fail.retry > 0) {
+          diagnostics.push(
+            error(
+              step.line,
+              `FOR-level FAIL transition in step "${step.name}" uses RETRY; RETRY is not yet supported on iteration-level transitions`,
             ),
           );
         }

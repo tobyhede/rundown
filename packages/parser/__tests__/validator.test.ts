@@ -711,6 +711,43 @@ describe('validator strict rules', () => {
           ),
         ).toBe(true);
       });
+
+      it('rejects FOR with RETRY on iteration-level transitions', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Review',
+            forClause: {
+              variable: 'pass',
+              start: 1,
+              end: 3,
+              transitions: {
+                all: true,
+                pass: {
+                  kind: 'pass' as const,
+                  retry: 2,
+                  action: { type: 'BREAK' as const },
+                },
+                fail: {
+                  kind: 'fail' as const,
+                  retry: 0,
+                  action: { type: 'CONTINUE' as const },
+                },
+              },
+            },
+            substeps: [{ id: '1', description: 'Check' }],
+          },
+        ];
+        const diagnostics = validateRunbook(steps);
+        const errors = filterErrors(diagnostics);
+        expect(
+          errors.some(
+            (e) =>
+              e.message.includes('FOR-level PASS transition') &&
+              e.message.includes('RETRY is not yet supported'),
+          ),
+        ).toBe(true);
+      });
     });
   });
 });
