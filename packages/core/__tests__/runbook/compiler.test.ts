@@ -4313,6 +4313,39 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('step::2::1');
       expect(actor.getSnapshot().context.forStack[0]?.stepId).toBe('2');
     });
+
+    it('iterates a FOR step with multiple shorthand runbooks', () => {
+      const steps = createRunbook(`
+## 1. Review the plan
+- FOR pass IN 1 TO 2
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+- review-technical-accuracy.runbook.md
+- review-structural-integrity.runbook.md
+- review-build-runtime.runbook.md
+- review-risk-safety.runbook.md
+
+## 2. Done
+- PASS: COMPLETE
+`);
+
+      // All four runbooks canonicalized into single substep
+      expect(steps[0].substeps?.[0].workflows).toHaveLength(4);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      actor.send({ type: 'PASS' }); // iteration 1
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(2);
+
+      actor.send({ type: 'PASS' }); // iteration 2 -> PASS ALL -> step 2
+      expect(actor.getSnapshot().value).toBe('step::2');
+    });
   });
 
   describe('non-FOR substep aggregation', () => {

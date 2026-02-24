@@ -46,7 +46,7 @@ describe('renderTransitions', () => {
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'failed' } },
     });
-    expect(result).toBe('- PASS: CONTINUE\n- FAIL: STOP "failed"');
+    expect(result).toBe('- PASS ALL: CONTINUE\n- FAIL ANY: STOP "failed"');
   });
 
   it('renders transitions with retry prefix', () => {
@@ -55,7 +55,7 @@ describe('renderTransitions', () => {
       pass: { kind: 'pass', retry: 2, action: { type: 'STOP' } },
       fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
     });
-    expect(result).toBe('- PASS: RETRY 2 STOP\n- FAIL: CONTINUE');
+    expect(result).toBe('- PASS ALL: RETRY 2 STOP\n- FAIL ANY: CONTINUE');
   });
 });
 
@@ -76,7 +76,7 @@ describe('renderSubstep', () => {
       description: 'With child runbook',
       workflows: ['task.runbook.md'],
     };
-    expect(renderSubstep(substep, '1')).toBe('### 1.1 With child runbook [@task.runbook.md]');
+    expect(renderSubstep(substep, '1')).toBe('### 1.1 With child runbook\n\n- task.runbook.md');
   });
 });
 
@@ -130,8 +130,8 @@ describe('renderStep', () => {
     };
     const result = renderStep(step);
     expect(result).toContain('- FOR pass IN 2');
-    expect(result).toContain('- PASS: CONTINUE');
-    expect(result).toContain('- FAIL: GOTO Synthesize');
+    expect(result).toContain('- PASS ANY: CONTINUE');
+    expect(result).toContain('- FAIL ALL: GOTO Synthesize');
   });
 
   it('renders shorthand for implicit workflow-only substep', () => {

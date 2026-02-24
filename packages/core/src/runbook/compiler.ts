@@ -126,9 +126,11 @@ const DEFAULT_TRANSITIONS: Transitions = {
  *
  * Child runbook outcomes should bubble to the parent aggregation state so
  * parent PASS ALL / FAIL ANY can evaluate iteration-wide results.
+ * The `all` value is inert here because both pass and fail use CONTINUE —
+ * aggregation only matters when transitions diverge (e.g., CONTINUE vs STOP).
  */
 const DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS: Transitions = {
-  all: true,
+  all: true, // Inert: both pass/fail CONTINUE, so ALL/ANY distinction has no effect
   pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
 };

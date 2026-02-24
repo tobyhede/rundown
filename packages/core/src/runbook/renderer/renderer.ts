@@ -43,8 +43,10 @@ function renderTransitionAction(transition: TransitionObject): string {
  */
 export function renderTransitions(transitions: Transitions): string {
   const lines: string[] = [];
-  lines.push(`- PASS: ${renderTransitionAction(transitions.pass)}`);
-  lines.push(`- FAIL: ${renderTransitionAction(transitions.fail)}`);
+  const passAgg = transitions.all ? ' ALL' : ' ANY';
+  const failAgg = transitions.all ? ' ANY' : ' ALL';
+  lines.push(`- PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
+  lines.push(`- FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
   return lines.join('\n');
 }
 
@@ -60,10 +62,26 @@ export function renderTransitions(transitions: Transitions): string {
  */
 export function renderSubstep(substep: Substep, parentStepName: string): string {
   const agentSuffix = substep.agentType ? ` (${substep.agentType})` : '';
-  const runbooksSuffix = substep.workflows?.length ? ` [@${substep.workflows.join(', ')}]` : '';
-  return `### ${parentStepName}.${substep.id} ${substep.description}${agentSuffix}${runbooksSuffix}`;
+  const lines: string[] = [];
+  lines.push(`### ${parentStepName}.${substep.id} ${substep.description}${agentSuffix}`);
+  if (substep.workflows?.length) {
+    lines.push('');
+    for (const wf of substep.workflows) {
+      lines.push(`- ${wf}`);
+    }
+  }
+  return lines.join('\n');
 }
 
+/**
+ * Render a FOR clause to its DSL bullet-point string.
+ *
+ * Handles all FOR variants: named/unnamed ranges, implicit start,
+ * and data-source references (full and windowed).
+ *
+ * @param forClause - The FOR clause to render
+ * @returns DSL string (e.g., "- FOR pass IN 1 TO 2")
+ */
 function renderForClause(forClause: NonNullable<Step['forClause']>): string {
   if (forClause.source !== undefined) {
     if (forClause.start === 1 && forClause.end === undefined) {
@@ -85,6 +103,20 @@ function renderForClause(forClause: NonNullable<Step['forClause']>): string {
   return `- FOR ${String(forClause.start)} TO ${String(forClause.end)}`;
 }
 
+/**
+ * Detect whether a step's single substep is a synthetic workflow-only substep
+ * created by the parser's shorthand canonicalization.
+ *
+ * Returns the substep if all five conditions hold:
+ * 1. Step has exactly one substep
+ * 2. Substep ID is "1"
+ * 3. Substep has workflows
+ * 4. Substep has no command, transitions, or agentType
+ * 5. Substep description is empty
+ *
+ * @param step - The step to inspect
+ * @returns The shorthand substep, or null if not shorthand
+ */
 function getShorthandWorkflowSubstep(step: Step): Substep | null {
   if (step.substeps?.length !== 1) return null;
   const candidate = step.substeps[0];
