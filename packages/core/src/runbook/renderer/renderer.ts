@@ -64,6 +64,37 @@ export function renderSubstep(substep: Substep, parentStepName: string): string 
   return `### ${parentStepName}.${substep.id} ${substep.description}${agentSuffix}${runbooksSuffix}`;
 }
 
+function renderForClause(forClause: NonNullable<Step['forClause']>): string {
+  if (forClause.source !== undefined) {
+    if (forClause.start === 1 && forClause.end === undefined) {
+      return `- FOR ${forClause.variable} IN {{ ${forClause.source} }}`;
+    }
+    return `- FOR ${forClause.variable} IN ${String(forClause.start)} TO ${String(forClause.end)} OF {{ ${forClause.source} }}`;
+  }
+
+  if (forClause.variable) {
+    if (forClause.start === 1) {
+      return `- FOR ${forClause.variable} IN ${String(forClause.end)}`;
+    }
+    return `- FOR ${forClause.variable} IN ${String(forClause.start)} TO ${String(forClause.end)}`;
+  }
+
+  if (forClause.start === 1) {
+    return `- FOR ${String(forClause.end)}`;
+  }
+  return `- FOR ${String(forClause.start)} TO ${String(forClause.end)}`;
+}
+
+function getShorthandWorkflowSubstep(step: Step): Substep | null {
+  if (step.substeps?.length !== 1) return null;
+  const candidate = step.substeps[0];
+  if (candidate.id !== '1') return null;
+  if (!candidate.workflows?.length) return null;
+  if (candidate.command || candidate.transitions || candidate.agentType) return null;
+  if (candidate.description !== '') return null;
+  return candidate;
+}
+
 /**
  * Render a Step to its Markdown representation.
  *
@@ -81,20 +112,30 @@ export function renderStep(step: Step): string {
   lines.push(`## ${stepId}. ${step.description}`);
   lines.push('');
 
-  // Child runbooks (step-level)
-  if (step.workflows?.length) {
-    for (const wf of step.workflows) {
-      lines.push(` - ${wf}`);
-    }
+  if (step.forClause) {
+    lines.push(renderForClause(step.forClause));
+  }
+
+  // Transitions
+  if (step.transitions) {
+    lines.push(renderTransitions(step.transitions));
+  }
+
+  if (step.forClause || step.transitions) {
     lines.push('');
   }
 
-  // Command
-  if (step.command) {
-    lines.push('```bash');
-    lines.push(step.command.code);
-    lines.push('```');
+  const shorthandSubstep = getShorthandWorkflowSubstep(step);
+  if (shorthandSubstep) {
+    if (shorthandSubstep.prompt) {
+      lines.push(shorthandSubstep.prompt);
+      lines.push('');
+    }
+    for (const wf of shorthandSubstep.workflows ?? []) {
+      lines.push(`- ${wf}`);
+    }
     lines.push('');
+    return lines.join('\n').trim();
   }
 
   // Prompt
@@ -103,9 +144,11 @@ export function renderStep(step: Step): string {
     lines.push('');
   }
 
-  // Transitions
-  if (step.transitions) {
-    lines.push(renderTransitions(step.transitions));
+  // Command
+  if (step.command) {
+    lines.push('```bash');
+    lines.push(step.command.code);
+    lines.push('```');
     lines.push('');
   }
 

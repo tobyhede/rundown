@@ -115,6 +115,41 @@ describe('renderStep', () => {
     expect(result).toContain('npm test');
     expect(result).toContain('```');
   });
+
+  it('renders FOR clause before transitions', () => {
+    const step: Step = {
+      name: '2',
+      description: 'Review the plan',
+      forClause: { variable: 'pass', start: 1, end: 2 },
+      transitions: {
+        all: false,
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: 'Synthesize' } } },
+      },
+      substeps: [{ id: '1', description: 'Review' }],
+    };
+    const result = renderStep(step);
+    expect(result).toContain('- FOR pass IN 2');
+    expect(result).toContain('- PASS: CONTINUE');
+    expect(result).toContain('- FAIL: GOTO Synthesize');
+  });
+
+  it('renders shorthand for implicit workflow-only substep', () => {
+    const step: Step = {
+      name: '2',
+      description: 'Review the plan',
+      substeps: [
+        {
+          id: '1',
+          description: '',
+          workflows: ['review-technical-accuracy.runbook.md'],
+        },
+      ],
+    };
+    const result = renderStep(step);
+    expect(result).toContain('- review-technical-accuracy.runbook.md');
+    expect(result).not.toContain('### 2.1');
+  });
 });
 
 describe('renderStep', () => {
@@ -237,5 +272,26 @@ More description`;
 
     const parsed = parseRunbook(markdown);
     expect(parsed[0].substeps?.[0].workflows).toEqual(['setup.runbook.md']);
+  });
+
+  it('round-trips step-level runbook-list shorthand via implicit substep', () => {
+    const original = `## 1. Review the plan
+- FOR pass IN 1 TO 2
+- FAIL ANY: GOTO Synthesize
+
+- review-technical-accuracy.runbook.md
+- review-structural-integrity.runbook.md
+
+## Synthesize`;
+
+    const parsed1 = parseRunbook(original);
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    const parsed2 = parseRunbook(rendered);
+
+    expect(parsed2[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
+    expect(parsed2[0].substeps?.[0]).toMatchObject({
+      id: '1',
+      workflows: ['review-technical-accuracy.runbook.md', 'review-structural-integrity.runbook.md'],
+    });
   });
 });

@@ -1643,6 +1643,18 @@ tags:
 - tests.runbook.md
 ```
 
+The step-level runbook list above is shorthand for an implicit `1.1` substep. Equivalent explicit form:
+
+```rundown
+## 1. Verify
+- FAIL ANY: STOP "Verification failed"
+
+### 1.1
+- lint.runbook.md
+- types.runbook.md
+- tests.runbook.md
+```
+
 
 ### substep-runbooks.runbook.md
 

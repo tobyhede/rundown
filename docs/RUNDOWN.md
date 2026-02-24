@@ -229,6 +229,25 @@ Steps can iterate their substeps over a numeric range using a FOR annotation. FO
 - FAIL: BREAK
 ````
 
+Step-level runbook lists are shorthand for an implicit `.1` substep, so FOR execution is equivalent across these forms:
+
+````markdown
+## 2. Review the plan
+- FOR pass IN 1 TO 2
+- FAIL ANY: GOTO Synthesize
+
+- review-technical-accuracy.runbook.md
+````
+
+````markdown
+## 2. Review the plan
+- FOR pass IN 1 TO 2
+- FAIL ANY: GOTO Synthesize
+
+### 2.1
+- review-technical-accuracy.runbook.md
+````
+
 See [SPEC.md FOR Steps](./SPEC.md#for-steps) for the full grammar and all clause variants.
 
 **FOR clause variants:**
@@ -244,8 +263,9 @@ See [SPEC.md FOR Steps](./SPEC.md#for-steps) for the full grammar and all clause
 
 **Loop variable expansion:**
 
-The named loop variable and `{{Index}}` are expanded per-iteration:
+The named loop variable, `{{Index}}`, and `{{Step}}` are expanded per-iteration:
 - `{{Index}}` - Current iteration number (1-based), available inside all FOR substeps
+- `{{Step}}` - Qualified execution location (for shorthand runbook-list steps this is `N.1`)
 - `{{var}}` - Named loop variable. For numeric ranges, equals the iteration index. For data sources (array/file), holds the current data element.
 
 These are expanded per-iteration, unlike template variables which are expanded once at `rd run` time.

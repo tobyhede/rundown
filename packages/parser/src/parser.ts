@@ -523,16 +523,42 @@ function finalizeStep(
 
   const transitions = convertToTransitions(pendingConditionals);
   const runbooks = extractRunbookList(step.content);
+  const prompt = promptText.trim() || undefined;
+
+  // Step-level runbook lists are syntax sugar for a single implicit substep.
+  if (runbooks.length > 0) {
+    if (step.command || step.substeps.length > 0) {
+      throw new RunbookSyntaxError(
+        `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
+      );
+    }
+
+    const syntheticSubstep: Substep = {
+      id: '1',
+      description: '',
+      prompt,
+      workflows: runbooks,
+      line: step.line,
+    };
+
+    return {
+      name: step.name,
+      forClause: step.forClause,
+      description: step.description,
+      transitions: transitions ?? undefined,
+      substeps: [syntheticSubstep],
+      line: step.line,
+    };
+  }
 
   return {
     name: step.name,
     forClause: step.forClause,
     description: step.description,
     command: step.command,
-    prompt: promptText.trim() || undefined,
+    prompt,
     transitions: transitions ?? undefined,
     substeps: step.substeps.length > 0 ? step.substeps : undefined,
-    workflows: runbooks.length > 0 ? runbooks : undefined,
     line: step.line,
   };
 }

@@ -82,6 +82,8 @@ Note: `prompt` alone (without a language) is valid for text-only prompts, e.g., 
 where runbooks is:
   - runbook_path [ ... ]
 
+Step-level `runbooks` syntax is shorthand for an implicit substep body (`### N.1`) that contains that runbook list.
+
 where transition is:
   - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result
 
@@ -193,6 +195,7 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 - FOR must appear before transitions in the step's bullet list
 - `NEXT` and `BREAK` actions are only valid within substeps of a FOR step
 - `AT` is only valid when the GOTO target is a FOR step (cross-step allowed, but the target must be FOR and have substeps)
+- Step-level runbook lists satisfy the FOR-substep requirement via implicit substep `1`
 - Parent FOR step transitions aggregate across iterations using ALL/ANY modifiers
 
 ---
@@ -201,7 +204,7 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 
 | Variable | Value | Available |
 |----------|-------|-----------|
-| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`) | Always |
+| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`; step-level runbook-list shorthand executes as `N.1`) | Always |
 | `{{Index}}` | Current loop iteration number (1-based) | Inside FOR steps |
 
 These use PascalCase, consistent with other built-in variables (Date, WorkPath). `{{Step}}` is expanded per-step. The loop variable (if named) and `{{Index}}` are expanded per-iteration. For data source loops, the named variable holds the data element while `{{Index}}` holds the iteration number.

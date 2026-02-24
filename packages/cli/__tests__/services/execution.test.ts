@@ -102,6 +102,11 @@ describe('execution service', () => {
       expect(vars).toEqual({ Step: '3.1' });
     });
 
+    it('returns Step as N.1 for shorthand-canonicalized workflow steps', () => {
+      const vars = buildStepVariables('2', '1');
+      expect(vars).toEqual({ Step: '2.1' });
+    });
+
     it('returns Step for named step', () => {
       const vars = buildStepVariables('ErrorHandler', undefined);
       expect(vars).toEqual({ Step: 'ErrorHandler' });

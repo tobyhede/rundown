@@ -22,9 +22,10 @@ tags:
   - composition
 ---
 
+Step-level runbook list shorthand below is equivalent to `### 1.1` with the same runbook list.
+
 ## 1. Verify
 - FAIL ANY: STOP "Verification failed"
 - lint.runbook.md
 - types.runbook.md
 - tests.runbook.md
-

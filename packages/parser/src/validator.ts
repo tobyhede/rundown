@@ -97,17 +97,16 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
   for (const step of steps) {
     // Conformance Rule 4: Exclusivity (Step level)
-    // A step can optionally have a prompt, plus EXACTLY ONE OF: command, substeps, or runbooks.
+    // A step can optionally have a prompt, plus at most one executable body kind.
     const hasCommand = step.command !== undefined;
     const hasSubsteps = step.substeps !== undefined && step.substeps.length > 0;
-    const hasRunbooks = step.workflows !== undefined && step.workflows.length > 0;
 
-    const contentCount = [hasCommand, hasSubsteps, hasRunbooks].filter(Boolean).length;
+    const contentCount = [hasCommand, hasSubsteps].filter(Boolean).length;
     if (contentCount > 1) {
       diagnostics.push(
         error(
           step.line,
-          `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps, Runbook List}.`,
+          `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
         ),
       );
     }

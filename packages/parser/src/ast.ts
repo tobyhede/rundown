@@ -94,8 +94,6 @@ export interface Step {
   readonly transitions?: Transitions;
   /** Child substeps (H3 headers) */
   readonly substeps?: readonly Substep[];
-  /** Referenced runbook files (.runbook.md) */
-  readonly workflows?: readonly string[];
   /** Source line number for error reporting */
   readonly line?: number;
 }

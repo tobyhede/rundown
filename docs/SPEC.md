@@ -45,7 +45,7 @@ Step content must appear in this strict order:
 1.  **FOR Annotation**: Loop definition (optional).
 2.  **Transitions**: Control flow rules (optional).
 3.  **Prompt**: Text instructions.
-4.  **Body**: One of: Code Block, Substeps, or Runbooks.
+4.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for an implicit substep (`.1`).
 
 ## 3. Step Bodies
 
@@ -71,11 +71,25 @@ Nested steps defined by H3 (`###`) headers.
 *   **Identifiers**: `### 1`, `### 1.1` (sequential), or `### Name` (named).
 *   **Aggregation**: Parent step outcome is derived from substeps via transitions (`ALL`/`ANY`).
 
-### 3.3 Runbooks
+### 3.3 Runbook List Shorthand
 List of external runbooks to execute.
 ```markdown
 - ./deploy-db.runbook.md
 - ./deploy-api.runbook.md
+```
+
+At step level, this syntax is canonicalized to an implicit substep with ID `1`.
+These two forms are execution-equivalent:
+
+```markdown
+## 2. Review the plan
+- review-technical-accuracy.runbook.md
+```
+
+```markdown
+## 2. Review the plan
+### 2.1
+- review-technical-accuracy.runbook.md
 ```
 
 ## 4. Control Flow
@@ -88,7 +102,7 @@ Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
 | Component | Values | Description |
 | :--- | :--- | :--- |
 | **Result** | `PASS` (`YES`), `FAIL` (`NO`) | Outcome of the step's body. |
-| **Aggregation** | `ALL`, `ANY` | For substeps/runbooks. Default: `PASS ALL`, `FAIL ANY`. |
+| **Aggregation** | `ALL`, `ANY` | For substeps. Step-level runbook-list shorthand is canonicalized to substeps. Default: `PASS ALL`, `FAIL ANY`. |
 
 Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` (pessimistic — any failure stops), or `PASS ANY` with `FAIL ALL` (optimistic — only total failure stops). Non-complementary combinations are invalid because they create evaluation gaps (ALL/ALL) or overlaps (ANY/ANY).
 
@@ -139,7 +153,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
 *   **No descending data sources**: Descending windows (`start > end`) are not supported for data sources.
 *   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
-*   **Constraint**: FOR steps MUST have substeps.
+*   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substep `1`.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
 *   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.
 
@@ -150,7 +164,7 @@ Variables use Handlebars syntax: `{{variable}}`.
 | Source | Scope | Description |
 | :--- | :--- | :--- |
 | CLI (`--var`) | Global | Expanded at startup. |
-| `{{Step}}` | Step | Current step ID (e.g., `1.2`). |
+| `{{Step}}` | Step | Current step ID (e.g., `1`, `1.2`; step-level runbook-list shorthand executes as `N.1`). |
 | `{{Index}}` | Loop | Current iteration number. |
 | Loop Var | Loop | Current item/index (e.g., `{{batch}}`). |
 
@@ -174,9 +188,13 @@ scenarios:
 1.  **Strict Hierarchy**: H2 -> H3. No H4.
 2.  **Sequential IDs**: 1, 2, 3... (gaps invalid).
 3.  **Strict Ordering**: FOR -> Transitions -> Prompt -> Body.
-4.  **Exclusivity**: Only one body type (Code OR Substeps OR Runbooks).
+4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
 5.  **Single Command**: Max one executable block per step.
 6.  **Loop Safety**: `NEXT`/`BREAK` only valid inside FOR substeps.
 7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
 9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.
+
+## 9. Compatibility
+
+Step-level runbook lists are represented internally as substeps (`N.1`). In-progress sessions created before this model are not auto-migrated and must be restarted after upgrade.

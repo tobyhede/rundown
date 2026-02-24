@@ -195,7 +195,6 @@ export const StepSchema = z.object({
   prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
   transitions: TransitionsSchema.optional(),
   substeps: z.array(SubstepSchema).readonly().optional(),
-  workflows: z.array(z.string()).readonly().optional(),
   line: z.number().optional(),
 });
 

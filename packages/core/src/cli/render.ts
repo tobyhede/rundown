@@ -25,11 +25,13 @@ export function renderStepForCLI(
 
   const isStep = 'name' in item;
   const id = isStep ? item.name : item.id;
+  const description = item.description.trim();
 
   const headingPrefix = isStep ? '##' : '###';
-  const heading = isStep
-    ? `${headingPrefix} ${id}. ${item.description}`
-    : `${headingPrefix} ${instanceNumber ? `${instanceNumber}.${id}` : id}. ${item.description}`;
+  const headingId = isStep ? id : instanceNumber ? `${instanceNumber}.${id}` : id;
+  const heading = description
+    ? `${headingPrefix} ${headingId}. ${description}`
+    : `${headingPrefix} ${headingId}`;
 
   lines.push(heading);
 

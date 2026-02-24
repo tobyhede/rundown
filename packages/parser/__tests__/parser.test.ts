@@ -967,7 +967,7 @@ Review the tasks carefully.
     expect(sub?.workflows).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
   });
 
-  it('filters runbook refs at step level and populates workflows', () => {
+  it('canonicalizes step-level runbook refs into an implicit substep', () => {
     const md = `## 1 Step
 - PASS: CONTINUE
 - FAIL: STOP
@@ -976,8 +976,61 @@ Review the tasks carefully.
 - verify.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].workflows).toEqual(['deploy.runbook.md', 'verify.runbook.md']);
     expect(steps[0].prompt).toBeUndefined();
+    expect(steps[0].substeps?.[0]).toMatchObject({
+      id: '1',
+      description: '',
+      workflows: ['deploy.runbook.md', 'verify.runbook.md'],
+    });
+  });
+
+  it('moves step-level prompt onto the implicit substep', () => {
+    const md = `## 1 Step
+- PASS: CONTINUE
+- FAIL: STOP
+
+Review this checklist.
+
+- deploy.runbook.md
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBeUndefined();
+    expect(steps[0].substeps?.[0]).toMatchObject({
+      id: '1',
+      description: '',
+      prompt: 'Review this checklist.',
+      workflows: ['deploy.runbook.md'],
+    });
+  });
+
+  it('canonicalizes FOR + step-level runbook list into a FOR step with one substep', () => {
+    const md = `## 1. Review the plan
+- FOR pass IN 1 TO 2
+- FAIL ANY: GOTO Synthesize
+
+- review-technical-accuracy.runbook.md
+- review-structural-integrity.runbook.md
+- review-build-runtime.runbook.md
+- review-risk-safety.runbook.md
+
+## Synthesize
+- PASS: COMPLETE
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
+    expect(steps[0].substeps?.[0]).toMatchObject({
+      id: '1',
+      workflows: [
+        'review-technical-accuracy.runbook.md',
+        'review-structural-integrity.runbook.md',
+        'review-build-runtime.runbook.md',
+        'review-risk-safety.runbook.md',
+      ],
+    });
+    expect(steps[0].transitions?.fail.action).toEqual({
+      type: 'GOTO',
+      target: { step: 'Synthesize' },
+    });
   });
 });
 
@@ -1022,7 +1075,7 @@ describe('regex boundaries and runbook patterns', () => {
 `;
     const steps = parseRunbook(md);
     // "task.runbook.md extra text" should NOT be parsed as a runbook ref
-    expect(steps[0].workflows).toBeUndefined();
+    expect(steps[0].substeps).toBeUndefined();
   });
 
   it('does not match bare .runbook.md without a filename prefix', () => {
@@ -1035,7 +1088,7 @@ describe('regex boundaries and runbook patterns', () => {
     const steps = parseRunbook(md);
     // ".runbook.md" alone has no prefix — \S+ in the regex must capture at
     // least one char before the ".runbook.md" suffix, so this cannot match.
-    expect(steps[0].workflows).toBeUndefined();
+    expect(steps[0].substeps).toBeUndefined();
   });
 
   it('matches simple runbook ref', () => {
@@ -1046,7 +1099,7 @@ describe('regex boundaries and runbook patterns', () => {
 - simple.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].workflows).toEqual(['simple.runbook.md']);
+    expect(steps[0].substeps?.[0].workflows).toEqual(['simple.runbook.md']);
   });
 
   it('matches path-like runbook ref', () => {
@@ -1057,7 +1110,7 @@ describe('regex boundaries and runbook patterns', () => {
 - path/to/complex-name.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].workflows).toEqual(['path/to/complex-name.runbook.md']);
+    expect(steps[0].substeps?.[0].workflows).toEqual(['path/to/complex-name.runbook.md']);
   });
 
   it('does not treat .runbook.md.txt as a runbook ref', () => {
@@ -1068,7 +1121,7 @@ describe('regex boundaries and runbook patterns', () => {
 - task.runbook.md.txt
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].workflows).toBeUndefined();
+    expect(steps[0].substeps).toBeUndefined();
   });
 });
 
@@ -1201,14 +1254,14 @@ Do work.
     expect(steps[0].substeps![0].id).toBe('1');
   });
 
-  it('returns undefined workflows when step has no runbook refs', () => {
+  it('does not synthesize substeps when step has no runbook refs', () => {
     const md = `## 1 Step
 - PASS: COMPLETE
 
 Just text.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].workflows).toBeUndefined();
+    expect(steps[0].substeps).toBeUndefined();
   });
 });
 
@@ -1419,7 +1472,6 @@ Do second.
     expect(steps[0].prompt).toBeUndefined();
     expect(steps[0].command).toBeUndefined();
     expect(steps[0].substeps).toBeUndefined();
-    expect(steps[0].workflows).toBeUndefined();
     expect(steps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
   });
 

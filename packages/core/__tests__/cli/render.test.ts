@@ -153,6 +153,17 @@ describe('substep rendering', () => {
     expect(result).toContain('### 2.1. First Substep');
   });
 
+  it('renders substep with empty description as heading-only ID', () => {
+    const substep: Substep = {
+      id: '1',
+      description: '',
+    };
+
+    const result = renderStepForCLI(substep, '2', '1');
+
+    expect(result).toBe('### 2.1');
+  });
+
   it('does not render substep command in output (shown via printCommandExec)', () => {
     const substep: Substep = {
       id: '1',

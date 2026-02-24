@@ -122,6 +122,18 @@ const DEFAULT_TRANSITIONS: Transitions = {
 };
 
 /**
+ * Default transitions for runbook-list substeps.
+ *
+ * Child runbook outcomes should bubble to the parent aggregation state so
+ * parent PASS ALL / FAIL ANY can evaluate iteration-wide results.
+ */
+const DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS: Transitions = {
+  all: true,
+  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+};
+
+/**
  * Internal helper to format state IDs for the XState machine.
  * Uses _ instead of . to avoid XState path resolution issues.
  */
@@ -1179,11 +1191,15 @@ export function compileRunbookToMachine(
     const stepName = step.name;
     if (step.substeps && step.substeps.length > 0) {
       step.substeps.forEach((substep) => {
+        const inferredTransitions =
+          substep.workflows && substep.workflows.length > 0
+            ? DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS
+            : DEFAULT_TRANSITIONS;
         allStates.push({
           id: formatStateId(stepName, substep.id),
           stepName,
           substepId: substep.id,
-          transitions: substep.transitions ?? DEFAULT_TRANSITIONS,
+          transitions: substep.transitions ?? inferredTransitions,
         });
       });
       // Parent aggregation state

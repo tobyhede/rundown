@@ -4220,6 +4220,101 @@ echo "processing"
     });
   });
 
+  describe('FOR shorthand canonicalization', () => {
+    function createRunbook(markdown: string): Step[] {
+      const runbook = parseRunbookDocument(markdown);
+      return [...runbook.steps];
+    }
+
+    it('iterates a FOR step defined via step-level runbook-list shorthand', () => {
+      const steps = createRunbook(`
+## 1. Review the plan
+- FOR pass IN 1 TO 2
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+- review-technical-accuracy.runbook.md
+
+## 2. Done
+- PASS: COMPLETE
+`);
+
+      expect(steps[0].substeps?.[0]).toMatchObject({
+        id: '1',
+        workflows: ['review-technical-accuracy.runbook.md'],
+      });
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      actor.send({ type: 'PASS' }); // iteration 1 complete -> loop back to iteration 2
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(2);
+
+      actor.send({ type: 'PASS' }); // iteration 2 complete -> PASS ALL -> step 2
+      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+    });
+
+    it('evaluates FAIL ANY across shorthand iterations and routes to GOTO target', () => {
+      const steps = createRunbook(`
+## 1. Review the plan
+- FOR pass IN 1 TO 2
+- PASS ALL: CONTINUE
+- FAIL ANY: GOTO Synthesize
+
+- review-technical-accuracy.runbook.md
+
+## 2. Skipped
+- PASS: COMPLETE
+
+## Synthesize
+- PASS: COMPLETE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // iteration 1
+      actor.send({ type: 'FAIL' }); // iteration 2 -> FAIL ANY -> GOTO Synthesize
+
+      expect(actor.getSnapshot().value).toBe('step::Synthesize');
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
+    });
+
+    it('GOTO to shorthand-canonicalized FOR step enters substep .1', () => {
+      const steps = createRunbook(`
+## 1. Start
+- PASS: GOTO 2
+- FAIL: STOP
+
+## 2. Review the plan
+- FOR pass IN 1 TO 2
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+- review-technical-accuracy.runbook.md
+
+## 3. Done
+- PASS: COMPLETE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().value).toBe('step::1');
+
+      actor.send({ type: 'PASS' }); // GOTO 2 -> first substep
+      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().context.forStack[0]?.stepId).toBe('2');
+    });
+  });
+
   describe('non-FOR substep aggregation', () => {
     it('PASS ALL: CONTINUE advances when all pass', () => {
       const steps: Step[] = [
