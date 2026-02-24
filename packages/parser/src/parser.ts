@@ -1,7 +1,7 @@
 import { fromMarkdown } from 'mdast-util-from-markdown';
-import { visit } from 'unist-util-visit';
+import { visit, SKIP } from 'unist-util-visit';
 import type { Node } from 'unist';
-import type { Code, Heading, ListItem, Paragraph, PhrasingContent } from 'mdast';
+import type { Code, Heading, List, ListItem, Paragraph, PhrasingContent } from 'mdast';
 import type { Step, Substep, Runbook, Command, ForClause } from './ast.js';
 import { type ParsedConditional, RunbookSyntaxError } from './types.js';
 import {
@@ -78,6 +78,7 @@ interface StepBuilder {
   line?: number;
   forClause?: ForClause;
   hasSeenForClause: boolean;
+  forConditionals?: ParsedConditional[];
 }
 
 /**
@@ -391,7 +392,30 @@ export function parseRunbookDocument(
           }
           currentStep.forClause = forClause;
           currentStep.hasSeenForClause = true;
-          return; // Don't process this list item further
+
+          // Check for nested list (FOR-level transitions)
+          const nestedList = listItemNode.children.find((c): c is List => c.type === 'list');
+          if (nestedList) {
+            const forConditionals: ParsedConditional[] = [];
+            for (const nestedItem of nestedList.children) {
+              const nestedParagraph = nestedItem.children.find((c) => c.type === 'paragraph');
+              if (!nestedParagraph) continue;
+              const nestedText = extractText(
+                nestedParagraph as PhrasingContent | Heading | Paragraph | ListItem,
+              );
+              const cond = parseConditional(nestedText);
+              if (!cond) {
+                throw new RunbookSyntaxError(
+                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL) are allowed`,
+                );
+              }
+              forConditionals.push(cond);
+            }
+            if (forConditionals.length > 0) {
+              currentStep.forConditionals = forConditionals;
+            }
+          }
+          return SKIP; // Don't process this list item further
         }
 
         // If FOR text appears in a substep context, that's an error
@@ -522,6 +546,14 @@ function finalizeStep(
   validateNEXTUsage(pendingConditionals, step.forClause !== undefined);
 
   const transitions = convertToTransitions(pendingConditionals);
+
+  if (step.forClause && step.forConditionals?.length) {
+    const forTrans = convertToTransitions(step.forConditionals);
+    if (forTrans) {
+      step.forClause = { ...step.forClause, transitions: forTrans };
+    }
+  }
+
   const runbooks = extractRunbookList(step.content);
   const prompt = promptText.trim() || undefined;
 

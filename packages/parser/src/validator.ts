@@ -120,6 +120,27 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         );
       }
 
+      // FOR iteration-level transitions must only use CONTINUE or BREAK
+      if (step.forClause.transitions) {
+        const allowedActions = ['CONTINUE', 'BREAK'];
+        if (!allowedActions.includes(step.forClause.transitions.pass.action.type)) {
+          diagnostics.push(
+            error(
+              step.line,
+              `FOR-level PASS transition in step "${step.name}" uses ${step.forClause.transitions.pass.action.type}; only CONTINUE or BREAK are allowed`,
+            ),
+          );
+        }
+        if (!allowedActions.includes(step.forClause.transitions.fail.action.type)) {
+          diagnostics.push(
+            error(
+              step.line,
+              `FOR-level FAIL transition in step "${step.name}" uses ${step.forClause.transitions.fail.action.type}; only CONTINUE or BREAK are allowed`,
+            ),
+          );
+        }
+      }
+
       // Parent FOR step must not use NEXT/BREAK in its own transitions
       if (step.transitions) {
         if (

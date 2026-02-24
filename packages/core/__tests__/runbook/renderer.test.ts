@@ -7,6 +7,7 @@ import {
   renderStep,
 } from '../../src/runbook/renderer/renderer.js';
 import { parseRunbook } from '../../src/runbook/index.js';
+import { parseRunbookDocument } from '@rundown-org/parser';
 import type { Step, Substep } from '../../src/runbook/types.js';
 
 describe('renderAction', () => {
@@ -292,6 +293,85 @@ More description`;
     expect(parsed2[0].substeps?.[0]).toMatchObject({
       id: '1',
       workflows: ['review-technical-accuracy.runbook.md', 'review-structural-integrity.runbook.md'],
+    });
+  });
+});
+
+describe('FOR clause with nested transitions', () => {
+  it('renders FOR clause with nested transitions as indented bullets', () => {
+    const step: Step = {
+      name: '1',
+      description: 'Review',
+      forClause: {
+        variable: 'pass',
+        start: 1,
+        end: 3,
+        transitions: {
+          all: true,
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
+        },
+      },
+      substeps: [{ id: '1', description: 'Check' }],
+    };
+
+    const result = renderStep(step);
+    expect(result).toContain('- FOR pass IN 3');
+    expect(result).toContain('  - PASS ALL: CONTINUE');
+    expect(result).toContain('  - FAIL ANY: BREAK');
+  });
+
+  it('renders FOR clause without transitions (no nested bullets)', () => {
+    const step: Step = {
+      name: '1',
+      description: 'Review',
+      forClause: {
+        variable: 'pass',
+        start: 1,
+        end: 3,
+      },
+      substeps: [{ id: '1', description: 'Check' }],
+    };
+
+    const result = renderStep(step);
+    expect(result).toContain('- FOR pass IN 3');
+    expect(result).not.toContain('  - PASS');
+    expect(result).not.toContain('  - FAIL');
+  });
+
+  it('round-trips FOR clause with nested transitions', () => {
+    const markdown = `## 1. Review
+
+- FOR pass IN 1 TO 3
+  - PASS ALL: CONTINUE
+  - FAIL ANY: BREAK
+
+### 1.1 Check
+
+\`\`\`bash
+echo check
+\`\`\``;
+
+    const parsed1 = parseRunbookDocument(markdown);
+    expect(parsed1.steps).toHaveLength(1);
+    expect(parsed1.steps[0].forClause?.transitions).toBeDefined();
+    expect(parsed1.steps[0].forClause?.transitions?.pass.action.type).toBe('CONTINUE');
+    expect(parsed1.steps[0].forClause?.transitions?.fail.action.type).toBe('BREAK');
+
+    const rendered = renderStep(parsed1.steps[0]);
+    const parsed2 = parseRunbookDocument(rendered);
+
+    // Verify transitions survive round-trip
+    expect(parsed2.steps[0].forClause?.transitions).toBeDefined();
+    expect(parsed2.steps[0].forClause?.transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'CONTINUE' },
+    });
+    expect(parsed2.steps[0].forClause?.transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'BREAK' },
     });
   });
 });

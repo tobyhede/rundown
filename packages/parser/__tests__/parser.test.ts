@@ -790,6 +790,89 @@ echo batch
     expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
     expect(steps[0].substeps).toHaveLength(1);
   });
+
+  describe('FOR clause nested transitions', () => {
+    it('parses FOR with nested transitions (PASS ALL / FAIL ANY)', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+  - PASS ALL: CONTINUE
+  - FAIL ANY: BREAK
+
+### 1.1 Check
+\`\`\`bash
+echo check
+\`\`\`
+`;
+      const steps = parseRunbook(markdown);
+      expect(steps[0].forClause).toBeDefined();
+      expect(steps[0].forClause?.transitions).toBeDefined();
+      expect(steps[0].forClause?.transitions?.all).toBe(true);
+      expect(steps[0].forClause?.transitions?.pass).toEqual({
+        kind: 'pass',
+        retry: 0,
+        action: { type: 'CONTINUE' },
+      });
+      expect(steps[0].forClause?.transitions?.fail).toEqual({
+        kind: 'fail',
+        retry: 0,
+        action: { type: 'BREAK' },
+      });
+    });
+
+    it('parses FOR without nested transitions', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+
+### 1.1 Check
+\`\`\`bash
+echo check
+\`\`\`
+`;
+      const steps = parseRunbook(markdown);
+      expect(steps[0].forClause).toBeDefined();
+      expect(steps[0].forClause?.transitions).toBeUndefined();
+    });
+
+    it('throws error on invalid nested bullet under FOR', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+  - some random text
+
+### 1.1 Check
+\`\`\`bash
+echo check
+\`\`\`
+`;
+      expect(() => parseRunbook(markdown)).toThrow(/Invalid nested bullet under FOR clause/i);
+    });
+
+    it('parses FOR with nested transitions (PASS ANY / FAIL ALL)', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+  - PASS ANY: CONTINUE
+  - FAIL ALL: BREAK
+
+### 1.1 Check
+\`\`\`bash
+echo check
+\`\`\`
+`;
+      const steps = parseRunbook(markdown);
+      expect(steps[0].forClause).toBeDefined();
+      expect(steps[0].forClause?.transitions).toBeDefined();
+      expect(steps[0].forClause?.transitions?.all).toBe(false);
+      expect(steps[0].forClause?.transitions?.pass).toEqual({
+        kind: 'pass',
+        retry: 0,
+        action: { type: 'CONTINUE' },
+      });
+      expect(steps[0].forClause?.transitions?.fail).toEqual({
+        kind: 'fail',
+        retry: 0,
+        action: { type: 'BREAK' },
+      });
+    });
+  });
 });
 
 describe('parser ordering enforcement', () => {

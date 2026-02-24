@@ -44,6 +44,7 @@ export const NumericWindowSchema = z.object({
   start: z.number().int().positive().max(MAX_FOR_BOUND),
   end: z.number().int().positive().max(MAX_FOR_BOUND),
   source: z.never().optional(),
+  transitions: z.lazy(() => TransitionsSchema.optional()),
 });
 
 /**
@@ -56,6 +57,7 @@ export const SourceWindowSchema = z.object({
   start: z.number().int().positive().max(MAX_FOR_BOUND),
   end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
   source: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+  transitions: z.lazy(() => TransitionsSchema.optional()),
 });
 
 /**

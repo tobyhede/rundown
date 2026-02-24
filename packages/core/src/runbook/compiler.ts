@@ -39,6 +39,8 @@ export interface RunbookContext {
   readonly forStack: readonly ForContext[];
   /** Per-iteration outcomes ('pass' or 'fail') */
   iterationResults?: ('pass' | 'fail')[];
+  /** Per-substep outcomes within current FOR iteration. Reset on loop-back. */
+  substepResults?: ('pass' | 'fail')[];
 }
 
 /**
@@ -501,6 +503,22 @@ function appendIterationResult(iterationResult: 'pass' | 'fail') {
   };
 }
 
+function appendSubstepResult(result: 'pass' | 'fail') {
+  return ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] => {
+    return [...(context.substepResults ?? []), result];
+  };
+}
+
+/**
+ * Default FOR iteration-level transitions: PASS ALL / FAIL ANY: CONTINUE.
+ * Used when no nested transitions are specified on a FOR clause.
+ */
+const DEFAULT_FOR_TRANSITIONS: Transitions = {
+  all: true,
+  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+};
+
 /** Build assign action for substep-to-parent transition with iteration result. */
 function buildSubstepToParentAssign(
   stepName: string,
@@ -638,6 +656,7 @@ function buildParentExitAssign(
             return [createForContext(targetStep.name, forClause, iteration, false, sources)];
           },
           iterationResults: [] as ('pass' | 'fail')[],
+          substepResults: [] as ('pass' | 'fail')[],
           lastAction: buildGotoLastAction(parentAction.target),
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
         });
@@ -721,11 +740,29 @@ function buildParentStateConfig(
 
   const always: AlwaysTransition[] = [];
 
+  // FOR iteration-level aggregation helpers
+  const forTransitions = parentStep.forClause?.transitions ?? DEFAULT_FOR_TRANSITIONS;
+
+  const computeIterationResult = (context: RunbookContext): 'pass' | 'fail' => {
+    const results = context.substepResults ?? [];
+    const hasFailed = results.some((r) => r === 'fail');
+    const passCount = results.filter((r) => r === 'pass').length;
+    return shouldAggregationPass(hasFailed, passCount, forTransitions.all) ? 'pass' : 'fail';
+  };
+
+  const shouldBreakIteration = (context: RunbookContext): boolean => {
+    const iterResult = computeIterationResult(context);
+    if (iterResult === 'pass' && forTransitions.pass.action.type === 'BREAK') return true;
+    if (iterResult === 'fail' && forTransitions.fail.action.type === 'BREAK') return true;
+    return false;
+  };
+
   // Loop-back guard (Cases A & C: FOR steps)
   if (hasFor) {
     always.push({
       guard: ({ context }: { context: RunbookContext }) => {
         if (context.lastAction?.type === 'BREAK') return false;
+        if (shouldBreakIteration(context)) return false;
         const top = peekForStack(context.forStack);
         return top !== undefined && hasMoreIterations(top);
       },
@@ -736,6 +773,12 @@ function buildParentStateConfig(
           if (!top) return context.forStack;
           return [{ ...top, iteration: nextIteration(top), currentValue: undefined }];
         },
+        // Aggregate substepResults into a single iteration result, append to iterationResults
+        iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] => {
+          const results = context.iterationResults ?? [];
+          return [...results, computeIterationResult(context)];
+        },
+        substepResults: [] as ('pass' | 'fail')[],
         retryCount: 0,
         substep: firstSubstep?.id,
       }),
@@ -780,6 +823,7 @@ function buildParentStateConfig(
           retryMax: transition.retry,
           forStack: [] as readonly ForContext[],
           iterationResults: [] as ('pass' | 'fail')[],
+          substepResults: [] as ('pass' | 'fail')[],
           lastMessage: undefined as string | undefined,
           substep: firstSubstep?.id,
         }),
@@ -795,9 +839,11 @@ function buildParentStateConfig(
     const failTarget = resolveActionTarget(parentTransitions.fail.action, stepName, steps);
 
     const aggregationPasses = ({ context }: { context: RunbookContext }): boolean => {
-      const results = context.iterationResults ?? [];
-      const hasFailed = results.some((r) => r === 'fail');
-      const passCount = results.filter((r) => r === 'pass').length;
+      const baseResults = context.iterationResults ?? [];
+      // For FOR steps: include the current (final) iteration's computed result
+      const allResults = hasFor ? [...baseResults, computeIterationResult(context)] : baseResults;
+      const hasFailed = allResults.some((r) => r === 'fail');
+      const passCount = allResults.filter((r) => r === 'pass').length;
       return shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
     };
 
@@ -966,7 +1012,16 @@ function buildLoopControlTransition(
   if (!currentStep?.forClause) {
     return { target: 'STOPPED', actions: assign({ lastAction: { type: actionType } }) };
   }
-  return buildSubstepToParentAssign(stepName, kind, actionType, false);
+  // FOR step: accumulate into substepResults before transitioning to parent
+  return {
+    target: formatStateId(stepName),
+    actions: assign({
+      substepResults: appendSubstepResult(kind),
+      lastAction: { type: actionType },
+      lastMessage: undefined as string | undefined,
+      substep: undefined as string | undefined,
+    }),
+  };
 }
 
 /**
@@ -998,30 +1053,41 @@ function buildContinueTransition(
 
   // If at last substep, route to parent aggregation state
   if (isLastSubstep && currentStep) {
-    const isImplicit = !currentStep.forClause;
-
-    return buildSubstepToParentAssign(
-      stepName,
-      kind,
-      'CONTINUE',
-      isImplicit && !currentStep.transitions,
-    );
+    if (currentStep.forClause) {
+      // FOR step: accumulate into substepResults, parent state aggregates
+      return {
+        target: formatStateId(stepName),
+        actions: assign({
+          substepResults: appendSubstepResult(kind),
+          lastAction: { type: 'CONTINUE' as const },
+          lastMessage: undefined as string | undefined,
+          substep: undefined as string | undefined,
+        }),
+      };
+    }
+    // Non-FOR: existing behaviour unchanged
+    return buildSubstepToParentAssign(stepName, kind, 'CONTINUE', !currentStep.transitions);
   }
 
   // Non-last substep CONTINUE: advance to next sibling substep.
-  // FOR loops accumulate once per iteration at the parent state, not per substep.
-  const shouldAccumulate = !!(
+  const shouldAccumulateIterationResults = !!(
     currentStep?.substeps?.length &&
     !currentStep.forClause &&
     currentStep.transitions
   );
+  const shouldAccumulateSubstepResults = !!(currentStep?.substeps?.length && currentStep.forClause);
 
   return {
     target,
     actions: assign({
-      ...(shouldAccumulate
+      ...(shouldAccumulateIterationResults
         ? {
             iterationResults: appendIterationResult(kind),
+          }
+        : {}),
+      ...(shouldAccumulateSubstepResults
+        ? {
+            substepResults: appendSubstepResult(kind),
           }
         : {}),
       lastAction: { type: 'CONTINUE' as const },
@@ -1103,6 +1169,19 @@ function buildGotoTransition(
           ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
           : 0,
         substep: resolvedSubstepId,
+        ...(!isImplicit
+          ? {
+              substepResults: ({
+                context,
+              }: {
+                context: RunbookContext;
+              }): ('pass' | 'fail')[] | undefined => {
+                const top = peekForStack(context.forStack);
+                if (top?.stepId === targetStepObj.name) return context.substepResults;
+                return [];
+              },
+            }
+          : {}),
       }),
     };
   }
@@ -1265,6 +1344,21 @@ export function compileRunbookToMachine(
                 stepInfo.step.name,
                 !stepInfo.implicit || !!stepInfo.step.transitions,
               ),
+            // Reset substepResults for FOR steps at start of first iteration
+            ...(!stepInfo.implicit
+              ? {
+                  substepResults: ({
+                    context,
+                  }: {
+                    context: RunbookContext;
+                  }): ('pass' | 'fail')[] | undefined => {
+                    // Preserve if re-entering same FOR step (intra-loop GOTO)
+                    const top = peekForStack(context.forStack);
+                    if (top?.stepId === stepInfo.step.name) return context.substepResults;
+                    return [];
+                  },
+                }
+              : {}),
           }),
         }
       : {};
@@ -1332,6 +1426,19 @@ export function compileRunbookToMachine(
               retryCount: 0,
               substep: ({ event }: { event: RunbookEvent }) =>
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
+              ...(!forStepForTarget.implicit
+                ? {
+                    substepResults: ({
+                      context,
+                    }: {
+                      context: RunbookContext;
+                    }): ('pass' | 'fail')[] | undefined => {
+                      const top = peekForStack(context.forStack);
+                      if (top?.stepId === forStepForTarget.step.name) return context.substepResults;
+                      return [];
+                    },
+                  }
+                : {}),
             })
           : buildSimpleGotoAssign({
               lastAction: buildGotoLastActionFromEvent(target.substepId),
@@ -1418,6 +1525,7 @@ export function compileRunbookToMachine(
       lastMessage: undefined,
       forStack: [],
       iterationResults: undefined,
+      substepResults: undefined,
     },
     states: {
       ...states,

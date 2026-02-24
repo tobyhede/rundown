@@ -24,6 +24,8 @@ export interface NumericWindow {
   readonly end: number;
   /** Explicitly absent — discriminant for TypeScript narrowing */
   readonly source?: never;
+  /** Iteration-level transition handlers for FOR loops */
+  readonly transitions?: Transitions;
 }
 
 /**
@@ -40,6 +42,8 @@ export interface SourceWindow {
   readonly end?: number;
   /** Key in the sources map */
   readonly source: string;
+  /** Iteration-level transition handlers for FOR loops */
+  readonly transitions?: Transitions;
 }
 
 /**

@@ -77,30 +77,48 @@ export function renderSubstep(substep: Substep, parentStepName: string): string 
  * Render a FOR clause to its DSL bullet-point string.
  *
  * Handles all FOR variants: named/unnamed ranges, implicit start,
- * and data-source references (full and windowed).
+ * and data-source references (full and windowed). If transitions are
+ * present, they are appended as indented nested bullets.
  *
  * @param forClause - The FOR clause to render
- * @returns DSL string (e.g., "- FOR pass IN 1 TO 2")
+ * @returns Array of DSL strings (e.g., ["- FOR pass IN 1 TO 2", "  - PASS ANY: CONTINUE"])
  */
-function renderForClause(forClause: NonNullable<Step['forClause']>): string {
+function renderForClause(forClause: NonNullable<Step['forClause']>): string[] {
+  const lines: string[] = [];
+
   if (forClause.source !== undefined) {
     if (forClause.start === 1 && forClause.end === undefined) {
-      return `- FOR ${forClause.variable} IN {{ ${forClause.source} }}`;
+      lines.push(`- FOR ${forClause.variable} IN {{ ${forClause.source} }}`);
+    } else {
+      lines.push(
+        `- FOR ${forClause.variable} IN ${String(forClause.start)} TO ${String(forClause.end)} OF {{ ${forClause.source} }}`,
+      );
     }
-    return `- FOR ${forClause.variable} IN ${String(forClause.start)} TO ${String(forClause.end)} OF {{ ${forClause.source} }}`;
-  }
-
-  if (forClause.variable) {
+  } else if (forClause.variable) {
     if (forClause.start === 1) {
-      return `- FOR ${forClause.variable} IN ${String(forClause.end)}`;
+      lines.push(`- FOR ${forClause.variable} IN ${String(forClause.end)}`);
+    } else {
+      lines.push(
+        `- FOR ${forClause.variable} IN ${String(forClause.start)} TO ${String(forClause.end)}`,
+      );
     }
-    return `- FOR ${forClause.variable} IN ${String(forClause.start)} TO ${String(forClause.end)}`;
+  } else {
+    if (forClause.start === 1) {
+      lines.push(`- FOR ${String(forClause.end)}`);
+    } else {
+      lines.push(`- FOR ${String(forClause.start)} TO ${String(forClause.end)}`);
+    }
   }
 
-  if (forClause.start === 1) {
-    return `- FOR ${String(forClause.end)}`;
+  const transitions = (forClause as { transitions?: Transitions }).transitions;
+  if (transitions) {
+    const passAgg = transitions.all ? ' ALL' : ' ANY';
+    const failAgg = transitions.all ? ' ANY' : ' ALL';
+    lines.push(`  - PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
+    lines.push(`  - FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
   }
-  return `- FOR ${String(forClause.start)} TO ${String(forClause.end)}`;
+
+  return lines;
 }
 
 /**
@@ -145,7 +163,7 @@ export function renderStep(step: Step): string {
   lines.push('');
 
   if (step.forClause) {
-    lines.push(renderForClause(step.forClause));
+    lines.push(...renderForClause(step.forClause));
   }
 
   // Transitions
