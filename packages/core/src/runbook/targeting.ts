@@ -1,5 +1,5 @@
 import type { StepPosition } from '../cli/types.js';
-import type { ForContext, RunbookState } from './types.js';
+import type { ForContext, ResolvedCompletion, RunbookState } from './types.js';
 
 /**
  * Derive execution location notation for runtime targets.
@@ -126,5 +126,33 @@ export function buildStepPosition(
           },
         }
       : {}),
+  };
+}
+
+/**
+ * Build a ResolvedCompletion with conditional optional fields and defaulted completedAt.
+ *
+ * @param fields - Completion fields; `targetSubstep`, `targetIteration`, and `completedAt` are optional
+ * @returns A fully-formed ResolvedCompletion
+ */
+export function buildResolvedCompletion(fields: {
+  agentId: string;
+  result: 'pass' | 'fail';
+  targetStep: string;
+  targetSubstep?: string;
+  targetIteration?: number;
+  targetFrameKey: string;
+  targetEntry: number;
+  completedAt?: string;
+}): ResolvedCompletion {
+  return {
+    agentId: fields.agentId,
+    result: fields.result,
+    targetStep: fields.targetStep,
+    ...(fields.targetSubstep ? { targetSubstep: fields.targetSubstep } : {}),
+    ...(fields.targetIteration !== undefined ? { targetIteration: fields.targetIteration } : {}),
+    targetFrameKey: fields.targetFrameKey,
+    targetEntry: fields.targetEntry,
+    completedAt: fields.completedAt ?? new Date().toISOString(),
   };
 }

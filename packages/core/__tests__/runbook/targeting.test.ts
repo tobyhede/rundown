@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   buildCompletionKey,
   buildFrameKey,
+  buildResolvedCompletion,
   deriveExecutionAt,
   derivePositionAt,
   parseCompletionKey,
@@ -99,6 +100,58 @@ describe('targeting helpers', () => {
 
     it('returns null for negative entry', () => {
       expect(parseCompletionKey('1|2|-1|sub')).toBeNull();
+    });
+  });
+
+  describe('buildResolvedCompletion', () => {
+    it('includes all fields when present', () => {
+      const completion = buildResolvedCompletion({
+        agentId: 'agent-1',
+        result: 'pass',
+        targetStep: '2',
+        targetSubstep: '1',
+        targetIteration: 3,
+        targetFrameKey: '2|3',
+        targetEntry: 1,
+        completedAt: '2026-01-01T00:00:00.000Z',
+      });
+      expect(completion).toEqual({
+        agentId: 'agent-1',
+        result: 'pass',
+        targetStep: '2',
+        targetSubstep: '1',
+        targetIteration: 3,
+        targetFrameKey: '2|3',
+        targetEntry: 1,
+        completedAt: '2026-01-01T00:00:00.000Z',
+      });
+    });
+
+    it('omits targetSubstep and targetIteration when undefined', () => {
+      const completion = buildResolvedCompletion({
+        agentId: 'agent-1',
+        result: 'fail',
+        targetStep: '1',
+        targetFrameKey: '1|',
+        targetEntry: 2,
+        completedAt: '2026-01-01T00:00:00.000Z',
+      });
+      expect(completion).not.toHaveProperty('targetSubstep');
+      expect(completion).not.toHaveProperty('targetIteration');
+    });
+
+    it('defaults completedAt to current ISO timestamp', () => {
+      const before = new Date().toISOString();
+      const completion = buildResolvedCompletion({
+        agentId: 'agent-1',
+        result: 'pass',
+        targetStep: '1',
+        targetFrameKey: '1|',
+        targetEntry: 1,
+      });
+      const after = new Date().toISOString();
+      expect(completion.completedAt >= before).toBe(true);
+      expect(completion.completedAt <= after).toBe(true);
     });
   });
 });

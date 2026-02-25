@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { JsonValue } from './runbook/types.js';
-import { buildFrameKey, buildCompletionKey } from './runbook/targeting.js';
+import { buildFrameKey, buildCompletionKey, buildResolvedCompletion } from './runbook/targeting.js';
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -447,16 +447,16 @@ export const RunbookStateSchema = z
       const substep = legacy.targetSubstep ?? parsed.substep;
       const completionKey = buildCompletionKey(frameKey, activeEntry, substep);
       if (completionKey in resolvedCompletions) continue;
-      resolvedCompletions[completionKey] = {
+      resolvedCompletions[completionKey] = buildResolvedCompletion({
         agentId: legacy.agentId,
         result: legacy.result,
         targetStep: frameStep,
-        ...(substep ? { targetSubstep: substep } : {}),
-        ...(frameIteration !== undefined ? { targetIteration: frameIteration } : {}),
+        targetSubstep: substep,
+        targetIteration: frameIteration,
         targetFrameKey: frameKey,
         targetEntry: activeEntry,
         completedAt: legacy.completedAt,
-      };
+      });
     }
 
     // Backfill missing target frame metadata on already-resolved entries.

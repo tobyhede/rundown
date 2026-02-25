@@ -17,12 +17,12 @@ import {
   parseActionType,
   buildCompletionKey,
   buildFrameKey,
+  buildResolvedCompletion,
   deriveExecutionAt,
   getActiveForContext,
   deriveActiveFrame,
   type AnyActorRef,
   stepIdToString,
-  type ResolvedCompletion,
   type Step,
   type RunbookState,
   type RunbookCompletedPayload,
@@ -387,16 +387,15 @@ export async function handleAgentBinding(
     target.completionKey,
   );
   if (!existing) {
-    const completion: ResolvedCompletion = {
+    const completion = buildResolvedCompletion({
       agentId,
       result,
       targetStep: target.step,
-      ...(target.substep ? { targetSubstep: target.substep } : {}),
-      ...(target.iteration !== undefined ? { targetIteration: target.iteration } : {}),
+      targetSubstep: target.substep,
+      targetIteration: target.iteration,
       targetFrameKey: target.frameKey,
       targetEntry: target.entry,
-      completedAt: new Date().toISOString(),
-    };
+    });
     await lifecycleService.upsertResolvedCompletion(
       activeState.id,
       target.completionKey,
@@ -499,16 +498,15 @@ export async function executeTransition(
     const completionKey = buildCompletionKey(cursor.frameKey, cursor.entry, activeState.substep);
     const existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
     if (!existing) {
-      const completion: ResolvedCompletion = {
+      const completion = buildResolvedCompletion({
         agentId: agentId ?? 'manual',
         result: config.lastResult,
         targetStep: cursor.step,
-        ...(cursor.substep ? { targetSubstep: cursor.substep } : {}),
-        ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
+        targetSubstep: cursor.substep,
+        targetIteration: cursor.iteration,
         targetFrameKey: cursor.frameKey,
         targetEntry: cursor.entry,
-        completedAt: new Date().toISOString(),
-      };
+      });
       await lifecycleService.upsertResolvedCompletion(activeState.id, completionKey, completion);
     } else {
       output.status(
