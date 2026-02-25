@@ -83,6 +83,29 @@ function makeStep(overrides: Partial<any> = {}): any {
   } as any;
 }
 
+function makeLifecycle(overrides: Partial<any> = {}): any {
+  return {
+    ensureActiveEntry: jest
+      .fn<any>()
+      .mockImplementation(async (_id: string, _steps: unknown[], _prev: unknown, state: any) => ({
+        state: {
+          ...(state ?? {}),
+          activeEntry: state?.activeEntry ?? 1,
+          activeFrameKey: state?.activeFrameKey ?? `${state?.step ?? '1'}|`,
+        },
+        frameKey: state?.activeFrameKey ?? `${state?.step ?? '1'}|`,
+        entry: state?.activeEntry ?? 1,
+      })),
+    buildTargetFrameKey: jest
+      .fn<any>()
+      .mockImplementation(
+        (step: string, iteration?: number) =>
+          `${step}|${iteration != null ? String(iteration) : ''}`,
+      ),
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations after reset
@@ -197,7 +220,7 @@ describe('queueStep', () => {
       manager: {} as any,
       actorService: {} as any,
       sessionService: { getActive: jest.fn<any>().mockResolvedValue(null) },
-      lifecycleService: { pushPendingStep: jest.fn() },
+      lifecycleService: makeLifecycle({ pushPendingStep: jest.fn() }),
       cwd: '/test',
     };
 
@@ -223,7 +246,7 @@ describe('queueStep', () => {
           .fn<any>()
           .mockResolvedValue({ id: 'test-id', step: '1', substep: undefined }),
       },
-      lifecycleService: { pushPendingStep: jest.fn() },
+      lifecycleService: makeLifecycle({ pushPendingStep: jest.fn() }),
       cwd: '/test',
     };
 
@@ -251,7 +274,7 @@ describe('queueStep', () => {
           .fn<any>()
           .mockResolvedValue({ id: 'test-id', step: '2', substep: undefined }),
       },
-      lifecycleService: { pushPendingStep: mockPush },
+      lifecycleService: makeLifecycle({ pushPendingStep: mockPush }),
       cwd: '/test',
     };
 
@@ -266,6 +289,8 @@ describe('queueStep', () => {
       stepId: { step: '2' },
       runbook: 'child.md',
       targetStep: '2',
+      targetFrameKey: '2|',
+      targetEntry: 1,
     });
     if (result.ok) {
       expect(result.targetAt).toBe('2');
@@ -287,7 +312,7 @@ describe('queueStep', () => {
           .fn<any>()
           .mockResolvedValue({ id: 'test-id', step: '1', substep: undefined }),
       },
-      lifecycleService: { pushPendingStep: jest.fn() },
+      lifecycleService: makeLifecycle({ pushPendingStep: jest.fn() }),
       cwd: '/test',
     };
 
@@ -322,7 +347,7 @@ describe('startRunbook', () => {
       } as any,
       actorService: { initializeState: mockInitState } as any,
       sessionService: { pushRunbook: mockPushRunbook } as any,
-      lifecycleService: {} as any,
+      lifecycleService: makeLifecycle() as any,
       cwd: '/test',
     };
 
@@ -370,7 +395,7 @@ describe('startRunbook', () => {
       } as any,
       actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
       sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
-      lifecycleService: {} as any,
+      lifecycleService: makeLifecycle() as any,
       cwd: '/test',
     };
 
@@ -398,7 +423,7 @@ describe('bindAgent', () => {
       manager: {} as any,
       actorService: {} as any,
       sessionService: { getActive: jest.fn<any>().mockResolvedValue(null) },
-      lifecycleService: { popPendingStep: jest.fn() },
+      lifecycleService: makeLifecycle({ popPendingStep: jest.fn() }),
       cwd: '/test',
     };
 
@@ -416,7 +441,7 @@ describe('bindAgent', () => {
       manager: {} as any,
       actorService: {} as any,
       sessionService: { getActive: jest.fn<any>().mockResolvedValue({ id: 'test-id' }) },
-      lifecycleService: { popPendingStep: jest.fn<any>().mockResolvedValue(null) },
+      lifecycleService: makeLifecycle({ popPendingStep: jest.fn<any>().mockResolvedValue(null) }),
       cwd: '/test',
     };
 
@@ -439,12 +464,14 @@ describe('bindAgent', () => {
       sessionService: {
         getActive: jest.fn<any>().mockResolvedValue({ id: 'test-id' }),
       },
-      lifecycleService: {
+      lifecycleService: makeLifecycle({
         popPendingStep: jest.fn<any>().mockResolvedValue({
           stepId: { step: '2' },
           targetStep: '2',
+          targetFrameKey: '2|',
+          targetEntry: 1,
         }),
-      },
+      }),
       cwd: '/test',
     };
 
@@ -457,6 +484,8 @@ describe('bindAgent', () => {
     expect(mockBindAgent).toHaveBeenCalledWith('test-id', 'agent-1', {
       stepId: { step: '2' },
       targetStep: '2',
+      targetFrameKey: '2|',
+      targetEntry: 1,
     });
   });
 
@@ -489,13 +518,15 @@ describe('bindAgent', () => {
         getActive: jest.fn<any>().mockResolvedValue({ id: 'parent-id', prompted: true }),
         pushRunbook: jest.fn<any>().mockResolvedValue(undefined),
       },
-      lifecycleService: {
+      lifecycleService: makeLifecycle({
         popPendingStep: jest.fn<any>().mockResolvedValue({
           stepId: { step: '2' },
           targetStep: '2',
+          targetFrameKey: '2|',
+          targetEntry: 1,
           runbook: 'child.runbook.md',
         }),
-      },
+      }),
       cwd: '/test',
     };
 

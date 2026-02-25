@@ -230,10 +230,19 @@ export async function queueStep(
 ): Promise<StepQueueResult> {
   const { sessionService, lifecycleService } = ctx;
 
-  const state = await sessionService.getActive();
-  if (!state) {
+  const loadedState = await sessionService.getActive();
+  if (!loadedState) {
     return { ok: false, error: 'No active runbook', code: 'NO_ACTIVE_RUNBOOK' };
   }
+
+  const steps = loadedState.runbookSrc ? getRunbookFromState(loadedState, ctx.cwd) : [];
+  const ensured = await lifecycleService.ensureActiveEntry(
+    loadedState.id,
+    steps,
+    undefined,
+    loadedState,
+  );
+  const state = ensured.state;
 
   const stepId = parseStepIdFromString(stepStr);
   if (!stepId) {
@@ -264,8 +273,15 @@ export async function queueStep(
 
   const targetSubstep = stepId.substep ?? state.substep;
   if (targetSubstep) {
-    const steps = getRunbookFromState(state, ctx.cwd);
-    const currentStep = steps.find((s) => s.name === state.step);
+    const runbookSteps = state.runbookSrc ? getRunbookFromState(state, ctx.cwd) : [];
+    if (runbookSteps.length === 0) {
+      return {
+        ok: false,
+        error: `Cannot validate substep ${state.step}.${targetSubstep} without runbook source context`,
+        code: 'VALIDATION_ERROR',
+      };
+    }
+    const currentStep = runbookSteps.find((s) => s.name === state.step);
 
     if (currentStep?.substeps?.some((s) => s.id === targetSubstep) !== true) {
       return {
@@ -282,12 +298,16 @@ export async function queueStep(
 
   const activeFor = getActiveForContext(state.forStack, state.step);
   const targetAt = deriveExecutionAt(state.step, targetSubstep, activeFor?.iteration);
+  const targetFrameKey = lifecycleService.buildTargetFrameKey(state.step, activeFor?.iteration);
+  const targetEntry = state.activeEntry ?? ensured.entry;
   const pendingStep: PendingStep = {
     stepId,
     runbook: file,
     targetStep: state.step,
     ...(targetSubstep ? { targetSubstep } : {}),
     ...(activeFor ? { targetIteration: activeFor.iteration } : {}),
+    targetFrameKey,
+    targetEntry,
   };
   await lifecycleService.pushPendingStep(state.id, pendingStep);
 
@@ -322,7 +342,7 @@ async function launchRunbook(
     afterInit?: (stateId: string) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
-  const { output, manager, actorService, sessionService, cwd } = ctx;
+  const { output, manager, actorService, sessionService, lifecycleService, cwd } = ctx;
   const { filePath, rawContent, runbook, mergedVariables, sources } = prepared;
 
   const runbookPath = path.relative(cwd, filePath);
@@ -339,6 +359,7 @@ async function launchRunbook(
 
   // Initialize actor state (populates forStack for first step)
   await actorService.initializeState(state.id, [...runbook.steps]);
+  await lifecycleService.ensureActiveEntry(state.id, [...runbook.steps]);
 
   // Optional post-init hook (e.g., updateAgentBinding for child runbooks)
   if (options.afterInit) {
@@ -436,28 +457,72 @@ export async function bindAgent(
     };
   }
 
-  await manager.bindAgent(state.id, agentId, pending);
+  const normalizedFrameKey =
+    pending.targetFrameKey ??
+    lifecycleService.buildTargetFrameKey(pending.targetStep, pending.targetIteration);
+  const normalizedEntry =
+    pending.targetEntry ??
+    (() => {
+      const known = state.frameEntries?.[normalizedFrameKey];
+      if (state.activeFrameKey === normalizedFrameKey && state.activeEntry)
+        return state.activeEntry;
+      if (known && known > 0) return known;
+      return undefined;
+    })();
+  if (!normalizedEntry) {
+    return {
+      ok: false,
+      error:
+        `Pending step ${stepIdToString(pending.stepId)} is missing target entry metadata. ` +
+        'Re-queue from the active frontier and bind again.',
+      code: 'AGENT_BINDING_ERROR',
+      details: { agent: agentId, stepId: stepIdToString(pending.stepId) },
+    };
+  }
+
+  const normalizedPending: PendingStep = {
+    ...pending,
+    targetFrameKey: normalizedFrameKey,
+    targetEntry: normalizedEntry,
+  };
+  const normalizedTargetStep = normalizedPending.targetStep ?? pending.targetStep;
+  const normalizedTargetSubstep = normalizedPending.targetSubstep ?? pending.targetSubstep;
+  const normalizedTargetIteration = normalizedPending.targetIteration ?? pending.targetIteration;
+  if (!normalizedTargetStep) {
+    return {
+      ok: false,
+      error:
+        `Pending step ${stepIdToString(pending.stepId)} is missing canonical target identity. ` +
+        'Re-queue the step from the active frontier before binding.',
+      code: 'AGENT_BINDING_ERROR',
+      details: { agent: agentId, stepId: stepIdToString(pending.stepId) },
+    };
+  }
+
+  await manager.bindAgent(state.id, agentId, normalizedPending);
   const targetAt = deriveExecutionAt(
-    pending.targetStep,
-    pending.targetSubstep,
-    pending.targetIteration,
+    normalizedTargetStep,
+    normalizedTargetSubstep,
+    normalizedTargetIteration,
   );
 
   output.status(true, 'agent_bound', `Agent ${agentId} bound to step ${targetAt}`, {
     agent: agentId,
-    stepId: stepIdToString(pending.stepId),
+    stepId: stepIdToString(normalizedPending.stepId),
     targetAt,
+    targetFrameKey: normalizedFrameKey,
+    targetEntry: normalizedEntry,
   });
   output.flush();
 
   // If pending step has a runbook, start child runbook
-  if (pending.runbook) {
-    const prepResult = await prepareRunbook(pending.runbook, varOpts, cwd);
+  if (normalizedPending.runbook) {
+    const prepResult = await prepareRunbook(normalizedPending.runbook, varOpts, cwd);
     if (!prepResult.ok) {
       // Adjust error message for child context
       const error =
         prepResult.code === 'RUNBOOK_NOT_FOUND'
-          ? `Runbook file not found: ${pending.runbook}`
+          ? `Runbook file not found: ${normalizedPending.runbook}`
           : prepResult.code === 'VALIDATION_ERROR'
             ? 'Child runbook has no steps'
             : prepResult.error;
@@ -465,7 +530,7 @@ export async function bindAgent(
         ok: false,
         error,
         code: prepResult.code,
-        details: { runbook: pending.runbook, ...prepResult.details },
+        details: { runbook: normalizedPending.runbook, ...prepResult.details },
       };
     }
 
@@ -473,11 +538,11 @@ export async function bindAgent(
     const parentPrompted = state.prompted ?? false;
 
     return launchRunbook(ctx, prepResult.prepared, {
-      runbookName: pending.runbook,
+      runbookName: normalizedPending.runbook,
       prompted: parentPrompted,
       agentId,
       parentRunbookId: state.id,
-      parentStepId: pending.stepId,
+      parentStepId: normalizedPending.stepId,
       afterInit: (childStateId) =>
         manager.updateAgentBinding(state.id, agentId, {
           childRunbookId: childStateId,

@@ -113,6 +113,10 @@ export interface PendingStep {
   readonly targetSubstep?: string;
   /** Canonical target loop iteration for runtime routing. */
   readonly targetIteration?: number;
+  /** Canonical target frame key (`step|iteration`) for completion identity. */
+  readonly targetFrameKey?: string;
+  /** Canonical target frame entry (monotonic per frame). */
+  readonly targetEntry?: number;
 }
 
 /**
@@ -149,18 +153,24 @@ export interface AgentBinding {
   readonly targetSubstep?: string;
   /** Canonical target loop iteration for runtime routing. */
   readonly targetIteration?: number;
+  /** Canonical target frame key (`step|iteration`) for completion identity. */
+  readonly targetFrameKey?: string;
+  /** Canonical target frame entry (monotonic per frame). */
+  readonly targetEntry?: number;
 }
 
 /**
  * Deferred agent completion captured for a valid frontier target
  * that is not currently at the active cursor.
  */
-export interface DeferredCompletion {
+export interface ResolvedCompletion {
   readonly agentId: string;
   readonly result: AgentResult;
   readonly targetStep: string;
   readonly targetSubstep?: string;
   readonly targetIteration?: number;
+  readonly targetFrameKey: string;
+  readonly targetEntry: number;
   readonly completedAt: string;
 }
 
@@ -352,7 +362,13 @@ export interface RunbookState {
   // Orchestration fields
   readonly pendingSteps: readonly PendingStep[];
   readonly agentBindings: Readonly<Record<string, AgentBinding>>;
-  readonly deferredCompletions?: Readonly<Record<string, DeferredCompletion>>;
+  readonly resolvedCompletions?: Readonly<Record<string, ResolvedCompletion>>;
+  /** Monotonic entry counter by frame key (`step|iteration`). */
+  readonly frameEntries?: Readonly<Record<string, number>>;
+  /** Active frame key (`step|iteration`). */
+  readonly activeFrameKey?: string;
+  /** Active frame entry (monotonic per frame). */
+  readonly activeEntry?: number;
 
   // Substep tracking
   readonly substepStates?: readonly SubstepState[];

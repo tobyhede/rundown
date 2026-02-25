@@ -51,6 +51,9 @@ export interface StatusOutputData {
     substep?: string;
     at?: string;
     for?: { index: number; end?: number };
+    frameKey?: string;
+    entry?: number;
+    unresolved?: number;
   };
   /** Current step details */
   step?: {
@@ -170,13 +173,43 @@ export function buildActiveStatus(
     return acc;
   }, {});
 
+  const basePosition = buildStepPosition(
+    displayStep,
+    totalSteps,
+    activeState.substep,
+    activeState.forStack,
+  );
+  const activeFrameKey = activeState.activeFrameKey;
+  const activeEntry = activeState.activeEntry;
+  const unresolved =
+    currentStep?.substeps?.length && activeFrameKey && activeEntry
+      ? (() => {
+          const resolvedSubsteps = new Set(
+            Object.values(activeState.resolvedCompletions ?? {})
+              .filter(
+                (completion) =>
+                  completion.targetFrameKey === activeFrameKey &&
+                  completion.targetEntry === activeEntry &&
+                  completion.targetSubstep !== undefined,
+              )
+              .map((completion) => completion.targetSubstep as string),
+          );
+          return currentStep.substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
+        })()
+      : undefined;
+
   return {
     active: true,
     stashed: !!stashedId,
     file: metadata.file,
     state: metadata.state,
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
-    position: buildStepPosition(displayStep, totalSteps, activeState.substep, activeState.forStack),
+    position: {
+      ...basePosition,
+      ...(activeFrameKey ? { frameKey: activeFrameKey } : {}),
+      ...(activeEntry !== undefined ? { entry: activeEntry } : {}),
+      ...(unresolved !== undefined ? { unresolved } : {}),
+    },
     ...(currentStep && {
       step: {
         name: currentStep.name,

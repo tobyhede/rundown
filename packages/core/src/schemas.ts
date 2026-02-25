@@ -133,6 +133,8 @@ const TargetIdentitySchema = z.object({
   targetStep: z.string().optional(),
   targetSubstep: z.string().optional(),
   targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+  targetFrameKey: z.string().optional(),
+  targetEntry: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
 });
 
 /**
@@ -144,6 +146,8 @@ const PendingStepSchema = z.object({
   targetStep: TargetIdentitySchema.shape.targetStep,
   targetSubstep: TargetIdentitySchema.shape.targetSubstep,
   targetIteration: TargetIdentitySchema.shape.targetIteration,
+  targetFrameKey: TargetIdentitySchema.shape.targetFrameKey,
+  targetEntry: TargetIdentitySchema.shape.targetEntry,
 });
 
 /**
@@ -157,7 +161,18 @@ const SubstepStateSchema = z.object({
   result: z.enum(['pass', 'fail']).optional(),
 });
 
-const DeferredCompletionSchema = z.object({
+const ResolvedCompletionSchema = z.object({
+  agentId: z.string(),
+  result: z.enum(['pass', 'fail']),
+  targetStep: z.string(),
+  targetSubstep: z.string().optional(),
+  targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+  targetFrameKey: z.string(),
+  targetEntry: z.number().int().positive().max(MAX_FOR_BOUND),
+  completedAt: z.string(),
+});
+
+const LegacyDeferredCompletionSchema = z.object({
   agentId: z.string(),
   result: z.enum(['pass', 'fail']),
   targetStep: z.string(),
@@ -265,9 +280,15 @@ export const RunbookStateSchema = z
         targetStep: TargetIdentitySchema.shape.targetStep,
         targetSubstep: TargetIdentitySchema.shape.targetSubstep,
         targetIteration: TargetIdentitySchema.shape.targetIteration,
+        targetFrameKey: TargetIdentitySchema.shape.targetFrameKey,
+        targetEntry: TargetIdentitySchema.shape.targetEntry,
       }),
     ),
-    deferredCompletions: z.record(z.string(), DeferredCompletionSchema).optional(),
+    resolvedCompletions: z.record(z.string(), ResolvedCompletionSchema).optional(),
+    deferredCompletions: z.record(z.string(), LegacyDeferredCompletionSchema).optional(),
+    frameEntries: z.record(z.string(), z.number().int().positive().max(MAX_FOR_BOUND)).optional(),
+    activeFrameKey: z.string().optional(),
+    activeEntry: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
     substepStates: z.array(SubstepStateSchema).optional(),
     agentId: z.string().optional(),
     parentRunbookId: z.string().optional(),
@@ -329,8 +350,56 @@ export const RunbookStateSchema = z
   })
   .transform((data) => {
     const { forIteration, forStart, forEnd, forVariable, ...rest } = data;
+
+    const buildFrameKey = (step: string, iteration?: number): string =>
+      `${step}|${iteration !== undefined ? String(iteration) : ''}`;
+
+    const buildCompletionKey = (frameKey: string, entry: number, substep?: string): string =>
+      `${frameKey}|${String(entry)}|${substep ?? ''}`;
+
+    const parseLegacyKey = (
+      key: string,
+    ): { step?: string; substep?: string; iteration?: number } => {
+      const [step, substepRaw, iterationRaw] = key.split('|');
+      if (!step) return {};
+      const iteration =
+        iterationRaw && iterationRaw.length > 0 ? Number.parseInt(iterationRaw, 10) : undefined;
+      const substep = substepRaw && substepRaw.length > 0 ? substepRaw : undefined;
+      return {
+        step,
+        ...(substep ? { substep } : {}),
+        ...(Number.isFinite(iteration) ? { iteration } : {}),
+      };
+    };
+
+    const getActiveForIteration = (
+      step: string,
+      forStack?: readonly z.infer<typeof ForStackEntrySchema>[],
+    ): number | undefined => {
+      if (!forStack || forStack.length === 0) return undefined;
+      const top = forStack[forStack.length - 1];
+      if (top.implicit || top.stepId !== step) return undefined;
+      return top.iteration;
+    };
     // Migrate old flat FOR fields → forStack
     if (!rest.forStack && forIteration !== undefined && rest.step) {
+      const activeIteration = getActiveForIteration(rest.step, [
+        ForStackEntrySchema.parse({
+          stepId: rest.step,
+          iteration: forIteration,
+          start: forStart ?? 1,
+          end: forEnd ?? forIteration,
+          variable: forVariable,
+          implicit: false,
+          source: { kind: 'range' as const },
+        }),
+      ]);
+      const activeFrameKey = rest.activeFrameKey ?? buildFrameKey(rest.step, activeIteration);
+      const activeEntry = rest.activeEntry ?? 1;
+      const frameEntries = {
+        ...(rest.frameEntries ?? {}),
+        [activeFrameKey]: Math.max(rest.frameEntries?.[activeFrameKey] ?? 0, activeEntry),
+      };
       return {
         ...rest,
         forStack: [
@@ -344,13 +413,82 @@ export const RunbookStateSchema = z
             source: { kind: 'range' as const },
           }),
         ],
+        activeFrameKey,
+        activeEntry,
+        frameEntries,
+        resolvedCompletions: rest.resolvedCompletions ?? {},
       };
     }
     // Strip implicit entries if they leaked into persisted state
     const forStack = rest.forStack?.filter((fc) => !fc.implicit);
-    return {
+    const normalized = {
       ...rest,
       forStack: forStack?.length ? forStack : undefined,
+    };
+
+    const activeIteration = getActiveForIteration(normalized.step, normalized.forStack);
+    const activeFrameKey =
+      normalized.activeFrameKey ?? buildFrameKey(normalized.step, activeIteration);
+    const activeEntry = normalized.activeEntry ?? 1;
+
+    const frameEntries = {
+      ...(normalized.frameEntries ?? {}),
+      [activeFrameKey]: Math.max(normalized.frameEntries?.[activeFrameKey] ?? 0, activeEntry),
+    };
+
+    const resolvedCompletions: Record<string, z.infer<typeof ResolvedCompletionSchema>> = {
+      ...(normalized.resolvedCompletions ?? {}),
+    };
+
+    // Legacy migration: only map deferred entries when frame identity is unambiguous.
+    for (const [legacyKey, legacy] of Object.entries(normalized.deferredCompletions ?? {})) {
+      const parsed = parseLegacyKey(legacyKey);
+      const frameStep = legacy.targetStep ?? parsed.step;
+      if (!frameStep) continue;
+      const frameIteration = legacy.targetIteration ?? parsed.iteration;
+      const frameKey = buildFrameKey(frameStep, frameIteration);
+      if (frameKey !== activeFrameKey) continue;
+
+      const substep = legacy.targetSubstep ?? parsed.substep;
+      const completionKey = buildCompletionKey(frameKey, activeEntry, substep);
+      if (completionKey in resolvedCompletions) continue;
+      resolvedCompletions[completionKey] = {
+        agentId: legacy.agentId,
+        result: legacy.result,
+        targetStep: frameStep,
+        ...(substep ? { targetSubstep: substep } : {}),
+        ...(frameIteration !== undefined ? { targetIteration: frameIteration } : {}),
+        targetFrameKey: frameKey,
+        targetEntry: activeEntry,
+        completedAt: legacy.completedAt,
+      };
+    }
+
+    // Backfill missing target frame metadata on already-resolved entries.
+    for (const [key, completion] of Object.entries(resolvedCompletions)) {
+      if (completion.targetFrameKey && completion.targetEntry) continue;
+      const frameKey = completion.targetFrameKey
+        ? completion.targetFrameKey
+        : buildFrameKey(completion.targetStep, completion.targetIteration);
+      const entry = completion.targetEntry ?? activeEntry;
+      const normalizedKey = buildCompletionKey(frameKey, entry, completion.targetSubstep);
+      resolvedCompletions[normalizedKey] = {
+        ...completion,
+        targetFrameKey: frameKey,
+        targetEntry: entry,
+      };
+      if (normalizedKey !== key) {
+        delete resolvedCompletions[key];
+      }
+    }
+
+    return {
+      ...normalized,
+      frameEntries,
+      activeFrameKey,
+      activeEntry,
+      resolvedCompletions,
+      deferredCompletions: undefined,
     };
   });
 

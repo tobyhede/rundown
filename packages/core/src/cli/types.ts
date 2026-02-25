@@ -18,6 +18,12 @@ export interface StepPosition {
     /** Optional inclusive loop bound (undefined for open-ended sources). */
     readonly end?: number;
   };
+  /** Active frame key (`step|iteration`) for execution identity. */
+  readonly frameKey?: string;
+  /** Active frame entry (monotonic per frame). */
+  readonly entry?: number;
+  /** Remaining unresolved substeps in the active frame. */
+  readonly unresolved?: number;
 }
 
 /**

@@ -38,6 +38,9 @@ interface JsonOutput {
     substep?: string;
     at?: string;
     for?: { index: number; end?: number };
+    frameKey?: string;
+    entry?: number;
+    unresolved?: number;
   };
   to?: {
     current: string;
@@ -45,6 +48,9 @@ interface JsonOutput {
     substep?: string;
     at?: string;
     for?: { index: number; end?: number };
+    frameKey?: string;
+    entry?: number;
+    unresolved?: number;
   };
   [key: string]: unknown;
 }
@@ -55,6 +61,9 @@ type JsonPosition = {
   substep?: string;
   at?: string;
   for?: { index: number; end?: number };
+  frameKey?: string;
+  entry?: number;
+  unresolved?: number;
 };
 
 /**
@@ -322,6 +331,9 @@ export class JSONRenderer implements OutputRenderer {
     total: number;
     substep?: string;
     for?: { index: number; end?: number };
+    frameKey?: string;
+    entry?: number;
+    unresolved?: number;
   }): JsonPosition {
     return {
       current: position.current,
@@ -329,6 +341,9 @@ export class JSONRenderer implements OutputRenderer {
       ...(position.substep ? { substep: position.substep } : {}),
       at: derivePositionAt(position),
       ...(position.for ? { for: position.for } : {}),
+      ...(position.frameKey ? { frameKey: position.frameKey } : {}),
+      ...(position.entry !== undefined ? { entry: position.entry } : {}),
+      ...(position.unresolved !== undefined ? { unresolved: position.unresolved } : {}),
     };
   }
 }

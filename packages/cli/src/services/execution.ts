@@ -2,8 +2,10 @@
 
 import {
   buildStepPosition,
-  buildTargetKey,
-  getActiveForContext,
+  buildCompletionKey,
+  deriveActiveFrame,
+  parseActionType,
+  type ActionType,
   extractLastAction,
   extractLastMessage,
   extractRetryDisplayCount,
@@ -149,12 +151,15 @@ interface ApplyResultTransitionArgs {
   manager: RunbookStateManager;
   actorService: RunbookActorService;
   sessionService: SessionService;
+  lifecycleService: ExecutionLifecycleService;
   emitter: ExecutionEventEmitter;
   runbookId: string;
   steps: Step[];
   currentState: RunbookState;
   currentStep: Step;
   result: 'pass' | 'fail';
+  transitionPolicy: TransitionOrchestrationPolicy;
+  computeActionResult?: (actionType: ActionType) => boolean;
   agentId?: string;
   command?: string;
 }
@@ -176,12 +181,15 @@ async function applyResultTransition({
   manager,
   actorService,
   sessionService,
+  lifecycleService,
   emitter,
   runbookId,
   steps,
   currentState,
   currentStep,
   result,
+  transitionPolicy,
+  computeActionResult,
   agentId,
   command,
 }: ApplyResultTransitionArgs): Promise<
@@ -192,6 +200,15 @@ async function applyResultTransition({
   });
   if (!syncResult) return { status: 'stopped' };
 
+  const ensured = await lifecycleService.ensureActiveEntry(
+    runbookId,
+    steps,
+    currentState,
+    syncResult.state,
+  );
+  const actionType = parseActionType(extractLastAction(syncResult.snapshot));
+  const actionResult = computeActionResult ? computeActionResult(actionType) : result === 'pass';
+
   const orchestration = await orchestrateTransition({
     manager,
     sessionService,
@@ -200,11 +217,11 @@ async function applyResultTransition({
     steps,
     currentStep,
     previousState: currentState,
-    updatedState: syncResult.state,
+    updatedState: ensured.state,
     snapshot: syncResult.snapshot,
     result,
-    actionResult: result === 'pass',
-    policy: EXECUTION_TERMINAL_POLICY,
+    actionResult,
+    policy: transitionPolicy,
     agentId,
     command,
   });
@@ -216,6 +233,108 @@ async function applyResultTransition({
     return { status: 'done' };
   }
   return { status: 'stopped' };
+}
+
+export interface DrainResolvedCompletionsArgs {
+  manager: RunbookStateManager;
+  actorService: RunbookActorService;
+  sessionService: SessionService;
+  lifecycleService: ExecutionLifecycleService;
+  emitter: ExecutionEventEmitter;
+  runbookId: string;
+  steps: Step[];
+  currentState: RunbookState;
+  transitionPolicy: TransitionOrchestrationPolicy;
+  computeActionResult?: (actionType: ActionType) => boolean;
+  agentId?: string;
+  command?: string;
+}
+
+export type DrainResolvedCompletionsResult =
+  | {
+      status: 'continue';
+      state: RunbookState;
+      unresolved: number;
+      applied: number;
+    }
+  | { status: 'done'; unresolved: number; applied: number }
+  | { status: 'stopped'; unresolved: number; applied: number };
+
+/**
+ * Deterministically drain resolved substep completions for the active frame+entry.
+ *
+ * Applies completions in substep order and stops at the first unresolved substep.
+ */
+export async function drainResolvedCompletions({
+  manager,
+  actorService,
+  sessionService,
+  lifecycleService,
+  emitter,
+  runbookId,
+  steps,
+  currentState,
+  transitionPolicy,
+  computeActionResult,
+  agentId,
+  command,
+}: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
+  let state = currentState;
+  let applied = 0;
+
+  while (true) {
+    const currentStep = steps.find((s) => s.name === state.step) ?? steps[0];
+    if (!currentStep?.substeps?.length || !state.substep) {
+      return { status: 'continue', state, unresolved: 0, applied };
+    }
+
+    const ensured = await lifecycleService.ensureActiveEntry(runbookId, steps, undefined, state);
+    state = ensured.state;
+
+    const frame = deriveActiveFrame(state);
+    const entry = state.activeEntry ?? ensured.entry;
+    const orderedSubsteps = currentStep.substeps.map((s) => s.id);
+    const resolved = await lifecycleService.listResolvedCompletions(
+      runbookId,
+      frame.frameKey,
+      entry,
+    );
+    const resolvedBySubstep = new Map(
+      resolved
+        .filter(({ completion }) => completion.targetSubstep !== undefined)
+        .map(({ completion }) => [completion.targetSubstep as string, completion]),
+    );
+
+    const unresolved = orderedSubsteps.filter((id) => !resolvedBySubstep.has(id)).length;
+
+    const cursorKey = buildCompletionKey(frame.frameKey, entry, state.substep);
+    const completion = await lifecycleService.consumeResolvedCompletion(runbookId, cursorKey);
+    if (!completion) {
+      return { status: 'continue', state, unresolved, applied };
+    }
+
+    const transitionResult = await applyResultTransition({
+      manager,
+      actorService,
+      sessionService,
+      lifecycleService,
+      emitter,
+      runbookId,
+      steps,
+      currentState: state,
+      currentStep,
+      result: completion.result,
+      transitionPolicy,
+      computeActionResult,
+      agentId,
+      command,
+    });
+    applied += 1;
+
+    if (transitionResult.status === 'done') return { status: 'done', unresolved: 0, applied };
+    if (transitionResult.status === 'stopped') return { status: 'stopped', unresolved: 0, applied };
+    state = transitionResult.state;
+  }
 }
 
 /**
@@ -249,13 +368,18 @@ export async function runExecutionLoop(
   const state = await manager.load(runbookId);
   if (!state) return 'stopped';
 
-  let currentState: RunbookState = state;
-
   // Service for resolving FOR loop iteration values (array, file, range)
   const actorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   const iterationService = new ForIterationService(manager, actorService);
+  const ensuredInitial = await lifecycleService.ensureActiveEntry(
+    runbookId,
+    steps,
+    undefined,
+    state,
+  );
+  let currentState: RunbookState = ensuredInitial.state;
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
@@ -337,39 +461,45 @@ export async function runExecutionLoop(
         return 'stopped';
       }
       // No terminal state — machine transitioned to next step after loop exit
-      currentState = iterResult.state;
+      const ensured = await lifecycleService.ensureActiveEntry(
+        runbookId,
+        steps,
+        currentState,
+        iterResult.state,
+      );
+      currentState = ensured.state;
       continue;
     }
 
     if (iterResult.status === 'ready') {
       // Value resolved — re-enter loop with populated currentValue
-      currentState = iterResult.state;
-      continue;
-    }
-
-    // status === 'no-resolution-needed' — proceed to step execution
-    // State is unchanged; no need to overwrite currentState.
-
-    const activeFor = getActiveForContext(currentState.forStack, currentState.step);
-    const cursorKey = buildTargetKey(currentState.step, currentState.substep, activeFor?.iteration);
-    const deferred = await lifecycleService.consumeDeferredCompletion(runbookId, cursorKey);
-    if (deferred) {
-      const deferredResult = await applyResultTransition({
-        manager,
-        actorService,
-        sessionService,
-        emitter,
+      const ensured = await lifecycleService.ensureActiveEntry(
         runbookId,
         steps,
         currentState,
-        currentStep,
-        result: deferred.result,
-        agentId,
-      });
+        iterResult.state,
+      );
+      currentState = ensured.state;
+      continue;
+    }
 
-      if (deferredResult.status === 'done') return 'done';
-      if (deferredResult.status === 'stopped') return 'stopped';
-      currentState = deferredResult.state;
+    // status === 'no-resolution-needed' — drain any pre-resolved completions
+    const drainResult = await drainResolvedCompletions({
+      manager,
+      actorService,
+      sessionService,
+      lifecycleService,
+      emitter,
+      runbookId,
+      steps,
+      currentState,
+      transitionPolicy: EXECUTION_TERMINAL_POLICY,
+      agentId,
+    });
+    if (drainResult.status === 'done') return 'done';
+    if (drainResult.status === 'stopped') return 'stopped';
+    if (drainResult.applied > 0) {
+      currentState = drainResult.state;
       continue;
     }
 
@@ -485,12 +615,14 @@ export async function runExecutionLoop(
       manager,
       actorService,
       sessionService,
+      lifecycleService,
       emitter,
       runbookId,
       steps,
       currentState,
       currentStep,
       result: lastResult,
+      transitionPolicy: EXECUTION_TERMINAL_POLICY,
       agentId,
       command: displayCommand,
     });

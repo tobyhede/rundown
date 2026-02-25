@@ -1,5 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
-import { deriveExecutionAt, derivePositionAt } from '../../src/runbook/targeting.js';
+import {
+  buildCompletionKey,
+  buildFrameKey,
+  deriveExecutionAt,
+  derivePositionAt,
+} from '../../src/runbook/targeting.js';
 
 describe('targeting helpers', () => {
   describe('deriveExecutionAt', () => {
@@ -31,6 +36,26 @@ describe('targeting helpers', () => {
       expect(derivePositionAt({ current: '2', substep: '1' })).toBe('2.1');
       expect(derivePositionAt({ current: '2', for: { index: 3 } })).toBe('2.3');
       expect(derivePositionAt({ current: '2', substep: '1', for: { index: 3 } })).toBe('2.3.1');
+    });
+  });
+
+  describe('buildFrameKey', () => {
+    it('builds non-loop frame key', () => {
+      expect(buildFrameKey('1')).toBe('1|');
+    });
+
+    it('builds loop frame key', () => {
+      expect(buildFrameKey('1', 2)).toBe('1|2');
+    });
+  });
+
+  describe('buildCompletionKey', () => {
+    it('builds completion key with substep', () => {
+      expect(buildCompletionKey('1|2', 3, '1')).toBe('1|2|3|1');
+    });
+
+    it('builds completion key without substep', () => {
+      expect(buildCompletionKey('1|2', 3)).toBe('1|2|3|');
     });
   });
 });

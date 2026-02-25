@@ -1,6 +1,12 @@
 // src/runbook/execution-lifecycle-service.ts
 import type { RunbookStateManager } from './state.js';
-import type { DeferredCompletion, PendingStep } from './types.js';
+import {
+  buildCompletionKey,
+  deriveActiveFrame,
+  buildFrameKey,
+  parseCompletionKey,
+} from './targeting.js';
+import type { PendingStep, ResolvedCompletion, RunbookState, Step } from './types.js';
 
 /**
  * Service for execution-flow helpers that read/write specific fields
@@ -79,48 +85,179 @@ export class ExecutionLifecycleService {
   }
 
   /**
-   * Store or replace a deferred completion keyed by canonical target key.
+   * Ensure active frame/entry identity is initialized and current.
+   *
+   * Entry increments when execution enters a frame from another frame, or when
+   * control-flow re-enters the same frame via GOTO/RETRY.
    *
    * @param id - The runbook state ID
-   * @param key - Canonical target key (`step|substep|iteration`)
-   * @param completion - Deferred completion payload
+   * @param _steps - Parsed runbook steps (reserved for parity with call sites)
+   * @param previousState - State before a transition (optional)
+   * @param nextState - State after a transition (optional)
+   * @returns Persisted state with active frame/entry fields populated
    */
-  async upsertDeferredCompletion(
+  async ensureActiveEntry(
+    id: string,
+    _steps: readonly Step[],
+    previousState?: RunbookState,
+    nextState?: RunbookState,
+  ): Promise<{ state: RunbookState; frameKey: string; entry: number }> {
+    const loaded = await this.manager.load(id);
+    if (!loaded) throw new Error(`Runbook ${id} not found`);
+
+    const state = nextState ?? loaded;
+    const activeFrame = deriveActiveFrame(state);
+    const previousFrame = previousState ? deriveActiveFrame(previousState) : undefined;
+
+    const frameEntries = { ...(loaded.frameEntries ?? {}) };
+    const knownEntry = frameEntries[activeFrame.frameKey] ?? 0;
+
+    let entry = loaded.activeEntry ?? knownEntry;
+    if (!entry || entry < 1) {
+      entry = knownEntry > 0 ? knownEntry : 1;
+    }
+
+    const fromFrameKey = previousFrame?.frameKey;
+    const toFrameKey = activeFrame.frameKey;
+    const reenteredSameFrame =
+      fromFrameKey === toFrameKey &&
+      nextState !== undefined &&
+      (nextState.lastAction?.type === 'GOTO' || nextState.lastAction?.type === 'RETRY');
+    const switchedFrame =
+      fromFrameKey !== undefined && toFrameKey !== fromFrameKey && nextState !== undefined;
+
+    if (!loaded.activeFrameKey || loaded.activeEntry === undefined) {
+      entry = knownEntry > 0 ? knownEntry : 1;
+    } else if (reenteredSameFrame || switchedFrame) {
+      entry = Math.max(knownEntry, entry) + 1;
+    } else if (loaded.activeFrameKey !== toFrameKey) {
+      entry = Math.max(knownEntry, entry) + 1;
+    }
+
+    frameEntries[toFrameKey] = Math.max(frameEntries[toFrameKey] ?? 0, entry);
+
+    const unchanged =
+      loaded.activeFrameKey === toFrameKey &&
+      loaded.activeEntry === entry &&
+      (loaded.frameEntries?.[toFrameKey] ?? 0) === frameEntries[toFrameKey];
+    if (unchanged) {
+      return {
+        state: {
+          ...loaded,
+          activeFrameKey: toFrameKey,
+          activeEntry: entry,
+          frameEntries,
+        },
+        frameKey: toFrameKey,
+        entry,
+      };
+    }
+
+    const updated = await this.manager.update(id, {
+      activeFrameKey: toFrameKey,
+      activeEntry: entry,
+      frameEntries,
+    });
+
+    return { state: updated, frameKey: toFrameKey, entry };
+  }
+
+  /**
+   * Store or replace a resolved completion keyed by canonical completion key.
+   *
+   * @param id - The runbook state ID
+   * @param key - Canonical completion key (`frame|entry|substep`)
+   * @param completion - Resolved completion payload
+   */
+  async upsertResolvedCompletion(
     id: string,
     key: string,
-    completion: DeferredCompletion,
+    completion: ResolvedCompletion,
   ): Promise<void> {
     const state = await this.manager.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);
 
     await this.manager.update(id, {
-      deferredCompletions: {
-        ...(state.deferredCompletions ?? {}),
+      resolvedCompletions: {
+        ...(state.resolvedCompletions ?? {}),
         [key]: completion,
       },
     });
   }
 
   /**
-   * Consume (read and remove) a deferred completion by canonical target key.
+   * Read a resolved completion by key without consuming it.
+   */
+  async getResolvedCompletion(id: string, key: string): Promise<ResolvedCompletion | null> {
+    const state = await this.manager.load(id);
+    if (!state) return null;
+    return state.resolvedCompletions?.[key] ?? null;
+  }
+
+  /**
+   * Consume (read and remove) a resolved completion by canonical completion key.
    *
    * @param id - The runbook state ID
-   * @param key - Canonical target key (`step|substep|iteration`)
-   * @returns The deferred completion if present, otherwise null
+   * @param key - Canonical completion key (`frame|entry|substep`)
+   * @returns The resolved completion if present, otherwise null
    */
-  async consumeDeferredCompletion(id: string, key: string): Promise<DeferredCompletion | null> {
+  async consumeResolvedCompletion(id: string, key: string): Promise<ResolvedCompletion | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
 
-    const existing = state.deferredCompletions?.[key];
+    const existing = state.resolvedCompletions?.[key];
     if (!existing) return null;
 
-    const next = { ...(state.deferredCompletions ?? {}) };
+    const next = { ...(state.resolvedCompletions ?? {}) };
     delete next[key];
     await this.manager.update(id, {
-      deferredCompletions: Object.keys(next).length > 0 ? next : {},
+      resolvedCompletions: Object.keys(next).length > 0 ? next : {},
     });
     return existing;
+  }
+
+  /**
+   * List resolved completions for a specific frame+entry.
+   *
+   * @param id - The runbook state ID
+   * @param frameKey - Frame key (`step|iteration`)
+   * @param entry - Frame entry number
+   */
+  async listResolvedCompletions(
+    id: string,
+    frameKey: string,
+    entry: number,
+  ): Promise<ReadonlyArray<{ key: string; completion: ResolvedCompletion }>> {
+    const state = await this.manager.load(id);
+    if (!state) return [];
+
+    const prefix = `${frameKey}|${String(entry)}|`;
+    return Object.entries(state.resolvedCompletions ?? {})
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, completion]) => ({ key, completion }));
+  }
+
+  /**
+   * Build a completion key for the active frame in a state.
+   */
+  buildActiveCompletionKey(state: RunbookState, substep?: string): string {
+    const frame = deriveActiveFrame(state);
+    const entry = state.activeEntry ?? 1;
+    return buildCompletionKey(frame.frameKey, entry, substep);
+  }
+
+  /**
+   * Resolve frame key from canonical target identity.
+   */
+  buildTargetFrameKey(targetStep: string, targetIteration?: number): string {
+    return buildFrameKey(targetStep, targetIteration);
+  }
+
+  /**
+   * Parse completion key helper for callers that need frame/entry extraction.
+   */
+  parseCompletionKey(key: string): { frameKey: string; entry: number; substep?: string } | null {
+    return parseCompletionKey(key);
   }
 
   /**

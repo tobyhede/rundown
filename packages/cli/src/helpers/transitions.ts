@@ -15,12 +15,14 @@ import {
   ExecutionLifecycleService,
   extractLastAction,
   parseActionType,
-  buildTargetKey,
+  buildCompletionKey,
+  buildFrameKey,
   deriveExecutionAt,
   getActiveForContext,
+  deriveActiveFrame,
   type AnyActorRef,
   stepIdToString,
-  type DeferredCompletion,
+  type ResolvedCompletion,
   type Step,
   type RunbookState,
   type RunbookCompletedPayload,
@@ -28,7 +30,7 @@ import {
   type StepTransitionedPayload,
 } from '@rundown-org/core';
 import { getRunbookFromState } from './runbook-loader.js';
-import { runExecutionLoop } from '../services/execution.js';
+import { drainResolvedCompletions, runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import {
@@ -229,23 +231,40 @@ interface RuntimeTarget {
   step: string;
   substep?: string;
   iteration?: number;
+  frameKey: string;
+  entry: number;
+  completionKey: string;
   at: string;
-  key: string;
 }
 
-function toRuntimeTarget(step: string, substep?: string, iteration?: number): RuntimeTarget {
+function toRuntimeTarget(
+  step: string,
+  substep: string | undefined,
+  iteration: number | undefined,
+  entry: number,
+  frameKey?: string,
+): RuntimeTarget {
+  const resolvedFrameKey = frameKey ?? buildFrameKey(step, iteration);
   return {
     step,
     substep,
     iteration,
+    frameKey: resolvedFrameKey,
+    entry,
+    completionKey: buildCompletionKey(resolvedFrameKey, entry, substep),
     at: deriveExecutionAt(step, substep, iteration),
-    key: buildTargetKey(step, substep, iteration),
   };
 }
 
 function activeCursorTarget(state: RunbookState): RuntimeTarget {
-  const activeFor = getActiveForContext(state.forStack, state.step);
-  return toRuntimeTarget(state.step, state.substep, activeFor?.iteration);
+  const activeFrame = deriveActiveFrame(state);
+  return toRuntimeTarget(
+    activeFrame.step,
+    state.substep,
+    activeFrame.iteration,
+    state.activeEntry ?? 1,
+    activeFrame.frameKey,
+  );
 }
 
 function resolveBindingTarget(
@@ -254,7 +273,16 @@ function resolveBindingTarget(
   binding: RunbookState['agentBindings'][string],
 ): RuntimeTarget {
   if (binding.targetStep) {
-    return toRuntimeTarget(binding.targetStep, binding.targetSubstep, binding.targetIteration);
+    const frameKey =
+      binding.targetFrameKey ?? buildFrameKey(binding.targetStep, binding.targetIteration);
+    const entry = binding.targetEntry ?? state.activeEntry ?? 1;
+    return toRuntimeTarget(
+      binding.targetStep,
+      binding.targetSubstep,
+      binding.targetIteration,
+      entry,
+      frameKey,
+    );
   }
 
   // Legacy compatibility: infer only when target is unambiguous from active state.
@@ -277,29 +305,32 @@ function resolveBindingTarget(
   }
 
   const activeFor = getActiveForContext(state.forStack, state.step);
-  return toRuntimeTarget(state.step, inferredSubstep, activeFor?.iteration);
-}
-
-function isFrontierTarget(target: RuntimeTarget, cursor: RuntimeTarget): boolean {
-  if (target.step !== cursor.step) return false;
-  if (cursor.iteration !== undefined) return target.iteration === cursor.iteration;
-  return target.iteration === undefined;
+  const frame = deriveActiveFrame(state);
+  return toRuntimeTarget(
+    state.step,
+    inferredSubstep,
+    activeFor?.iteration,
+    state.activeEntry ?? 1,
+    frame.frameKey,
+  );
 }
 
 /**
  * Handle agent binding completion.
  *
- * Matching cursor targets are routed through the same actor PASS/FAIL path
- * as plain commands. Valid frontier targets that are not at cursor are
- * deferred. Out-of-frontier and stale completions are rejected.
+ * Agent completions are accepted only for the active frame+entry identity.
+ * Accepted completions are recorded and drained through the shared transition path.
  */
 export async function handleAgentBinding(
   ctx: TransitionContext,
   agentId: string,
   _config: TransitionConfig,
 ): Promise<boolean> {
-  const { output, manager, lifecycleService, state, steps } = ctx;
-  const binding = await manager.getAgentBinding(state.id, agentId);
+  const { output, manager, lifecycleService, state, steps, actorService, sessionService, cwd } =
+    ctx;
+  const ensured = await lifecycleService.ensureActiveEntry(state.id, steps, undefined, state);
+  const activeState = ensured.state;
+  const binding = await manager.getAgentBinding(activeState.id, agentId);
 
   if (!binding) {
     // No binding - this is a standalone runbook in agent's stack
@@ -325,55 +356,117 @@ export async function handleAgentBinding(
     result = childResult;
   }
 
-  const target = resolveBindingTarget(state, steps, binding);
-  const cursor = activeCursorTarget(state);
-
-  if (!isFrontierTarget(target, cursor)) {
+  const target = resolveBindingTarget(activeState, steps, binding);
+  const cursor = activeCursorTarget(activeState);
+  if (target.frameKey !== cursor.frameKey || target.entry !== cursor.entry) {
     throw new Error(
-      `Rejected out-of-frontier completion. Current cursor: ${cursor.key} (${cursor.at}). ` +
-        `Attempted target: ${target.key} (${target.at}).`,
+      `Rejected stale completion. Current frame=${cursor.frameKey}, entry=${String(cursor.entry)} (${cursor.at}). ` +
+        `Attempted frame=${target.frameKey}, entry=${String(target.entry)} (${target.at}).`,
     );
   }
 
-  await manager.updateAgentBinding(state.id, agentId, {
+  await manager.updateAgentBinding(activeState.id, agentId, {
     status: 'done',
     result,
     targetStep: target.step,
     targetSubstep: target.substep,
     targetIteration: target.iteration,
+    targetFrameKey: target.frameKey,
+    targetEntry: target.entry,
   });
 
-  const updated = await manager.load(state.id);
-  const bindings = Object.values(updated?.agentBindings ?? {});
-  const runningCount = bindings.filter((b) => b.status === 'running').length;
-
-  if (target.key === cursor.key) {
-    const transitionConfig =
-      result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
+  const transitionConfig =
+    result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
+  if (!target.substep) {
     await executeTransition(ctx, transitionConfig);
     return true;
   }
 
-  const completion: DeferredCompletion = {
-    agentId,
-    result,
-    targetStep: target.step,
-    targetSubstep: target.substep,
-    targetIteration: target.iteration,
-    completedAt: new Date().toISOString(),
-  };
-  await lifecycleService.upsertDeferredCompletion(state.id, target.key, completion);
+  const existing = await lifecycleService.getResolvedCompletion(
+    activeState.id,
+    target.completionKey,
+  );
+  if (!existing) {
+    const completion: ResolvedCompletion = {
+      agentId,
+      result,
+      targetStep: target.step,
+      ...(target.substep ? { targetSubstep: target.substep } : {}),
+      ...(target.iteration !== undefined ? { targetIteration: target.iteration } : {}),
+      targetFrameKey: target.frameKey,
+      targetEntry: target.entry,
+      completedAt: new Date().toISOString(),
+    };
+    await lifecycleService.upsertResolvedCompletion(
+      activeState.id,
+      target.completionKey,
+      completion,
+    );
+  } else {
+    output.status(
+      existing.result === 'pass',
+      'agent_duplicate',
+      `Agent ${agentId} completion already recorded for ${target.at}`,
+      {
+        agent: agentId,
+        targetAt: target.at,
+        frameKey: target.frameKey,
+        entry: target.entry,
+      },
+    );
+  }
+
+  const emitter = createBridgedEmitter(activeState, output);
+  const drained = await drainResolvedCompletions({
+    manager,
+    actorService,
+    sessionService,
+    lifecycleService,
+    emitter,
+    runbookId: activeState.id,
+    steps,
+    currentState: activeState,
+    transitionPolicy: transitionConfig.policy,
+    computeActionResult: transitionConfig.computeActionResult,
+    agentId: ctx.agentId,
+  });
+
+  if (drained.status === 'stopped') {
+    output.flush();
+    process.exit(1);
+  }
+  if (drained.status === 'done') {
+    output.flush();
+    return true;
+  }
+
+  if (drained.applied > 0) {
+    const loopResult = await runExecutionLoop(
+      manager,
+      activeState.id,
+      steps,
+      cwd,
+      !!drained.state.prompted,
+      emitter,
+      ctx.agentId,
+    );
+    output.flush();
+    if (loopResult === 'stopped') {
+      process.exit(1);
+    }
+    return true;
+  }
 
   output.status(
     result === 'pass',
-    'agent_deferred',
-    `Agent ${agentId} completion deferred for ${target.at} (${String(runningCount)} agent(s) still running)`,
+    'agent_recorded',
+    `Agent ${agentId} completion recorded for ${target.at}`,
     {
       agent: agentId,
       targetAt: target.at,
-      targetKey: target.key,
-      result,
-      agentsRunning: runningCount,
+      frameKey: target.frameKey,
+      entry: target.entry,
+      unresolved: drained.unresolved,
     },
   );
   output.flush();
@@ -394,17 +487,102 @@ export async function executeTransition(
   ctx: TransitionContext,
   config: TransitionConfig,
 ): Promise<void> {
-  const { output, manager, actorService, state, steps, actor, cwd, agentId } = ctx;
+  const { output, manager, actorService, state, steps, actor, cwd, agentId, lifecycleService } =
+    ctx;
+  const ensured = await lifecycleService.ensureActiveEntry(state.id, steps, undefined, state);
+  const activeState = ensured.state;
+  const activeStep = steps.find((s) => s.name === activeState.step) ?? steps[0];
+  const isSubstepCompletion = !!(activeState.substep && activeStep?.substeps?.length);
+
+  if (isSubstepCompletion) {
+    const cursor = activeCursorTarget(activeState);
+    const completionKey = buildCompletionKey(cursor.frameKey, cursor.entry, activeState.substep);
+    const existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
+    if (!existing) {
+      const completion: ResolvedCompletion = {
+        agentId: agentId ?? 'manual',
+        result: config.lastResult,
+        targetStep: cursor.step,
+        ...(cursor.substep ? { targetSubstep: cursor.substep } : {}),
+        ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
+        targetFrameKey: cursor.frameKey,
+        targetEntry: cursor.entry,
+        completedAt: new Date().toISOString(),
+      };
+      await lifecycleService.upsertResolvedCompletion(activeState.id, completionKey, completion);
+    } else {
+      output.status(
+        existing.result === 'pass',
+        'completion_duplicate',
+        `Completion already recorded for ${cursor.at}`,
+        {
+          at: cursor.at,
+          frameKey: cursor.frameKey,
+          entry: cursor.entry,
+        },
+      );
+    }
+
+    const emitter = createBridgedEmitter(activeState, output);
+    const drained = await drainResolvedCompletions({
+      manager,
+      actorService,
+      sessionService: ctx.sessionService,
+      lifecycleService,
+      emitter,
+      runbookId: activeState.id,
+      steps,
+      currentState: activeState,
+      transitionPolicy: config.policy,
+      computeActionResult: config.computeActionResult,
+      agentId,
+    });
+    if (drained.status === 'stopped') {
+      output.flush();
+      process.exit(1);
+    }
+    if (drained.status === 'done') {
+      output.flush();
+      return;
+    }
+    if (drained.applied === 0) {
+      output.flush();
+      return;
+    }
+
+    const loopResult = await runExecutionLoop(
+      manager,
+      activeState.id,
+      steps,
+      cwd,
+      !!drained.state.prompted,
+      emitter,
+      agentId,
+    );
+    output.flush();
+    if (loopResult === 'stopped') {
+      process.exit(1);
+    }
+    return;
+  }
+
   // Capture previous state before mutation.
-  const previousState = { ...state };
+  const previousState = { ...activeState };
   const currentStep = steps.find((s) => s.name === previousState.step) ?? steps[0];
 
   actor.send({ type: config.eventType });
-  const { state: updatedState, snapshot: rawSnapshot } = await actorService.updateFromActor(
-    state.id,
+  const { state: actorUpdatedState, snapshot: rawSnapshot } = await actorService.updateFromActor(
+    activeState.id,
     actor,
     steps,
   );
+  const ensuredAfterTransition = await lifecycleService.ensureActiveEntry(
+    activeState.id,
+    steps,
+    previousState,
+    actorUpdatedState,
+  );
+  const updatedState = ensuredAfterTransition.state;
 
   const actionType = parseActionType(extractLastAction(rawSnapshot));
   const actionResult = config.computeActionResult(actionType);
@@ -430,7 +608,7 @@ export async function executeTransition(
     manager,
     sessionService: ctx.sessionService,
     sink: commandSink,
-    runbookId: state.id,
+    runbookId: activeState.id,
     steps,
     currentStep,
     previousState,
@@ -442,22 +620,22 @@ export async function executeTransition(
     agentId,
   });
 
-  output.flush();
-
   if (orchestration.status === 'stopped') {
+    output.flush();
     process.exit(1);
   }
   if (orchestration.status === 'done') {
+    output.flush();
     return;
   }
 
   const emitter = createBridgedEmitter(updatedState, output);
   const loopResult = await runExecutionLoop(
     manager,
-    state.id,
+    activeState.id,
     steps,
     cwd,
-    !!state.prompted,
+    !!updatedState.prompted,
     emitter,
     agentId,
   );

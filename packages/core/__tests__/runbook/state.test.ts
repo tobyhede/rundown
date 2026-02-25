@@ -302,17 +302,20 @@ describe('RunbookStateManager', () => {
     it('loads legacy targetPath fields and strips them on save', async () => {
       const state = await manager.create('legacy.md', mockRunbook, { runbookPath: 'legacy.md' });
       const deferredKey = '1||';
+      const resolvedKey = '1||1|';
 
       await manager.update(state.id, {
         pendingSteps: [{ stepId: { step: '1' }, targetStep: '1' }],
         agentBindings: {
           'agent-1': { stepId: { step: '1' }, status: 'running', targetStep: '1' },
         },
-        deferredCompletions: {
-          [deferredKey]: {
+        resolvedCompletions: {
+          [resolvedKey]: {
             agentId: 'agent-1',
             result: 'pass',
             targetStep: '1',
+            targetFrameKey: '1|',
+            targetEntry: 1,
             completedAt: new Date().toISOString(),
           },
         },
@@ -325,10 +328,19 @@ describe('RunbookStateManager', () => {
       pending.targetPath = '1';
       const binding = (raw.agentBindings as Record<string, Record<string, unknown>>)['agent-1'];
       binding.targetPath = '1';
-      const deferred = (raw.deferredCompletions as Record<string, Record<string, unknown>>)[
-        deferredKey
+      const resolved = (raw.resolvedCompletions as Record<string, Record<string, unknown>>)[
+        resolvedKey
       ];
-      deferred.targetPath = '1';
+      resolved.targetPath = '1';
+      raw.deferredCompletions = {
+        [deferredKey]: {
+          agentId: 'agent-1',
+          result: 'pass',
+          targetStep: '1',
+          completedAt: new Date().toISOString(),
+          targetPath: '1',
+        },
+      };
       await writeFile(stateFilePath, JSON.stringify(raw), { mode: 0o600 });
 
       const loaded = await manager.load(state.id);
@@ -337,12 +349,12 @@ describe('RunbookStateManager', () => {
         | { targetPath?: string }
         | undefined;
       const loadedBinding = loaded?.agentBindings['agent-1'] as { targetPath?: string } | undefined;
-      const loadedDeferred = loaded?.deferredCompletions?.[deferredKey] as
+      const loadedResolved = loaded?.resolvedCompletions?.[resolvedKey] as
         | { targetPath?: string }
         | undefined;
       expect(loadedPending?.targetPath).toBeUndefined();
       expect(loadedBinding?.targetPath).toBeUndefined();
-      expect(loadedDeferred?.targetPath).toBeUndefined();
+      expect(loadedResolved?.targetPath).toBeUndefined();
 
       await manager.update(state.id, { stepName: 'updated' });
       const saved = await readFile(stateFilePath, 'utf8');

@@ -11,7 +11,19 @@ const mockSessionService = {
 
 const mockLifecycleService = {
   setLastResult: jest.fn(),
-  consumeDeferredCompletion: jest.fn().mockResolvedValue(null),
+  ensureActiveEntry: jest
+    .fn()
+    .mockImplementation(async (_id: string, _steps: unknown[], _prev: unknown, state: any) => ({
+      state: {
+        ...(state ?? {}),
+        activeEntry: state?.activeEntry ?? 1,
+        activeFrameKey: `${state?.step ?? '1'}|`,
+      },
+      frameKey: `${state?.step ?? '1'}|`,
+      entry: state?.activeEntry ?? 1,
+    })),
+  listResolvedCompletions: jest.fn().mockResolvedValue([]),
+  consumeResolvedCompletion: jest.fn().mockResolvedValue(null),
 };
 
 jest.unstable_mockModule('@rundown-org/core', () => {
@@ -76,11 +88,14 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       total,
       ...(substep ? { substep } : {}),
     })),
-    buildTargetKey: jest.fn(
-      (step: string, substep?: string, iteration?: number) =>
-        `${step}|${substep ?? ''}|${iteration != null ? String(iteration) : ''}`,
+    buildCompletionKey: jest.fn(
+      (frameKey: string, entry: number, substep?: string) =>
+        `${frameKey}|${String(entry)}|${substep ?? ''}`,
     ),
-    getActiveForContext: jest.fn().mockReturnValue(null),
+    deriveActiveFrame: jest.fn((state: any) => ({
+      frameKey: `${state?.step ?? '1'}|`,
+      step: state?.step ?? '1',
+    })),
     RunbookActorService: jest.fn().mockImplementation(() => mockActorService),
     SessionService: jest.fn().mockImplementation(() => mockSessionService),
     ExecutionLifecycleService: jest.fn().mockImplementation(() => mockLifecycleService),
@@ -159,8 +174,22 @@ describe('runExecutionLoop', () => {
       updateAgentBinding: jest.fn(),
     };
 
-    mockLifecycleService.consumeDeferredCompletion.mockReset();
-    mockLifecycleService.consumeDeferredCompletion.mockResolvedValue(null);
+    mockLifecycleService.ensureActiveEntry.mockReset();
+    mockLifecycleService.ensureActiveEntry.mockImplementation(
+      async (_id: string, _steps: unknown[], _prev: unknown, state: any) => ({
+        state: {
+          ...(state ?? {}),
+          activeEntry: state?.activeEntry ?? 1,
+          activeFrameKey: `${state?.step ?? '1'}|`,
+        },
+        frameKey: `${state?.step ?? '1'}|`,
+        entry: state?.activeEntry ?? 1,
+      }),
+    );
+    mockLifecycleService.listResolvedCompletions.mockReset();
+    mockLifecycleService.listResolvedCompletions.mockResolvedValue([]);
+    mockLifecycleService.consumeResolvedCompletion.mockReset();
+    mockLifecycleService.consumeResolvedCompletion.mockResolvedValue(null);
 
     mockActorService.sendAndSync.mockReset();
 

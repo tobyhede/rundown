@@ -98,6 +98,17 @@ export const PositionSchema = z
       })
       .optional()
       .describe('Loop scope for this position'),
+    /** Active execution frame key (`step|iteration`) */
+    frameKey: z.string().optional().describe('Active execution frame key'),
+    /** Active execution entry for the frame */
+    entry: z.number().int().positive().optional().describe('Active frame entry'),
+    /** Count of unresolved substeps in the active frame */
+    unresolved: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe('Number of unresolved substeps in the active frame'),
   })
   .describe('Current position within the runbook execution');
 

@@ -115,7 +115,8 @@ export class RunbookStateManager {
       steps: [],
       pendingSteps: [],
       agentBindings: {},
-      deferredCompletions: {},
+      resolvedCompletions: {},
+      frameEntries: {},
       agentId: options.agentId,
       parentRunbookId: options.parentRunbookId,
       parentStepId: options.parentStepId,
@@ -294,6 +295,8 @@ export class RunbookStateManager {
       targetStep: pending.targetStep,
       targetSubstep: pending.targetSubstep,
       targetIteration: pending.targetIteration,
+      targetFrameKey: pending.targetFrameKey,
+      targetEntry: pending.targetEntry,
     };
 
     await this.update(id, {
@@ -333,7 +336,14 @@ export class RunbookStateManager {
     updates: Partial<
       Pick<
         AgentBinding,
-        'status' | 'result' | 'childRunbookId' | 'targetStep' | 'targetSubstep' | 'targetIteration'
+        | 'status'
+        | 'result'
+        | 'childRunbookId'
+        | 'targetStep'
+        | 'targetSubstep'
+        | 'targetIteration'
+        | 'targetFrameKey'
+        | 'targetEntry'
       >
     >,
   ): Promise<void> {
