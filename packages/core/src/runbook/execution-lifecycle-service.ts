@@ -102,17 +102,16 @@ export class ExecutionLifecycleService {
     previousState?: RunbookState,
     nextState?: RunbookState,
   ): Promise<{ state: RunbookState; frameKey: string; entry: number }> {
-    const loaded = await this.manager.load(id);
-    if (!loaded) throw new Error(`Runbook ${id} not found`);
+    const base = nextState ?? (await this.manager.load(id));
+    if (!base) throw new Error(`Runbook ${id} not found`);
 
-    const state = nextState ?? loaded;
-    const activeFrame = deriveActiveFrame(state);
+    const activeFrame = deriveActiveFrame(base);
     const previousFrame = previousState ? deriveActiveFrame(previousState) : undefined;
 
-    const frameEntries = { ...(loaded.frameEntries ?? {}) };
+    const frameEntries = { ...(base.frameEntries ?? {}) };
     const knownEntry = frameEntries[activeFrame.frameKey] ?? 0;
 
-    let entry = loaded.activeEntry ?? knownEntry;
+    let entry = base.activeEntry ?? knownEntry;
     if (!entry || entry < 1) {
       entry = knownEntry > 0 ? knownEntry : 1;
     }
@@ -126,24 +125,24 @@ export class ExecutionLifecycleService {
     const switchedFrame =
       fromFrameKey !== undefined && toFrameKey !== fromFrameKey && nextState !== undefined;
 
-    if (!loaded.activeFrameKey || loaded.activeEntry === undefined) {
+    if (!base.activeFrameKey || base.activeEntry === undefined) {
       entry = knownEntry > 0 ? knownEntry : 1;
     } else if (reenteredSameFrame || switchedFrame) {
       entry = Math.max(knownEntry, entry) + 1;
-    } else if (loaded.activeFrameKey !== toFrameKey) {
+    } else if (base.activeFrameKey !== toFrameKey) {
       entry = Math.max(knownEntry, entry) + 1;
     }
 
     frameEntries[toFrameKey] = Math.max(frameEntries[toFrameKey] ?? 0, entry);
 
     const unchanged =
-      loaded.activeFrameKey === toFrameKey &&
-      loaded.activeEntry === entry &&
-      (loaded.frameEntries?.[toFrameKey] ?? 0) === frameEntries[toFrameKey];
+      base.activeFrameKey === toFrameKey &&
+      base.activeEntry === entry &&
+      (base.frameEntries?.[toFrameKey] ?? 0) === frameEntries[toFrameKey];
     if (unchanged) {
       return {
         state: {
-          ...loaded,
+          ...base,
           activeFrameKey: toFrameKey,
           activeEntry: entry,
           frameEntries,
