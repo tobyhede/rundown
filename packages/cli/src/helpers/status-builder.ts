@@ -12,6 +12,7 @@ import {
   deriveExecutionAt,
   countNumberedSteps,
   type ActionBlockData,
+  type ResolvedCompletion,
   type RunbookState,
 } from '@rundown-org/core';
 import {
@@ -66,6 +67,28 @@ export interface StatusOutputData {
   pending?: string[];
   /** Active child agents keyed by agent name. */
   agents?: Record<string, { step: string; status: string; result?: string }>;
+}
+
+/**
+ * Count substeps that have no resolved completion for the active frame+entry.
+ */
+function countUnresolvedSubsteps(
+  substeps: ReadonlyArray<{ id: string }>,
+  resolvedCompletions: Record<string, ResolvedCompletion> | undefined,
+  activeFrameKey: string,
+  activeEntry: number,
+): number {
+  const resolvedSubsteps = new Set(
+    Object.values(resolvedCompletions ?? {})
+      .filter(
+        (completion) =>
+          completion.targetFrameKey === activeFrameKey &&
+          completion.targetEntry === activeEntry &&
+          completion.targetSubstep !== undefined,
+      )
+      .map((completion) => completion.targetSubstep as string),
+  );
+  return substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
 }
 
 /**
@@ -183,19 +206,12 @@ export function buildActiveStatus(
   const activeEntry = activeState.activeEntry;
   const unresolved =
     currentStep?.substeps?.length && activeFrameKey && activeEntry
-      ? (() => {
-          const resolvedSubsteps = new Set(
-            Object.values(activeState.resolvedCompletions ?? {})
-              .filter(
-                (completion) =>
-                  completion.targetFrameKey === activeFrameKey &&
-                  completion.targetEntry === activeEntry &&
-                  completion.targetSubstep !== undefined,
-              )
-              .map((completion) => completion.targetSubstep as string),
-          );
-          return currentStep.substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
-        })()
+      ? countUnresolvedSubsteps(
+          currentStep.substeps,
+          activeState.resolvedCompletions,
+          activeFrameKey,
+          activeEntry,
+        )
       : undefined;
 
   return {
