@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "gray-matter": "^4.0.3",
-    "mdast-util-from-markdown": "^2.0.2",
+    "mdast-util-from-markdown": "^2.0.3",
     "unist-util-visit": "^5.0.0",
     "zod": "^3.24.1"
   },
