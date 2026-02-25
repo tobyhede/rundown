@@ -480,9 +480,9 @@ export async function bindAgent(
     targetFrameKey: normalizedFrameKey,
     targetEntry: normalizedEntry,
   };
-  const normalizedTargetStep = normalizedPending.targetStep ?? pending.targetStep;
-  const normalizedTargetSubstep = normalizedPending.targetSubstep ?? pending.targetSubstep;
-  const normalizedTargetIteration = normalizedPending.targetIteration ?? pending.targetIteration;
+  const normalizedTargetStep = normalizedPending.targetStep;
+  const normalizedTargetSubstep = normalizedPending.targetSubstep;
+  const normalizedTargetIteration = normalizedPending.targetIteration;
   if (!normalizedTargetStep) {
     return {
       ok: false,

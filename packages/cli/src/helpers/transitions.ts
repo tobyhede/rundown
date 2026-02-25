@@ -324,7 +324,7 @@ function resolveBindingTarget(
 export async function handleAgentBinding(
   ctx: TransitionContext,
   agentId: string,
-  _config: TransitionConfig,
+  config: TransitionConfig,
 ): Promise<boolean> {
   const { output, manager, lifecycleService, state, steps, actorService, sessionService, cwd } =
     ctx;
@@ -345,7 +345,7 @@ export async function handleAgentBinding(
     );
   }
 
-  let result: 'pass' | 'fail' = _config.lastResult;
+  let result: 'pass' | 'fail' = config.lastResult;
   if (binding.childRunbookId) {
     const childResult = await lifecycleService.getChildRunbookResult(binding.childRunbookId);
     if (childResult === null) {
