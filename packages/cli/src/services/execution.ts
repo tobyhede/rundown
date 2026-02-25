@@ -300,8 +300,11 @@ export async function drainResolvedCompletions({
     );
     const resolvedBySubstep = new Map(
       resolved
-        .filter(({ completion }) => completion.targetSubstep !== undefined)
-        .map(({ completion }) => [completion.targetSubstep as string, completion]),
+        .filter(
+          (r): r is typeof r & { completion: { targetSubstep: string } } =>
+            r.completion.targetSubstep !== undefined,
+        )
+        .map(({ completion }) => [completion.targetSubstep, completion]),
     );
 
     const unresolved = orderedSubsteps.filter((id) => !resolvedBySubstep.has(id)).length;

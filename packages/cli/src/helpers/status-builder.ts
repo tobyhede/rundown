@@ -81,12 +81,12 @@ function countUnresolvedSubsteps(
   const resolvedSubsteps = new Set(
     Object.values(resolvedCompletions ?? {})
       .filter(
-        (completion) =>
+        (completion): completion is typeof completion & { targetSubstep: string } =>
           completion.targetFrameKey === activeFrameKey &&
           completion.targetEntry === activeEntry &&
           completion.targetSubstep !== undefined,
       )
-      .map((completion) => completion.targetSubstep as string),
+      .map((completion) => completion.targetSubstep),
   );
   return substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
 }
