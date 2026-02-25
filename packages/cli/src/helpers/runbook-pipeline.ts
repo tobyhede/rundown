@@ -249,7 +249,7 @@ export async function queueStep(
     };
   }
 
-  // Dispatch frontier: only current step is queueable.
+  // Only the current step may be queued.
   if (stepId.step !== state.step) {
     const activeFor = getActiveForContext(state.forStack, state.step);
     const currentAt = deriveExecutionAt(state.step, state.substep, activeFor?.iteration);
@@ -257,7 +257,7 @@ export async function queueStep(
       ok: false,
       error:
         `Cannot queue step ${stepIdToString(stepId)} from current cursor ${currentAt}. ` +
-        'Only the active step frontier is dispatchable.',
+        'Only active steps may be dispatched.',
       code: 'VALIDATION_ERROR',
       details: {
         current: currentAt,
@@ -281,7 +281,7 @@ export async function queueStep(
     if (currentStep?.substeps?.some((s) => s.id === targetSubstep) !== true) {
       return {
         ok: false,
-        error: `Substep ${state.step}.${targetSubstep} is not dispatchable from the current step`,
+        error: `Substep ${state.step}.${targetSubstep} is not available from the current step`,
         code: 'STEP_NOT_FOUND',
         details: {
           current: state.step,
