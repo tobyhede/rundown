@@ -236,12 +236,7 @@ export async function queueStep(
   }
 
   const steps = loadedState.runbookSrc ? getRunbookFromState(loadedState, ctx.cwd) : [];
-  const ensured = await lifecycleService.ensureActiveEntry(
-    loadedState.id,
-    steps,
-    undefined,
-    loadedState,
-  );
+  const ensured = await lifecycleService.ensureActiveEntry(loadedState.id, undefined, loadedState);
   const state = ensured.state;
 
   const stepId = parseStepIdFromString(stepStr);
@@ -359,7 +354,7 @@ async function launchRunbook(
 
   // Initialize actor state (populates forStack for first step)
   await actorService.initializeState(state.id, [...runbook.steps]);
-  await lifecycleService.ensureActiveEntry(state.id, [...runbook.steps]);
+  await lifecycleService.ensureActiveEntry(state.id);
 
   // Optional post-init hook (e.g., updateAgentBinding for child runbooks)
   if (options.afterInit) {

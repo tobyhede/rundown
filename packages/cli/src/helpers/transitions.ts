@@ -328,7 +328,7 @@ export async function handleAgentBinding(
 ): Promise<boolean> {
   const { output, manager, lifecycleService, state, steps, actorService, sessionService, cwd } =
     ctx;
-  const ensured = await lifecycleService.ensureActiveEntry(state.id, steps, undefined, state);
+  const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
   const activeState = ensured.state;
   const binding = await manager.getAgentBinding(activeState.id, agentId);
 
@@ -489,7 +489,7 @@ export async function executeTransition(
 ): Promise<void> {
   const { output, manager, actorService, state, steps, actor, cwd, agentId, lifecycleService } =
     ctx;
-  const ensured = await lifecycleService.ensureActiveEntry(state.id, steps, undefined, state);
+  const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
   const activeState = ensured.state;
   const activeStep = steps.find((s) => s.name === activeState.step) ?? steps[0];
   const isSubstepCompletion = !!(activeState.substep && activeStep?.substeps?.length);
@@ -578,7 +578,6 @@ export async function executeTransition(
   );
   const ensuredAfterTransition = await lifecycleService.ensureActiveEntry(
     activeState.id,
-    steps,
     previousState,
     actorUpdatedState,
   );

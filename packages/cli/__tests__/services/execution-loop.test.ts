@@ -13,7 +13,7 @@ const mockLifecycleService = {
   setLastResult: jest.fn(),
   ensureActiveEntry: jest
     .fn()
-    .mockImplementation(async (_id: string, _steps: unknown[], _prev: unknown, state: any) => ({
+    .mockImplementation(async (_id: string, _prev: unknown, state: any) => ({
       state: {
         ...(state ?? {}),
         activeEntry: state?.activeEntry ?? 1,
@@ -176,7 +176,7 @@ describe('runExecutionLoop', () => {
 
     mockLifecycleService.ensureActiveEntry.mockReset();
     mockLifecycleService.ensureActiveEntry.mockImplementation(
-      async (_id: string, _steps: unknown[], _prev: unknown, state: any) => ({
+      async (_id: string, _prev: unknown, state: any) => ({
         state: {
           ...(state ?? {}),
           activeEntry: state?.activeEntry ?? 1,

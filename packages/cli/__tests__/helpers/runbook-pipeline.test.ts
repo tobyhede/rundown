@@ -87,7 +87,7 @@ function makeLifecycle(overrides: Partial<any> = {}): any {
   return {
     ensureActiveEntry: jest
       .fn<any>()
-      .mockImplementation(async (_id: string, _steps: unknown[], _prev: unknown, state: any) => ({
+      .mockImplementation(async (_id: string, _prev: unknown, state: any) => ({
         state: {
           ...(state ?? {}),
           activeEntry: state?.activeEntry ?? 1,

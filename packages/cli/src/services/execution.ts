@@ -202,7 +202,6 @@ async function applyResultTransition({
 
   const ensured = await lifecycleService.ensureActiveEntry(
     runbookId,
-    steps,
     currentState,
     syncResult.state,
   );
@@ -288,7 +287,7 @@ export async function drainResolvedCompletions({
       return { status: 'continue', state, unresolved: 0, applied };
     }
 
-    const ensured = await lifecycleService.ensureActiveEntry(runbookId, steps, undefined, state);
+    const ensured = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
     state = ensured.state;
 
     const frame = deriveActiveFrame(state);
@@ -373,12 +372,7 @@ export async function runExecutionLoop(
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   const iterationService = new ForIterationService(manager, actorService);
-  const ensuredInitial = await lifecycleService.ensureActiveEntry(
-    runbookId,
-    steps,
-    undefined,
-    state,
-  );
+  const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
   let currentState: RunbookState = ensuredInitial.state;
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -463,7 +457,6 @@ export async function runExecutionLoop(
       // No terminal state — machine transitioned to next step after loop exit
       const ensured = await lifecycleService.ensureActiveEntry(
         runbookId,
-        steps,
         currentState,
         iterResult.state,
       );
@@ -475,7 +468,6 @@ export async function runExecutionLoop(
       // Value resolved — re-enter loop with populated currentValue
       const ensured = await lifecycleService.ensureActiveEntry(
         runbookId,
-        steps,
         currentState,
         iterResult.state,
       );

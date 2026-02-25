@@ -6,7 +6,7 @@ import {
   buildFrameKey,
   parseCompletionKey,
 } from './targeting.js';
-import type { PendingStep, ResolvedCompletion, RunbookState, Step } from './types.js';
+import type { PendingStep, ResolvedCompletion, RunbookState } from './types.js';
 
 /**
  * Service for execution-flow helpers that read/write specific fields
@@ -91,14 +91,12 @@ export class ExecutionLifecycleService {
    * control-flow re-enters the same frame via GOTO/RETRY.
    *
    * @param id - The runbook state ID
-   * @param _steps - Parsed runbook steps (reserved for parity with call sites)
    * @param previousState - State before a transition (optional)
    * @param nextState - State after a transition (optional)
    * @returns Persisted state with active frame/entry fields populated
    */
   async ensureActiveEntry(
     id: string,
-    _steps: readonly Step[],
     previousState?: RunbookState,
     nextState?: RunbookState,
   ): Promise<{ state: RunbookState; frameKey: string; entry: number }> {
