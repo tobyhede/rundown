@@ -1,6 +1,9 @@
 // packages/cli/src/services/execution.ts
 
 import {
+  buildStepPosition,
+  buildTargetKey,
+  getActiveForContext,
   type RunbookStateManager,
   RunbookActorService,
   SessionService,
@@ -145,6 +148,160 @@ export function buildStepVariables(
   return vars;
 }
 
+interface ApplyResultTransitionArgs {
+  manager: RunbookStateManager;
+  actorService: RunbookActorService;
+  sessionService: SessionService;
+  runbookId: string;
+  steps: Step[];
+  currentState: RunbookState;
+  currentStep: Step;
+  totalSteps: number;
+  result: 'pass' | 'fail';
+  agentId?: string;
+  emitter?: ExecutionEventEmitter;
+  command?: string;
+}
+
+async function applyResultTransition({
+  manager,
+  actorService,
+  sessionService,
+  runbookId,
+  steps,
+  currentState,
+  currentStep,
+  totalSteps,
+  result,
+  agentId,
+  emitter,
+  command,
+}: ApplyResultTransitionArgs): Promise<
+  { status: 'continue'; state: RunbookState } | { status: 'done' } | { status: 'stopped' }
+> {
+  const prevRetryCount = currentState.retryCount;
+
+  const syncResult = await actorService.sendAndSync(runbookId, steps, {
+    type: result === 'pass' ? 'PASS' : 'FAIL',
+  });
+  if (!syncResult) return { status: 'stopped' };
+
+  const { state: updatedState, snapshot } = syncResult;
+
+  const terminalSnapshot = asTerminalSnapshotOrDefault(snapshot);
+  const isComplete = isRunbookComplete(terminalSnapshot);
+  const isStopped = isRunbookStopped(terminalSnapshot);
+
+  const retryMax = extractRetryMax(snapshot);
+  const lastActionFromContext = extractLastAction(snapshot);
+  const retryDisplayCount = extractRetryDisplayCount(snapshot, updatedState.retryCount);
+  const action = formatActionForDisplay(lastActionFromContext, retryDisplayCount, retryMax);
+
+  await manager.update(runbookId, {
+    lastAction: lastActionFromContext,
+    lastResult: result,
+  });
+
+  const prevPos = buildStepPosition(
+    currentState.step,
+    totalSteps,
+    currentState.substep,
+    currentState.forStack,
+  );
+  const newPos = buildStepPosition(
+    updatedState.step,
+    totalSteps,
+    updatedState.substep,
+    updatedState.forStack,
+  );
+
+  if (emitter) {
+    emitter.emit('STEP_TRANSITIONED', {
+      action,
+      from: prevPos,
+      to: newPos,
+      result: result === 'pass',
+      command,
+    });
+  } else {
+    printStepSeparator(newPos);
+    printActionBlock({
+      action,
+      from: prevPos,
+      command,
+      result: result === 'pass',
+      at: newPos,
+    });
+  }
+
+  if (isComplete) {
+    const completionMessage =
+      extractLastMessage(snapshot) ??
+      (result === 'pass'
+        ? evaluatePassCondition(currentStep).message
+        : evaluateFailCondition(currentStep, prevRetryCount).message);
+
+    await manager.update(runbookId, {
+      variables: { ...updatedState.variables, completed: true },
+    });
+
+    if (emitter) {
+      emitter.emit('RUNBOOK_COMPLETED', {
+        message: completionMessage,
+        finalPosition: newPos,
+      });
+    } else {
+      printRunbookComplete(completionMessage);
+    }
+
+    if (agentId && currentState.parentRunbookId) {
+      await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
+        status: 'done',
+        result: 'pass',
+      });
+    }
+
+    await sessionService.popRunbook(agentId);
+    return { status: 'done' };
+  }
+
+  if (isStopped) {
+    const stopMessage =
+      extractLastMessage(snapshot) ??
+      (result === 'pass'
+        ? evaluatePassCondition(currentStep).message
+        : evaluateFailCondition(currentStep, prevRetryCount).message);
+
+    await manager.update(runbookId, {
+      variables: { ...updatedState.variables, stopped: true },
+    });
+
+    if (emitter) {
+      emitter.emit('RUNBOOK_STOPPED', {
+        message: stopMessage,
+        position: prevPos,
+        reason: 'fail_transition',
+      });
+    } else {
+      printRunbookStoppedAtStep(prevPos, stopMessage);
+    }
+
+    if (agentId && currentState.parentRunbookId) {
+      await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
+        status: 'done',
+        result: 'fail',
+      });
+    }
+
+    await sessionService.popRunbook(agentId);
+    return { status: 'stopped' };
+  }
+
+  const reloaded = await manager.load(runbookId);
+  if (!reloaded) return { status: 'stopped' };
+  return { status: 'continue', state: reloaded };
+}
+
 /**
  * Execute command steps in a loop until:
  * - Runbook completes or stops
@@ -189,7 +346,6 @@ export async function runExecutionLoop(
     const currentStepIndex = steps.findIndex((s) => s.name === currentState.step);
     const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
 
-    const displayStep = currentState.step;
     const totalSteps = countNumberedSteps(steps);
 
     // Determine what to render: substep if we're at one, otherwise the step
@@ -200,8 +356,6 @@ export async function runExecutionLoop(
         itemToRender = substep;
       }
     }
-
-    const displaySubstep = currentState.substep;
 
     // Resolve dynamic values for all data sources (array, file, range).
     // The ForIterationService resolves currentValue before each iteration,
@@ -227,11 +381,12 @@ export async function runExecutionLoop(
         if (emitter) {
           emitter.emit('RUNBOOK_COMPLETED', {
             message: completionMessage,
-            finalPosition: {
-              current: iterResult.state.step,
-              total: totalSteps,
-              substep: iterResult.state.substep,
-            },
+            finalPosition: buildStepPosition(
+              iterResult.state.step,
+              totalSteps,
+              iterResult.state.substep,
+              iterResult.state.forStack,
+            ),
           });
         } else {
           printRunbookComplete(completionMessage);
@@ -254,11 +409,12 @@ export async function runExecutionLoop(
           });
         }
 
-        const stopPos = {
-          current: iterResult.state.step,
-          total: totalSteps,
-          substep: iterResult.state.substep,
-        };
+        const stopPos = buildStepPosition(
+          iterResult.state.step,
+          totalSteps,
+          iterResult.state.substep,
+          iterResult.state.forStack,
+        );
         if (emitter) {
           emitter.emit('RUNBOOK_STOPPED', {
             message: stopMessage,
@@ -286,6 +442,30 @@ export async function runExecutionLoop(
     // status === 'no-resolution-needed' — proceed to step execution
     // State is unchanged; no need to overwrite currentState.
 
+    const activeFor = getActiveForContext(currentState.forStack, currentState.step);
+    const cursorKey = buildTargetKey(currentState.step, currentState.substep, activeFor?.iteration);
+    const deferred = await lifecycleService.consumeDeferredCompletion(runbookId, cursorKey);
+    if (deferred) {
+      const deferredResult = await applyResultTransition({
+        manager,
+        actorService,
+        sessionService,
+        runbookId,
+        steps,
+        currentState,
+        currentStep,
+        totalSteps,
+        result: deferred.result,
+        agentId,
+        emitter,
+      });
+
+      if (deferredResult.status === 'done') return 'done';
+      if (deferredResult.status === 'stopped') return 'stopped';
+      currentState = deferredResult.state;
+      continue;
+    }
+
     // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration
     const stepVars = buildStepVariables(
       currentState.step,
@@ -300,7 +480,12 @@ export async function runExecutionLoop(
       : itemToRender.prompt;
 
     // Emit STEP_ENTERED event or print step/substep block
-    const stepPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
+    const stepPosition = buildStepPosition(
+      currentState.step,
+      totalSteps,
+      currentState.substep,
+      currentState.forStack,
+    );
     if (emitter) {
       const isSubstep = 'id' in itemToRender;
       emitter.emit('STEP_ENTERED', {
@@ -351,7 +536,7 @@ export async function runExecutionLoop(
       emitter.emit('COMMAND_STARTED', {
         command: expandedCommandCode,
         displayCommand,
-        position: { current: displayStep, total: totalSteps, substep: displaySubstep },
+        position: stepPosition,
       });
     } else {
       // Temporary fallback only when emitter is not provided.
@@ -381,12 +566,11 @@ export async function runExecutionLoop(
 
     // Emit COMMAND_COMPLETED event
     if (emitter) {
-      const cmdPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
       emitter.emit('COMMAND_COMPLETED', {
         command: expandedCommandCode,
         success: execResult.success,
         exitCode: execResult.exitCode,
-        position: cmdPosition,
+        position: stepPosition,
         policyDenied: execResult.policyDenied,
         denialReason: execResult.denialReason,
         sandboxed: execResult.sandboxed,
@@ -395,7 +579,7 @@ export async function runExecutionLoop(
 
     // Handle policy denial
     if (execResult.policyDenied) {
-      const policyPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
+      const policyPosition = stepPosition;
       if (emitter) {
         emitter.emit('POLICY_DENIED', {
           command: expandedCommandCode,
@@ -418,141 +602,23 @@ export async function runExecutionLoop(
     // Store result
     const lastResult = execResult.success ? 'pass' : 'fail';
     await lifecycleService.setLastResult(runbookId, lastResult);
-
-    // Capture prev state BEFORE mutation
-    const prevStep = currentState.step;
-    const prevSubstep = currentState.substep;
-    const prevRetryCount = currentState.retryCount;
-
-    // Send event to actor
-    const syncResult = await actorService.sendAndSync(runbookId, steps, {
-      type: execResult.success ? 'PASS' : 'FAIL',
+    const transitionResult = await applyResultTransition({
+      manager,
+      actorService,
+      sessionService,
+      runbookId,
+      steps,
+      currentState,
+      currentStep,
+      totalSteps,
+      result: lastResult,
+      agentId,
+      emitter,
+      command: displayCommand,
     });
-    if (!syncResult) return 'stopped';
-
-    const { state: updatedState, snapshot } = syncResult;
-
-    const terminalSnapshot = asTerminalSnapshotOrDefault(snapshot);
-    const isComplete = isRunbookComplete(terminalSnapshot);
-    const isStopped = isRunbookStopped(terminalSnapshot);
-
-    // Read action from XState context (source of truth for retryMax and lastAction)
-    const retryMax = extractRetryMax(snapshot);
-    const lastActionFromContext = extractLastAction(snapshot);
-    const action = formatActionForDisplay(lastActionFromContext, updatedState.retryCount, retryMax);
-
-    // Update lastAction in state (pass structured object directly — no lossy conversion)
-    await manager.update(runbookId, { lastAction: lastActionFromContext });
-
-    const prevDisplayStep = prevStep;
-    const prevDisplaySubstep = prevSubstep;
-    const newDisplayStep = updatedState.step;
-    const newDisplaySubstep = updatedState.substep;
-
-    // Compute positions for output
-    const prevPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
-    const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
-
-    // Emit STEP_TRANSITIONED event or fallback to printing
-    if (emitter) {
-      emitter.emit('STEP_TRANSITIONED', {
-        action,
-        from: prevPos,
-        to: newPos,
-        result: execResult.success,
-        command: displayCommand,
-      });
-    } else {
-      // Temporary fallback only when emitter is not provided.
-      printStepSeparator(newPos);
-      printActionBlock({
-        action,
-        from: prevPos,
-        command: displayCommand,
-        result: execResult.success,
-        at: newPos,
-      });
-    }
-
-    // Handle runbook end states
-    if (isComplete) {
-      // Extract message: prefer machine snapshot (source of truth), fall back to re-evaluation
-      const completionMessage =
-        extractLastMessage(snapshot) ??
-        (lastResult === 'pass'
-          ? evaluatePassCondition(currentStep).message
-          : evaluateFailCondition(currentStep, prevRetryCount).message);
-
-      const currentVars = updatedState.variables;
-      await manager.update(runbookId, {
-        variables: { ...currentVars, completed: true },
-      });
-      if (emitter) {
-        emitter.emit('RUNBOOK_COMPLETED', {
-          message: completionMessage,
-          finalPosition: newPos,
-        });
-      } else {
-        // Temporary fallback only when emitter is not provided.
-        printRunbookComplete(completionMessage);
-      }
-
-      // If this was a child runbook with agent, update parent's agent binding
-
-      if (agentId && currentState.parentRunbookId) {
-        await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
-          status: 'done',
-          result: 'pass',
-        });
-      }
-
-      // Pop current runbook from stack (makes parent active if exists, or clears stack)
-      await sessionService.popRunbook(agentId);
-      return 'done';
-    }
-
-    if (isStopped) {
-      // Extract message: prefer machine snapshot (source of truth), fall back to re-evaluation
-      const stopMessage =
-        extractLastMessage(snapshot) ??
-        (lastResult === 'pass'
-          ? evaluatePassCondition(currentStep).message
-          : evaluateFailCondition(currentStep, prevRetryCount).message);
-
-      const currentVars = updatedState.variables;
-      await manager.update(runbookId, {
-        variables: { ...currentVars, stopped: true },
-      });
-      const stopPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
-      if (emitter) {
-        emitter.emit('RUNBOOK_STOPPED', {
-          message: stopMessage,
-          position: stopPos,
-          reason: 'fail_transition',
-        });
-      } else {
-        // Temporary fallback only when emitter is not provided.
-        printRunbookStoppedAtStep(stopPos, stopMessage);
-      }
-
-      // If this was a child runbook with agent, update parent's agent binding
-
-      if (agentId && currentState.parentRunbookId) {
-        await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
-          status: 'done',
-          result: 'fail',
-        });
-      }
-
-      // Pop current runbook from stack
-      await sessionService.popRunbook(agentId);
-      return 'stopped';
-    }
-
-    // Reload state for next iteration
-    const reloaded = await manager.load(runbookId);
-    if (!reloaded) return 'stopped';
-    currentState = reloaded;
+    if (transitionResult.status === 'done') return 'done';
+    if (transitionResult.status === 'stopped') return 'stopped';
+    currentState = transitionResult.state;
   }
 }
 
@@ -563,6 +629,7 @@ export async function runExecutionLoop(
 interface SnapshotContext {
   lastAction?: LastAction;
   retryMax?: number;
+  iterationRetryCount?: number;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -643,6 +710,33 @@ export function extractRetryMax(snapshot: unknown): number {
     return (snapshot.context as SnapshotContext).retryMax ?? 0;
   }
   return 0;
+}
+
+/**
+ * Extract the retry counter to display for RETRY actions.
+ *
+ * Iteration-level retries are tracked separately from step retries in machine
+ * context (`iterationRetryCount`). When present and non-zero, that value is
+ * the user-visible RETRY numerator; otherwise fall back to persisted step
+ * `retryCount`.
+ *
+ * @param snapshot - The persisted XState snapshot
+ * @param retryCount - Persisted step retryCount fallback
+ * @returns Retry count to use in display output
+ */
+export function extractRetryDisplayCount(snapshot: unknown, retryCount: number): number {
+  if (
+    snapshot &&
+    typeof snapshot === 'object' &&
+    'context' in snapshot &&
+    snapshot.context &&
+    typeof snapshot.context === 'object' &&
+    'iterationRetryCount' in snapshot.context
+  ) {
+    const iterationRetryCount = (snapshot.context as SnapshotContext).iterationRetryCount ?? 0;
+    if (iterationRetryCount > 0) return iterationRetryCount;
+  }
+  return retryCount;
 }
 
 /**

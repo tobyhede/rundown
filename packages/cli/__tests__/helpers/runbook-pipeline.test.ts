@@ -6,6 +6,11 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
+  deriveExecutionAt: jest.fn(
+    (step: string, substep?: string, iteration?: number) =>
+      `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
+  ),
+  getActiveForContext: jest.fn().mockReturnValue(null),
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',
 }));
@@ -82,6 +87,11 @@ beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations after reset
   (runExecutionLoop as jest.Mock).mockResolvedValue('done');
+  (core.deriveExecutionAt as jest.Mock).mockImplementation(
+    (step: string, substep?: string, iteration?: number) =>
+      `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
+  );
+  (core.getActiveForContext as jest.Mock).mockReturnValue(null);
   (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
   (extractVarsFromMarkdown as jest.Mock).mockReturnValue({});
   (resolveVariables as jest.Mock).mockResolvedValue({ vars: {}, sources: {} });
@@ -208,7 +218,11 @@ describe('queueStep', () => {
       output: {} as any,
       manager: {} as any,
       actorService: {} as any,
-      sessionService: { getActive: jest.fn<any>().mockResolvedValue({ id: 'test-id' }) },
+      sessionService: {
+        getActive: jest
+          .fn<any>()
+          .mockResolvedValue({ id: 'test-id', step: '1', substep: undefined }),
+      },
       lifecycleService: { pushPendingStep: jest.fn() },
       cwd: '/test',
     };
@@ -232,7 +246,11 @@ describe('queueStep', () => {
       output: {} as any,
       manager: {} as any,
       actorService: {} as any,
-      sessionService: { getActive: jest.fn<any>().mockResolvedValue({ id: 'test-id' }) },
+      sessionService: {
+        getActive: jest
+          .fn<any>()
+          .mockResolvedValue({ id: 'test-id', step: '2', substep: undefined }),
+      },
       lifecycleService: { pushPendingStep: mockPush },
       cwd: '/test',
     };
@@ -247,7 +265,37 @@ describe('queueStep', () => {
     expect(mockPush).toHaveBeenCalledWith('test-id', {
       stepId: { step: '2' },
       runbook: 'child.md',
+      targetStep: '2',
     });
+    if (result.ok) {
+      expect(result.targetAt).toBe('2');
+    }
+  });
+
+  it('rejects queueing a future step outside the active frontier', async () => {
+    (
+      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+    ).mockReturnValue({ step: '2' });
+    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2');
+
+    const ctx = {
+      output: {} as any,
+      manager: {} as any,
+      actorService: {} as any,
+      sessionService: {
+        getActive: jest
+          .fn<any>()
+          .mockResolvedValue({ id: 'test-id', step: '1', substep: undefined }),
+      },
+      lifecycleService: { pushPendingStep: jest.fn() },
+      cwd: '/test',
+    };
+
+    const result = await queueStep(ctx as any, '2');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+    }
   });
 });
 
@@ -403,7 +451,7 @@ describe('bindAgent', () => {
     if (result.ok) {
       expect(result.loopResult).toBeUndefined(); // No child runbook, no loop
     }
-    expect(mockBindAgent).toHaveBeenCalledWith('test-id', 'agent-1', { step: '2' });
+    expect(mockBindAgent).toHaveBeenCalledWith('test-id', 'agent-1', { stepId: { step: '2' } });
   });
 
   it('starts child runbook when pending step has runbook', async () => {

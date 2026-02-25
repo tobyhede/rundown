@@ -399,7 +399,11 @@ export function parseRunbookDocument(
             const forConditionals: ParsedConditional[] = [];
             for (const nestedItem of nestedList.children) {
               const nestedParagraph = nestedItem.children.find((c) => c.type === 'paragraph');
-              if (!nestedParagraph) continue;
+              if (!nestedParagraph) {
+                throw new RunbookSyntaxError(
+                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL) are allowed`,
+                );
+              }
               const nestedText = extractText(
                 nestedParagraph as PhrasingContent | Heading | Paragraph | ListItem,
               );

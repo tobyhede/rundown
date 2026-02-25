@@ -107,6 +107,12 @@ export type LastAction =
 export interface PendingStep {
   readonly stepId: StepId;
   readonly runbook?: string; // Child runbook file path (relative)
+  /** Canonical target step for runtime routing. */
+  readonly targetStep?: string;
+  /** Canonical target substep for runtime routing. */
+  readonly targetSubstep?: string;
+  /** Canonical target loop iteration for runtime routing. */
+  readonly targetIteration?: number;
 }
 
 /**
@@ -137,6 +143,25 @@ export interface AgentBinding {
   readonly childRunbookId?: string;
   readonly status: AgentStatus;
   readonly result?: AgentResult;
+  /** Canonical target step for runtime routing. */
+  readonly targetStep?: string;
+  /** Canonical target substep for runtime routing. */
+  readonly targetSubstep?: string;
+  /** Canonical target loop iteration for runtime routing. */
+  readonly targetIteration?: number;
+}
+
+/**
+ * Deferred agent completion captured for a valid frontier target
+ * that is not currently at the active cursor.
+ */
+export interface DeferredCompletion {
+  readonly agentId: string;
+  readonly result: AgentResult;
+  readonly targetStep: string;
+  readonly targetSubstep?: string;
+  readonly targetIteration?: number;
+  readonly completedAt: string;
 }
 
 /**
@@ -327,6 +352,7 @@ export interface RunbookState {
   // Orchestration fields
   readonly pendingSteps: readonly PendingStep[];
   readonly agentBindings: Readonly<Record<string, AgentBinding>>;
+  readonly deferredCompletions?: Readonly<Record<string, DeferredCompletion>>;
 
   // Substep tracking
   readonly substepStates?: readonly SubstepState[];

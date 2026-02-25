@@ -11,6 +11,7 @@ const mockSessionService = {
 
 const mockLifecycleService = {
   setLastResult: jest.fn(),
+  consumeDeferredCompletion: jest.fn().mockResolvedValue(null),
 };
 
 jest.unstable_mockModule('@rundown-org/core', () => {
@@ -42,6 +43,16 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     extractDisplayCommand: jest.fn((cmd) => cmd),
     createFileProvider: jest.fn(),
     computeFileSnapshot: jest.fn(),
+    buildStepPosition: jest.fn((current: string, total: number, substep?: string) => ({
+      current,
+      total,
+      ...(substep ? { substep } : {}),
+    })),
+    buildTargetKey: jest.fn(
+      (step: string, substep?: string, iteration?: number) =>
+        `${step}|${substep ?? ''}|${iteration != null ? String(iteration) : ''}`,
+    ),
+    getActiveForContext: jest.fn().mockReturnValue(null),
     RunbookActorService: jest.fn().mockImplementation(() => mockActorService),
     SessionService: jest.fn().mockImplementation(() => mockSessionService),
     ExecutionLifecycleService: jest.fn().mockImplementation(() => mockLifecycleService),
@@ -119,6 +130,9 @@ describe('runExecutionLoop', () => {
       update: jest.fn(),
       updateAgentBinding: jest.fn(),
     };
+
+    mockLifecycleService.consumeDeferredCompletion.mockReset();
+    mockLifecycleService.consumeDeferredCompletion.mockResolvedValue(null);
 
     mockActorService.sendAndSync.mockReset();
 

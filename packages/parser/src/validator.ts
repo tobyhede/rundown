@@ -120,14 +120,14 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         );
       }
 
-      // FOR iteration-level transitions must only use CONTINUE or BREAK, no RETRY
+      // FOR iteration-level transitions allow full loop control and terminal routing.
       if (step.forClause.transitions) {
-        const allowedActions = ['CONTINUE', 'BREAK'];
+        const allowedActions = ['CONTINUE', 'BREAK', 'GOTO', 'STOP', 'COMPLETE'];
         if (!allowedActions.includes(step.forClause.transitions.pass.action.type)) {
           diagnostics.push(
             error(
               step.line,
-              `FOR-level PASS transition in step "${step.name}" uses ${step.forClause.transitions.pass.action.type}; only CONTINUE or BREAK are allowed`,
+              `FOR-level PASS transition in step "${step.name}" uses ${step.forClause.transitions.pass.action.type}; allowed actions are CONTINUE, BREAK, GOTO, STOP, COMPLETE`,
             ),
           );
         }
@@ -135,8 +135,28 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
           diagnostics.push(
             error(
               step.line,
-              `FOR-level FAIL transition in step "${step.name}" uses ${step.forClause.transitions.fail.action.type}; only CONTINUE or BREAK are allowed`,
+              `FOR-level FAIL transition in step "${step.name}" uses ${step.forClause.transitions.fail.action.type}; allowed actions are CONTINUE, BREAK, GOTO, STOP, COMPLETE`,
             ),
+          );
+        }
+
+        // Reuse GOTO validation logic for FOR-level transitions.
+        if (step.forClause.transitions.pass.action.type === 'GOTO') {
+          validateAction(
+            step.forClause.transitions.pass.action,
+            undefined,
+            steps,
+            step,
+            diagnostics,
+          );
+        }
+        if (step.forClause.transitions.fail.action.type === 'GOTO') {
+          validateAction(
+            step.forClause.transitions.fail.action,
+            undefined,
+            steps,
+            step,
+            diagnostics,
           );
         }
       }

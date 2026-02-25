@@ -1,0 +1,36 @@
+import { describe, expect, it } from '@jest/globals';
+import { deriveExecutionAt, derivePositionAt } from '../../src/runbook/targeting.js';
+
+describe('targeting helpers', () => {
+  describe('deriveExecutionAt', () => {
+    it('derives step-only location for non-loop steps', () => {
+      expect(deriveExecutionAt('1')).toBe('1');
+    });
+
+    it('derives step.substep location for non-loop substeps', () => {
+      expect(deriveExecutionAt('1', '1')).toBe('1.1');
+    });
+
+    it('derives step.iteration location for loop-scoped step targets', () => {
+      expect(deriveExecutionAt('1', undefined, 2)).toBe('1.2');
+    });
+
+    it('derives step.iteration.substep location for loop-scoped substeps', () => {
+      expect(deriveExecutionAt('1', '1', 2)).toBe('1.2.1');
+    });
+
+    it('supports named steps with and without substeps', () => {
+      expect(deriveExecutionAt('Recover')).toBe('Recover');
+      expect(deriveExecutionAt('Recover', 'verify')).toBe('Recover.verify');
+    });
+  });
+
+  describe('derivePositionAt', () => {
+    it('derives location from canonical position fields', () => {
+      expect(derivePositionAt({ current: '2' })).toBe('2');
+      expect(derivePositionAt({ current: '2', substep: '1' })).toBe('2.1');
+      expect(derivePositionAt({ current: '2', for: { index: 3 } })).toBe('2.3');
+      expect(derivePositionAt({ current: '2', substep: '1', for: { index: 3 } })).toBe('2.3.1');
+    });
+  });
+});

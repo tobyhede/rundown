@@ -2,7 +2,7 @@
 
 Has substeps.
 
-### 1.1. Substep A
+### 1.1 Substep A
 
 - PASS: CONTINUE
 
@@ -12,7 +12,7 @@ First substep.
 rd echo --result pass
 ```
 
-### 1.2. Substep B
+### 1.2 Substep B
 
 - PASS: CONTINUE
 - FAIL: RETRY 2

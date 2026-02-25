@@ -1,6 +1,7 @@
 export type * from './types.js';
 export * from './step-id.js';
 export * from './step-utils.js';
+export * from './targeting.js';
 export { RunbookStateManager, STATE_DIR, type SessionData } from './state.js';
 export { SessionService } from './session-service.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';

@@ -15,6 +15,8 @@ import {
   type RunbookActorService,
   type SessionService,
   type ExecutionLifecycleService,
+  deriveExecutionAt,
+  getActiveForContext,
   parseRunbookDocument,
   stepIdToString,
   parseStepIdFromString,
@@ -28,6 +30,7 @@ import {
 } from '@rundown-org/core';
 import { isSourced, type ForClause } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
+import { getRunbookFromState } from './runbook-loader.js';
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
@@ -85,7 +88,7 @@ export interface PreparedRunbook {
  * Result types for pipeline operations.
  */
 export type StepQueueResult =
-  | { ok: true; stepId: string; runbook?: string }
+  | { ok: true; stepId: string; runbook?: string; targetAt?: string }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> };
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
@@ -242,10 +245,58 @@ export async function queueStep(
     };
   }
 
-  const pendingStep: PendingStep = { stepId, runbook: file };
+  // Dispatch frontier: only current step is queueable.
+  if (stepId.step !== state.step) {
+    const activeFor = getActiveForContext(state.forStack, state.step);
+    const currentAt = deriveExecutionAt(state.step, state.substep, activeFor?.iteration);
+    return {
+      ok: false,
+      error:
+        `Cannot queue step ${stepIdToString(stepId)} from current cursor ${currentAt}. ` +
+        'Only the active step frontier is dispatchable.',
+      code: 'VALIDATION_ERROR',
+      details: {
+        current: currentAt,
+        requested: stepIdToString(stepId),
+      },
+    };
+  }
+
+  const targetSubstep = stepId.substep ?? state.substep;
+  if (targetSubstep) {
+    const steps = getRunbookFromState(state, ctx.cwd);
+    const currentStep = steps.find((s) => s.name === state.step);
+
+    if (currentStep?.substeps?.some((s) => s.id === targetSubstep) !== true) {
+      return {
+        ok: false,
+        error: `Substep ${state.step}.${targetSubstep} is not dispatchable from the current step`,
+        code: 'STEP_NOT_FOUND',
+        details: {
+          current: state.step,
+          requested: `${state.step}.${targetSubstep}`,
+        },
+      };
+    }
+  }
+
+  const activeFor = getActiveForContext(state.forStack, state.step);
+  const targetAt = deriveExecutionAt(state.step, targetSubstep, activeFor?.iteration);
+  const pendingStep: PendingStep = {
+    stepId,
+    runbook: file,
+    targetStep: state.step,
+    ...(targetSubstep ? { targetSubstep } : {}),
+    ...(activeFor ? { targetIteration: activeFor.iteration } : {}),
+  };
   await lifecycleService.pushPendingStep(state.id, pendingStep);
 
-  return { ok: true, stepId: stepIdToString(stepId), runbook: file };
+  return {
+    ok: true,
+    stepId: stepIdToString(stepId),
+    runbook: file,
+    targetAt,
+  };
 }
 
 /**
@@ -374,17 +425,16 @@ export async function bindAgent(
     };
   }
 
-  await manager.bindAgent(state.id, agentId, pending.stepId);
+  await manager.bindAgent(state.id, agentId, pending);
+  const targetAt = pending.targetStep
+    ? deriveExecutionAt(pending.targetStep, pending.targetSubstep, pending.targetIteration)
+    : stepIdToString(pending.stepId);
 
-  output.status(
-    true,
-    'agent_bound',
-    `Agent ${agentId} bound to step ${stepIdToString(pending.stepId)}`,
-    {
-      agent: agentId,
-      stepId: stepIdToString(pending.stepId),
-    },
-  );
+  output.status(true, 'agent_bound', `Agent ${agentId} bound to step ${targetAt}`, {
+    agent: agentId,
+    stepId: stepIdToString(pending.stepId),
+    targetAt,
+  });
   output.flush();
 
   // If pending step has a runbook, start child runbook

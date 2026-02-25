@@ -5,6 +5,7 @@ import type {
   RunbookState,
   ForContext,
   AgentBinding,
+  PendingStep,
   Substep,
   SubstepState,
   Runbook,
@@ -114,6 +115,7 @@ export class RunbookStateManager {
       steps: [],
       pendingSteps: [],
       agentBindings: {},
+      deferredCompletions: {},
       agentId: options.agentId,
       parentRunbookId: options.parentRunbookId,
       parentStepId: options.parentStepId,
@@ -274,16 +276,19 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID
    * @param agentId - The agent ID to bind
-   * @param stepId - The step ID the agent is working on
+   * @param pending - The pending step target the agent is working on
    * @throws Error if the runbook with the given ID is not found
    */
-  async bindAgent(id: string, agentId: string, stepId: StepId): Promise<void> {
+  async bindAgent(id: string, agentId: string, pending: PendingStep): Promise<void> {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);
 
     const binding: AgentBinding = {
-      stepId,
+      stepId: pending.stepId,
       status: 'running',
+      targetStep: pending.targetStep,
+      targetSubstep: pending.targetSubstep,
+      targetIteration: pending.targetIteration,
     };
 
     await this.update(id, {
@@ -320,7 +325,12 @@ export class RunbookStateManager {
   async updateAgentBinding(
     id: string,
     agentId: string,
-    updates: Partial<Pick<AgentBinding, 'status' | 'result' | 'childRunbookId'>>,
+    updates: Partial<
+      Pick<
+        AgentBinding,
+        'status' | 'result' | 'childRunbookId' | 'targetStep' | 'targetSubstep' | 'targetIteration'
+      >
+    >,
   ): Promise<void> {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);

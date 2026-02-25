@@ -95,6 +95,11 @@ where result is:
 where action is:
   CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK | RETRY ...
 
+Context constraints:
+- `NEXT` is only valid inside substeps of a FOR step
+- `BREAK` is valid inside substeps of a FOR step and FOR-level nested transitions
+- FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions `CONTINUE`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
+
 where message is:
   name | "\"" text "\""
 
@@ -193,10 +198,19 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 
 **Rules:**
 - FOR must appear before transitions in the step's bullet list
-- `NEXT` and `BREAK` actions are only valid within substeps of a FOR step
+- `NEXT` is only valid within substeps of a FOR step
+- `BREAK` is valid within substeps and FOR-level nested transitions
 - `AT` is only valid when the GOTO target is a FOR step (cross-step allowed, but the target must be FOR and have substeps)
 - Step-level runbook lists satisfy the FOR-substep requirement via implicit substep `1`
 - Parent FOR step transitions aggregate across iterations using ALL/ANY modifiers
+- FOR-level nested transitions execute at iteration scope; RETRY evaluates before the exhausted action
+- Iteration-level `BREAK` includes the current iteration result in parent aggregation; iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation
+
+### Execution Path Notation
+
+Runtime execution paths are often displayed as `STEP.INDEX.SUBSTEP` (for example `1.2.1`). This is display-only notation and not authoring syntax.
+
+Canonical runtime targeting is `step + substep + iteration`.
 
 ---
 

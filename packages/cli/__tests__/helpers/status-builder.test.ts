@@ -5,6 +5,15 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
+  buildStepPosition: jest.fn((current: string, total: number, substep?: string) => ({
+    current,
+    total,
+    ...(substep ? { substep } : {}),
+  })),
+  deriveExecutionAt: jest.fn(
+    (step: string, substep?: string, iteration?: number) =>
+      `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
+  ),
   countNumberedSteps: jest.fn().mockReturnValue(5),
 }));
 
@@ -20,6 +29,7 @@ jest.unstable_mockModule('../../src/services/execution', () => ({
   getStepRetryMax: jest.fn().mockReturnValue(0),
   buildMetadata: jest.fn(),
   formatActionForDisplay: jest.fn().mockReturnValue('CONTINUE'),
+  extractRetryDisplayCount: jest.fn((_: unknown, retryCount: number) => retryCount),
 }));
 
 // Import after mocking

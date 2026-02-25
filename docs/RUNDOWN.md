@@ -248,7 +248,7 @@ Step-level runbook lists are shorthand for an implicit `.1` substep, so FOR exec
 - review-technical-accuracy.runbook.md
 ````
 
-See [SPEC.md FOR Steps](./SPEC.md#for-steps) for the full grammar and all clause variants.
+See [SPEC.md Iteration (FOR)](./SPEC.md#5-iteration-for) for the full grammar and all clause variants.
 
 **FOR clause variants:**
 
@@ -281,7 +281,18 @@ Substep transitions control within-iteration flow:
 | `BREAK` | Exit the FOR loop; parent step transitions evaluate |
 | `STOP` | Halt runbook execution immediately |
 
-Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results across all iterations after the loop completes.
+FOR-level nested transitions (nested bullets directly under `- FOR ...`) run at **iteration scope**:
+
+| Action | Effect |
+|--------|--------|
+| `CONTINUE` | Keep iterating |
+| `BREAK` | Exit loop; include current iteration result in parent aggregation |
+| `GOTO` | Jump immediately; bypass parent FOR aggregation |
+| `STOP` | Stop immediately; bypass parent FOR aggregation |
+| `COMPLETE` | Complete immediately; bypass parent FOR aggregation |
+| `RETRY N X` | Retry current iteration first, then execute exhausted action `X` |
+
+Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results across all iterations after normal loop completion or iteration-level `BREAK`.
 
 **GOTO AT interaction:**
 
@@ -295,7 +306,11 @@ In runbook transitions, `GOTO N AT I` enters step N at iteration I. See [GOTO fo
 
 **Status display during loops:**
 
-When a FOR loop is active, `rundown status` reflects the current iteration via the `forStack` field in the state file. The step display shows the active step and substep within the loop.
+When a FOR loop is active, output includes explicit loop scope and expanded location:
+- `For: index/end` (or `index/?` for open-ended data sources)
+- `At: STEP.INDEX.SUBSTEP` (display path)
+
+The display path is not an authoring identifier. Canonical runtime identity is `step + substep + iteration`.
 
 #### Data Sources
 
@@ -402,8 +417,25 @@ Each runbook state file contains:
     "log_file": { "kind": "file", "path": "data/results.jsonl", "format": "jsonl" }
   },
   "steps": [],
-  "pendingSteps": [],
-  "agentBindings": {},
+  "pendingSteps": [
+    {
+      "stepId": { "step": "2", "substep": "1" },
+      "runbook": "child.runbook.md",
+      "targetStep": "2",
+      "targetSubstep": "1",
+      "targetIteration": 2
+    }
+  ],
+  "agentBindings": {
+    "agent-123": {
+      "stepId": { "step": "2", "substep": "1" },
+      "status": "running",
+      "targetStep": "2",
+      "targetSubstep": "1",
+      "targetIteration": 2
+    }
+  },
+  "deferredCompletions": {},
   "substepStates": [],
   "forStack": [
     {
@@ -440,6 +472,9 @@ Key fields:
 - `forStack[].source`: Resolved source for the active loop (range, array, or file with snapshot)
 - `forStack[].currentValue`: Data element at the current iteration (array/file sources)
 - `iterationResults`: Array of per-iteration outcomes (`"pass"` or `"fail"`) for the current loop
+- `pendingSteps[].target*`: Canonical dispatch target identity (`step + substep + iteration`)
+- `agentBindings[].target*`: Bound agent target identity (same model as pending steps)
+- `deferredCompletions`: Agent results held until their target cursor becomes active
 - `snapshot`: XState persisted snapshot for state restoration
 
 ---
@@ -719,7 +754,8 @@ State:    .claude/rundown/runs/wf-2024-01-07-abc123.json
 Action:   CONTINUE
 Result:   PASS
 
-Step:     2/5
+For:      2/5
+At:       3.2.1
 
 Execute batch...
 
@@ -814,6 +850,13 @@ rundown prune --active      # Only active (careful!)
 | `rundown pass --agent <id>` | Mark agent's work as passed |
 | `rundown fail --agent <id>` | Mark agent's work as failed |
 
+Dispatch/completion rules:
+- Dispatch frontier is the current step only; when FOR is active, frontier is current iteration only.
+- Canonical target identity is `step + substep + iteration`.
+- Expanded path (`STEP.INDEX.SUBSTEP`, e.g. `1.2.1`) is display-only.
+- `pass/fail --agent` uses the same actor transition path as plain `pass/fail` when the completion target matches the active cursor.
+- Valid non-active frontier completions are deferred and auto-applied when their target cursor becomes active.
+
 ---
 
 ## Common Tasks
@@ -838,7 +881,7 @@ rundown status
 Output shows:
 - Current runbook file
 - State file location
-- Current step and substep
+- Current action location (`At`) and optional loop scope (`For`)
 - Last action taken
 
 ### Task: Jump to a Specific Step
@@ -934,7 +977,8 @@ rd pass --agent subagent-1    # or: rd fail --agent subagent-1
 **Key points:**
 - Child runbook is specified with `--step`, not with `--agent`
 - Subagent uses `--agent` flag on all commands (`run`, `pass`, `fail`)
-- Parent waits for agent result before evaluating transition
+- If the agent completion target matches the active cursor, parent transition applies immediately through the normal PASS/FAIL actor path
+- If completion is valid but not currently active, it is deferred and auto-applied when reached
 
 ### Pattern 2: Agent-Controlled Branching
 
@@ -965,8 +1009,7 @@ Output formatting is implemented in `packages/cli/src/services/output-emitter.ts
 File:     runbook.runbook.md
 State:    .claude/rundown/runs/wf-xxx.json
 Action:   START
-
-Step:     1/5
+At:       1/5
 
 Step description here...
 
@@ -974,10 +1017,10 @@ $ npm test
 
 -----
 Action:   CONTINUE
-From:     1/5
+From:     1.1.1
 Result:   PASS
-
-Step:     2/5
+For:      2/5
+At:       1.2.1
 
 Next step description...
 
@@ -1054,10 +1097,16 @@ Scenario: COMPLETE
 | `Action:` | Last action (START, CONTINUE, GOTO, RETRY, COMPLETE, STOP) |
 | `From:` | Previous step position |
 | `Result:` | PASS or FAIL |
-| `Step:` | Current position (n/total or n.m/total) |
+| `For:` | Loop scope (`index/end` or `index/?`) when in FOR execution |
+| `At:` | Current execution path (display path, e.g. `1.2.1`) |
 | `$` | Command being executed |
 | `---` | Separator between scenario commands |
 | `Runbook:` | Runbook terminal state (COMPLETE, STOPPED, STASHED) |
+
+JSON output compatibility:
+- Existing position fields (`current`, `substep`, `total`) are preserved.
+- Loop/location-aware fields are additive and optional: `position.at`, `position.for.index`, `position.for.end`.
+- `targetAt` is derived at output boundaries from canonical target identity fields.
 
 ---
 

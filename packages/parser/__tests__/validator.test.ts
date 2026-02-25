@@ -621,7 +621,7 @@ describe('validator strict rules', () => {
         expect(errors.some((e) => e.message.includes('FOR-level'))).toBe(false);
       });
 
-      it('rejects FOR with GOTO nested transition', () => {
+      it('accepts FOR with GOTO nested transition', () => {
         const steps: Step[] = [
           {
             name: '1',
@@ -642,19 +642,18 @@ describe('validator strict rules', () => {
             },
             substeps: [{ id: '1', description: 'Check' }],
           },
+          {
+            name: '2',
+            description: 'Follow-up',
+            substeps: [{ id: '1', description: 'Finalize' }],
+          },
         ];
         const diagnostics = validateRunbook(steps);
         const errors = filterErrors(diagnostics);
-        expect(
-          errors.some(
-            (e) =>
-              e.message.includes('FOR-level PASS transition') &&
-              e.message.includes('only CONTINUE or BREAK are allowed'),
-          ),
-        ).toBe(true);
+        expect(errors).toHaveLength(0);
       });
 
-      it('rejects FOR with STOP nested transition', () => {
+      it('accepts FOR with STOP nested transition', () => {
         const steps: Step[] = [
           {
             name: '1',
@@ -674,16 +673,10 @@ describe('validator strict rules', () => {
         ];
         const diagnostics = validateRunbook(steps);
         const errors = filterErrors(diagnostics);
-        expect(
-          errors.some(
-            (e) =>
-              e.message.includes('FOR-level FAIL transition') &&
-              e.message.includes('only CONTINUE or BREAK are allowed'),
-          ),
-        ).toBe(true);
+        expect(errors).toHaveLength(0);
       });
 
-      it('rejects FOR with COMPLETE nested transition', () => {
+      it('accepts FOR with COMPLETE nested transition', () => {
         const steps: Step[] = [
           {
             name: '1',
@@ -703,13 +696,7 @@ describe('validator strict rules', () => {
         ];
         const diagnostics = validateRunbook(steps);
         const errors = filterErrors(diagnostics);
-        expect(
-          errors.some(
-            (e) =>
-              e.message.includes('FOR-level PASS transition') &&
-              e.message.includes('only CONTINUE or BREAK are allowed'),
-          ),
-        ).toBe(true);
+        expect(errors).toHaveLength(0);
       });
 
       it('accepts FOR with RETRY on iteration-level transitions', () => {

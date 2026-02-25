@@ -129,9 +129,21 @@ const RunbookStepSchema = z.string().min(1);
 /**
  * Schema for pending step.
  */
+const TargetIdentitySchema = z.object({
+  targetStep: z.string().optional(),
+  targetSubstep: z.string().optional(),
+  targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+});
+
+/**
+ * Schema for pending step.
+ */
 const PendingStepSchema = z.object({
   stepId: StepIdSchema,
   runbook: z.string().optional(),
+  targetStep: TargetIdentitySchema.shape.targetStep,
+  targetSubstep: TargetIdentitySchema.shape.targetSubstep,
+  targetIteration: TargetIdentitySchema.shape.targetIteration,
 });
 
 /**
@@ -143,6 +155,15 @@ const SubstepStateSchema = z.object({
   status: z.enum(['pending', 'running', 'done']),
   agentId: z.string().optional(),
   result: z.enum(['pass', 'fail']).optional(),
+});
+
+const DeferredCompletionSchema = z.object({
+  agentId: z.string(),
+  result: z.enum(['pass', 'fail']),
+  targetStep: z.string(),
+  targetSubstep: z.string().optional(),
+  targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+  completedAt: z.string(),
 });
 
 /**
@@ -241,8 +262,12 @@ export const RunbookStateSchema = z
         childRunbookId: z.string().optional(),
         status: z.enum(['running', 'done', 'stopped']),
         result: z.enum(['pass', 'fail']).optional(),
+        targetStep: TargetIdentitySchema.shape.targetStep,
+        targetSubstep: TargetIdentitySchema.shape.targetSubstep,
+        targetIteration: TargetIdentitySchema.shape.targetIteration,
       }),
     ),
+    deferredCompletions: z.record(z.string(), DeferredCompletionSchema).optional(),
     substepStates: z.array(SubstepStateSchema).optional(),
     agentId: z.string().optional(),
     parentRunbookId: z.string().optional(),

@@ -1,16 +1,14 @@
 // packages/cli/src/commands/pass.ts
 
 import type { Command } from 'commander';
-import { evaluatePassCondition, type Step, type RunbookState } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
+  createPassTransitionConfig,
   executeTransition,
   handleAgentBinding,
-  type ActionType,
-  type TransitionConfig,
 } from '../helpers/transitions.js';
 
 /**
@@ -38,18 +36,7 @@ export function registerPassCommand(program: Command): void {
           }
 
           try {
-            const passConfig: TransitionConfig = {
-              eventType: 'PASS',
-              commandName: 'pass',
-              lastResult: 'pass',
-              computeActionResult: (actionType: ActionType) =>
-                actionType !== 'RETRY' && actionType !== 'STOP',
-              evaluateCondition: (step: Step, prevState: RunbookState) =>
-                evaluatePassCondition(step, prevState.retryCount),
-              terminalOrder: 'complete-first',
-              onStopped: { popRunbook: false, updateParentBinding: false },
-              onComplete: { popRunbook: true, updateParentBinding: true },
-            };
+            const passConfig = createPassTransitionConfig();
 
             // Handle agent binding completion (substep case)
             // Only applies when parent runbook has an agent binding - not for standalone agent runbooks

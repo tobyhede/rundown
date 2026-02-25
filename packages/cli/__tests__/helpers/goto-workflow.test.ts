@@ -9,6 +9,11 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
+  buildStepPosition: jest.fn((current: string, total: number, substep?: string) => ({
+    current,
+    total,
+    ...(substep ? { substep } : {}),
+  })),
   countNumberedSteps: jest.fn().mockReturnValue(3),
 }));
 

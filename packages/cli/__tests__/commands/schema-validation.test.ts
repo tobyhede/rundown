@@ -798,7 +798,7 @@ prompt: Wait for user
         `---
 name: step-test
 ---
-## Step 1
+## 1. Step 1
 prompt: Wait for agent
 `,
       );
@@ -843,7 +843,7 @@ prompt: Wait for agent
         `---
 name: agent-test
 ---
-## Step 1
+## 1. Step 1
 prompt: Wait for agent
 `,
       );

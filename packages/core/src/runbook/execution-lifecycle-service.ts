@@ -1,6 +1,6 @@
 // src/runbook/execution-lifecycle-service.ts
 import type { RunbookStateManager } from './state.js';
-import type { PendingStep } from './types.js';
+import type { DeferredCompletion, PendingStep } from './types.js';
 
 /**
  * Service for execution-flow helpers that read/write specific fields
@@ -76,6 +76,51 @@ export class ExecutionLifecycleService {
     const [first, ...rest] = state.pendingSteps;
     await this.manager.update(id, { pendingSteps: rest });
     return first;
+  }
+
+  /**
+   * Store or replace a deferred completion keyed by canonical target key.
+   *
+   * @param id - The runbook state ID
+   * @param key - Canonical target key (`step|substep|iteration`)
+   * @param completion - Deferred completion payload
+   */
+  async upsertDeferredCompletion(
+    id: string,
+    key: string,
+    completion: DeferredCompletion,
+  ): Promise<void> {
+    const state = await this.manager.load(id);
+    if (!state) throw new Error(`Runbook ${id} not found`);
+
+    await this.manager.update(id, {
+      deferredCompletions: {
+        ...(state.deferredCompletions ?? {}),
+        [key]: completion,
+      },
+    });
+  }
+
+  /**
+   * Consume (read and remove) a deferred completion by canonical target key.
+   *
+   * @param id - The runbook state ID
+   * @param key - Canonical target key (`step|substep|iteration`)
+   * @returns The deferred completion if present, otherwise null
+   */
+  async consumeDeferredCompletion(id: string, key: string): Promise<DeferredCompletion | null> {
+    const state = await this.manager.load(id);
+    if (!state) return null;
+
+    const existing = state.deferredCompletions?.[key];
+    if (!existing) return null;
+
+    const next = { ...(state.deferredCompletions ?? {}) };
+    delete next[key];
+    await this.manager.update(id, {
+      deferredCompletions: Object.keys(next).length > 0 ? next : {},
+    });
+    return existing;
   }
 
   /**

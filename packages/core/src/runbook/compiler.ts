@@ -754,11 +754,17 @@ function buildParentStateConfig(
     return shouldAggregationPass(hasFailed, passCount, forTransitions.all) ? 'pass' : 'fail';
   };
 
-  const shouldBreakIteration = (context: RunbookContext): boolean => {
-    const iterResult = computeIterationResult(context);
-    if (iterResult === 'pass' && forTransitions.pass.action.type === 'BREAK') return true;
-    if (iterResult === 'fail' && forTransitions.fail.action.type === 'BREAK') return true;
-    return false;
+  const getIterationTransition = (
+    context: RunbookContext,
+  ): {
+    result: 'pass' | 'fail';
+    transition: { retry: number; action: Action };
+  } => {
+    const result = computeIterationResult(context);
+    return {
+      result,
+      transition: result === 'pass' ? forTransitions.pass : forTransitions.fail,
+    };
   };
 
   type GuardFn = (args: { context: RunbookContext }) => boolean;
@@ -792,11 +798,45 @@ function buildParentStateConfig(
     pushIterationRetry('pass', forTransitions.pass);
     pushIterationRetry('fail', forTransitions.fail);
 
+    const pushDirectIterationExit = (
+      kind: 'pass' | 'fail',
+      transition: { retry: number; action: Action },
+    ): void => {
+      if (
+        transition.action.type !== 'GOTO' &&
+        transition.action.type !== 'STOP' &&
+        transition.action.type !== 'COMPLETE'
+      ) {
+        return;
+      }
+
+      const target = resolveActionTarget(transition.action, stepName, steps);
+      always.push({
+        guard: ({ context }: { context: RunbookContext }) => {
+          const selected = getIterationTransition(context);
+          if (selected.result !== kind) return false;
+          return transition.retry <= 0 || context.iterationRetryCount >= transition.retry;
+        },
+        target,
+        actions: [
+          buildParentExitAssign(transition.action, target, steps, sources),
+          assign({
+            retryMax: transition.retry > 0 ? transition.retry : undefined,
+          }),
+        ],
+      });
+    };
+
+    // Iteration-level direct actions bypass parent aggregation.
+    pushDirectIterationExit('pass', forTransitions.pass);
+    pushDirectIterationExit('fail', forTransitions.fail);
+
     // Loop-back: advance to next iteration
     always.push({
       guard: ({ context }: { context: RunbookContext }) => {
         if (context.lastAction?.type === 'BREAK') return false;
-        if (shouldBreakIteration(context)) return false;
+        const selected = getIterationTransition(context).transition;
+        if (selected.action.type !== 'CONTINUE') return false;
         const top = peekForStack(context.forStack);
         return top !== undefined && hasMoreIterations(top);
       },

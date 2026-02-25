@@ -13,10 +13,18 @@ import {
   RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
+  buildStepPosition,
+  buildTargetKey,
+  deriveExecutionAt,
+  evaluateFailCondition,
+  evaluatePassCondition,
+  getActiveForContext,
   type AnyActorRef,
   countNumberedSteps,
   isRunbookComplete,
   isRunbookStopped,
+  stepIdToString,
+  type DeferredCompletion,
   type Step,
   type RunbookState,
   type StepPosition,
@@ -29,6 +37,7 @@ import {
   runExecutionLoop,
   formatActionForDisplay,
   extractLastAction,
+  extractRetryDisplayCount,
   extractRetryMax,
 } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
@@ -100,6 +109,41 @@ export interface TransitionConfig {
   onStopped: TerminalSideEffects;
   /** Side effects when runbook completes */
   onComplete: TerminalSideEffects;
+}
+
+/**
+ * Canonical PASS transition behavior.
+ */
+export function createPassTransitionConfig(): TransitionConfig {
+  return {
+    eventType: 'PASS',
+    commandName: 'pass',
+    lastResult: 'pass',
+    computeActionResult: (actionType: ActionType) =>
+      actionType !== 'RETRY' && actionType !== 'STOP',
+    evaluateCondition: (step: Step, prevState: RunbookState) =>
+      evaluatePassCondition(step, prevState.retryCount),
+    terminalOrder: 'complete-first',
+    onStopped: { popRunbook: false, updateParentBinding: false },
+    onComplete: { popRunbook: true, updateParentBinding: true },
+  };
+}
+
+/**
+ * Canonical FAIL transition behavior.
+ */
+export function createFailTransitionConfig(): TransitionConfig {
+  return {
+    eventType: 'FAIL',
+    commandName: 'fail',
+    lastResult: 'fail',
+    computeActionResult: () => false,
+    evaluateCondition: (step: Step, prevState: RunbookState) =>
+      evaluateFailCondition(step, prevState.retryCount),
+    terminalOrder: 'stopped-first',
+    onStopped: { popRunbook: true, updateParentBinding: true },
+    onComplete: { popRunbook: true, updateParentBinding: true },
+  };
 }
 
 /**
@@ -240,16 +284,13 @@ export function buildPositions(
 ): { prevPos: StepPosition; newPos: StepPosition } {
   const totalSteps = countNumberedSteps(steps);
 
-  const prevPos: StepPosition = {
-    current: prevState.step,
-    total: totalSteps,
-    substep: prevState.substep,
-  };
-  const newPos: StepPosition = {
-    current: newState.step,
-    total: totalSteps,
-    substep: newState.substep,
-  };
+  const prevPos = buildStepPosition(
+    prevState.step,
+    totalSteps,
+    prevState.substep,
+    prevState.forStack,
+  );
+  const newPos = buildStepPosition(newState.step, totalSteps, newState.substep, newState.forStack);
 
   return { prevPos, newPos };
 }
@@ -366,24 +407,80 @@ export async function handleTerminalState(
   return 'continue';
 }
 
+interface RuntimeTarget {
+  step: string;
+  substep?: string;
+  iteration?: number;
+  at: string;
+  key: string;
+}
+
+function toRuntimeTarget(step: string, substep?: string, iteration?: number): RuntimeTarget {
+  return {
+    step,
+    substep,
+    iteration,
+    at: deriveExecutionAt(step, substep, iteration),
+    key: buildTargetKey(step, substep, iteration),
+  };
+}
+
+function activeCursorTarget(state: RunbookState): RuntimeTarget {
+  const activeFor = getActiveForContext(state.forStack, state.step);
+  return toRuntimeTarget(state.step, state.substep, activeFor?.iteration);
+}
+
+function resolveBindingTarget(
+  state: RunbookState,
+  steps: Step[],
+  binding: RunbookState['agentBindings'][string],
+): RuntimeTarget {
+  if (binding.targetStep) {
+    return toRuntimeTarget(binding.targetStep, binding.targetSubstep, binding.targetIteration);
+  }
+
+  // Legacy compatibility: infer only when target is unambiguous from active state.
+  if (binding.stepId.step !== state.step) {
+    throw new Error(
+      `Legacy agent binding target cannot be inferred for ${stepIdToString(binding.stepId)}. ` +
+        `Current cursor: ${activeCursorTarget(state).at}. Re-queue the active step before completing this agent.`,
+    );
+  }
+
+  const inferredSubstep = binding.stepId.substep ?? state.substep;
+  if (!binding.stepId.substep && !state.substep) {
+    const activeStep = steps.find((s) => s.name === state.step);
+    if (activeStep?.substeps && activeStep.substeps.length > 1) {
+      throw new Error(
+        `Legacy agent binding for step ${state.step} is ambiguous without a substep. ` +
+          `Re-queue a specific frontier substep and rebind the agent.`,
+      );
+    }
+  }
+
+  const activeFor = getActiveForContext(state.forStack, state.step);
+  return toRuntimeTarget(state.step, inferredSubstep, activeFor?.iteration);
+}
+
+function isFrontierTarget(target: RuntimeTarget, cursor: RuntimeTarget): boolean {
+  if (target.step !== cursor.step) return false;
+  if (cursor.iteration !== undefined) return target.iteration === cursor.iteration;
+  return target.iteration === undefined;
+}
+
 /**
- * Handle agent binding completion with condition evaluation.
+ * Handle agent binding completion.
  *
- * Unified handler for both pass and fail agent bindings. Evaluates
- * RETRY/GOTO conditions before marking agent as done. If retry or
- * goto is triggered, continues execution instead of marking complete.
- *
- * @param ctx - Transition context
- * @param agentId - Agent ID to check binding for
- * @param config - Transition configuration (for condition evaluation)
- * @returns True if agent binding was handled, false to continue to main flow
+ * Matching cursor targets are routed through the same actor PASS/FAIL path
+ * as plain commands. Valid frontier targets that are not at cursor are
+ * deferred. Out-of-frontier and stale completions are rejected.
  */
 export async function handleAgentBinding(
   ctx: TransitionContext,
   agentId: string,
-  config: TransitionConfig,
+  _config: TransitionConfig,
 ): Promise<boolean> {
-  const { output, manager, actorService, lifecycleService, state, steps, actor, cwd } = ctx;
+  const { output, manager, lifecycleService, state, steps } = ctx;
   const binding = await manager.getAgentBinding(state.id, agentId);
 
   if (!binding) {
@@ -392,71 +489,14 @@ export async function handleAgentBinding(
     return false;
   }
 
-  // Agent binding exists - evaluate condition for RETRY/GOTO (same for pass and fail)
-  const stepName = binding.stepId.step;
-  const stepIndex = steps.findIndex((s) => s.name === stepName);
-  const agentStep = stepIndex >= 0 ? steps[stepIndex] : steps[0];
-  const conditionResult = config.evaluateCondition(agentStep, state);
-
-  if (conditionResult.action === 'retry') {
-    try {
-      actor.send({ type: config.eventType });
-      const { state: retryState } = await actorService.updateFromActor(state.id, actor, steps);
-      output.status(true, 'retry', `Agent ${agentId} retrying step ${stepName}`, {
-        agent: agentId,
-        step: stepName,
-      });
-      // Continue with execution loop for retry
-      const retryEmitter = createBridgedEmitter(retryState, output);
-      const loopResult = await runExecutionLoop(
-        manager,
-        state.id,
-        steps,
-        cwd,
-        !!state.prompted,
-        agentId,
-        retryEmitter,
-      );
-      output.flush();
-      if (loopResult === 'stopped') process.exit(1);
-      return true;
-    } finally {
-      actor.stop();
-    }
+  if (binding.status !== 'running') {
+    throw new Error(
+      `Agent ${agentId} completion is stale (binding status is ${binding.status}). ` +
+        'Use rd status to inspect current bindings before completing.',
+    );
   }
 
-  if (conditionResult.action === 'goto') {
-    try {
-      actor.send({ type: config.eventType });
-      const { state: gotoState } = await actorService.updateFromActor(state.id, actor, steps);
-      output.status(true, 'goto', `Agent ${agentId} triggered goto to step ${gotoState.step}`, {
-        agent: agentId,
-        step: gotoState.step,
-      });
-      // Continue with execution loop after GOTO
-      const gotoEmitter = createBridgedEmitter(gotoState, output);
-      const loopResult = await runExecutionLoop(
-        manager,
-        state.id,
-        steps,
-        cwd,
-        !!state.prompted,
-        agentId,
-        gotoEmitter,
-      );
-      output.flush();
-      if (loopResult === 'stopped') process.exit(1);
-      return true;
-    } finally {
-      actor.stop();
-    }
-  }
-
-  // No retry/goto - mark binding as done; stop actor since it's no longer needed
-  actor.stop();
-
-  let result: 'pass' | 'fail' = config.lastResult;
-
+  let result: 'pass' | 'fail' = _config.lastResult;
   if (binding.childRunbookId) {
     const childResult = await lifecycleService.getChildRunbookResult(binding.childRunbookId);
     if (childResult === null) {
@@ -467,23 +507,57 @@ export async function handleAgentBinding(
     result = childResult;
   }
 
-  await manager.updateAgentBinding(state.id, agentId, { status: 'done', result });
+  const target = resolveBindingTarget(state, steps, binding);
+  const cursor = activeCursorTarget(state);
+
+  if (!isFrontierTarget(target, cursor)) {
+    throw new Error(
+      `Rejected out-of-frontier completion. Current cursor: ${cursor.key} (${cursor.at}). ` +
+        `Attempted target: ${target.key} (${target.at}).`,
+    );
+  }
+
+  await manager.updateAgentBinding(state.id, agentId, {
+    status: 'done',
+    result,
+    targetStep: target.step,
+    targetSubstep: target.substep,
+    targetIteration: target.iteration,
+  });
 
   const updated = await manager.load(state.id);
   const bindings = Object.values(updated?.agentBindings ?? {});
   const runningCount = bindings.filter((b) => b.status === 'running').length;
 
-  const action = config.lastResult === 'pass' ? 'agent_completed' : 'agent_failed';
-  const statusMessage =
-    runningCount > 0
-      ? `Agent ${agentId} marked as ${config.lastResult} (${String(runningCount)} agent(s) still running)`
-      : `Agent ${agentId} marked as ${config.lastResult} (All agents complete)`;
+  if (target.key === cursor.key) {
+    const transitionConfig =
+      result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
+    await executeTransition(ctx, transitionConfig);
+    return true;
+  }
 
-  output.status(config.lastResult === 'pass', action, statusMessage, {
-    agent: agentId,
+  const completion: DeferredCompletion = {
+    agentId,
     result,
-    agentsRunning: runningCount,
-  });
+    targetStep: target.step,
+    targetSubstep: target.substep,
+    targetIteration: target.iteration,
+    completedAt: new Date().toISOString(),
+  };
+  await lifecycleService.upsertDeferredCompletion(state.id, target.key, completion);
+
+  output.status(
+    result === 'pass',
+    'agent_deferred',
+    `Agent ${agentId} completion deferred for ${target.at} (${String(runningCount)} agent(s) still running)`,
+    {
+      agent: agentId,
+      targetAt: target.at,
+      targetKey: target.key,
+      result,
+      agentsRunning: runningCount,
+    },
+  );
   output.flush();
   return true;
 }
@@ -508,10 +582,6 @@ export async function executeTransition(
     // Capture prev state BEFORE mutation (deep copy for retryCount, etc.)
     const prevState = { ...state };
 
-    // Calculate initial position for action output
-    const { displayStep } = calculatePosition(state, steps);
-    const prevSubstep = state.substep;
-
     // Send event
     actor.send({ type: config.eventType });
 
@@ -530,8 +600,8 @@ export async function executeTransition(
     const currentStep = prevStepIndex >= 0 ? steps[prevStepIndex] : steps[0];
     const retryMax = extractRetryMax(rawSnapshot);
     const lastActionFromContext = extractLastAction(rawSnapshot);
-
-    const action = formatActionForDisplay(lastActionFromContext, updatedState.retryCount, retryMax);
+    const retryDisplayCount = extractRetryDisplayCount(rawSnapshot, updatedState.retryCount);
+    const action = formatActionForDisplay(lastActionFromContext, retryDisplayCount, retryMax);
 
     // Derive action type and compute result
     const actionType = parseActionType(lastActionFromContext);
@@ -544,14 +614,7 @@ export async function executeTransition(
     });
 
     // Build positions for output
-    const totalStepsValue = countNumberedSteps(steps);
-
-    const prevPos = { current: displayStep, total: totalStepsValue, substep: prevSubstep };
-    const newPos = {
-      current: updatedState.step,
-      total: totalStepsValue,
-      substep: updatedState.substep,
-    };
+    const { prevPos, newPos } = buildPositions(prevState, updatedState, steps);
 
     // Emit action block
     output.action({

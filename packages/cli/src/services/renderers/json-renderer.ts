@@ -13,6 +13,7 @@
  */
 
 import {
+  derivePositionAt,
   type OutputEvent,
   type OutputWriter,
   type RunbookEventV1,
@@ -31,10 +32,30 @@ interface JsonOutput {
   code?: string;
   data?: Record<string, unknown>;
   items?: unknown[];
-  from?: { current: string; total: number | string; substep?: string };
-  to?: { current: string; total: number | string; substep?: string };
+  from?: {
+    current: string;
+    total: number | string;
+    substep?: string;
+    at?: string;
+    for?: { index: number; end?: number };
+  };
+  to?: {
+    current: string;
+    total: number | string;
+    substep?: string;
+    at?: string;
+    for?: { index: number; end?: number };
+  };
   [key: string]: unknown;
 }
+
+type JsonPosition = {
+  current: string;
+  total: number;
+  substep?: string;
+  at?: string;
+  for?: { index: number; end?: number };
+};
 
 /**
  * Renders output events as JSON.
@@ -107,11 +128,7 @@ export class JSONRenderer implements OutputRenderer {
         break;
       case 'step_separator':
         // JSON doesn't need separators, but capture position
-        this.output.position = {
-          current: event.position.current,
-          total: event.position.total,
-          ...(event.position.substep && { substep: event.position.substep }),
-        };
+        this.output.position = this.toJsonPosition(event.position);
         break;
       case 'message':
         // Messages become info field or are captured in message
@@ -138,11 +155,7 @@ export class JSONRenderer implements OutputRenderer {
           this.output.message = event.message;
         }
         if (event.position) {
-          this.output.position = {
-            current: event.position.current,
-            total: event.position.total,
-            ...(event.position.substep && { substep: event.position.substep }),
-          };
+          this.output.position = this.toJsonPosition(event.position);
         }
         break;
       case 'stopped':
@@ -152,11 +165,7 @@ export class JSONRenderer implements OutputRenderer {
           this.output.message = event.message;
         }
         if (event.position) {
-          this.output.position = {
-            current: event.position.current,
-            total: event.position.total,
-            ...(event.position.substep && { substep: event.position.substep }),
-          };
+          this.output.position = this.toJsonPosition(event.position);
         }
         break;
       case 'no_active_runbook':
@@ -239,18 +248,10 @@ export class JSONRenderer implements OutputRenderer {
       this.output.command = block.command;
     }
     if (block.from) {
-      this.output.from = {
-        current: block.from.current,
-        total: block.from.total,
-        ...(block.from.substep && { substep: block.from.substep }),
-      };
+      this.output.from = this.toJsonPosition(block.from);
     }
     if (block.at) {
-      this.output.to = {
-        current: block.at.current,
-        total: block.at.total,
-        ...(block.at.substep && { substep: block.at.substep }),
-      };
+      this.output.to = this.toJsonPosition(block.at);
     }
 
     if (event.complete) {
@@ -314,5 +315,20 @@ export class JSONRenderer implements OutputRenderer {
    */
   private toSnakeCase(str: string): string {
     return str.toLowerCase();
+  }
+
+  private toJsonPosition(position: {
+    current: string;
+    total: number;
+    substep?: string;
+    for?: { index: number; end?: number };
+  }): JsonPosition {
+    return {
+      current: position.current,
+      total: position.total,
+      ...(position.substep ? { substep: position.substep } : {}),
+      at: derivePositionAt(position),
+      ...(position.for ? { for: position.for } : {}),
+    };
   }
 }

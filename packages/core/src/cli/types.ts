@@ -11,6 +11,13 @@ export interface StepPosition {
   readonly total: number;
   /** Current substep identifier within the step (e.g., "1", "2") */
   readonly substep?: string;
+  /** Active FOR loop scope when position is loop-scoped. */
+  readonly for?: {
+    /** Current 1-based loop iteration index. */
+    readonly index: number;
+    /** Optional inclusive loop bound (undefined for open-ended sources). */
+    readonly end?: number;
+  };
 }
 
 /**

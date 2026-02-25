@@ -1,5 +1,6 @@
 import type { Step, Substep } from '../runbook/types.js';
 import { isNumberedStepName } from '../runbook/step-utils.js';
+import { derivePositionAt } from '../runbook/targeting.js';
 import type { RunbookMetadata, StepPosition, ActionBlockData } from './types.js';
 import type { OutputWriter } from './writer.js';
 import { getWriter } from './context.js';
@@ -39,7 +40,15 @@ export function formatPosition(pos: StepPosition): string {
  * @returns Formatted step number string (e.g., "1", "2.1", "RECOVER")
  */
 export function formatStepNumber(pos: StepPosition): string {
-  return pos.substep ? `${pos.current}.${pos.substep}` : pos.current;
+  return derivePositionAt(pos);
+}
+
+function formatForScope(pos: StepPosition | undefined): string | undefined {
+  if (!pos) return undefined;
+  if (!pos.for) return undefined;
+  return pos.for.end !== undefined
+    ? `${String(pos.for.index)}/${String(pos.for.end)}`
+    : `${String(pos.for.index)}/?`;
 }
 
 /**
@@ -108,8 +117,12 @@ export function printActionBlock(data: ActionBlockData, writer: OutputWriter = g
   if (data.result !== undefined) {
     writer.writeLine(`Result:   ${colorizeResult(data.result)}`);
   }
+  const forScope = formatForScope(data.at ?? data.from);
+  if (forScope) {
+    writer.writeLine(`For:      ${info(forScope)}`);
+  }
   if (data.at) {
-    writer.writeLine(`At:       ${info(formatPosition(data.at))}`);
+    writer.writeLine(`At:       ${info(formatStepNumber(data.at))}`);
   }
 }
 

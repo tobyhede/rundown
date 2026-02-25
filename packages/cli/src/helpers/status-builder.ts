@@ -8,12 +8,19 @@
  */
 
 import {
+  buildStepPosition,
+  deriveExecutionAt,
   stepIdToString,
   countNumberedSteps,
   type ActionBlockData,
   type RunbookState,
 } from '@rundown-org/core';
-import { getStepRetryMax, buildMetadata, formatActionForDisplay } from '../services/execution.js';
+import {
+  getStepRetryMax,
+  buildMetadata,
+  extractRetryDisplayCount,
+  formatActionForDisplay,
+} from '../services/execution.js';
 import { getRunbookFromState } from './runbook-loader.js';
 
 /**
@@ -43,6 +50,8 @@ export interface StatusOutputData {
     current: string;
     total: number;
     substep?: string;
+    at?: string;
+    for?: { index: number; end?: number };
   };
   /** Current step details */
   step?: {
@@ -84,11 +93,12 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
     file: metadata.file,
     state: metadata.state,
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
-    position: {
-      current: stashedState.step,
-      total: totalSteps,
-      ...(stashedState.substep && { substep: stashedState.substep }),
-    },
+    position: buildStepPosition(
+      stashedState.step,
+      totalSteps,
+      stashedState.substep,
+      stashedState.forStack,
+    ),
   };
 }
 
@@ -108,6 +118,18 @@ export function buildActiveStatus(
   cwd: string,
   stashedId?: string,
 ): StatusOutputData {
+  const toTargetAt = (target: {
+    targetStep?: string;
+    targetSubstep?: string;
+    targetIteration?: number;
+    stepId: { step: string; substep?: string };
+  }): string => {
+    if (target.targetStep) {
+      return deriveExecutionAt(target.targetStep, target.targetSubstep, target.targetIteration);
+    }
+    return stepIdToString(target.stepId);
+  };
+
   const steps = getRunbookFromState(activeState, cwd);
   const currentStepIndex = steps.findIndex((s) => s.name === activeState.step);
   const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
@@ -120,9 +142,13 @@ export function buildActiveStatus(
   let actionBlockData: ActionBlockData | undefined;
   if (activeState.lastAction) {
     const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
+    const retryDisplayCount = extractRetryDisplayCount(
+      activeState.snapshot,
+      activeState.retryCount,
+    );
     const actionStr = formatActionForDisplay(
       activeState.lastAction,
-      activeState.retryCount,
+      retryDisplayCount,
       retryMaxForAction,
     );
     actionBlockData = { action: actionStr };
@@ -137,11 +163,7 @@ export function buildActiveStatus(
     file: metadata.file,
     state: metadata.state,
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
-    position: {
-      current: displayStep,
-      total: totalSteps,
-      ...(activeState.substep && { substep: activeState.substep }),
-    },
+    position: buildStepPosition(displayStep, totalSteps, activeState.substep, activeState.forStack),
     ...(currentStep && {
       step: {
         name: currentStep.name,
@@ -151,7 +173,7 @@ export function buildActiveStatus(
     lastAction: actionBlockData,
     pending:
       activeState.pendingSteps.length > 0
-        ? activeState.pendingSteps.map((p) => stepIdToString(p.stepId))
+        ? activeState.pendingSteps.map((p) => toTargetAt(p))
         : undefined,
     agents:
       Object.keys(activeState.agentBindings).length > 0
@@ -159,7 +181,7 @@ export function buildActiveStatus(
             Record<string, { step: string; status: string; result?: string }>
           >((acc, [agentId, binding]) => {
             acc[agentId] = {
-              step: stepIdToString(binding.stepId),
+              step: toTargetAt(binding),
               status: binding.status,
               result: binding.result,
             };

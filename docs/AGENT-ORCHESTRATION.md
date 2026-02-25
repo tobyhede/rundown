@@ -152,6 +152,12 @@ rd pass --agent subagent-abc
 
 The agent type (`code-review-agent`, `test-agent`) drives context injection — see [Context File Discovery](#context-file-discovery).
 
+**Dispatch frontier and identity:**
+- `run --step` is constrained to the active step frontier.
+- If the active step is in a FOR loop, queueing is constrained to the active iteration frontier.
+- Canonical target identity is `step + substep + iteration`.
+- Display path (`STEP.INDEX.SUBSTEP`, e.g. `2.3.1`) is output-only.
+
 ---
 
 ### 5. Parallel Fan-Out / Fan-In
@@ -277,7 +283,12 @@ STATUS: FAIL
 | `FAIL` | Agent encountered issues or rejected the work |
 | `BLOCKED` | Agent could not proceed (used in plan execution) |
 
-The plugin parses this from agent output and translates it to `rd pass --agent <id>` or `rd fail --agent <id>`, which advances the parent runbook's state machine.
+The plugin parses this from agent output and translates it to `rd pass --agent <id>` or `rd fail --agent <id>`.
+
+Routing behavior:
+- If completion target matches the active cursor, Rundown applies the normal actor PASS/FAIL transition immediately.
+- If completion is valid for the current frontier but not currently active, Rundown stores it as deferred completion and auto-applies it when reached.
+- Out-of-frontier or stale completions are rejected.
 
 **Important:** The STATUS line should appear at the end of the agent's response. If no STATUS line is found, the plugin treats the result based on the agent's exit behaviour.
 

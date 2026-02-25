@@ -205,7 +205,7 @@ describe('output formatter', () => {
         'From:     1',
         'Command:  npm test',
         'Result:   PASS',
-        'At:       2/5',
+        'At:       2',
       ]);
     });
   });

@@ -92,6 +92,13 @@ These two forms are execution-equivalent:
 - review-technical-accuracy.runbook.md
 ```
 
+### 3.4 Runtime Target Identity
+Runtime dispatch/completion identity is canonicalized as:
+
+`step + substep + iteration`
+
+Execution path notation such as `1.2.1` (`STEP.INDEX.SUBSTEP`) is display-only. It is not authoring syntax and not a canonical identifier.
+
 ## 4. Control Flow
 
 Control flow is defined by **Transitions** (conditions) and **Actions** (effects).
@@ -121,7 +128,7 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 | `GOTO {Target}` | Any | Jump to step/substep (e.g., `1`, `Error`). |
 | `RETRY [N] [Act]` | Any | Retry N times (default 1), then perform Action. |
 | `NEXT` | FOR Substep | Skip to next iteration. |
-| `BREAK` | FOR Substep | Exit loop immediately. |
+| `BREAK` | FOR Substep, FOR Iteration-Level | Exit loop immediately. |
 
 GOTO targeting the containing step (self-reference) without an AT qualifier may create an infinite loop. Use RETRY for bounded re-execution.
 
@@ -156,6 +163,9 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substep `1`.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
 *   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.
+*   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause execute per iteration. Allowed terminal actions are `CONTINUE`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
+*   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action.
+*   **Exit semantics**: Iteration-level `BREAK` includes the current iteration result in parent aggregation. Iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation and exit directly.
 
 ## 6. Templating
 
@@ -190,10 +200,11 @@ scenarios:
 3.  **Strict Ordering**: FOR -> Transitions -> Prompt -> Body.
 4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
 5.  **Single Command**: Max one executable block per step.
-6.  **Loop Safety**: `NEXT`/`BREAK` only valid inside FOR substeps.
+6.  **Loop Safety**: `NEXT` is only valid inside FOR substeps. `BREAK` is valid in FOR substeps and FOR iteration-level transitions.
 7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
 9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.
+10. **FOR Iteration Action Set**: FOR-level nested transitions only allow `CONTINUE`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
 
 ## 9. Compatibility
 

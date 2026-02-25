@@ -9,6 +9,7 @@
  */
 
 import {
+  buildStepPosition,
   RunbookStateManager,
   RunbookActorService,
   SessionService,
@@ -189,12 +190,13 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
 
   // Compute new position (the target of the goto)
   const totalSteps = countNumberedSteps(steps);
-  const newPos = {
-    current: target.step,
-    total: totalSteps,
-    substep: target.substep,
-  };
-  const prevPos = { current: prevStep, total: totalSteps, substep: prevSubstep };
+  const newPos = buildStepPosition(
+    syncResult.state.step,
+    totalSteps,
+    syncResult.state.substep,
+    syncResult.state.forStack,
+  );
+  const prevPos = buildStepPosition(prevStep, totalSteps, prevSubstep, state.forStack);
 
   // Build action data for goto
   const actionData = {

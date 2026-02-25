@@ -846,6 +846,24 @@ echo check
       expect(() => parseRunbook(markdown)).toThrow(/Invalid nested bullet under FOR clause/i);
     });
 
+    it('throws error on nested FOR bullet without transition paragraph', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+  - <div>invalid</div>
+`;
+      expect(() => parseRunbook(markdown)).toThrow(/Invalid nested bullet under FOR clause/i);
+    });
+
+    it('throws error on nested FOR bullet with code block content', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+  - \`\`\`bash
+    echo nope
+    \`\`\`
+`;
+      expect(() => parseRunbook(markdown)).toThrow(/Invalid nested bullet under FOR clause/i);
+    });
+
     it('parses FOR with nested transitions (PASS ANY / FAIL ALL)', () => {
       const markdown = `## 1. Review
 - FOR pass IN 1 TO 3

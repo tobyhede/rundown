@@ -1,15 +1,14 @@
 // packages/cli/src/commands/fail.ts
 
 import type { Command } from 'commander';
-import { evaluateFailCondition, type Step, type RunbookState } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
+  createFailTransitionConfig,
   executeTransition,
   handleAgentBinding,
-  type TransitionConfig,
 } from '../helpers/transitions.js';
 
 /**
@@ -37,17 +36,7 @@ export function registerFailCommand(program: Command): void {
           }
 
           try {
-            const failConfig: TransitionConfig = {
-              eventType: 'FAIL',
-              commandName: 'fail',
-              lastResult: 'fail',
-              computeActionResult: () => false, // Always false for fail
-              evaluateCondition: (step: Step, prevState: RunbookState) =>
-                evaluateFailCondition(step, prevState.retryCount),
-              terminalOrder: 'stopped-first',
-              onStopped: { popRunbook: true, updateParentBinding: true },
-              onComplete: { popRunbook: true, updateParentBinding: true },
-            };
+            const failConfig = createFailTransitionConfig();
 
             // Handle agent binding completion (substep case)
             // Only applies when parent runbook has an agent binding - not for standalone agent runbooks

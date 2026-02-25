@@ -66,7 +66,7 @@ describe('status command', () => {
 
   it('shows pending steps count', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
-    runCli('run --step 2', workspace);
+    runCli('run --step 1', workspace);
 
     const result = runCli('status', workspace);
 

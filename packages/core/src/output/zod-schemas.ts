@@ -86,6 +86,18 @@ export const PositionSchema = z
     total: z.number().describe('Total number of steps'),
     /** Current substep identifier if applicable */
     substep: z.string().optional().describe('Optional substep identifier'),
+    /** Expanded execution location (for example "1.2.1") */
+    at: z.string().optional().describe('Expanded execution location'),
+    /** Active FOR loop scope for loop-scoped positions */
+    for: z
+      .object({
+        /** Current 1-based loop iteration */
+        index: z.number().int().positive().describe('Current loop iteration index'),
+        /** Optional inclusive loop bound (undefined for open-ended loops) */
+        end: z.number().int().positive().optional().describe('Optional loop bound'),
+      })
+      .optional()
+      .describe('Loop scope for this position'),
   })
   .describe('Current position within the runbook execution');
 
