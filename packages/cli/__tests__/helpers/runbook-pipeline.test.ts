@@ -91,9 +91,9 @@ function makeLifecycle(overrides: Partial<any> = {}): any {
         state: {
           ...(state ?? {}),
           activeEntry: state?.activeEntry ?? 1,
-          activeFrameKey: state?.activeFrameKey ?? `${state?.step ?? '1'}|`,
+          activeFrameKey: state?.activeFrameKey ?? `${String(state?.step ?? '1')}|`,
         },
-        frameKey: state?.activeFrameKey ?? `${state?.step ?? '1'}|`,
+        frameKey: state?.activeFrameKey ?? `${String(state?.step ?? '1')}|`,
         entry: state?.activeEntry ?? 1,
       })),
     buildTargetFrameKey: jest
@@ -347,7 +347,7 @@ describe('startRunbook', () => {
       } as any,
       actorService: { initializeState: mockInitState } as any,
       sessionService: { pushRunbook: mockPushRunbook } as any,
-      lifecycleService: makeLifecycle() as any,
+      lifecycleService: makeLifecycle(),
       cwd: '/test',
     };
 
@@ -395,7 +395,7 @@ describe('startRunbook', () => {
       } as any,
       actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
       sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
-      lifecycleService: makeLifecycle() as any,
+      lifecycleService: makeLifecycle(),
       cwd: '/test',
     };
 

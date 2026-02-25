@@ -42,9 +42,15 @@ export function transitionSinkFromEmitter(
   emitter: Pick<ExecutionEventEmitter, 'emit'>,
 ): TransitionEventSink {
   return {
-    onStepTransitioned: (payload) => emitter.emit('STEP_TRANSITIONED', payload),
-    onRunbookCompleted: (payload) => emitter.emit('RUNBOOK_COMPLETED', payload),
-    onRunbookStopped: (payload) => emitter.emit('RUNBOOK_STOPPED', payload),
+    onStepTransitioned: (payload) => {
+      emitter.emit('STEP_TRANSITIONED', payload);
+    },
+    onRunbookCompleted: (payload) => {
+      emitter.emit('RUNBOOK_COMPLETED', payload);
+    },
+    onRunbookStopped: (payload) => {
+      emitter.emit('RUNBOOK_STOPPED', payload);
+    },
   };
 }
 

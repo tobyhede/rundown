@@ -127,7 +127,7 @@ describe('start command', () => {
       const result = runCli('run --step 2', workspace);
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('active step frontier');
+      expect(result.stderr).toContain('Only active steps may be dispatched');
     });
 
     it('accepts substep format', async () => {

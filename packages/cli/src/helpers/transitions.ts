@@ -491,7 +491,7 @@ export async function executeTransition(
   const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
   const activeState = ensured.state;
   const activeStep = steps.find((s) => s.name === activeState.step) ?? steps[0];
-  const isSubstepCompletion = !!(activeState.substep && activeStep?.substeps?.length);
+  const isSubstepCompletion = !!(activeState.substep && activeStep.substeps?.length);
 
   if (isSubstepCompletion) {
     const cursor = activeCursorTarget(activeState);

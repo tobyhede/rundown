@@ -64,7 +64,7 @@ export function parseCompletionKey(
   if (!step || !entryRaw) return null;
   const entry = Number.parseInt(entryRaw, 10);
   if (!Number.isFinite(entry) || entry < 1) return null;
-  const frameKey = `${step}|${iterationRaw ?? ''}`;
+  const frameKey = `${step}|${iterationRaw}`;
   return {
     frameKey,
     entry,

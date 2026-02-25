@@ -85,10 +85,19 @@ export interface PreparedRunbook {
 }
 
 /**
- * Result types for pipeline operations.
+ * Result of queuing a step for agent binding.
+ *
+ * On success, returns the resolved step ID and optional child runbook path.
+ * On failure, returns an error message with a machine-readable code.
  */
 export type StepQueueResult =
-  | { ok: true; stepId: string; runbook?: string; targetAt?: string }
+  | {
+      ok: true;
+      stepId: string;
+      runbook?: string;
+      /** Qualified execution location (e.g., `"2"`, `"2.3.1"`). */
+      targetAt?: string;
+    }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> };
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
@@ -235,7 +244,6 @@ export async function queueStep(
     return { ok: false, error: 'No active runbook', code: 'NO_ACTIVE_RUNBOOK' };
   }
 
-  const steps = loadedState.runbookSrc ? getRunbookFromState(loadedState, ctx.cwd) : [];
   const ensured = await lifecycleService.ensureActiveEntry(loadedState.id, undefined, loadedState);
   const state = ensured.state;
 
@@ -480,25 +488,11 @@ export async function bindAgent(
     targetFrameKey: normalizedFrameKey,
     targetEntry: normalizedEntry,
   };
-  const normalizedTargetStep = normalizedPending.targetStep;
-  const normalizedTargetSubstep = normalizedPending.targetSubstep;
-  const normalizedTargetIteration = normalizedPending.targetIteration;
-  if (!normalizedTargetStep) {
-    return {
-      ok: false,
-      error:
-        `Pending step ${stepIdToString(pending.stepId)} is missing canonical target identity. ` +
-        'Re-queue the step from the active frontier before binding.',
-      code: 'AGENT_BINDING_ERROR',
-      details: { agent: agentId, stepId: stepIdToString(pending.stepId) },
-    };
-  }
-
   await manager.bindAgent(state.id, agentId, normalizedPending);
   const targetAt = deriveExecutionAt(
-    normalizedTargetStep,
-    normalizedTargetSubstep,
-    normalizedTargetIteration,
+    pending.targetStep,
+    normalizedPending.targetSubstep,
+    normalizedPending.targetIteration,
   );
 
   output.status(true, 'agent_bound', `Agent ${agentId} bound to step ${targetAt}`, {

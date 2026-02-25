@@ -281,9 +281,10 @@ export async function drainResolvedCompletions({
   let state = currentState;
   let applied = 0;
 
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     const currentStep = steps.find((s) => s.name === state.step) ?? steps[0];
-    if (!currentStep?.substeps?.length || !state.substep) {
+    if (!currentStep.substeps?.length || !state.substep) {
       return { status: 'continue', state, unresolved: 0, applied };
     }
 

@@ -438,7 +438,7 @@ export const RunbookStateSchema = z
     // Legacy migration: only map deferred entries when frame identity is unambiguous.
     for (const [legacyKey, legacy] of Object.entries(normalized.deferredCompletions ?? {})) {
       const parsed = parseLegacyKey(legacyKey);
-      const frameStep = legacy.targetStep ?? parsed.step;
+      const frameStep = legacy.targetStep;
       if (!frameStep) continue;
       const frameIteration = legacy.targetIteration ?? parsed.iteration;
       const frameKey = buildFrameKey(frameStep, frameIteration);
@@ -465,7 +465,7 @@ export const RunbookStateSchema = z
       const frameKey = completion.targetFrameKey
         ? completion.targetFrameKey
         : buildFrameKey(completion.targetStep, completion.targetIteration);
-      const entry = completion.targetEntry ?? activeEntry;
+      const entry = completion.targetEntry;
       const normalizedKey = buildCompletionKey(frameKey, entry, completion.targetSubstep);
       resolvedCompletions[normalizedKey] = {
         ...completion,

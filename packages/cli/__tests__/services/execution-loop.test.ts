@@ -17,9 +17,9 @@ const mockLifecycleService = {
       state: {
         ...(state ?? {}),
         activeEntry: state?.activeEntry ?? 1,
-        activeFrameKey: `${state?.step ?? '1'}|`,
+        activeFrameKey: `${String(state?.step ?? '1')}|`,
       },
-      frameKey: `${state?.step ?? '1'}|`,
+      frameKey: `${String(state?.step ?? '1')}|`,
       entry: state?.activeEntry ?? 1,
     })),
   listResolvedCompletions: jest.fn().mockResolvedValue([]),
@@ -93,7 +93,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
         `${frameKey}|${String(entry)}|${substep ?? ''}`,
     ),
     deriveActiveFrame: jest.fn((state: any) => ({
-      frameKey: `${state?.step ?? '1'}|`,
+      frameKey: `${String(state?.step ?? '1')}|`,
       step: state?.step ?? '1',
     })),
     RunbookActorService: jest.fn().mockImplementation(() => mockActorService),
@@ -180,9 +180,9 @@ describe('runExecutionLoop', () => {
         state: {
           ...(state ?? {}),
           activeEntry: state?.activeEntry ?? 1,
-          activeFrameKey: `${state?.step ?? '1'}|`,
+          activeFrameKey: `${String(state?.step ?? '1')}|`,
         },
-        frameKey: `${state?.step ?? '1'}|`,
+        frameKey: `${String(state?.step ?? '1')}|`,
         entry: state?.activeEntry ?? 1,
       }),
     );
