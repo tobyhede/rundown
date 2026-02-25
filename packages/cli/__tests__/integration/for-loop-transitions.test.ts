@@ -368,4 +368,103 @@ Complete the work.
       expect(result.exitCode).toBe(1);
     });
   });
+
+  // ===========================================================================
+  // Group 4: FOR + Multi-Substep Agent Dispatch
+  // ===========================================================================
+  describe('FOR with multi-substep agent dispatch', () => {
+    async function writeForMultiSubstep(ws: TestWorkspace): Promise<void> {
+      const content = `## 1. Process
+- FOR i IN 1 TO 2
+  - PASS ALL: CONTINUE
+  - FAIL ANY: BREAK
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+### 1.1 Validate
+Validate the item.
+
+### 1.2 Transform
+Transform the item.
+
+## 2. Done
+- PASS: COMPLETE
+
+Final step.
+`;
+      await writeFile(join(ws.cwd, 'for-multi.runbook.md'), content);
+    }
+
+    it('FOR + multi-substep — all iterations all substeps pass', async () => {
+      await writeForMultiSubstep(workspace);
+
+      // Start at substep 1.1 (iteration 1)
+      let result = runCli('run --prompted for-multi.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Iteration 1, substep 1.1
+      result = runCli('run --step 1', workspace);
+      expect(result.exitCode).toBe(0);
+      result = runCli('run --agent agent-1a', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('bound');
+      result = runCli('pass --agent agent-1a', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Iteration 1, substep 1.2
+      result = runCli('run --step 1', workspace);
+      expect(result.exitCode).toBe(0);
+      result = runCli('run --agent agent-1b', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('bound');
+      result = runCli('pass --agent agent-1b', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Iteration 2, substep 1.1
+      result = runCli('run --step 1', workspace);
+      expect(result.exitCode).toBe(0);
+      result = runCli('run --agent agent-2a', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('bound');
+      result = runCli('pass --agent agent-2a', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Iteration 2, substep 1.2
+      result = runCli('run --step 1', workspace);
+      expect(result.exitCode).toBe(0);
+      result = runCli('run --agent agent-2b', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('bound');
+      result = runCli('pass --agent agent-2b', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // All iterations + substeps passed → CONTINUE to step 2
+      result = runCli('pass', workspace);
+      expect(result.stdout).toContain('COMPLETE');
+    });
+
+    it('FOR + multi-substep — second iteration first substep fails → BREAK → STOP', async () => {
+      await writeForMultiSubstep(workspace);
+
+      // Start at substep 1.1 (iteration 1)
+      runCli('run --prompted for-multi.runbook.md', workspace);
+
+      // Iteration 1: pass both substeps
+      runCli('run --step 1', workspace);
+      runCli('run --agent agent-1a', workspace);
+      let result = runCli('pass --agent agent-1a', workspace);
+      expect(result.exitCode).toBe(0);
+
+      runCli('run --step 1', workspace);
+      runCli('run --agent agent-1b', workspace);
+      result = runCli('pass --agent agent-1b', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Iteration 2, substep 1.1: fail → BREAK → STOP
+      runCli('run --step 1', workspace);
+      runCli('run --agent agent-2a', workspace);
+      result = runCli('fail --agent agent-2a', workspace);
+      expect(result.exitCode).toBe(1);
+    });
+  });
 });
