@@ -4,6 +4,7 @@ import {
   buildFrameKey,
   deriveExecutionAt,
   derivePositionAt,
+  parseCompletionKey,
 } from '../../src/runbook/targeting.js';
 
 describe('targeting helpers', () => {
@@ -56,6 +57,48 @@ describe('targeting helpers', () => {
 
     it('builds completion key without substep', () => {
       expect(buildCompletionKey('1|2', 3)).toBe('1|2|3|');
+    });
+  });
+
+  describe('parseCompletionKey', () => {
+    it('parses a valid key with substep', () => {
+      expect(parseCompletionKey('1|2|3|1')).toEqual({
+        frameKey: '1|2',
+        entry: 3,
+        substep: '1',
+      });
+    });
+
+    it('parses a valid key without substep', () => {
+      expect(parseCompletionKey('1||1|')).toEqual({
+        frameKey: '1|',
+        entry: 1,
+      });
+    });
+
+    it('returns null for extra pipe segments', () => {
+      expect(parseCompletionKey('1|2|3|1|extra')).toBeNull();
+    });
+
+    it('returns null for empty string', () => {
+      expect(parseCompletionKey('')).toBeNull();
+    });
+
+    it('returns null for too few segments', () => {
+      expect(parseCompletionKey('1|2')).toBeNull();
+      expect(parseCompletionKey('1|2|3')).toBeNull();
+    });
+
+    it('returns null when entry is missing', () => {
+      expect(parseCompletionKey('1|2||sub')).toBeNull();
+    });
+
+    it('returns null for zero entry', () => {
+      expect(parseCompletionKey('1|2|0|sub')).toBeNull();
+    });
+
+    it('returns null for negative entry', () => {
+      expect(parseCompletionKey('1|2|-1|sub')).toBeNull();
     });
   });
 });
