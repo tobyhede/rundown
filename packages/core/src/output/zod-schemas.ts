@@ -573,6 +573,7 @@ export const StepQueuedResponseSchema = z
     action: z.literal('step_queued').describe('Action type for step queue'),
     stepId: z.string().describe('Step identifier that was queued'),
     runbook: z.string().optional().describe('Runbook filename'),
+    targetAt: z.string().optional().describe('Derived execution location for the queued target'),
   })
   .describe('Response when a step is queued for execution');
 
@@ -584,6 +585,7 @@ export const AgentBoundResponseSchema = z
     action: z.literal('agent_bound').describe('Action type for agent binding'),
     agent: z.string().describe('Agent identifier that was bound'),
     stepId: z.string().describe('Step identifier the agent is bound to'),
+    targetAt: z.string().optional().describe('Derived execution location for the bound target'),
   })
   .describe('Response when an agent is bound to a step');
 

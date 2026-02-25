@@ -234,7 +234,7 @@ describe('buildActiveStatus', () => {
 
   it('includes pending steps when present', () => {
     const state = makeState({
-      pendingSteps: [{ stepId: { step: '2' } }] as any,
+      pendingSteps: [{ stepId: { step: '2' }, targetStep: '2' }] as any,
     });
     const steps = [makeStep()];
 
@@ -246,8 +246,6 @@ describe('buildActiveStatus', () => {
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
     ).mockReturnValue(1);
-    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2');
-
     const result = buildActiveStatus(state, '/test');
 
     expect(result.pending).toEqual(['2']);
@@ -256,7 +254,7 @@ describe('buildActiveStatus', () => {
   it('includes agent bindings when present', () => {
     const state = makeState({
       agentBindings: {
-        'agent-1': { stepId: { step: '1' }, status: 'running' },
+        'agent-1': { stepId: { step: '1' }, targetStep: '1', status: 'running' },
       } as any,
     });
     const steps = [makeStep()];
@@ -269,8 +267,6 @@ describe('buildActiveStatus', () => {
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
     ).mockReturnValue(1);
-    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('1');
-
     const result = buildActiveStatus(state, '/test');
 
     expect(result.agents).toEqual({

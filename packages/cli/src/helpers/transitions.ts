@@ -13,68 +13,30 @@ import {
   RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
-  buildStepPosition,
+  extractLastAction,
+  parseActionType,
   buildTargetKey,
   deriveExecutionAt,
-  evaluateFailCondition,
-  evaluatePassCondition,
   getActiveForContext,
   type AnyActorRef,
-  countNumberedSteps,
-  isRunbookComplete,
-  isRunbookStopped,
   stepIdToString,
   type DeferredCompletion,
   type Step,
   type RunbookState,
-  type StepPosition,
-  type StepId,
-  type LastAction,
-  asTerminalSnapshotOrDefault,
 } from '@rundown-org/core';
 import { getRunbookFromState } from './runbook-loader.js';
-import {
-  runExecutionLoop,
-  formatActionForDisplay,
-  extractLastAction,
-  extractRetryDisplayCount,
-  extractRetryMax,
-} from '../services/execution.js';
+import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
-
-/**
- * Result of evaluating a step condition (PASS or FAIL).
- *
- * Indicates what action should be taken based on the condition evaluation.
- * This mirrors ConditionResult from @rundown-org/core but is defined locally
- * since that type is not exported from the core package.
- */
-export interface ConditionResult {
-  /** The action to take based on the condition evaluation */
-  action: 'retry' | 'stopped' | 'goto' | 'continue' | 'complete';
-  /** New retry count (only set when action is 'retry') */
-  newRetryCount?: number;
-  /** Target step for GOTO action */
-  gotoTarget?: StepId;
-  /** Message to display (typically for STOP action) */
-  message?: string;
-}
+import {
+  orchestrateTransition,
+  type TransitionOrchestrationPolicy,
+} from './transition-orchestrator.js';
 
 /**
  * Action type derived from formatted action string.
  */
 export type ActionType = 'GOTO' | 'RETRY' | 'CONTINUE' | 'COMPLETE' | 'STOP';
-
-/**
- * Side effects to perform when reaching terminal states.
- */
-export interface TerminalSideEffects {
-  /** Whether to pop the runbook from the stack */
-  popRunbook: boolean;
-  /** Whether to update parent agent binding (if agent + parentRunbookId) */
-  updateParentBinding: boolean;
-}
 
 /**
  * Configuration for transition behavior.
@@ -98,17 +60,8 @@ export interface TransitionConfig {
    * fail: always false
    */
   computeActionResult: (actionType: ActionType) => boolean;
-  /**
-   * Condition evaluator - receives step and prevState for pre-transition context.
-   * fail uses prevState.retryCount for correct message; pass ignores retryCount.
-   */
-  evaluateCondition: (step: Step, prevState: RunbookState) => ConditionResult;
-  /** Order of terminal state checks */
-  terminalOrder: 'complete-first' | 'stopped-first';
-  /** Side effects when runbook stops (STOP transition) */
-  onStopped: TerminalSideEffects;
-  /** Side effects when runbook completes */
-  onComplete: TerminalSideEffects;
+  /** Terminal side-effect policy shared with execution loop transitions. */
+  policy: TransitionOrchestrationPolicy;
 }
 
 /**
@@ -121,11 +74,18 @@ export function createPassTransitionConfig(): TransitionConfig {
     lastResult: 'pass',
     computeActionResult: (actionType: ActionType) =>
       actionType !== 'RETRY' && actionType !== 'STOP',
-    evaluateCondition: (step: Step, prevState: RunbookState) =>
-      evaluatePassCondition(step, prevState.retryCount),
-    terminalOrder: 'complete-first',
-    onStopped: { popRunbook: false, updateParentBinding: false },
-    onComplete: { popRunbook: true, updateParentBinding: true },
+    policy: {
+      onStopped: {
+        popRunbook: false,
+        updateParentBinding: false,
+        parentResult: 'fail',
+      },
+      onComplete: {
+        popRunbook: true,
+        updateParentBinding: true,
+        parentResult: 'pass',
+      },
+    },
   };
 }
 
@@ -138,11 +98,18 @@ export function createFailTransitionConfig(): TransitionConfig {
     commandName: 'fail',
     lastResult: 'fail',
     computeActionResult: () => false,
-    evaluateCondition: (step: Step, prevState: RunbookState) =>
-      evaluateFailCondition(step, prevState.retryCount),
-    terminalOrder: 'stopped-first',
-    onStopped: { popRunbook: true, updateParentBinding: true },
-    onComplete: { popRunbook: true, updateParentBinding: true },
+    policy: {
+      onStopped: {
+        popRunbook: true,
+        updateParentBinding: true,
+        parentResult: 'fail',
+      },
+      onComplete: {
+        popRunbook: true,
+        updateParentBinding: true,
+        parentResult: 'pass',
+      },
+    },
   };
 }
 
@@ -252,159 +219,6 @@ export async function buildTransitionContext(
     cwd,
     agentId,
   };
-}
-
-/**
- * Calculate display position info for a runbook state.
- *
- * @param state - Current runbook state
- * @param steps - Parsed runbook steps
- * @returns Display position with step, total, and optional substep
- */
-export function calculatePosition(
-  state: RunbookState,
-  steps: Step[],
-): { displayStep: string; totalSteps: number; displaySubstep?: string } {
-  const totalSteps = countNumberedSteps(steps);
-  return { displayStep: state.step, totalSteps, displaySubstep: state.substep };
-}
-
-/**
- * Build prev/new position objects for output.action().
- *
- * @param prevState - State before transition
- * @param newState - State after transition
- * @param steps - Parsed runbook steps
- * @returns Prev and new position objects
- */
-export function buildPositions(
-  prevState: RunbookState,
-  newState: RunbookState,
-  steps: Step[],
-): { prevPos: StepPosition; newPos: StepPosition } {
-  const totalSteps = countNumberedSteps(steps);
-
-  const prevPos = buildStepPosition(
-    prevState.step,
-    totalSteps,
-    prevState.substep,
-    prevState.forStack,
-  );
-  const newPos = buildStepPosition(newState.step, totalSteps, newState.substep, newState.forStack);
-
-  return { prevPos, newPos };
-}
-
-/**
- * Derive actionType from structured LastAction.
- *
- * Maps the discriminated union type to the simplified ActionType used
- * for display-layer result computation.
- *
- * @param lastAction - The structured LastAction from XState context
- * @returns Action type for display-layer use
- */
-export function parseActionType(lastAction: LastAction | undefined): ActionType {
-  if (!lastAction) return 'CONTINUE';
-  switch (lastAction.type) {
-    case 'GOTO':
-      return 'GOTO';
-    case 'RETRY':
-      return 'RETRY';
-    case 'COMPLETE':
-      return 'COMPLETE';
-    case 'STOP':
-      return 'STOP';
-    default:
-      return 'CONTINUE';
-  }
-}
-
-/**
- * Handle terminal states (complete/stopped) with configurable side effects.
- *
- * @param ctx - Transition context
- * @param config - Transition configuration
- * @param isComplete - Whether runbook is complete
- * @param isStopped - Whether runbook is stopped
- * @param _prevState - State before transition (for correct retryCount in messages)
- * @param positions - Prev and new position objects
- * @param conditionResult - Result of condition evaluation (for message)
- * @returns 'complete', 'stopped', or 'continue'
- */
-export async function handleTerminalState(
-  ctx: TransitionContext,
-  config: TransitionConfig,
-  isComplete: boolean,
-  isStopped: boolean,
-  _prevState: RunbookState,
-  positions: { prevPos: StepPosition; newPos: StepPosition },
-  conditionResult: ConditionResult,
-): Promise<'complete' | 'stopped' | 'continue'> {
-  const { output, manager, sessionService, state, steps, agentId } = ctx;
-  const { prevPos, newPos } = positions;
-
-  /**
-   * Apply terminal side effects based on configuration.
-   */
-  const applySideEffects = async (
-    effects: TerminalSideEffects,
-    result: 'pass' | 'fail',
-  ): Promise<void> => {
-    // updateParentBinding only executes when BOTH agentId AND parentRunbookId are present
-    if (effects.updateParentBinding && agentId && state.parentRunbookId) {
-      await manager.updateAgentBinding(state.parentRunbookId, agentId, {
-        status: 'done',
-        result,
-      });
-    }
-
-    if (effects.popRunbook) {
-      await sessionService.popRunbook(agentId);
-    }
-  };
-
-  // Check terminal states in configured order
-  const checks =
-    config.terminalOrder === 'complete-first'
-      ? [
-          { check: isComplete, type: 'complete' as const },
-          { check: isStopped, type: 'stopped' as const },
-        ]
-      : [
-          { check: isStopped, type: 'stopped' as const },
-          { check: isComplete, type: 'complete' as const },
-        ];
-
-  for (const { check, type } of checks) {
-    if (!check) continue;
-
-    if (type === 'complete') {
-      await manager.update(state.id, {
-        step: steps[steps.length - 1].name,
-        variables: { ...state.variables, completed: true },
-      });
-
-      output.complete(conditionResult.message, newPos);
-      output.flush();
-
-      await applySideEffects(config.onComplete, config.lastResult);
-      return 'complete';
-    }
-
-    // type === 'stopped' (only other possibility)
-    await manager.update(state.id, { variables: { ...state.variables, stopped: true } });
-
-    // stopped uses prevPos for output
-    output.stopped(conditionResult.message, prevPos);
-    output.flush();
-
-    await applySideEffects(config.onStopped, config.lastResult);
-    process.exit(1);
-    return 'stopped'; // Explicit return for clarity (process.exit never returns)
-  }
-
-  return 'continue';
 }
 
 interface RuntimeTarget {
@@ -577,91 +391,58 @@ export async function executeTransition(
   config: TransitionConfig,
 ): Promise<void> {
   const { output, manager, actorService, state, steps, actor, cwd, agentId } = ctx;
+  // Capture previous state before mutation.
+  const previousState = { ...state };
+  const currentStep = steps.find((s) => s.name === previousState.step) ?? steps[0];
 
-  try {
-    // Capture prev state BEFORE mutation (deep copy for retryCount, etc.)
-    const prevState = { ...state };
+  actor.send({ type: config.eventType });
+  const { state: updatedState, snapshot: rawSnapshot } = await actorService.updateFromActor(
+    state.id,
+    actor,
+    steps,
+  );
 
-    // Send event
-    actor.send({ type: config.eventType });
+  const actionType = parseActionType(extractLastAction(rawSnapshot));
+  const actionResult = config.computeActionResult(actionType);
+  const emitter = createBridgedEmitter(updatedState, output);
 
-    const { state: updatedState, snapshot: rawSnapshot } = await actorService.updateFromActor(
-      state.id,
-      actor,
-      steps,
-    );
+  const orchestration = await orchestrateTransition({
+    manager,
+    sessionService: ctx.sessionService,
+    emitter,
+    runbookId: state.id,
+    steps,
+    currentStep,
+    previousState,
+    updatedState,
+    snapshot: rawSnapshot,
+    result: config.lastResult,
+    actionResult,
+    policy: config.policy,
+    agentId,
+  });
 
-    const terminalSnapshot = asTerminalSnapshotOrDefault(rawSnapshot);
-    const isComplete = isRunbookComplete(terminalSnapshot);
-    const isStopped = isRunbookStopped(terminalSnapshot);
+  output.flush();
 
-    // Read action from XState context (source of truth for retryMax and lastAction)
-    const prevStepIndex = steps.findIndex((s) => s.name === prevState.step);
-    const currentStep = prevStepIndex >= 0 ? steps[prevStepIndex] : steps[0];
-    const retryMax = extractRetryMax(rawSnapshot);
-    const lastActionFromContext = extractLastAction(rawSnapshot);
-    const retryDisplayCount = extractRetryDisplayCount(rawSnapshot, updatedState.retryCount);
-    const action = formatActionForDisplay(lastActionFromContext, retryDisplayCount, retryMax);
+  if (orchestration.status === 'stopped') {
+    process.exit(1);
+  }
+  if (orchestration.status === 'done') {
+    return;
+  }
 
-    // Derive action type and compute result
-    const actionType = parseActionType(lastActionFromContext);
-    const actionResult = config.computeActionResult(actionType);
+  const loopResult = await runExecutionLoop(
+    manager,
+    state.id,
+    steps,
+    cwd,
+    !!state.prompted,
+    emitter,
+    agentId,
+  );
 
-    // Update lastAction and lastResult in persistent state (pass structured object directly)
-    await manager.update(state.id, {
-      lastAction: lastActionFromContext,
-      lastResult: config.lastResult,
-    });
-
-    // Build positions for output
-    const { prevPos, newPos } = buildPositions(prevState, updatedState, steps);
-
-    // Emit action block
-    output.action({
-      action,
-      from: prevPos,
-      result: actionResult,
-      at: newPos,
-    });
-
-    // Evaluate condition for terminal state message (using prevState for correct retryCount)
-    const conditionResult = config.evaluateCondition(currentStep, prevState);
-
-    // Handle terminal states
-    const terminalResult = await handleTerminalState(
-      ctx,
-      config,
-      isComplete,
-      isStopped,
-      prevState,
-      { prevPos, newPos },
-      conditionResult,
-    );
-
-    if (terminalResult !== 'continue') {
-      return;
-    }
-
-    // Create emitter bridged to unified output
-    const emitter = createBridgedEmitter(updatedState, output);
-
-    const loopResult = await runExecutionLoop(
-      manager,
-      state.id,
-      steps,
-      cwd,
-      !!state.prompted,
-      agentId,
-      emitter,
-    );
-
-    // Flush any remaining output
-    output.flush();
-
-    if (loopResult === 'stopped') {
-      process.exit(1);
-    }
-  } finally {
-    actor.stop();
+  output.flush();
+  if (loopResult === 'stopped') {
+    process.exit(1);
   }
 }

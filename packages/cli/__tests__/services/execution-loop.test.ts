@@ -39,6 +39,34 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     executeCommandWithPolicy: jest.fn(),
     evaluatePassCondition: jest.fn(),
     evaluateFailCondition: jest.fn(),
+    extractLastAction: jest.fn((snapshot: any) => snapshot?.context?.lastAction),
+    extractLastMessage: jest.fn((snapshot: any) =>
+      typeof snapshot?.context?.lastMessage === 'string' ? snapshot.context.lastMessage : undefined,
+    ),
+    extractRetryMax: jest.fn((snapshot: any) => snapshot?.context?.retryMax ?? 0),
+    extractRetryDisplayCount: jest.fn((snapshot: any, retryCount: number) => {
+      const iterationRetryCount = snapshot?.context?.iterationRetryCount;
+      return typeof iterationRetryCount === 'number' && iterationRetryCount > 0
+        ? iterationRetryCount
+        : retryCount;
+    }),
+    formatActionForDisplay: jest.fn((lastAction: any, retryCount: number, retryMax: number) => {
+      if (!lastAction) return 'CONTINUE';
+      if (lastAction.type === 'RETRY') return `RETRY (${String(retryCount)}/${String(retryMax)})`;
+      if (lastAction.type === 'GOTO') return `GOTO ${String(lastAction.target)}`;
+      return lastAction.type;
+    }),
+    deriveTransitionMessage: jest.fn((result: 'pass' | 'fail') =>
+      result === 'pass' ? 'Success' : 'Failed',
+    ),
+    parseActionType: jest.fn((lastAction: any) => {
+      if (!lastAction) return 'CONTINUE';
+      if (lastAction.type === 'GOTO') return 'GOTO';
+      if (lastAction.type === 'RETRY') return 'RETRY';
+      if (lastAction.type === 'COMPLETE') return 'COMPLETE';
+      if (lastAction.type === 'STOP') return 'STOP';
+      return 'CONTINUE';
+    }),
     countNumberedSteps: jest.fn().mockReturnValue(2),
     extractDisplayCommand: jest.fn((cmd) => cmd),
     createFileProvider: jest.fn(),
@@ -147,7 +175,14 @@ describe('runExecutionLoop', () => {
 
   it('stops if state cannot be loaded', async () => {
     mockManager.load.mockResolvedValue(null);
-    const result = await runExecutionLoop(mockManager, runbookId, steps, '/tmp', false);
+    const result = await runExecutionLoop(
+      mockManager,
+      runbookId,
+      steps,
+      '/tmp',
+      false,
+      mockEmitter,
+    );
     expect(result).toBe('stopped');
   });
 
@@ -158,15 +193,7 @@ describe('runExecutionLoop', () => {
       status: 'running',
     });
 
-    const result = await runExecutionLoop(
-      mockManager,
-      runbookId,
-      steps,
-      '/tmp',
-      true,
-      undefined,
-      mockEmitter,
-    );
+    const result = await runExecutionLoop(mockManager, runbookId, steps, '/tmp', true, mockEmitter);
 
     expect(result).toBe('waiting');
     expect(mockEmitter.emit).toHaveBeenCalledWith(
@@ -194,7 +221,6 @@ describe('runExecutionLoop', () => {
       stepsNoCmd as any,
       '/tmp',
       false,
-      undefined,
       mockEmitter,
     );
 
@@ -228,7 +254,6 @@ describe('runExecutionLoop', () => {
       testSteps,
       '/tmp',
       false,
-      undefined,
       mockEmitter,
     );
 
@@ -252,7 +277,6 @@ describe('runExecutionLoop', () => {
       steps,
       '/tmp',
       false,
-      undefined,
       mockEmitter,
     );
 
@@ -290,7 +314,6 @@ describe('runExecutionLoop', () => {
       steps,
       '/tmp',
       false,
-      undefined,
       mockEmitter,
     );
 
@@ -341,8 +364,8 @@ describe('runExecutionLoop', () => {
       steps,
       '/tmp',
       false,
-      childAgentId,
       mockEmitter,
+      childAgentId,
     );
 
     expect(result).toBe('done');
@@ -390,8 +413,8 @@ describe('runExecutionLoop', () => {
       steps,
       '/tmp',
       false,
-      childAgentId,
       mockEmitter,
+      childAgentId,
     );
 
     expect(result).toBe('stopped');
@@ -407,7 +430,7 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.popRunbook).toHaveBeenCalledWith(childAgentId);
   });
 
-  it('uses expanded command text in printStepBlock fallback (prompted mode, no emitter)', async () => {
+  it('emits expanded command text in STEP_ENTERED payload for prompted mode', async () => {
     const forSteps = [
       {
         name: '1',
@@ -432,16 +455,23 @@ describe('runExecutionLoop', () => {
       status: 'running',
     });
 
-    const result = await runExecutionLoop(mockManager, runbookId, forSteps as any, '/tmp', true);
+    const result = await runExecutionLoop(
+      mockManager,
+      runbookId,
+      forSteps as any,
+      '/tmp',
+      true,
+      mockEmitter,
+    );
 
     expect(result).toBe('waiting');
-    expect(core.printStepBlock).toHaveBeenCalledWith(
-      expect.anything(),
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'STEP_ENTERED',
       expect.objectContaining({
         description: 'Handle 1',
-        command: expect.objectContaining({ code: 'rd echo item=1' }),
+        commandCode: 'rd echo item=1',
+        prompted: true,
       }),
-      true,
     );
   });
 });

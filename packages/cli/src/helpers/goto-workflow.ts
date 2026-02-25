@@ -218,8 +218,8 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     steps,
     cwd,
     !!state.prompted,
-    undefined,
     emitter,
+    undefined,
   );
 
   return { ok: true, loopResult };

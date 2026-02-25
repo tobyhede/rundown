@@ -118,6 +118,7 @@ import {
   ScenarioDetailSchema,
   ScenarioRunResponseSchema,
   ExecutionSummarySchema,
+  RunCommandResponseSchema,
   AvailableRunbooksListSchema,
 } from '@rundown-org/core';
 
@@ -139,21 +140,7 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
   check: CheckResponseSchema,
   echo: EchoResponseSchema,
   prompt: PromptResponseSchema,
-  run: z.union([
-    ExecutionSummarySchema,
-    z.object({
-      action: z.literal('step_queued'),
-      stepId: z.string(),
-      runbook: z.string().optional(),
-      targetAt: z.string().optional(),
-    }),
-    z.object({
-      action: z.literal('agent_bound'),
-      agent: z.string(),
-      stepId: z.string(),
-      targetAt: z.string().optional(),
-    }),
-  ]),
+  run: RunCommandResponseSchema,
   ls: z.union([RunbookListSchema, AvailableRunbooksListSchema]),
   prune: RunbookListSchema,
   'scenario ls': ScenarioListSchema,

@@ -368,8 +368,8 @@ async function launchRunbook(
     [...runbook.steps],
     cwd,
     options.prompted,
-    options.agentId,
     emitter,
+    options.agentId,
   );
 
   return { ok: true, loopResult };
@@ -425,10 +425,23 @@ export async function bindAgent(
     };
   }
 
+  if (!pending.targetStep) {
+    return {
+      ok: false,
+      error:
+        `Pending step ${stepIdToString(pending.stepId)} is missing canonical target identity. ` +
+        'Re-queue the step from the active frontier before binding.',
+      code: 'AGENT_BINDING_ERROR',
+      details: { agent: agentId, stepId: stepIdToString(pending.stepId) },
+    };
+  }
+
   await manager.bindAgent(state.id, agentId, pending);
-  const targetAt = pending.targetStep
-    ? deriveExecutionAt(pending.targetStep, pending.targetSubstep, pending.targetIteration)
-    : stepIdToString(pending.stepId);
+  const targetAt = deriveExecutionAt(
+    pending.targetStep,
+    pending.targetSubstep,
+    pending.targetIteration,
+  );
 
   output.status(true, 'agent_bound', `Agent ${agentId} bound to step ${targetAt}`, {
     agent: agentId,

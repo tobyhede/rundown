@@ -440,7 +440,10 @@ describe('bindAgent', () => {
         getActive: jest.fn<any>().mockResolvedValue({ id: 'test-id' }),
       },
       lifecycleService: {
-        popPendingStep: jest.fn<any>().mockResolvedValue({ stepId: { step: '2' } }),
+        popPendingStep: jest.fn<any>().mockResolvedValue({
+          stepId: { step: '2' },
+          targetStep: '2',
+        }),
       },
       cwd: '/test',
     };
@@ -451,7 +454,10 @@ describe('bindAgent', () => {
     if (result.ok) {
       expect(result.loopResult).toBeUndefined(); // No child runbook, no loop
     }
-    expect(mockBindAgent).toHaveBeenCalledWith('test-id', 'agent-1', { stepId: { step: '2' } });
+    expect(mockBindAgent).toHaveBeenCalledWith('test-id', 'agent-1', {
+      stepId: { step: '2' },
+      targetStep: '2',
+    });
   });
 
   it('starts child runbook when pending step has runbook', async () => {
@@ -486,6 +492,7 @@ describe('bindAgent', () => {
       lifecycleService: {
         popPendingStep: jest.fn<any>().mockResolvedValue({
           stepId: { step: '2' },
+          targetStep: '2',
           runbook: 'child.runbook.md',
         }),
       },

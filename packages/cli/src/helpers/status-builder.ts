@@ -10,7 +10,6 @@
 import {
   buildStepPosition,
   deriveExecutionAt,
-  stepIdToString,
   countNumberedSteps,
   type ActionBlockData,
   type RunbookState,
@@ -122,12 +121,9 @@ export function buildActiveStatus(
     targetStep?: string;
     targetSubstep?: string;
     targetIteration?: number;
-    stepId: { step: string; substep?: string };
-  }): string => {
-    if (target.targetStep) {
-      return deriveExecutionAt(target.targetStep, target.targetSubstep, target.targetIteration);
-    }
-    return stepIdToString(target.stepId);
+  }): string | undefined => {
+    if (!target.targetStep) return undefined;
+    return deriveExecutionAt(target.targetStep, target.targetSubstep, target.targetIteration);
   };
 
   const steps = getRunbookFromState(activeState, cwd);
@@ -157,6 +153,23 @@ export function buildActiveStatus(
     }
   }
 
+  const pendingTargets = activeState.pendingSteps
+    .map((p) => toTargetAt(p))
+    .filter((targetAt): targetAt is string => targetAt !== undefined);
+
+  const activeAgents = Object.entries(activeState.agentBindings).reduce<
+    Record<string, { step: string; status: string; result?: string }>
+  >((acc, [agentId, binding]) => {
+    const targetAt = toTargetAt(binding);
+    if (!targetAt) return acc;
+    acc[agentId] = {
+      step: targetAt,
+      status: binding.status,
+      result: binding.result,
+    };
+    return acc;
+  }, {});
+
   return {
     active: true,
     stashed: !!stashedId,
@@ -171,22 +184,7 @@ export function buildActiveStatus(
       },
     }),
     lastAction: actionBlockData,
-    pending:
-      activeState.pendingSteps.length > 0
-        ? activeState.pendingSteps.map((p) => toTargetAt(p))
-        : undefined,
-    agents:
-      Object.keys(activeState.agentBindings).length > 0
-        ? Object.entries(activeState.agentBindings).reduce<
-            Record<string, { step: string; status: string; result?: string }>
-          >((acc, [agentId, binding]) => {
-            acc[agentId] = {
-              step: toTargetAt(binding),
-              status: binding.status,
-              result: binding.result,
-            };
-            return acc;
-          }, {})
-        : undefined,
+    pending: pendingTargets.length > 0 ? pendingTargets : undefined,
+    agents: Object.keys(activeAgents).length > 0 ? activeAgents : undefined,
   };
 }

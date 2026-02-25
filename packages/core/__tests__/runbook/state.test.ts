@@ -165,12 +165,13 @@ describe('RunbookStateManager', () => {
     it('bindAgent creates new binding', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
-      await manager.bindAgent(state.id, 'agent-abc', { stepId: { step: '1' } });
+      await manager.bindAgent(state.id, 'agent-abc', { stepId: { step: '1' }, targetStep: '1' });
 
       const binding = await manager.getAgentBinding(state.id, 'agent-abc');
       expect(binding).toEqual({
         stepId: { step: '1' },
         status: 'running',
+        targetStep: '1',
       });
     });
 
@@ -184,7 +185,7 @@ describe('RunbookStateManager', () => {
 
     it('updateAgentBinding modifies existing binding', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      await manager.bindAgent(state.id, 'agent-def', { stepId: { step: '2' } });
+      await manager.bindAgent(state.id, 'agent-def', { stepId: { step: '2' }, targetStep: '2' });
 
       await manager.updateAgentBinding(state.id, 'agent-def', {
         status: 'done',
@@ -206,7 +207,7 @@ describe('RunbookStateManager', () => {
 
     it('bindAgent throws for missing runbook', async () => {
       await expect(
-        manager.bindAgent('nonexistent-id', 'agent', { stepId: { step: '1' } }),
+        manager.bindAgent('nonexistent-id', 'agent', { stepId: { step: '1' }, targetStep: '1' }),
       ).rejects.toThrow('not found');
     });
   });

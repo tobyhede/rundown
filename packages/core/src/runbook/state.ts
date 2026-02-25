@@ -282,6 +282,11 @@ export class RunbookStateManager {
   async bindAgent(id: string, agentId: string, pending: PendingStep): Promise<void> {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);
+    if (!pending.targetStep) {
+      throw new Error(
+        `Pending step ${pending.stepId.step} is missing canonical targetStep. Re-queue the active step before binding.`,
+      );
+    }
 
     const binding: AgentBinding = {
       stepId: pending.stepId,
