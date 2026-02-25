@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { JsonValue } from './runbook/types.js';
+import { buildFrameKey, buildCompletionKey } from './runbook/targeting.js';
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -350,12 +351,6 @@ export const RunbookStateSchema = z
   })
   .transform((data) => {
     const { forIteration, forStart, forEnd, forVariable, ...rest } = data;
-
-    const buildFrameKey = (step: string, iteration?: number): string =>
-      `${step}|${iteration !== undefined ? String(iteration) : ''}`;
-
-    const buildCompletionKey = (frameKey: string, entry: number, substep?: string): string =>
-      `${frameKey}|${String(entry)}|${substep ?? ''}`;
 
     const parseLegacyKey = (
       key: string,
