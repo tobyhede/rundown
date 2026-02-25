@@ -23,6 +23,9 @@ import {
   type DeferredCompletion,
   type Step,
   type RunbookState,
+  type RunbookCompletedPayload,
+  type RunbookStoppedPayload,
+  type StepTransitionedPayload,
 } from '@rundown-org/core';
 import { getRunbookFromState } from './runbook-loader.js';
 import { runExecutionLoop } from '../services/execution.js';
@@ -30,6 +33,7 @@ import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import {
   orchestrateTransition,
+  type TransitionEventSink,
   type TransitionOrchestrationPolicy,
 } from './transition-orchestrator.js';
 
@@ -404,12 +408,28 @@ export async function executeTransition(
 
   const actionType = parseActionType(extractLastAction(rawSnapshot));
   const actionResult = config.computeActionResult(actionType);
-  const emitter = createBridgedEmitter(updatedState, output);
+  const commandSink: TransitionEventSink = {
+    onStepTransitioned: (payload: StepTransitionedPayload) => {
+      output.action({
+        action: payload.action,
+        from: payload.from,
+        at: payload.to,
+        result: payload.result,
+        ...(payload.command ? { command: payload.command } : {}),
+      });
+    },
+    onRunbookCompleted: (payload: RunbookCompletedPayload) => {
+      output.complete(payload.message, payload.finalPosition);
+    },
+    onRunbookStopped: (payload: RunbookStoppedPayload) => {
+      output.stopped(payload.message, payload.position);
+    },
+  };
 
   const orchestration = await orchestrateTransition({
     manager,
     sessionService: ctx.sessionService,
-    emitter,
+    sink: commandSink,
     runbookId: state.id,
     steps,
     currentStep,
@@ -431,6 +451,7 @@ export async function executeTransition(
     return;
   }
 
+  const emitter = createBridgedEmitter(updatedState, output);
   const loopResult = await runExecutionLoop(
     manager,
     state.id,

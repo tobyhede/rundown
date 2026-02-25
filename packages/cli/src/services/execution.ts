@@ -38,6 +38,7 @@ import {
 import { expandLoopVariables, expandLoopVariablesForCommand } from './template-renderer.js';
 import {
   orchestrateTransition,
+  transitionSinkFromEmitter,
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
 
@@ -194,7 +195,7 @@ async function applyResultTransition({
   const orchestration = await orchestrateTransition({
     manager,
     sessionService,
-    emitter,
+    sink: transitionSinkFromEmitter(emitter),
     runbookId,
     steps,
     currentStep,

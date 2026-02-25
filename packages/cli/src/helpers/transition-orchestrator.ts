@@ -11,11 +11,14 @@ import {
   isRunbookComplete,
   isRunbookStopped,
   type ExecutionEventEmitter,
+  type RunbookCompletedPayload,
   type RunbookState,
   type RunbookStateManager,
+  type RunbookStoppedPayload,
   type SessionService,
   type Step,
   type StepPosition,
+  type StepTransitionedPayload,
 } from '@rundown-org/core';
 
 export interface TerminalSideEffectsPolicy {
@@ -29,10 +32,26 @@ export interface TransitionOrchestrationPolicy {
   onStopped: TerminalSideEffectsPolicy;
 }
 
+export interface TransitionEventSink {
+  onStepTransitioned(payload: StepTransitionedPayload): void;
+  onRunbookCompleted(payload: RunbookCompletedPayload): void;
+  onRunbookStopped(payload: RunbookStoppedPayload): void;
+}
+
+export function transitionSinkFromEmitter(
+  emitter: Pick<ExecutionEventEmitter, 'emit'>,
+): TransitionEventSink {
+  return {
+    onStepTransitioned: (payload) => emitter.emit('STEP_TRANSITIONED', payload),
+    onRunbookCompleted: (payload) => emitter.emit('RUNBOOK_COMPLETED', payload),
+    onRunbookStopped: (payload) => emitter.emit('RUNBOOK_STOPPED', payload),
+  };
+}
+
 interface OrchestrateTransitionArgs {
   manager: RunbookStateManager;
   sessionService: SessionService;
-  emitter: ExecutionEventEmitter;
+  sink: TransitionEventSink;
   runbookId: string;
   steps: Step[];
   currentStep: Step;
@@ -110,7 +129,7 @@ export async function orchestrateTransition(
   const {
     manager,
     sessionService,
-    emitter,
+    sink,
     runbookId,
     steps,
     currentStep,
@@ -135,7 +154,7 @@ export async function orchestrateTransition(
     lastResult: result,
   });
 
-  emitter.emit('STEP_TRANSITIONED', {
+  sink.onStepTransitioned({
     action,
     from: positions.from,
     to: positions.to,
@@ -155,7 +174,7 @@ export async function orchestrateTransition(
     await manager.update(runbookId, {
       variables: { ...updatedState.variables, completed: true },
     });
-    emitter.emit('RUNBOOK_COMPLETED', {
+    sink.onRunbookCompleted({
       message,
       finalPosition: positions.to,
     });
@@ -178,7 +197,7 @@ export async function orchestrateTransition(
     await manager.update(runbookId, {
       variables: { ...updatedState.variables, stopped: true },
     });
-    emitter.emit('RUNBOOK_STOPPED', {
+    sink.onRunbookStopped({
       message,
       position: positions.from,
       reason: 'fail_transition',
