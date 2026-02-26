@@ -6,6 +6,7 @@ import {
   runCli,
   createRunbook,
   findActionOutput,
+  getAgentActiveState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -675,6 +676,122 @@ describe('Template Variables Integration', () => {
       const passOutput = findActionOutputFromJsonStream(passResult.stdout);
       expect(passOutput).not.toBeNull();
       expect(passOutput?.result).toBe(true);
+    });
+
+    describe('context.parent.vars.* propagation', () => {
+      it('should propagate parent --var values into child via context.parent.vars.*', async () => {
+        // Parent runbook receives PlanPath via --var at run time
+        const parentRunbook = createRunbook({
+          title: 'Parent Runbook',
+          steps: [{ title: 'Dispatch work', pass: 'COMPLETE', content: 'Delegate work to agent.' }],
+        });
+
+        // Child runbook references the parent var
+        const childRunbook = createRunbook({
+          title: 'Child Runbook',
+          steps: [
+            {
+              title: 'Use parent var',
+              pass: 'COMPLETE',
+              command: 'rd echo {{context.parent.vars.PlanPath}}',
+            },
+          ],
+        });
+
+        const runbooksDir = join(workspace.cwd, 'runbooks');
+        await mkdir(runbooksDir, { recursive: true });
+        await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+        await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+        // Start parent with --var
+        let result = runCli(
+          'run runbooks/parent.runbook.md --prompted --var PlanPath=.work/plan.md',
+          workspace,
+        );
+        expect(result.exitCode).toBe(0);
+
+        // Queue step with child runbook
+        result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Bind agent — child auto-executes
+        result = runCli('run --agent test-agent --json', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Verify via persisted child state that context.parent.vars.PlanPath was set
+        const childState = await getAgentActiveState(workspace, 'test-agent');
+        expect(childState).not.toBeNull();
+        const templateVars = childState!['templateVars'] as Record<string, string> | undefined;
+        expect(templateVars?.['context.parent.vars.PlanPath']).toBe('.work/plan.md');
+
+        // Complete the child
+        const passResult = runCli('pass --agent test-agent --json', workspace);
+        expect(passResult.exitCode).toBe(0);
+        const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+        expect(passOutput).not.toBeNull();
+        expect(passOutput?.result).toBe(true);
+      });
+
+      it('should propagate parent frontmatter vars into child via context.parent.vars.*', async () => {
+        // Parent runbook with frontmatter vars
+        const parentContent = [
+          '---',
+          'name: parent-runbook',
+          'vars:',
+          '  environment: staging',
+          '---',
+          '',
+          '# Parent Runbook',
+          '',
+          '## 1. Dispatch work',
+          '- PASS: COMPLETE',
+          '- FAIL: STOP',
+          '',
+          'Delegate work to agent.',
+        ].join('\n');
+
+        // Child runbook references the parent frontmatter var
+        const childRunbook = createRunbook({
+          title: 'Child Runbook',
+          steps: [
+            {
+              title: 'Use parent var',
+              pass: 'COMPLETE',
+              command: 'rd echo "env={{context.parent.vars.environment}}"',
+            },
+          ],
+        });
+
+        const runbooksDir = join(workspace.cwd, 'runbooks');
+        await mkdir(runbooksDir, { recursive: true });
+        await writeFile(join(runbooksDir, 'parent.runbook.md'), parentContent);
+        await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+        // Start parent in prompted mode
+        let result = runCli('run runbooks/parent.runbook.md --prompted', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Queue step with child runbook
+        result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Bind agent — child auto-executes
+        result = runCli('run --agent test-agent --json', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Verify via persisted child state that context.parent.vars.environment was set
+        const childState = await getAgentActiveState(workspace, 'test-agent');
+        expect(childState).not.toBeNull();
+        const templateVars = childState!['templateVars'] as Record<string, string> | undefined;
+        expect(templateVars?.['context.parent.vars.environment']).toBe('staging');
+
+        // Complete the child
+        const passResult = runCli('pass --agent test-agent --json', workspace);
+        expect(passResult.exitCode).toBe(0);
+        const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+        expect(passOutput).not.toBeNull();
+        expect(passOutput?.result).toBe(true);
+      });
     });
   });
 });

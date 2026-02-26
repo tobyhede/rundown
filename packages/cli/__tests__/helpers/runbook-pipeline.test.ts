@@ -974,6 +974,176 @@ describe('bindAgent', () => {
     expect(varsArg['context.parent.parent.vars.context.vars.region']).toBeUndefined();
   });
 
+  it('propagates three-level deep ancestry vars via chain and array addressing', async () => {
+    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2');
+    resolveRunbookFile.mockResolvedValue('/test/child.runbook.md');
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({ steps: [makeStep()] } as any);
+    runExecutionLoop.mockResolvedValue('done');
+
+    const managerLoad = jest.fn<any>().mockImplementation(async (id: string) => {
+      if (id === 'grand-id') {
+        return {
+          id: 'grand-id',
+          step: '1',
+          substep: '3',
+          parentRunbookId: 'great-id',
+          templateVars: { PlanPath: '.work/plan.md' },
+        };
+      }
+      if (id === 'great-id') {
+        return {
+          id: 'great-id',
+          step: '5',
+          substep: '1',
+          templateVars: { region: 'us-west', tier: 'premium' },
+        };
+      }
+      return null;
+    });
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as any,
+      manager: {
+        bindAgent: jest.fn<any>().mockResolvedValue(undefined),
+        create: jest.fn<any>().mockResolvedValue({ id: 'child-id', title: 'Child' }),
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        updateAgentBinding: jest.fn<any>().mockResolvedValue(undefined),
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+        load: managerLoad,
+      } as any,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: {
+        getActive: jest.fn<any>().mockResolvedValue({
+          id: 'parent-id',
+          step: '2',
+          substep: '1',
+          parentRunbookId: 'grand-id',
+          prompted: true,
+          templateVars: { env: 'staging' },
+        }),
+        pushRunbook: jest.fn<any>().mockResolvedValue(undefined),
+      },
+      lifecycleService: makeLifecycle({
+        popPendingStep: jest.fn<any>().mockResolvedValue({
+          stepId: { step: '2' },
+          targetStep: '2',
+          targetFrameKey: '2|',
+          targetEntry: 1,
+          runbook: 'child.runbook.md',
+        }),
+      }),
+      cwd: '/test',
+    };
+
+    const result = await bindAgent(ctx as any, 'agent-1', {});
+
+    expect(result.ok).toBe(true);
+    const varsArg = (substituteRunbookVariables as jest.Mock).mock.calls[0][1] as Record<
+      string,
+      string
+    >;
+    // ancestors.0 = parent
+    expect(varsArg['context.ancestors.0.vars.env']).toBe('staging');
+    // ancestors.1 = grandparent
+    expect(varsArg['context.ancestors.1.vars.PlanPath']).toBe('.work/plan.md');
+    // ancestors.2 = great-grandparent
+    expect(varsArg['context.ancestors.2.vars.region']).toBe('us-west');
+    expect(varsArg['context.ancestors.2.vars.tier']).toBe('premium');
+    // Chain form
+    expect(varsArg['context.parent.vars.env']).toBe('staging');
+    expect(varsArg['context.parent.parent.vars.PlanPath']).toBe('.work/plan.md');
+    expect(varsArg['context.parent.parent.parent.vars.region']).toBe('us-west');
+    expect(varsArg['context.parent.parent.parent.vars.tier']).toBe('premium');
+  });
+
+  it('handles sparse templateVars in lineage (middle ancestor missing vars)', async () => {
+    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2');
+    resolveRunbookFile.mockResolvedValue('/test/child.runbook.md');
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({ steps: [makeStep()] } as any);
+    runExecutionLoop.mockResolvedValue('done');
+
+    const managerLoad = jest.fn<any>().mockImplementation(async (id: string) => {
+      if (id === 'grand-id') {
+        return {
+          id: 'grand-id',
+          step: '3',
+          substep: '2',
+          parentRunbookId: 'great-id',
+          // No templateVars — sparse gap
+        };
+      }
+      if (id === 'great-id') {
+        return {
+          id: 'great-id',
+          step: '1',
+          substep: '1',
+          templateVars: { region: 'eu-central' },
+        };
+      }
+      return null;
+    });
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as any,
+      manager: {
+        bindAgent: jest.fn<any>().mockResolvedValue(undefined),
+        create: jest.fn<any>().mockResolvedValue({ id: 'child-id', title: 'Child' }),
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        updateAgentBinding: jest.fn<any>().mockResolvedValue(undefined),
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+        load: managerLoad,
+      } as any,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: {
+        getActive: jest.fn<any>().mockResolvedValue({
+          id: 'parent-id',
+          step: '2',
+          substep: '1',
+          parentRunbookId: 'grand-id',
+          prompted: true,
+          templateVars: { PlanPath: '.work/plan.md' },
+        }),
+        pushRunbook: jest.fn<any>().mockResolvedValue(undefined),
+      },
+      lifecycleService: makeLifecycle({
+        popPendingStep: jest.fn<any>().mockResolvedValue({
+          stepId: { step: '2' },
+          targetStep: '2',
+          targetFrameKey: '2|',
+          targetEntry: 1,
+          runbook: 'child.runbook.md',
+        }),
+      }),
+      cwd: '/test',
+    };
+
+    const result = await bindAgent(ctx as any, 'agent-1', {});
+
+    expect(result.ok).toBe(true);
+    const varsArg = (substituteRunbookVariables as jest.Mock).mock.calls[0][1] as Record<
+      string,
+      string
+    >;
+    // ancestors.0 = parent (has vars)
+    expect(varsArg['context.ancestors.0.vars.PlanPath']).toBe('.work/plan.md');
+    // ancestors.1 = grandparent (no vars — sparse)
+    const grandparentVarsKeys = Object.keys(varsArg).filter((k) =>
+      k.startsWith('context.ancestors.1.vars.'),
+    );
+    expect(grandparentVarsKeys).toHaveLength(0);
+    // Structural context still works for the sparse middle ancestor
+    expect(varsArg['context.ancestors.1.step']).toBe('3');
+    expect(varsArg['context.ancestors.1.at']).toBe('3.2');
+    // ancestors.2 = great-grandparent (has vars)
+    expect(varsArg['context.ancestors.2.vars.region']).toBe('eu-central');
+    // Chain form also works across the gap
+    expect(varsArg['context.parent.parent.parent.vars.region']).toBe('eu-central');
+  });
+
   it('handles parent state without templateVars gracefully', async () => {
     (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2');
     resolveRunbookFile.mockResolvedValue('/test/child.runbook.md');
