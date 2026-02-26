@@ -953,6 +953,49 @@ describe('convertToTransitions aggregation conflicts', () => {
     expect(result).not.toBeNull();
     expect(result?.pass.action).toEqual({ type: 'CONTINUE' });
   });
+
+  it('sets modifierImplicit when both modifiers are null', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result?.modifierImplicit).toBe(true);
+  });
+
+  it('sets modifierImplicit when only pass provided with null modifier', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', retry: 0, action: { type: 'COMPLETE' }, modifier: null, raw: 'COMPLETE' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result?.modifierImplicit).toBe(true);
+  });
+
+  it('sets modifierImplicit when only fail provided with null modifier', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result?.modifierImplicit).toBe(true);
+  });
+
+  it('does not set modifierImplicit when explicit ALL modifier present', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result?.modifierImplicit).toBeUndefined();
+  });
+
+  it('does not set modifierImplicit when one modifier is explicit', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result?.modifierImplicit).toBeUndefined();
+  });
 });
 
 describe('validateNEXTUsage with RETRY containing NEXT', () => {

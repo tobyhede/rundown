@@ -664,10 +664,13 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   }
 
   const all = resolveAggregationMode(passModifier, failModifier);
+  const modifierImplicit =
+    passModifier === null && failModifier === null ? (true as const) : undefined;
 
   if (passAction && failAction) {
     return {
       all,
+      ...(modifierImplicit && { modifierImplicit }),
       pass: { kind: passKind, retry: passRetry, action: passAction },
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };
@@ -676,6 +679,7 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   if (passAction && !failAction) {
     return {
       all,
+      ...(modifierImplicit && { modifierImplicit }),
       pass: { kind: passKind, retry: passRetry, action: passAction },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     };
@@ -684,6 +688,7 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   if (!passAction && failAction) {
     return {
       all,
+      ...(modifierImplicit && { modifierImplicit }),
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };

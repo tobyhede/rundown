@@ -71,6 +71,16 @@ describe('renderTransitions', () => {
     });
     expect(result).toBe('- PASS ALL: RETRY 2 STOP\n- FAIL ANY: CONTINUE');
   });
+
+  it('omits modifier when modifierImplicit is set', () => {
+    const result = renderTransitions({
+      all: true,
+      modifierImplicit: true,
+      pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+    });
+    expect(result).toBe('- PASS: GOTO 2\n- FAIL: STOP');
+  });
 });
 
 describe('renderSubstep', () => {
@@ -328,6 +338,47 @@ More description`;
       retry: 0,
       action: { type: 'GOTO', target: { step: '2', substep: '1' } },
     });
+  });
+
+  it('round-trips transitions without modifiers (no ALL/ANY in output)', () => {
+    const original = `## 1. First step
+- PASS: GOTO 2
+- FAIL: STOP
+
+## 2. Second step`;
+
+    const parsed1 = parseRunbook(original);
+    expect(parsed1[0].transitions?.modifierImplicit).toBe(true);
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    expect(rendered).toContain('- PASS: GOTO 2');
+    expect(rendered).toContain('- FAIL: STOP');
+    expect(rendered).not.toMatch(/PASS\s+(ALL|ANY)/);
+    expect(rendered).not.toMatch(/FAIL\s+(ALL|ANY)/);
+
+    // Verify re-parse produces same result
+    const parsed2 = parseRunbook(rendered);
+    expect(parsed2[0].transitions?.modifierImplicit).toBe(true);
+    expect(parsed2[0].transitions?.pass.action).toEqual({
+      type: 'GOTO',
+      target: { step: '2', substep: undefined },
+    });
+    expect(parsed2[0].transitions?.fail.action).toEqual({ type: 'STOP' });
+  });
+
+  it('round-trips transitions with explicit modifiers (ALL/ANY preserved)', () => {
+    const original = `## 1. First step
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+## 2. Second step`;
+
+    const parsed1 = parseRunbook(original);
+    expect(parsed1[0].transitions?.modifierImplicit).toBeUndefined();
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    expect(rendered).toContain('- PASS ALL: CONTINUE');
+    expect(rendered).toContain('- FAIL ANY: STOP');
   });
 
   it('validates substep child runbooks parsing', () => {

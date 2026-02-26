@@ -44,8 +44,8 @@ function renderTransitionAction(transition: TransitionObject): string {
  */
 export function renderTransitions(transitions: Transitions): string {
   const lines: string[] = [];
-  const passAgg = transitions.all ? ' ALL' : ' ANY';
-  const failAgg = transitions.all ? ' ANY' : ' ALL';
+  const passAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ALL' : ' ANY';
+  const failAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ANY' : ' ALL';
   lines.push(`- PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
   lines.push(`- FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
   return lines.join('\n');
@@ -115,8 +115,8 @@ function renderForClause(forClause: NonNullable<Step['forClause']>): string[] {
 
   const transitions = (forClause as { transitions?: Transitions }).transitions;
   if (transitions) {
-    const passAgg = transitions.all ? ' ALL' : ' ANY';
-    const failAgg = transitions.all ? ' ANY' : ' ALL';
+    const passAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ALL' : ' ANY';
+    const failAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ANY' : ' ALL';
     lines.push(`  - PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
     lines.push(`  - FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
   }
