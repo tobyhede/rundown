@@ -45,7 +45,7 @@ Step content must appear in this strict order:
 1.  **FOR Annotation**: Loop definition (optional).
 2.  **Transitions**: Control flow rules (optional).
 3.  **Prompt**: Text instructions.
-4.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for an implicit substep (`.1`).
+4.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
 
 ## 3. Step Bodies
 
@@ -78,18 +78,21 @@ List of external runbooks to execute.
 - ./deploy-api.runbook.md
 ```
 
-At step level, this syntax is canonicalized to an implicit substep with ID `1`.
+At step level, this syntax is canonicalized to implicit sequential substeps (`1`, `2`, ...), one workflow per substep.
 These two forms are execution-equivalent:
 
 ```markdown
 ## 2. Review the plan
 - review-technical-accuracy.runbook.md
+- review-structural-integrity.runbook.md
 ```
 
 ```markdown
 ## 2. Review the plan
 ### 2.1
 - review-technical-accuracy.runbook.md
+### 2.2
+- review-structural-integrity.runbook.md
 ```
 
 ### 3.4 Runtime Target Identity
@@ -160,10 +163,11 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
 *   **No descending data sources**: Descending windows (`start > end`) are not supported for data sources.
 *   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
-*   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substep `1`.
+*   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
 *   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.
 *   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause execute per iteration. Allowed terminal actions are `CONTINUE`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
+*   **Nested bullet rule**: Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid and fail parse.
 *   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action.
 *   **Exit semantics**: Iteration-level `BREAK` includes the current iteration result in parent aggregation. Iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation and exit directly.
 
@@ -174,12 +178,18 @@ Variables use Handlebars syntax: `{{variable}}`.
 | Source | Scope | Description |
 | :--- | :--- | :--- |
 | CLI (`--var`) | Global | Expanded at startup. |
-| `{{Step}}` | Step | Current step ID (e.g., `1`, `1.2`; step-level runbook-list shorthand executes as `N.1`). |
-| `{{Index}}` | Loop | Current iteration number. |
+| `{{Step}}`, `{{step}}` | Step | Current execution identifier for this runbook frame (e.g., `1`, `1.2`). |
+| `{{Index}}`, `{{index}}` | Loop | Current iteration number for this runbook frame. |
+| `{{context.current.*}}` | Step/Loop | Canonical current-frame context (`step`, `substep`, `index`, `at`). |
+| `{{context.parent.*}}` | Nested | Parent frame context when running a child runbook. |
+| `{{context.ancestors.N.*}}` | Nested | Ancestor frame context (`0` is nearest parent). |
+| `{{context.vars.NAME}}` | Global | User/config/frontmatter variable namespace. |
 | Loop Var | Loop | Current item/index (e.g., `{{batch}}`). |
 
 *   **Undefined**: Preserved as literal text.
 *   **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
+*   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
+*   **Reserved keys**: Runtime keys (`step`, `index`, `context`, `Step`, `Index`) are reserved and cannot be overridden by user variables.
 
 ## 7. Scenarios
 
@@ -208,4 +218,4 @@ scenarios:
 
 ## 9. Compatibility
 
-Step-level runbook lists are represented internally as substeps (`N.1`). In-progress sessions created before this model are not auto-migrated and must be restarted after upgrade.
+Step-level runbook lists are represented internally as sequential substeps (`N.1`, `N.2`, ...). In-progress sessions created before this model are not auto-migrated and must be restarted after upgrade.

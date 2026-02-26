@@ -28,7 +28,7 @@ describe('trackStepDispatch', () => {
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',
-        tool_input: { description: 'Do something' },
+        tool_input: { description: '1.1 - Do something' },
       });
 
       const result = trackStepDispatch(input);
@@ -42,7 +42,7 @@ describe('trackStepDispatch', () => {
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Task',
-        tool_input: { description: 'Do something' },
+        tool_input: { description: 'NamedStep: Do something' },
       });
 
       const result = trackStepDispatch(input);
@@ -52,6 +52,9 @@ describe('trackStepDispatch', () => {
   });
 
   describe('description validation', () => {
+    const expectedViolation =
+      'Step description must include a valid step identifier (e.g. "1.1 - Do work" or "ErrorHandler: Recover").';
+
     it('returns violation when description is empty', () => {
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',
@@ -59,7 +62,7 @@ describe('trackStepDispatch', () => {
       });
 
       const result = trackStepDispatch(input);
-      expect(result.violation).toBe('Step description cannot be empty');
+      expect(result.violation).toBe(expectedViolation);
     });
 
     it('returns violation when description is whitespace', () => {
@@ -69,7 +72,7 @@ describe('trackStepDispatch', () => {
       });
 
       const result = trackStepDispatch(input);
-      expect(result.violation).toBe('Step description cannot be empty');
+      expect(result.violation).toBe(expectedViolation);
     });
 
     it('returns violation when description is missing', () => {
@@ -79,18 +82,28 @@ describe('trackStepDispatch', () => {
       });
 
       const result = trackStepDispatch(input);
-      expect(result.violation).toBe('Step description cannot be empty');
+      expect(result.violation).toBe(expectedViolation);
+    });
+
+    it('returns violation when description has no parseable step id', () => {
+      const input = createMockHookInput('PostToolUse', {
+        tool_name: 'Step',
+        tool_input: { description: 'Run unit tests' },
+      });
+
+      const result = trackStepDispatch(input);
+      expect(result.violation).toBe(expectedViolation);
     });
   });
 
   describe('rundown CLI invocation', () => {
-    it('calls rundown with run --step and escaped description', () => {
+    it('calls rundown with normalized numeric substep id prefix', () => {
       const mockExec = jest.fn().mockReturnValue('ok');
       setExecSync(mockExec as never);
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',
-        tool_input: { description: 'Run unit tests' },
+        tool_input: { description: '1.1 - Run unit tests' },
         cwd: '/my/project',
       });
 
@@ -98,26 +111,43 @@ describe('trackStepDispatch', () => {
 
       expect(mockExec).toHaveBeenCalledWith(
         'node',
-        expect.arrayContaining(['run', '--step', 'Run unit tests']),
+        expect.arrayContaining(['run', '--step', '1.1']),
         expect.objectContaining({ cwd: '/my/project' }),
       );
     });
 
-    it('passes shell-special characters unescaped (execFileSync bypasses shell)', () => {
+    it('calls rundown with exact numeric id when description is id only', () => {
       const mockExec = jest.fn().mockReturnValue('ok');
       setExecSync(mockExec as never);
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',
-        tool_input: { description: 'Deploy "staging" env $HOME' },
+        tool_input: { description: '2.3' },
       });
 
       trackStepDispatch(input);
 
-      // execFileSync passes args as array — no shell interpretation, no escaping needed
       expect(mockExec).toHaveBeenCalledWith(
         'node',
-        expect.arrayContaining(['run', '--step', 'Deploy "staging" env $HOME']),
+        expect.arrayContaining(['run', '--step', '2.3']),
+        expect.any(Object),
+      );
+    });
+
+    it('calls rundown with normalized named step id prefix', () => {
+      const mockExec = jest.fn().mockReturnValue('ok');
+      setExecSync(mockExec as never);
+
+      const input = createMockHookInput('PostToolUse', {
+        tool_name: 'Task',
+        tool_input: { description: 'ErrorHandler: Recover from timeout' },
+      });
+
+      trackStepDispatch(input);
+
+      expect(mockExec).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining(['run', '--step', 'ErrorHandler']),
         expect.any(Object),
       );
     });
@@ -128,7 +158,7 @@ describe('trackStepDispatch', () => {
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',
-        tool_input: { description: 'Build project' },
+        tool_input: { description: 'BuildStep - Build project' },
       });
 
       expect(trackStepDispatch(input)).toEqual({});
@@ -142,7 +172,7 @@ describe('trackStepDispatch', () => {
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',
-        tool_input: { description: 'Valid description' },
+        tool_input: { description: '1.1 - Valid description' },
       });
 
       expect(trackStepDispatch(input)).toEqual({});

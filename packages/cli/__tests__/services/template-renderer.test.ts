@@ -402,9 +402,9 @@ describe('expandLoopVariablesForCommand', () => {
     expect(result).toContain(']');
   });
 
-  it('does not resolve numeric index paths on arrays (regex rejects leading digits)', () => {
+  it('resolves numeric index paths on arrays', () => {
     const result = expandLoopVariables('val={{item.0}}', { item: ['a', 'b', 'c'] });
-    expect(result).toBe('val={{item.0}}');
+    expect(result).toBe('val=a');
   });
 });
 

@@ -88,6 +88,10 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       total,
       ...(substep ? { substep } : {}),
     })),
+    deriveExecutionAt: jest.fn(
+      (step: string, substep?: string, iteration?: number) =>
+        `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
+    ),
     buildCompletionKey: jest.fn(
       (frameKey: string, entry: number, substep?: string) =>
         `${frameKey}|${String(entry)}|${substep ?? ''}`,

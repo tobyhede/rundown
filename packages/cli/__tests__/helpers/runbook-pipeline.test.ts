@@ -27,6 +27,7 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
+  buildStepVariables: jest.fn().mockReturnValue({ Step: '1.1' }),
   runExecutionLoop: jest.fn().mockResolvedValue('done'),
 }));
 
@@ -47,6 +48,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
 jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
   expandForClauseVariables: jest.fn((content: string) => content),
+  expandLoopVariables: jest.fn((text: string) => text),
 }));
 
 // Mock node:fs/promises
@@ -58,12 +60,12 @@ jest.unstable_mockModule('node:fs/promises', () => ({
 const core = await import('@rundown-org/core');
 const parser = await import('@rundown-org/parser');
 const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook');
-const { runExecutionLoop } = await import('../../src/services/execution');
+const { runExecutionLoop, buildStepVariables } = await import('../../src/services/execution');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
 const { extractVarsFromMarkdown, resolveVariables } = await import(
   '../../src/services/variable-discovery'
 );
-const { substituteRunbookVariables, expandForClauseVariables } = await import(
+const { substituteRunbookVariables, expandForClauseVariables, expandLoopVariables } = await import(
   '../../src/services/template-renderer'
 );
 const fsPromises = await import('node:fs/promises');
@@ -118,8 +120,10 @@ beforeEach(() => {
   (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
   (extractVarsFromMarkdown as jest.Mock).mockReturnValue({});
   (resolveVariables as jest.Mock).mockResolvedValue({ vars: {}, sources: {} });
+  (buildStepVariables as jest.Mock).mockReturnValue({ Step: '1.1' });
   (substituteRunbookVariables as jest.Mock).mockImplementation((runbook: unknown) => runbook);
   (expandForClauseVariables as jest.Mock).mockImplementation((content: string) => content);
+  (expandLoopVariables as jest.Mock).mockImplementation((text: string) => text);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS: CONTINUE');
 });
 
@@ -214,6 +218,147 @@ describe('prepareRunbook', () => {
 });
 
 describe('queueStep', () => {
+  it('requires explicit substep id when active step has substeps', async () => {
+    (
+      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+    ).mockReturnValue({ step: '2' });
+
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({
+      steps: [
+        {
+          name: '2',
+          substeps: [
+            { id: '1', description: 'A' },
+            { id: '2', description: 'B' },
+          ],
+        },
+      ],
+    } as any);
+
+    const ctx = {
+      output: {} as any,
+      manager: {} as any,
+      actorService: {} as any,
+      sessionService: {
+        getActive: jest.fn<any>().mockResolvedValue({
+          id: 'test-id',
+          step: '2',
+          runbook: 'test.runbook.md',
+          runbookSrc: '## 2',
+          templateVars: {},
+          sources: {},
+        }),
+      },
+      lifecycleService: makeLifecycle({ pushPendingStep: jest.fn() }),
+      cwd: '/test',
+    };
+
+    const result = await queueStep(ctx as any, '2');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('requires an explicit substep identifier');
+    }
+  });
+
+  it('infers child runbook when substep has exactly one workflow and file is omitted', async () => {
+    (
+      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+    ).mockReturnValue({ step: '2', substep: '1' });
+    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2.1');
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({
+      steps: [
+        {
+          name: '2',
+          substeps: [{ id: '1', description: 'A', workflows: ['child-{{Index}}.runbook.md'] }],
+        },
+      ],
+    } as any);
+    (buildStepVariables as jest.Mock).mockReturnValue({ Step: '2.1', Index: '4' });
+    (expandLoopVariables as jest.Mock).mockImplementation((text: string) =>
+      text.replace('{{Index}}', '4'),
+    );
+
+    const mockPush = jest.fn<any>().mockResolvedValue(undefined);
+    const ctx = {
+      output: {} as any,
+      manager: {} as any,
+      actorService: {} as any,
+      sessionService: {
+        getActive: jest.fn<any>().mockResolvedValue({
+          id: 'test-id',
+          step: '2',
+          substep: '1',
+          runbook: 'test.runbook.md',
+          runbookSrc: '## 2',
+          templateVars: {},
+          sources: {},
+        }),
+      },
+      lifecycleService: makeLifecycle({ pushPendingStep: mockPush }),
+      cwd: '/test',
+    };
+
+    const result = await queueStep(ctx as any, '2.1');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.runbook).toBe('child-4.runbook.md');
+    }
+    expect(mockPush).toHaveBeenCalledWith(
+      'test-id',
+      expect.objectContaining({ runbook: 'child-4.runbook.md' }),
+    );
+  });
+
+  it('returns ambiguity error when substep has multiple workflows and file is omitted', async () => {
+    (
+      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+    ).mockReturnValue({ step: '2', substep: '1' });
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({
+      steps: [
+        {
+          name: '2',
+          substeps: [{ id: '1', description: 'A', workflows: ['a.runbook.md', 'b.runbook.md'] }],
+        },
+      ],
+    } as any);
+
+    const ctx = {
+      output: {} as any,
+      manager: {} as any,
+      actorService: {} as any,
+      sessionService: {
+        getActive: jest.fn<any>().mockResolvedValue({
+          id: 'test-id',
+          step: '2',
+          substep: '1',
+          runbook: 'test.runbook.md',
+          runbookSrc: '## 2',
+          templateVars: {},
+          sources: {},
+        }),
+      },
+      lifecycleService: makeLifecycle({ pushPendingStep: jest.fn() }),
+      cwd: '/test',
+    };
+
+    const result = await queueStep(ctx as any, '2.1');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('multiple child runbooks');
+    }
+  });
+
   it('returns error when no active runbook', async () => {
     const ctx = {
       output: {} as any,

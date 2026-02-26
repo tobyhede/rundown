@@ -82,7 +82,7 @@ Note: `prompt` alone (without a language) is valid for text-only prompts, e.g., 
 where runbooks is:
   - runbook_path [ ... ]
 
-Step-level `runbooks` syntax is shorthand for an implicit substep body (`### N.1`) that contains that runbook list.
+Step-level `runbooks` syntax is shorthand for implicit sequential substeps (`### N.1`, `### N.2`, ...), one workflow path per generated substep.
 
 where transition is:
   - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result
@@ -201,10 +201,11 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 - `NEXT` is only valid within substeps of a FOR step
 - `BREAK` is valid within substeps and FOR-level nested transitions
 - `AT` is only valid when the GOTO target is a FOR step (cross-step allowed, but the target must be FOR and have substeps)
-- Step-level runbook lists satisfy the FOR-substep requirement via implicit substep `1`
+- Step-level runbook lists satisfy the FOR-substep requirement via implicit sequential substeps
 - Parent FOR step transitions aggregate across iterations using ALL/ANY modifiers
 - FOR-level nested transitions execute at iteration scope; RETRY evaluates before the exhausted action
 - Iteration-level `BREAK` includes the current iteration result in parent aggregation; iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation
+- Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid
 
 ### Execution Path Notation
 
@@ -218,10 +219,16 @@ Canonical runtime targeting is `step + substep + iteration`.
 
 | Variable | Value | Available |
 |----------|-------|-----------|
-| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`; step-level runbook-list shorthand executes as `N.1`) | Always |
+| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`; shorthand runbook-list steps execute as `N.1`, `N.2`, ...) | Always |
 | `{{Index}}` | Current loop iteration number (1-based) | Inside FOR steps |
+| `{{step}}` | Lowercase alias for current step identifier | Always |
+| `{{index}}` | Lowercase alias for current loop iteration number | Inside FOR steps |
+| `{{context.current.*}}` | Canonical current-frame runtime context (`step`, `substep`, `index`, `at`) | Always |
+| `{{context.parent.*}}` | Parent runbook frame context | Nested runbooks |
+| `{{context.ancestors.N.*}}` | Ancestor frame context (`0` = nearest parent) | Nested runbooks |
+| `{{context.vars.NAME}}` | User/config/frontmatter variables under canonical namespace | Always |
 
-These use PascalCase, consistent with other built-in variables (Date, WorkPath). `{{Step}}` is expanded per-step. The loop variable (if named) and `{{Index}}` are expanded per-iteration. For data source loops, the named variable holds the data element while `{{Index}}` holds the iteration number.
+`{{Step}}`/`{{Index}}` and lowercase aliases are expanded per-step/per-iteration. For data source loops, the named variable holds the data element while `{{Index}}`/`{{index}}` holds the iteration number. Runtime keys (`step`, `index`, `context`, `Step`, `Index`) are reserved and cannot be overridden by user variables.
 
 ---
 
@@ -231,6 +238,7 @@ These use PascalCase, consistent with other built-in variables (Date, WorkPath).
 |---------------------|-----------|-----------------------------------------|
 | `{{VariableName}}`  | defined   | literal variable value                  |
 | `{{VariableName}}`  | undefined | preserved as literal `{{VariableName}}` |
+| `{{path.to.value}}` | missing path | preserved as literal `{{path.to.value}}` |
 
 
  VariableName: `/^[a-zA-Z_][a-zA-Z0-9_]*$/`

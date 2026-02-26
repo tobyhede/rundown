@@ -6,6 +6,37 @@ export interface StepDispatchResult {
   violation?: string;
 }
 
+const IDENTIFIER = '[A-Za-z_][A-Za-z0-9_]*';
+const NUMERIC = '[0-9]+';
+const STEP_ID_PATTERN = `(?:${NUMERIC}|${IDENTIFIER})(?:\\.(?:${NUMERIC}|${IDENTIFIER}))?`;
+const EXACT_STEP_ID = new RegExp(`^${STEP_ID_PATTERN}$`);
+const PREFIXED_STEP_ID = new RegExp(`^\\s*(${STEP_ID_PATTERN})\\s*[-–—:]\\s+`);
+
+/**
+ * Extract a normalized step identifier from a Step/Task description.
+ *
+ * Accepted forms:
+ * - "1.1"
+ * - "NamedStep"
+ * - "1.1 - Description"
+ * - "NamedStep: Description"
+ */
+function extractStepId(description: string): string | null {
+  const trimmed = description.trim();
+  if (!trimmed) return null;
+
+  if (EXACT_STEP_ID.test(trimmed)) {
+    return trimmed;
+  }
+
+  const prefixed = PREFIXED_STEP_ID.exec(trimmed);
+  if (prefixed?.[1]) {
+    return prefixed[1];
+  }
+
+  return null;
+}
+
 /**
  * Track Step tool dispatches in workflow state
  */
@@ -17,16 +48,18 @@ export function trackStepDispatch(input: HookInput): StepDispatchResult {
 
   try {
     const description = input.tool_input?.description ?? '';
+    const stepId = extractStepId(description);
 
-    if (!description.trim()) {
+    if (!stepId) {
       return {
-        violation: 'Step description cannot be empty',
+        violation:
+          'Step description must include a valid step identifier (e.g. "1.1 - Do work" or "ErrorHandler: Recover").',
       };
     }
 
     try {
       // execFileSync passes args as an array — no shell interpretation, no escaping needed
-      rundown(['run', '--step', description], input.cwd);
+      rundown(['run', '--step', stepId], input.cwd);
       return {};
     } catch {
       return {};

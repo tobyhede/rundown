@@ -94,22 +94,44 @@ describe('execution service', () => {
   describe('buildStepVariables', () => {
     it('returns Step for simple step', () => {
       const vars = buildStepVariables('3', undefined);
-      expect(vars).toEqual({ Step: '3' });
+      expect(vars).toMatchObject({
+        Step: '3',
+        step: '3',
+        'context.current.step': '3',
+        'context.current.at': '3',
+      });
     });
 
     it('returns Step for substep', () => {
       const vars = buildStepVariables('3', '1');
-      expect(vars).toEqual({ Step: '3.1' });
+      expect(vars).toMatchObject({
+        Step: '3.1',
+        step: '3.1',
+        'context.current.step': '3.1',
+        'context.current.substep': '1',
+        'context.current.at': '3.1',
+      });
     });
 
     it('returns Step as N.1 for shorthand-canonicalized workflow steps', () => {
       const vars = buildStepVariables('2', '1');
-      expect(vars).toEqual({ Step: '2.1' });
+      expect(vars).toMatchObject({
+        Step: '2.1',
+        step: '2.1',
+        'context.current.step': '2.1',
+        'context.current.substep': '1',
+        'context.current.at': '2.1',
+      });
     });
 
     it('returns Step for named step', () => {
       const vars = buildStepVariables('ErrorHandler', undefined);
-      expect(vars).toEqual({ Step: 'ErrorHandler' });
+      expect(vars).toMatchObject({
+        Step: 'ErrorHandler',
+        step: 'ErrorHandler',
+        'context.current.step': 'ErrorHandler',
+        'context.current.at': 'ErrorHandler',
+      });
     });
 
     it('returns Index and named variable from forStack', () => {
@@ -131,7 +153,13 @@ describe('execution service', () => {
       const vars = buildStepVariables('1', '1', [
         { stepId: '1', iteration: 1, start: 1, end: 1, implicit: true, source: { kind: 'range' } },
       ]);
-      expect(vars).toEqual({ Step: '1.1' });
+      expect(vars).toMatchObject({
+        Step: '1.1',
+        step: '1.1',
+        'context.current.step': '1.1',
+        'context.current.substep': '1',
+        'context.current.at': '1.1',
+      });
       expect(vars).not.toHaveProperty('Index');
     });
 

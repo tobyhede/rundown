@@ -31,13 +31,14 @@ import {
 import { isSourced, type ForClause } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
 import { getRunbookFromState } from './runbook-loader.js';
-import { runExecutionLoop } from '../services/execution.js';
+import { buildStepVariables, runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { extractVarsFromMarkdown, resolveVariables } from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
   expandForClauseVariables,
+  expandLoopVariables,
 } from '../services/template-renderer.js';
 
 /**
@@ -151,6 +152,86 @@ function emitRunbookStarted(
 }
 
 /**
+ * Build canonical current-context variable aliases for static template substitution.
+ */
+function buildContextVars(vars: Readonly<Record<string, string>>): Record<string, string> {
+  const contextVars: Record<string, string> = {};
+  for (const [key, value] of Object.entries(vars)) {
+    contextVars[`context.vars.${key}`] = value;
+  }
+  return contextVars;
+}
+
+interface FrameSnapshot {
+  step: string;
+  substep?: string;
+  index?: number;
+  at: string;
+}
+
+function snapshotFrame(state: RunbookState): FrameSnapshot {
+  const activeFor = getActiveForContext(state.forStack, state.step);
+  return {
+    step: state.step,
+    substep: state.substep,
+    index: activeFor?.iteration,
+    at: deriveExecutionAt(state.step, state.substep, activeFor?.iteration),
+  };
+}
+
+function writeFrameContext(
+  target: Record<string, string>,
+  prefix: string,
+  frame: FrameSnapshot,
+): void {
+  target[`${prefix}.step`] = frame.step;
+  target[`${prefix}.at`] = frame.at;
+  if (frame.substep) {
+    target[`${prefix}.substep`] = frame.substep;
+  }
+  if (frame.index !== undefined) {
+    target[`${prefix}.index`] = String(frame.index);
+  }
+}
+
+/**
+ * Build frozen ancestry context variables for child runbook launches.
+ *
+ * Produces:
+ * - context.parent.*
+ * - context.parent.parent.* (chain form)
+ * - context.ancestors.N.* (array-like addressing)
+ */
+async function buildInheritedContextVars(
+  manager: RunbookStateManager,
+  parentState: RunbookState,
+): Promise<Record<string, string>> {
+  const vars: Record<string, string> = {};
+  const lineage: RunbookState[] = [];
+
+  let cursor: RunbookState | null = parentState;
+  while (cursor) {
+    lineage.push(cursor);
+    if (!cursor.parentRunbookId) break;
+    cursor = await manager.load(cursor.parentRunbookId);
+  }
+
+  for (let i = 0; i < lineage.length; i += 1) {
+    const frame = snapshotFrame(lineage[i]);
+    writeFrameContext(vars, `context.ancestors.${String(i)}`, frame);
+  }
+
+  let parentPath = 'context.parent';
+  for (let i = 0; i < lineage.length; i += 1) {
+    const frame = snapshotFrame(lineage[i]);
+    writeFrameContext(vars, parentPath, frame);
+    parentPath += '.parent';
+  }
+
+  return vars;
+}
+
+/**
  * Prepare a runbook from file: resolve, load, parse, substitute variables.
  *
  * This is the shared pipeline used by both Mode 2 (file start) and
@@ -165,6 +246,9 @@ export async function prepareRunbook(
   file: string,
   varOpts: VarOptions,
   cwd: string,
+  options?: {
+    inheritedContextVars?: Readonly<Record<string, string>>;
+  },
 ): Promise<
   | { ok: true; prepared: PreparedRunbook }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> }
@@ -186,11 +270,16 @@ export async function prepareRunbook(
     { varFile: varOpts.varFile, var: varOpts.var, frontmatterVars },
     cwd,
   );
+  const templateVars: Record<string, string> = {
+    ...mergedVariables,
+    ...buildContextVars(mergedVariables),
+    ...(options?.inheritedContextVars ?? {}),
+  };
 
   // Pre-expand FOR clause bounds (parser needs numeric values)
   const forExpandedContent = expandForClauseVariables(
     rawContent,
-    mergedVariables,
+    templateVars,
     new Set(Object.keys(sources)),
   );
 
@@ -198,7 +287,7 @@ export async function prepareRunbook(
   const rawRunbook = parseRunbookDocument(forExpandedContent, path.basename(filePath));
 
   // Substitute variables into parsed AST
-  const runbook = substituteRunbookVariables(rawRunbook, mergedVariables);
+  const runbook = substituteRunbookVariables(rawRunbook, templateVars);
 
   // Validate sourced FOR clauses reference defined data sources
   try {
@@ -221,7 +310,10 @@ export async function prepareRunbook(
     };
   }
 
-  return { ok: true, prepared: { filePath, rawContent, runbook, mergedVariables, sources } };
+  return {
+    ok: true,
+    prepared: { filePath, rawContent, runbook, mergedVariables: templateVars, sources },
+  };
 }
 
 /**
@@ -274,26 +366,84 @@ export async function queueStep(
     };
   }
 
-  const targetSubstep = stepId.substep ?? state.substep;
-  if (targetSubstep) {
-    const runbookSteps = state.runbookSrc ? getRunbookFromState(state, ctx.cwd) : [];
-    if (runbookSteps.length === 0) {
-      return {
-        ok: false,
-        error: `Cannot validate substep ${state.step}.${targetSubstep} without runbook source context`,
-        code: 'VALIDATION_ERROR',
-      };
-    }
-    const currentStep = runbookSteps.find((s) => s.name === state.step);
+  const runbookSteps = state.runbookSrc ? getRunbookFromState(state, ctx.cwd) : [];
+  const currentStep = runbookSteps.find((s) => s.name === state.step);
+  const hasSubsteps = (currentStep?.substeps?.length ?? 0) > 0;
 
-    if (currentStep?.substeps?.some((s) => s.id === targetSubstep) !== true) {
+  if (hasSubsteps && !stepId.substep) {
+    const available = currentStep?.substeps?.map((s) => `${state.step}.${s.id}`) ?? [];
+    return {
+      ok: false,
+      error:
+        `Step ${state.step} has substeps. Dispatch requires an explicit substep identifier ` +
+        `(for example ${available[0] ?? `${state.step}.1`}).`,
+      code: 'VALIDATION_ERROR',
+      details: {
+        current: state.step,
+        available,
+      },
+    };
+  }
+
+  const targetSubstep = stepId.substep ?? state.substep;
+  if (targetSubstep && runbookSteps.length === 0) {
+    return {
+      ok: false,
+      error: `Cannot validate substep ${state.step}.${targetSubstep} without runbook source context`,
+      code: 'VALIDATION_ERROR',
+    };
+  }
+  if (targetSubstep && !hasSubsteps) {
+    return {
+      ok: false,
+      error: `Step ${state.step} has no substeps; cannot dispatch ${state.step}.${targetSubstep}`,
+      code: 'STEP_NOT_FOUND',
+      details: {
+        current: state.step,
+        requested: `${state.step}.${targetSubstep}`,
+      },
+    };
+  }
+  if (
+    targetSubstep &&
+    hasSubsteps &&
+    currentStep?.substeps?.some((s) => s.id === targetSubstep) !== true
+  ) {
+    return {
+      ok: false,
+      error: `Substep ${state.step}.${targetSubstep} is not available from the current step`,
+      code: 'STEP_NOT_FOUND',
+      details: {
+        current: state.step,
+        requested: `${state.step}.${targetSubstep}`,
+      },
+    };
+  }
+
+  let inferredRunbook = file;
+  if (!inferredRunbook && targetSubstep && hasSubsteps) {
+    const substep = currentStep?.substeps?.find((s) => s.id === targetSubstep);
+    const workflows = substep?.workflows ?? [];
+    if (workflows.length === 1) {
+      const stepVars = buildStepVariables(
+        state.step,
+        targetSubstep,
+        state.forStack,
+        currentStep?.forClause,
+        state.sources,
+        state.templateVars,
+      );
+      inferredRunbook = expandLoopVariables(workflows[0], stepVars);
+    } else if (workflows.length > 1) {
       return {
         ok: false,
-        error: `Substep ${state.step}.${targetSubstep} is not available from the current step`,
-        code: 'STEP_NOT_FOUND',
+        error:
+          `Substep ${state.step}.${targetSubstep} references multiple child runbooks. ` +
+          'Specify the runbook path explicitly with `rd run --step <id> <runbook>`.',
+        code: 'VALIDATION_ERROR',
         details: {
-          current: state.step,
           requested: `${state.step}.${targetSubstep}`,
+          workflows,
         },
       };
     }
@@ -305,7 +455,7 @@ export async function queueStep(
   const targetEntry = state.activeEntry ?? ensured.entry;
   const pendingStep: PendingStep = {
     stepId,
-    runbook: file,
+    runbook: inferredRunbook,
     targetStep: state.step,
     ...(targetSubstep ? { targetSubstep } : {}),
     ...(activeFor ? { targetIteration: activeFor.iteration } : {}),
@@ -317,7 +467,7 @@ export async function queueStep(
   return {
     ok: true,
     stepId: stepIdToString(stepId),
-    runbook: file,
+    runbook: inferredRunbook,
     targetAt,
   };
 }
@@ -506,7 +656,10 @@ export async function bindAgent(
 
   // If pending step has a runbook, start child runbook
   if (normalizedPending.runbook) {
-    const prepResult = await prepareRunbook(normalizedPending.runbook, varOpts, cwd);
+    const inheritedContextVars = await buildInheritedContextVars(manager, state);
+    const prepResult = await prepareRunbook(normalizedPending.runbook, varOpts, cwd, {
+      inheritedContextVars,
+    });
     if (!prepResult.ok) {
       // Adjust error message for child context
       const error =

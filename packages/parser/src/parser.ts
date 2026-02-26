@@ -561,28 +561,30 @@ function finalizeStep(
   const runbooks = extractRunbookList(step.content);
   const prompt = promptText.trim() || undefined;
 
-  // Step-level runbook lists are syntax sugar for a single implicit substep.
+  // Step-level runbook lists are syntax sugar for implicit substeps.
   if (runbooks.length > 0) {
     if (step.command || step.substeps.length > 0) {
       throw new RunbookSyntaxError(
         `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
       );
     }
-
-    const syntheticSubstep: Substep = {
-      id: '1',
+    // Canonicalize each step-level workflow bullet into its own synthetic substep.
+    // To avoid repeating step-level prompt text for every synthetic substep, attach it
+    // only to the first generated substep.
+    const syntheticSubsteps: Substep[] = runbooks.map((workflow, index) => ({
+      id: String(index + 1),
       description: '',
-      prompt,
-      workflows: runbooks,
+      prompt: index === 0 ? prompt : undefined,
+      workflows: [workflow],
       line: step.line,
-    };
+    }));
 
     return {
       name: step.name,
       forClause: step.forClause,
       description: step.description,
       transitions: transitions ?? undefined,
-      substeps: [syntheticSubstep],
+      substeps: syntheticSubsteps,
       line: step.line,
     };
   }

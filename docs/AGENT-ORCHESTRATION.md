@@ -153,10 +153,14 @@ rd pass --agent subagent-abc
 The agent type (`code-review-agent`, `test-agent`) drives context injection — see [Context File Discovery](#context-file-discovery).
 
 **Dispatch frontier and identity:**
+- `run --step` requires a parseable step identifier; when the active step has substeps, step-only dispatch (`N`) is rejected and `N.M` is required.
+- `run --step` accepts an optional runbook argument. When omitted, child runbook path is inferred only if the targeted substep has exactly one workflow.
+- Plugin Step/Task dispatch must include a parseable identifier prefix (for example `1.2 - Review` or `ErrorHandler: Recover`).
 - `run --step` is constrained to the active step frontier.
 - If the active step is in a FOR loop, queueing is constrained to the active iteration frontier.
 - Canonical target identity is `step + substep + iteration`.
 - Display path (`STEP.INDEX.SUBSTEP`, e.g. `2.3.1`) is output-only.
+- Completion acceptance is scoped by frame+entry identity so stale completions from prior re-entry are rejected.
 
 ---
 
@@ -286,9 +290,9 @@ STATUS: FAIL
 The plugin parses this from agent output and translates it to `rd pass --agent <id>` or `rd fail --agent <id>`.
 
 Routing behavior:
-- If completion target matches the active cursor, Rundown applies the normal actor PASS/FAIL transition immediately.
-- If completion is valid for the current frontier but not currently active, Rundown stores it as deferred completion and auto-applies it when reached.
-- Out-of-frontier or stale completions are rejected.
+- Agent completion and plain `pass/fail` share one record-and-drain transition path.
+- Completion keys are scoped to `frame + entry + substep`; stale completions from previous entries are rejected.
+- Resolved completions drain in deterministic substep order, and step-level transition does not execute until the current scope has no unresolved substeps.
 
 **Important:** The STATUS line should appear at the end of the agent's response. If no STATUS line is found, the plugin treats the result based on the agent's exit behaviour.
 

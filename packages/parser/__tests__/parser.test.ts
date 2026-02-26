@@ -1068,7 +1068,7 @@ Review the tasks carefully.
     expect(sub?.workflows).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
   });
 
-  it('canonicalizes step-level runbook refs into an implicit substep', () => {
+  it('canonicalizes step-level runbook refs into implicit per-workflow substeps', () => {
     const md = `## 1 Step
 - PASS: CONTINUE
 - FAIL: STOP
@@ -1078,10 +1078,16 @@ Review the tasks carefully.
 `;
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
+    expect(steps[0].substeps).toHaveLength(2);
     expect(steps[0].substeps?.[0]).toMatchObject({
       id: '1',
       description: '',
-      workflows: ['deploy.runbook.md', 'verify.runbook.md'],
+      workflows: ['deploy.runbook.md'],
+    });
+    expect(steps[0].substeps?.[1]).toMatchObject({
+      id: '2',
+      description: '',
+      workflows: ['verify.runbook.md'],
     });
   });
 
@@ -1104,7 +1110,7 @@ Review this checklist.
     });
   });
 
-  it('canonicalizes FOR + step-level runbook list into a FOR step with one substep', () => {
+  it('canonicalizes FOR + step-level runbook list into per-workflow substeps', () => {
     const md = `## 1. Review the plan
 - FOR pass IN 1 TO 2
 - FAIL ANY: GOTO Synthesize
@@ -1119,15 +1125,13 @@ Review this checklist.
 `;
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
-    expect(steps[0].substeps?.[0]).toMatchObject({
-      id: '1',
-      workflows: [
-        'review-technical-accuracy.runbook.md',
-        'review-structural-integrity.runbook.md',
-        'review-build-runtime.runbook.md',
-        'review-risk-safety.runbook.md',
-      ],
-    });
+    expect(steps[0].substeps).toHaveLength(4);
+    expect(steps[0].substeps?.map((s) => s.workflows)).toEqual([
+      ['review-technical-accuracy.runbook.md'],
+      ['review-structural-integrity.runbook.md'],
+      ['review-build-runtime.runbook.md'],
+      ['review-risk-safety.runbook.md'],
+    ]);
     expect(steps[0].transitions?.fail.action).toEqual({
       type: 'GOTO',
       target: { step: 'Synthesize' },

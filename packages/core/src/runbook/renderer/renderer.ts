@@ -122,27 +122,31 @@ function renderForClause(forClause: NonNullable<Step['forClause']>): string[] {
 }
 
 /**
- * Detect whether a step's single substep is a synthetic workflow-only substep
+ * Detect whether a step's substeps are synthetic workflow-only shorthand substeps
  * created by the parser's shorthand canonicalization.
  *
- * Returns the substep if all five conditions hold:
- * 1. Step has exactly one substep
- * 2. Substep ID is "1"
- * 3. Substep has workflows
- * 4. Substep has no command, transitions, or agentType
- * 5. Substep description is empty
+ * Returns shorthand substeps if all conditions hold:
+ * 1. Step has at least one substep
+ * 2. Substep IDs are sequential numeric values starting from 1
+ * 3. Every substep has exactly one workflow path
+ * 4. Substeps have no command, transitions, or agentType
+ * 5. Substep descriptions are empty
  *
  * @param step - The step to inspect
- * @returns The shorthand substep, or null if not shorthand
+ * @returns The shorthand substeps, or null if not shorthand
  */
-function getShorthandWorkflowSubstep(step: Step): Substep | null {
-  if (step.substeps?.length !== 1) return null;
-  const candidate = step.substeps[0];
-  if (candidate.id !== '1') return null;
-  if (!candidate.workflows?.length) return null;
-  if (candidate.command || candidate.transitions || candidate.agentType) return null;
-  if (candidate.description !== '') return null;
-  return candidate;
+function getShorthandWorkflowSubsteps(step: Step): readonly Substep[] | null {
+  if (!step.substeps?.length) return null;
+
+  for (let i = 0; i < step.substeps.length; i += 1) {
+    const candidate = step.substeps[i];
+    if (candidate.id !== String(i + 1)) return null;
+    if (candidate.workflows?.length !== 1) return null;
+    if (candidate.command || candidate.transitions || candidate.agentType) return null;
+    if (candidate.description !== '') return null;
+  }
+
+  return step.substeps;
 }
 
 /**
@@ -175,13 +179,16 @@ export function renderStep(step: Step): string {
     lines.push('');
   }
 
-  const shorthandSubstep = getShorthandWorkflowSubstep(step);
-  if (shorthandSubstep) {
-    if (shorthandSubstep.prompt) {
-      lines.push(shorthandSubstep.prompt);
+  const shorthandSubsteps = getShorthandWorkflowSubsteps(step);
+  if (shorthandSubsteps) {
+    const firstPrompt = shorthandSubsteps[0]?.prompt;
+    if (firstPrompt) {
+      lines.push(firstPrompt);
       lines.push('');
     }
-    for (const wf of shorthandSubstep.workflows ?? []) {
+    for (const shorthandSubstep of shorthandSubsteps) {
+      const wf = shorthandSubstep.workflows?.[0];
+      if (!wf) continue;
       lines.push(`- ${wf}`);
     }
     lines.push('');

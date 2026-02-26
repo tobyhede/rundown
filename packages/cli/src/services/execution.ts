@@ -2,6 +2,7 @@
 
 import {
   buildStepPosition,
+  deriveExecutionAt,
   buildCompletionKey,
   deriveActiveFrame,
   parseActionType,
@@ -84,15 +85,27 @@ export function buildStepVariables(
   forStack?: readonly ForContext[],
   forClause?: Step['forClause'],
   sources?: Readonly<Record<string, DataSource>>,
+  templateVars?: Readonly<Record<string, string>>,
 ): StepVariables {
   const step = substepId ? `${stepId}.${substepId}` : stepId;
-  const vars: StepVariables = { Step: step };
+  const vars: StepVariables = {
+    ...(templateVars ?? {}),
+    Step: step,
+    step,
+    'context.current.step': step,
+  };
+  if (substepId) {
+    vars['context.current.substep'] = substepId;
+  }
 
   // Primary: use forStack (available after first transition)
   if (forStack?.length) {
     const top = forStack[forStack.length - 1];
     if (!top.implicit) {
       vars.Index = String(top.iteration);
+      vars.index = String(top.iteration);
+      vars['context.current.index'] = String(top.iteration);
+      vars['context.current.at'] = deriveExecutionAt(stepId, substepId, top.iteration);
 
       if (top.variable) {
         switch (top.source.kind) {
@@ -129,19 +142,32 @@ export function buildStepVariables(
         // Clamp start to match compiler behavior (compiler.ts buildForContext)
         const clampedStart = Math.max(1, Math.min(forClause.start, ds.items.length));
         vars.Index = String(clampedStart);
+        vars.index = String(clampedStart);
+        vars['context.current.index'] = String(clampedStart);
+        vars['context.current.at'] = deriveExecutionAt(stepId, substepId, clampedStart);
         vars[forClause.variable] = ds.items[clampedStart - 1] ?? '';
       } else {
         // ds.kind === 'file': iteration starts at forClause.start, value resolved lazily by actor
         vars.Index = String(forClause.start);
+        vars.index = String(forClause.start);
+        vars['context.current.index'] = String(forClause.start);
+        vars['context.current.at'] = deriveExecutionAt(stepId, substepId, forClause.start);
         vars[forClause.variable] = '';
       }
     } else {
       // Numeric range (original behavior)
       vars.Index = String(forClause.start);
+      vars.index = String(forClause.start);
+      vars['context.current.index'] = String(forClause.start);
+      vars['context.current.at'] = deriveExecutionAt(stepId, substepId, forClause.start);
       if (forClause.variable) {
         vars[forClause.variable] = String(forClause.start);
       }
     }
+  }
+
+  if (!Object.hasOwn(vars, 'context.current.at')) {
+    vars['context.current.at'] = deriveExecutionAt(stepId, substepId);
   }
 
   return vars;
@@ -506,6 +532,7 @@ export async function runExecutionLoop(
       currentState.forStack,
       currentStep.forClause,
       currentState.sources,
+      currentState.templateVars,
     );
     const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
     const expandedPrompt = itemToRender.prompt
