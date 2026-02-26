@@ -53,7 +53,7 @@ function extractJsonObjects(stdout: string): unknown[] {
   return parsed;
 }
 
-function parseJsonOrNdjson(stdout: string): unknown {
+function parseJsonOrJsonl(stdout: string): unknown {
   const trimmed = stdout.trim();
   if (!trimmed) return undefined;
 
@@ -61,7 +61,7 @@ function parseJsonOrNdjson(stdout: string): unknown {
   try {
     return JSON.parse(trimmed) as unknown;
   } catch {
-    // Fall through to NDJSON parsing.
+    // Fall through to JSONL parsing.
   }
 
   const parsedLines: unknown[] = [];
@@ -118,9 +118,9 @@ export async function runCli(args: string[]): Promise<CliResult> {
       timeout: 30000,
     });
 
-    // Check if stdout has content and parse JSON/NDJSON output.
+    // Check if stdout has content and parse JSON/JSONL output.
     if (stdout.trim()) {
-      return { success: true, data: parseJsonOrNdjson(stdout) };
+      return { success: true, data: parseJsonOrJsonl(stdout) };
     }
 
     // Empty stdout is still success
@@ -132,7 +132,7 @@ export async function runCli(args: string[]): Promise<CliResult> {
 
       // Try stdout first (some commands write JSON errors to stdout)
       if (execError.stdout) {
-        const data = parseJsonOrNdjson(execError.stdout);
+        const data = parseJsonOrJsonl(execError.stdout);
         if (data && typeof data === 'object') {
           const error = (data as { error?: string }).error;
           return { success: false, error: error ?? 'Command failed', data };
@@ -141,7 +141,7 @@ export async function runCli(args: string[]): Promise<CliResult> {
 
       // Try stderr (withErrorHandling writes JSON errors here)
       if (execError.stderr) {
-        const data = parseJsonOrNdjson(execError.stderr);
+        const data = parseJsonOrJsonl(execError.stderr);
         if (data && typeof data === 'object') {
           const error = (data as { error?: string }).error;
           return { success: false, error: error ?? 'Command failed', data };

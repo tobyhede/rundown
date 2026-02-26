@@ -3,7 +3,7 @@
  *
  * Handles two output modes:
  * - Simple commands: Accumulates events and outputs a single JSON object on flush()
- * - Execution events: Streams NDJSON (newline-delimited JSON) for real-time output
+ * - Execution events: Streams JSONL (JSON Lines) for real-time output
  *
  * This unified approach allows both simple commands (check, ls) to maintain
  * backward compatibility with single-object JSON output, while execution
@@ -65,8 +65,8 @@ export class JSONRenderer implements OutputRenderer {
   private listItems: unknown[] | null = null;
   /** Track if only list events have been emitted */
   private isListOnly = true;
-  /** Track if NDJSON streaming has been used */
-  private isNdjsonMode = false;
+  /** Track if JSONL streaming has been used */
+  private isJsonlMode = false;
 
   /**
    * Create a new JSONRenderer.
@@ -179,13 +179,13 @@ export class JSONRenderer implements OutputRenderer {
    * Flush accumulated output as JSON.
    *
    * For list-only output, returns a raw array. Otherwise returns an object.
-   * When in NDJSON mode (streaming execution events), uses compact JSON
-   * to maintain the NDJSON contract of one JSON object per line.
+   * When in JSONL mode (streaming execution events), uses compact JSON
+   * to maintain the JSONL contract of one JSON object per line.
    */
   flush(): void {
     if (this.hasOutput) {
-      // Use compact JSON in NDJSON mode to maintain single-line contract
-      const pretty = !this.isNdjsonMode;
+      // Use compact JSON in JSONL mode to maintain single-line contract
+      const pretty = !this.isJsonlMode;
 
       // If only list events were emitted, output raw array
       if (this.isListOnly && this.listItems !== null) {
@@ -198,7 +198,7 @@ export class JSONRenderer implements OutputRenderer {
       this.output = {};
       this.listItems = null;
       this.isListOnly = true;
-      this.isNdjsonMode = false;
+      this.isJsonlMode = false;
       this.hasOutput = false;
     }
   }
@@ -254,9 +254,9 @@ export class JSONRenderer implements OutputRenderer {
   }
 
   /**
-   * Render an execution event as NDJSON.
+   * Render an execution event as JSONL.
    *
-   * Streams the event immediately as a newline-delimited JSON line,
+   * Streams the event immediately as a JSON Lines entry,
    * enabling real-time output for execution commands.
    *
    * Includes full envelope fields (runbook, agentId, parentRunbookId, parentStepId)
@@ -266,15 +266,15 @@ export class JSONRenderer implements OutputRenderer {
    * @param event - The execution event to render
    */
   private renderExecutionEvent(event: RunbookEventV1): void {
-    // Mark as NDJSON mode so flush() uses compact JSON
-    this.isNdjsonMode = true;
+    // Mark as JSONL mode so flush() uses compact JSON
+    this.isJsonlMode = true;
 
     // Convert event type to snake_case for JSON output
     const eventType = this.toSnakeCase(event.type);
 
-    // Build NDJSON line with full envelope and payload
+    // Build JSONL line with full envelope and payload
     // Include all envelope fields for multi-agent/nested runbook attribution
-    const ndjsonLine: Record<string, unknown> = {
+    const jsonlLine: Record<string, unknown> = {
       type: eventType,
       ...event.payload,
       timestamp: event.ts,
@@ -285,17 +285,17 @@ export class JSONRenderer implements OutputRenderer {
 
     // Include optional envelope fields when present
     if (event.agentId !== undefined) {
-      ndjsonLine.agentId = event.agentId;
+      jsonlLine.agentId = event.agentId;
     }
     if (event.parentRunbookId !== undefined) {
-      ndjsonLine.parentRunbookId = event.parentRunbookId;
+      jsonlLine.parentRunbookId = event.parentRunbookId;
     }
     if (event.parentStepId !== undefined) {
-      ndjsonLine.parentStepId = event.parentStepId;
+      jsonlLine.parentStepId = event.parentStepId;
     }
 
     // Stream immediately - don't buffer
-    this.writer.writeLine(JSON.stringify(ndjsonLine));
+    this.writer.writeLine(JSON.stringify(jsonlLine));
   }
 
   /**

@@ -50,7 +50,6 @@ lcov
 lockfile
 materialised
 monorepo
-ndjson
 nocase
 nodenv
 parseable

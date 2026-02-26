@@ -10,9 +10,9 @@ import {
 } from '../helpers/test-utils.js';
 
 /**
- * Parse NDJSON output from `run --json`, filtering out non-JSON lines (command output).
+ * Parse JSONL output from `run --json`, filtering out non-JSON lines (command output).
  */
-function parseNdjsonEvents(stdout: string): Record<string, unknown>[] {
+function parseJsonlEvents(stdout: string): Record<string, unknown>[] {
   return stdout
     .trim()
     .split('\n')
@@ -121,7 +121,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify the command used the correct variable value
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -138,7 +138,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify empty value was used
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -160,7 +160,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify explicit var file value was used
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -177,7 +177,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify auto-discovered value was used
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -198,7 +198,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -217,7 +217,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -237,7 +237,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -260,7 +260,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -281,7 +281,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -306,7 +306,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -326,12 +326,12 @@ describe('Template Variables Integration', () => {
 
       await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
 
-      // Run child runbook directly with --json to capture NDJSON events
+      // Run child runbook directly with --json to capture JSONL events
       const result = runCli('run child.runbook.md --json', workspace);
       expect(result.exitCode).toBe(0);
 
       // Verify the command was expanded with the frontmatter default variable
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent!.command).toBe('rd echo DefaultTask');
@@ -350,7 +350,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify undefined variable was preserved
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -380,7 +380,7 @@ describe('Template Variables Integration', () => {
       const result = runCli('pass --json', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parse NDJSON output - the last line contains the final state
+      // Parse JSONL output - the last line contains the final state
       const lines = result.stdout
         .trim()
         .split('\n')
@@ -414,7 +414,7 @@ describe('Template Variables Integration', () => {
       const result = runCli('fail --json', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parse NDJSON output - the last line contains the final state
+      // Parse JSONL output - the last line contains the final state
       const lines = result.stdout
         .trim()
         .split('\n')
@@ -443,7 +443,7 @@ describe('Template Variables Integration', () => {
       const result = runCli('goto 2 --json', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parse NDJSON output - the last line contains the final state
+      // Parse JSONL output - the last line contains the final state
       const lines = result.stdout
         .trim()
         .split('\n')
