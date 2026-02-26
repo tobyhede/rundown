@@ -23,18 +23,21 @@ import type { DataSource, FileFormat } from '@rundown-org/core';
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 /**
- * Runtime-reserved keys that cannot be overridden by user-provided variables.
+ * Runtime-reserved keys (normalized to lowercase) that cannot be overridden
+ * by user-provided variables.
  *
  * These keys are owned by runtime frame/context resolution and should remain
  * deterministic across runbook execution.
  */
-export const RUNTIME_RESERVED_VARIABLES = new Set(['step', 'index', 'context', 'Step', 'Index']);
+export const RUNTIME_RESERVED_VARIABLES = new Set(['step', 'index', 'context']);
 
 /**
  * Check whether a variable name is reserved for runtime context semantics.
+ *
+ * Matching is case-insensitive (`Step`, `STEP`, and `step` are treated equally).
  */
 export function isRuntimeReservedVariable(name: string): boolean {
-  return RUNTIME_RESERVED_VARIABLES.has(name);
+  return RUNTIME_RESERVED_VARIABLES.has(name.toLowerCase());
 }
 
 /**

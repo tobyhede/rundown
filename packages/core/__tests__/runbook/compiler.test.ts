@@ -4345,8 +4345,14 @@ echo "processing"
 - PASS: COMPLETE
 `);
 
-      // All four runbooks canonicalized into single substep
-      expect(steps[0].substeps?.[0].workflows).toHaveLength(4);
+      // All four runbooks canonicalized into four implicit substeps (one runbook each)
+      expect(steps[0].substeps).toHaveLength(4);
+      expect(steps[0].substeps?.map((substep) => substep.workflows)).toEqual([
+        ['review-technical-accuracy.runbook.md'],
+        ['review-structural-integrity.runbook.md'],
+        ['review-build-runtime.runbook.md'],
+        ['review-risk-safety.runbook.md'],
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -4354,11 +4360,24 @@ echo "processing"
 
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
-      actor.send({ type: 'PASS' }); // iteration 1
+      actor.send({ type: 'PASS' }); // iteration 1, substep 1 -> substep 2
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(1);
+
+      actor.send({ type: 'PASS' }); // substep 2 -> substep 3
+      expect(actor.getSnapshot().value).toBe('step::1::3');
+
+      actor.send({ type: 'PASS' }); // substep 3 -> substep 4
+      expect(actor.getSnapshot().value).toBe('step::1::4');
+
+      actor.send({ type: 'PASS' }); // end iteration 1 -> iteration 2 substep 1
       expect(actor.getSnapshot().value).toBe('step::1::1');
       expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(2);
 
-      actor.send({ type: 'PASS' }); // iteration 2 -> PASS ALL -> step 2
+      actor.send({ type: 'PASS' }); // iteration 2, substep 1
+      actor.send({ type: 'PASS' }); // iteration 2, substep 2
+      actor.send({ type: 'PASS' }); // iteration 2, substep 3
+      actor.send({ type: 'PASS' }); // iteration 2, substep 4 -> PASS ALL -> step 2
       expect(actor.getSnapshot().value).toBe('step::2');
     });
   });

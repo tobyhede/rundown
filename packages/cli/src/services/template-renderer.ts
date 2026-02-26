@@ -52,6 +52,12 @@ function resolveDottedPath(obj: unknown, path: string): unknown {
 
 /**
  * Render a template value for interpolation.
+ *
+ * Strings are preserved as-is. Non-strings are serialized with JSON to keep
+ * deterministic display behavior across text and command expansion paths.
+ *
+ * @param value - Resolved template value
+ * @returns String representation for interpolation
  */
 function renderTemplateValue(value: unknown): string {
   if (typeof value === 'string') {
@@ -66,6 +72,10 @@ function renderTemplateValue(value: unknown): string {
  * Resolution order:
  * 1. Exact key match (supports flattened dotted keys like "context.parent.index")
  * 2. Dotted traversal from a root object key
+ *
+ * @param path - Placeholder path (e.g. `item.name`, `context.ancestors.0.step`)
+ * @param variables - Runtime/template variable map
+ * @returns Rendered value string or undefined when unresolved
  */
 function resolveTemplatePath(path: string, variables: Record<string, unknown>): string | undefined {
   if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
@@ -94,6 +104,13 @@ function resolveTemplatePath(path: string, variables: Record<string, unknown>): 
 
 /**
  * Expand runtime loop/context variables in text.
+ *
+ * Unresolved placeholders are preserved literally so callers can surface
+ * downstream resolution errors with original source text.
+ *
+ * @param text - Input text that may contain placeholders
+ * @param variables - Runtime/template variables for substitution
+ * @returns Expanded text with unresolved placeholders preserved
  */
 export function expandLoopVariables(text: string, variables: Record<string, unknown>): string {
   return text.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
@@ -112,6 +129,11 @@ const FOR_CLAUSE_LINE = /^\s*-\s+FOR\s.+$/gm;
  * FOR clause bounds (e.g., `FOR item IN 1 TO {{Max}}`) must be numeric at parse
  * time. This function expands placeholders in lines matching `- FOR ...` so
  * the parser receives numeric bounds.
+ *
+ * @param markdown - Raw markdown source before parsing
+ * @param variables - Variables used for placeholder expansion
+ * @param sourceKeys - Optional source identifiers that must remain unexpanded
+ * @returns Markdown with FOR bounds expanded where resolvable
  */
 export function expandForClauseVariables(
   markdown: string,
@@ -134,6 +156,9 @@ const SAFE_SHELL_VALUE = /^(?!-)(?!.*\.\.)[a-zA-Z0-9_./-]+$/;
 
 /**
  * Shell-escape a variable value for safe interpolation into shell commands.
+ *
+ * @param value - Raw value before shell interpolation
+ * @returns Escaped shell-safe string
  */
 export function shellEscapeValue(value: string): string {
   if (value === '') return "''";
@@ -143,6 +168,11 @@ export function shellEscapeValue(value: string): string {
 
 /**
  * Substitute placeholders in text with optional escaping.
+ *
+ * @param text - Input text containing placeholders
+ * @param variables - Variable map for substitution
+ * @param escapeFn - Optional escape function for resolved values
+ * @returns Text with resolved placeholders substituted
  */
 export function substituteText(
   text: string,
@@ -158,6 +188,10 @@ export function substituteText(
 
 /**
  * Substitute template variables in a command, applying shell escaping.
+ *
+ * @param command - Parsed command block, if present
+ * @param variables - Variable map for substitution
+ * @returns Command with code expanded and shell-escaped, or undefined
  */
 function substituteCommand(
   command: Command | undefined,
@@ -172,6 +206,10 @@ function substituteCommand(
 
 /**
  * Substitute template variables in a substep.
+ *
+ * @param substep - Parsed substep node
+ * @param variables - Variable map for substitution
+ * @returns Substep with all string fields expanded
  */
 function substituteSubstep(substep: Substep, variables: Record<string, unknown>): Substep {
   return {
@@ -185,6 +223,10 @@ function substituteSubstep(substep: Substep, variables: Record<string, unknown>)
 
 /**
  * Substitute template variables in a step.
+ *
+ * @param step - Parsed step node
+ * @param variables - Variable map for substitution
+ * @returns Step with all string fields expanded
  */
 function substituteStep(step: Step, variables: Record<string, unknown>): Step {
   return {
@@ -200,6 +242,12 @@ function substituteStep(step: Step, variables: Record<string, unknown>): Step {
 
 /**
  * Substitute template variables into a parsed Runbook AST with context-aware escaping.
+ *
+ * This is the single AST-level substitution pass used at startup and resume.
+ *
+ * @param runbook - Parsed runbook AST
+ * @param variables - Variable map for substitution
+ * @returns New runbook AST with substitutions applied
  */
 export function substituteRunbookVariables(
   runbook: Runbook,
@@ -217,6 +265,10 @@ export function substituteRunbookVariables(
 
 /**
  * Expand loop variables in command code with shell escaping.
+ *
+ * @param text - Command text containing placeholders
+ * @param variables - Runtime/template variable map
+ * @returns Command text with resolved placeholders shell-escaped
  */
 export function expandLoopVariablesForCommand(
   text: string,
