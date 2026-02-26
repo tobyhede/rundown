@@ -130,6 +130,8 @@ This enables programmatic validation of CLI output against the schema.
 
 State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown/session.json` (active runbook tracking). Runbook source files are discovered from multiple locations (see [Runbook Discovery](#runbook-discovery)). State files persist across context clears.
 
+**Principle:** Never migrate persisted runbook state between versions. On schema changes, running runbooks should be completed/closed and restarted. The CLI should detect stale state and prompt the user rather than attempting silent migration.
+
 ## Runbook Discovery
 
 Runbooks are discovered from multiple sources with the following priority (highest to lowest):
