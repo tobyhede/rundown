@@ -486,12 +486,13 @@ export async function handleAgentBinding(
 }
 
 /**
- * Propagate child runbook completion to the parent's substep.
+ * Propagate child runbook completion to the parent runbook.
  *
  * After `executeTransition` completes a child runbook, this function detects
- * whether the child was popped (agent stack empty) and, if so, records a
- * resolved completion on the parent's substep and drains it through the
- * normal transition path.
+ * whether the child was popped (agent stack empty) and, if so, propagates the
+ * result to the parent. For substep bindings, a resolved completion is recorded
+ * and drained through the standard path. For step-level bindings, the parent
+ * transition is executed directly (mirroring handleAgentBinding's non-substep path).
  *
  * Child COMPLETE maps to PASS; child STOPPED maps to FAIL.
  *
@@ -541,11 +542,34 @@ export async function handleAgentCompletion(
     );
   }
 
-  // 9. Substep path
+  // 9. Non-substep path: execute transition directly on parent (mirrors handleAgentBinding)
   if (!target.substep) {
-    // Non-substep path: not applicable for now.
-    // Child runbooks are always under substep headings in practice.
-    return 'not-applicable';
+    const parentActorService = new RunbookActorService(manager);
+    const parentActor = await parentActorService.createActor(parentState.id, parentSteps);
+    if (!parentActor) {
+      throw new Error(
+        'Failed to initialize parent runbook engine for agent completion propagation',
+      );
+    }
+    const parentCtx: TransitionContext = {
+      output,
+      manager,
+      actorService: parentActorService,
+      sessionService,
+      lifecycleService,
+      state: parentState,
+      steps: parentSteps,
+      actor: parentActor,
+      cwd,
+      agentId: undefined, // Default stack operations
+    };
+    try {
+      const execResult = await executeTransition(parentCtx, transitionConfig);
+      if (execResult === 'stopped') return 'stopped';
+      return 'handled';
+    } finally {
+      parentActor.stop();
+    }
   }
 
   const existing = await lifecycleService.getResolvedCompletion(

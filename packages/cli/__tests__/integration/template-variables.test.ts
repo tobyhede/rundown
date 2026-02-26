@@ -5,6 +5,7 @@ import {
   createTestWorkspace,
   runCli,
   createRunbook,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -17,6 +18,76 @@ function parseNdjsonEvents(stdout: string): Record<string, unknown>[] {
     .split('\n')
     .filter((line) => line.startsWith('{'))
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function extractJsonObjects(stdout: string): Record<string, unknown>[] {
+  const parsed: Record<string, unknown>[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < stdout.length; index += 1) {
+    const char = stdout[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      if (depth === 0) {
+        start = index;
+      }
+      depth += 1;
+      continue;
+    }
+    if (char === '}') {
+      if (depth === 0) continue;
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        const candidate = stdout.slice(start, index + 1);
+        try {
+          parsed.push(JSON.parse(candidate) as Record<string, unknown>);
+        } catch {
+          // Ignore malformed segments.
+        }
+        start = -1;
+      }
+    }
+  }
+
+  return parsed;
+}
+
+function findActionOutputFromJsonStream(stdout: string): Record<string, unknown> | null {
+  const parsed = findActionOutput(stdout);
+  if (parsed) {
+    return parsed;
+  }
+
+  const parsedObjects = extractJsonObjects(stdout);
+  if (parsedObjects.length === 0) {
+    return null;
+  }
+
+  const actionOutput = parsedObjects.find((entry) => 'action' in entry && 'result' in entry);
+  if (actionOutput) {
+    return actionOutput;
+  }
+
+  const resultOutput = parsedObjects.find((entry) => 'result' in entry);
+  return resultOutput ?? null;
 }
 
 describe('Template Variables Integration', () => {
@@ -515,8 +586,9 @@ describe('Template Variables Integration', () => {
       // The child should have executed with the expanded variable
       // Since we can't directly inspect runbookSrc without accessing state files,
       // we verify indirectly by confirming the execution succeeded with the variable
-      const passOutput = JSON.parse(result.stdout);
-      expect(passOutput.result).toBe(true);
+      const passOutput = findActionOutputFromJsonStream(result.stdout);
+      expect(passOutput).not.toBeNull();
+      expect(passOutput?.result).toBe(true);
     });
 
     it('should handle child runbook with missing variables', async () => {
@@ -553,6 +625,9 @@ describe('Template Variables Integration', () => {
       // Pass the step to complete
       const passResult = runCli('pass --agent test-agent --json', workspace);
       expect(passResult.exitCode).toBe(0);
+      const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+      expect(passOutput).not.toBeNull();
+      expect(passOutput?.result).toBe(true);
     });
 
     it('should inherit parent variables in child runbook', async () => {
@@ -597,8 +672,9 @@ describe('Template Variables Integration', () => {
       const passResult = runCli('pass --agent test-agent --json', workspace);
       expect(passResult.exitCode).toBe(0);
 
-      const passOutput = JSON.parse(passResult.stdout);
-      expect(passOutput.result).toBe(true);
+      const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+      expect(passOutput).not.toBeNull();
+      expect(passOutput?.result).toBe(true);
     });
   });
 });
