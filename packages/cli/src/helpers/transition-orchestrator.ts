@@ -66,19 +66,33 @@ export function transitionSinkFromEmitter(
 }
 
 interface OrchestrateTransitionArgs {
+  /** State manager for persisting runbook state updates. */
   manager: RunbookStateManager;
+  /** Session service for managing the active runbook stack. */
   sessionService: SessionService;
+  /** Event sink for emitting transition lifecycle events. */
   sink: TransitionEventSink;
+  /** Unique identifier of the runbook being executed. */
   runbookId: string;
+  /** All steps in the runbook, used for position calculations. */
   steps: Step[];
+  /** The step that was just evaluated. */
   currentStep: Step;
+  /** Runbook state before the transition was applied. */
   previousState: RunbookState;
+  /** Runbook state after the XState machine processed the event. */
   updatedState: RunbookState;
+  /** Raw XState snapshot after the transition, used to extract action and message. */
   snapshot: unknown;
+  /** Whether the step passed or failed. */
   result: 'pass' | 'fail';
+  /** Whether the action (command execution or prompt response) succeeded. */
   actionResult: boolean;
+  /** Policy governing side effects for terminal outcomes. */
   policy: TransitionOrchestrationPolicy;
+  /** Agent identifier for parent binding updates and session stack operations. */
   agentId?: string;
+  /** The command string that triggered this transition, included in events. */
   command?: string;
 }
 
@@ -140,6 +154,11 @@ async function applyTerminalSideEffects(
  *
  * This is the shared transition application path for command-driven transitions
  * and execution-loop transitions.
+ *
+ * @param args - Transition context including state manager, step data, and side-effect policy.
+ *   See {@link OrchestrateTransitionArgs} for field descriptions.
+ * @returns A result indicating whether execution should continue, has completed, or was stopped.
+ *   See {@link OrchestrateTransitionResult} for the discriminated union variants.
  */
 export async function orchestrateTransition(
   args: OrchestrateTransitionArgs,

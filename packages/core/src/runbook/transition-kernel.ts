@@ -49,6 +49,9 @@ function isLastAction(value: unknown): value is LastAction {
 
 /**
  * Extract the lastAction from an XState snapshot in a type-safe way.
+ *
+ * @param snapshot - Raw XState snapshot object to inspect
+ * @returns The validated LastAction if present in the snapshot context, otherwise undefined
  */
 export function extractLastAction(snapshot: unknown): LastAction | undefined {
   if (
@@ -67,6 +70,9 @@ export function extractLastAction(snapshot: unknown): LastAction | undefined {
 
 /**
  * Extract the retryMax from an XState snapshot in a type-safe way.
+ *
+ * @param snapshot - Raw XState snapshot object to inspect
+ * @returns The retry limit from the snapshot context, or 0 if not present
  */
 export function extractRetryMax(snapshot: unknown): number {
   if (
@@ -86,6 +92,10 @@ export function extractRetryMax(snapshot: unknown): number {
  * Extract retry counter for RETRY action display.
  *
  * Iteration-level retry counts take precedence when present.
+ *
+ * @param snapshot - Raw XState snapshot object to inspect
+ * @param retryCount - Fallback retry count from persisted state
+ * @returns The iteration-level retry count if positive, otherwise the fallback retryCount
  */
 export function extractRetryDisplayCount(snapshot: unknown, retryCount: number): number {
   if (
@@ -104,6 +114,9 @@ export function extractRetryDisplayCount(snapshot: unknown, retryCount: number):
 
 /**
  * Extract the lastMessage from an XState snapshot.
+ *
+ * @param snapshot - Raw XState snapshot object to inspect
+ * @returns The last message string if present, otherwise undefined
  */
 export function extractLastMessage(snapshot: unknown): string | undefined {
   if (
@@ -122,6 +135,11 @@ export function extractLastMessage(snapshot: unknown): string | undefined {
 
 /**
  * Format action for display, adding retry details.
+ *
+ * @param lastAction - The structured action to format, or undefined for default CONTINUE
+ * @param retryCount - Current retry attempt number
+ * @param retryMax - Maximum retry attempts allowed
+ * @returns Human-readable action string (e.g. "RETRY (2/3)", "GOTO 5.1")
  */
 export function formatActionForDisplay(
   lastAction: LastAction | undefined,
@@ -146,6 +164,9 @@ export function formatActionForDisplay(
 
 /**
  * Derive action type from structured LastAction.
+ *
+ * @param lastAction - The structured action to classify, or undefined for default CONTINUE
+ * @returns The canonical ActionType category for the given action
  */
 export function parseActionType(lastAction: LastAction | undefined): ActionType {
   if (!lastAction) return 'CONTINUE';
@@ -165,6 +186,11 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
 
 /**
  * Resolve fallback transition message from step transitions when snapshot has no message.
+ *
+ * @param result - Whether the step passed or failed
+ * @param step - The step whose transitions to evaluate for a message
+ * @param retryCount - Current retry count, used to evaluate retry-gated transitions
+ * @returns The transition message if the matching condition provides one, otherwise undefined
  */
 export function deriveTransitionMessage(
   result: 'pass' | 'fail',
