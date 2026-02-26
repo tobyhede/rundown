@@ -185,6 +185,10 @@ export class ExecutionLifecycleService {
 
   /**
    * Read a resolved completion by key without consuming it.
+   *
+   * @param id - The runbook state ID
+   * @param key - Canonical completion key (`frame|entry|substep`)
+   * @returns The resolved completion if present, otherwise null
    */
   async getResolvedCompletion(id: string, key: string): Promise<ResolvedCompletion | null> {
     const state = await this.manager.load(id);
@@ -237,6 +241,10 @@ export class ExecutionLifecycleService {
 
   /**
    * Build a completion key for the active frame in a state.
+   *
+   * @param state - Current runbook state
+   * @param substep - Optional substep identifier
+   * @returns Canonical completion key for the active frame
    */
   buildActiveCompletionKey(state: RunbookState, substep?: string): string {
     const frame = deriveActiveFrame(state);
@@ -246,6 +254,10 @@ export class ExecutionLifecycleService {
 
   /**
    * Resolve frame key from canonical target identity.
+   *
+   * @param targetStep - Target step identifier
+   * @param targetIteration - Optional FOR loop iteration number
+   * @returns Pipe-delimited frame key
    */
   buildTargetFrameKey(targetStep: string, targetIteration?: number): string {
     return buildFrameKey(targetStep, targetIteration);
@@ -253,6 +265,9 @@ export class ExecutionLifecycleService {
 
   /**
    * Parse completion key helper for callers that need frame/entry extraction.
+   *
+   * @param key - Pipe-delimited completion key to parse
+   * @returns Parsed components, or null if the key format is invalid
    */
   parseCompletionKey(key: string): { frameKey: string; entry: number; substep?: string } | null {
     return parseCompletionKey(key);

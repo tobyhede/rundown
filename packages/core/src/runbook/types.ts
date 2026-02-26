@@ -164,13 +164,21 @@ export interface AgentBinding {
  * that is not currently at the active cursor.
  */
 export interface ResolvedCompletion {
+  /** Identifier of the agent that produced this completion. */
   readonly agentId: string;
+  /** Whether the agent passed or failed. */
   readonly result: AgentResult;
+  /** Step name this completion targets (e.g. "1", "ErrorHandler"). */
   readonly targetStep: string;
+  /** Substep ID within the target step, if applicable. */
   readonly targetSubstep?: string;
+  /** FOR loop iteration number this completion applies to. */
   readonly targetIteration?: number;
+  /** Frame key identifying the step+iteration context (e.g. "1|", "1|2"). */
   readonly targetFrameKey: string;
+  /** Monotonic entry counter within the frame, distinguishing repeated visits. */
   readonly targetEntry: number;
+  /** ISO 8601 timestamp when the agent completed. */
   readonly completedAt: string;
 }
 

@@ -278,35 +278,59 @@ async function applyResultTransition({
 
 /** Arguments for draining resolved substep completions. */
 export interface DrainResolvedCompletionsArgs {
+  /** State manager for raw state persistence. */
   manager: RunbookStateManager;
+  /** Actor service for sending events to the runbook machine. */
   actorService: RunbookActorService;
+  /** Session service for active runbook tracking. */
   sessionService: SessionService;
+  /** Lifecycle service for completion read/write operations. */
   lifecycleService: ExecutionLifecycleService;
+  /** Event emitter for execution progress notifications. */
   emitter: ExecutionEventEmitter;
+  /** ID of the runbook being drained. */
   runbookId: string;
+  /** Parsed step definitions for the runbook. */
   steps: Step[];
+  /** Current persisted runbook state. */
   currentState: RunbookState;
+  /** Policy governing transition orchestration. */
   transitionPolicy: TransitionOrchestrationPolicy;
+  /** Optional function to compute action result for transition evaluation. */
   computeActionResult?: (actionType: ActionType) => boolean;
+  /** Optional agent ID for agent-scoped draining. */
   agentId?: string;
+  /** Optional command string for event context. */
   command?: string;
 }
 
 /** Result of draining resolved substep completions. */
 export type DrainResolvedCompletionsResult =
   | {
+      /** Drain succeeded with remaining substeps to process. */
       status: 'continue';
       state: RunbookState;
       unresolved: number;
       applied: number;
     }
-  | { status: 'done'; unresolved: number; applied: number }
-  | { status: 'stopped'; unresolved: number; applied: number };
+  | {
+      /** All substeps resolved and runbook completed. */ status: 'done';
+      unresolved: number;
+      applied: number;
+    }
+  | {
+      /** Runbook stopped due to a STOP transition. */ status: 'stopped';
+      unresolved: number;
+      applied: number;
+    };
 
 /**
  * Deterministically drain resolved substep completions for the active frame+entry.
  *
  * Applies completions in substep order and stops at the first unresolved substep.
+ *
+ * @param args - Drain arguments including state manager, services, and current state
+ * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  */
 export async function drainResolvedCompletions({
   manager,

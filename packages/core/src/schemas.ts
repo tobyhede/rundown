@@ -127,7 +127,7 @@ export { StepIdSchema, ActionSchema, TransitionsSchema };
 const RunbookStepSchema = z.string().min(1);
 
 /**
- * Schema for pending step.
+ * Schema for target identity fields shared across agent bindings and pending steps.
  */
 const TargetIdentitySchema = z.object({
   targetStep: z.string().optional(),

@@ -6,6 +6,11 @@ import type { ForContext, ResolvedCompletion, RunbookState } from './types.js';
  *
  * - Non-loop step/substep: `STEP.SUBSTEP` (for example, `2.1`)
  * - Loop-scoped step/substep: `STEP.INDEX.SUBSTEP` (for example, `1.2.1`)
+ *
+ * @param step - Step identifier (e.g. "1", "ErrorHandler")
+ * @param substep - Optional substep identifier within the step
+ * @param iteration - Optional FOR loop iteration number
+ * @returns Dot-separated location string (e.g. "2.1", "1.2.1")
  */
 export function deriveExecutionAt(step: string, substep?: string, iteration?: number): string {
   if (iteration !== undefined) {
@@ -16,6 +21,9 @@ export function deriveExecutionAt(step: string, substep?: string, iteration?: nu
 
 /**
  * Derive execution location notation for a position payload.
+ *
+ * @param position - Position object with current step, optional substep and FOR context
+ * @returns Dot-separated location string
  */
 export function derivePositionAt(position: {
   current: string;
@@ -29,6 +37,11 @@ export function derivePositionAt(position: {
  * Canonical runtime key for target identity.
  *
  * Format: `<step>|<substep-or-empty>|<iteration-or-empty>`
+ *
+ * @param step - Step identifier
+ * @param substep - Optional substep identifier
+ * @param iteration - Optional FOR loop iteration number
+ * @returns Pipe-delimited target key
  */
 export function buildTargetKey(step: string, substep?: string, iteration?: number): string {
   return `${step}|${substep ?? ''}|${iteration !== undefined ? String(iteration) : ''}`;
@@ -38,6 +51,10 @@ export function buildTargetKey(step: string, substep?: string, iteration?: numbe
  * Runtime frame identity key.
  *
  * Format: `<step>|<iteration-or-empty>`
+ *
+ * @param step - Step identifier
+ * @param iteration - Optional FOR loop iteration number
+ * @returns Pipe-delimited frame key
  */
 export function buildFrameKey(step: string, iteration?: number): string {
   return `${step}|${iteration !== undefined ? String(iteration) : ''}`;
@@ -47,6 +64,11 @@ export function buildFrameKey(step: string, iteration?: number): string {
  * Runtime completion identity key.
  *
  * Format: `<frameKey>|<entry>|<substep-or-empty>`
+ *
+ * @param frameKey - Frame key from {@link buildFrameKey}
+ * @param entry - Monotonic entry counter within the frame
+ * @param substep - Optional substep identifier
+ * @returns Pipe-delimited completion key
  */
 export function buildCompletionKey(frameKey: string, entry: number, substep?: string): string {
   return `${frameKey}|${String(entry)}|${substep ?? ''}`;
@@ -54,6 +76,9 @@ export function buildCompletionKey(frameKey: string, entry: number, substep?: st
 
 /**
  * Parse a completion key into frame/entry/substep components.
+ *
+ * @param key - Pipe-delimited completion key to parse
+ * @returns Parsed components, or null if the key format is invalid
  */
 export function parseCompletionKey(
   key: string,
@@ -76,6 +101,10 @@ export function parseCompletionKey(
  * Get the active FOR context for the current step, if present.
  *
  * Implicit synthetic contexts are not exposed as loop scope.
+ *
+ * @param forStack - Current FOR context stack
+ * @param step - Step identifier to match against the top context
+ * @returns The active FOR context, or undefined if none applies
  */
 export function getActiveForContext(
   forStack: readonly ForContext[] | undefined,
@@ -89,6 +118,9 @@ export function getActiveForContext(
 
 /**
  * Derive active runtime frame from persisted runbook state.
+ *
+ * @param state - Current runbook state
+ * @returns Frame key, step, and optional iteration for the active frame
  */
 export function deriveActiveFrame(state: RunbookState): {
   frameKey: string;
@@ -105,6 +137,12 @@ export function deriveActiveFrame(state: RunbookState): {
 
 /**
  * Build a StepPosition enriched with optional loop scope and expanded path.
+ *
+ * @param current - Current step identifier
+ * @param total - Total number of numbered steps in the runbook
+ * @param substep - Optional active substep identifier
+ * @param forStack - Optional FOR context stack for loop scope
+ * @returns StepPosition with loop and substep fields populated as needed
  */
 export function buildStepPosition(
   current: string,
