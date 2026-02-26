@@ -86,6 +86,8 @@ export interface Substep {
 export interface Step {
   /** Step identifier: "1" or "ErrorHandler" (REQUIRED) */
   readonly name: string;
+  /** Parser canonicalization marker for step-level workflow-list shorthand. */
+  readonly bodyKind?: 'workflow-shorthand';
   /** FOR loop clause defining iteration range */
   readonly forClause?: ForClause;
   /** Human-readable description from the step header */

@@ -149,8 +149,9 @@ describe('renderStep', () => {
   });
 
   it('renders shorthand for implicit workflow-only substep', () => {
-    const step: Step = {
+    const step = {
       name: '2',
+      bodyKind: 'workflow-shorthand',
       description: 'Review the plan',
       substeps: [
         {
@@ -159,15 +160,16 @@ describe('renderStep', () => {
           workflows: ['review-technical-accuracy.runbook.md'],
         },
       ],
-    };
+    } as Step;
     const result = renderStep(step);
     expect(result).toContain('- review-technical-accuracy.runbook.md');
     expect(result).not.toContain('### 2.1');
   });
 
   it('renders shorthand workflow substep with prompt', () => {
-    const step: Step = {
+    const step = {
       name: '2',
+      bodyKind: 'workflow-shorthand',
       description: 'Review the plan',
       substeps: [
         {
@@ -177,7 +179,7 @@ describe('renderStep', () => {
           workflows: ['review.runbook.md'],
         },
       ],
-    };
+    } as Step;
     const result = renderStep(step);
     expect(result).toContain('Review the following items carefully.');
     expect(result).toContain('- review.runbook.md');
@@ -356,10 +358,11 @@ More description`;
     const parsed2 = parseRunbook(rendered);
 
     expect(parsed2[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
-    expect(parsed2[0].substeps?.[0]).toMatchObject({
-      id: '1',
-      workflows: ['review-technical-accuracy.runbook.md', 'review-structural-integrity.runbook.md'],
-    });
+    expect((parsed2[0] as Step & { bodyKind?: string }).bodyKind).toBe('workflow-shorthand');
+    expect(parsed2[0].substeps?.map((substep) => substep.workflows)).toEqual([
+      ['review-technical-accuracy.runbook.md'],
+      ['review-structural-integrity.runbook.md'],
+    ]);
   });
 });
 

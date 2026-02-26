@@ -581,6 +581,7 @@ function finalizeStep(
 
     return {
       name: step.name,
+      bodyKind: 'workflow-shorthand',
       forClause: step.forClause,
       description: step.description,
       transitions: transitions ?? undefined,

@@ -1,6 +1,8 @@
 import type { Step, Action, Transitions, TransitionObject, Substep, Runbook } from '../types.js';
 import { stepIdToString } from '../step-id.js';
 
+type WorkflowShorthandStep = Step & { bodyKind?: 'workflow-shorthand' };
+
 /**
  * Render an Action to DSL string.
  *
@@ -121,31 +123,8 @@ function renderForClause(forClause: NonNullable<Step['forClause']>): string[] {
   return lines;
 }
 
-/**
- * Detect whether a step's substeps are synthetic workflow-only shorthand substeps
- * created by the parser's shorthand canonicalization.
- *
- * Returns shorthand substeps if all conditions hold:
- * 1. Step has at least one substep
- * 2. Substep IDs are sequential numeric values starting from 1
- * 3. Every substep has exactly one workflow path
- * 4. Substeps have no command, transitions, or agentType
- * 5. Substep descriptions are empty
- *
- * @param step - The step to inspect
- * @returns The shorthand substeps, or null if not shorthand
- */
-function getShorthandWorkflowSubsteps(step: Step): readonly Substep[] | null {
-  if (!step.substeps?.length) return null;
-
-  for (let i = 0; i < step.substeps.length; i += 1) {
-    const candidate = step.substeps[i];
-    if (candidate.id !== String(i + 1)) return null;
-    if (candidate.workflows?.length !== 1) return null;
-    if (candidate.command || candidate.transitions || candidate.agentType) return null;
-    if (candidate.description !== '') return null;
-  }
-
+function getShorthandWorkflowSubsteps(step: Step): readonly Substep[] | undefined {
+  if ((step as WorkflowShorthandStep).bodyKind !== 'workflow-shorthand') return undefined;
   return step.substeps;
 }
 
@@ -180,7 +159,7 @@ export function renderStep(step: Step): string {
   }
 
   const shorthandSubsteps = getShorthandWorkflowSubsteps(step);
-  if (shorthandSubsteps) {
+  if (shorthandSubsteps?.length) {
     const firstPrompt = shorthandSubsteps[0]?.prompt;
     if (firstPrompt) {
       lines.push(firstPrompt);

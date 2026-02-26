@@ -1078,6 +1078,7 @@ Review the tasks carefully.
 `;
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
+    expect(steps[0].bodyKind).toBe('workflow-shorthand');
     expect(steps[0].substeps).toHaveLength(2);
     expect(steps[0].substeps?.[0]).toMatchObject({
       id: '1',
@@ -1125,6 +1126,7 @@ Review this checklist.
 `;
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
+    expect(steps[0].bodyKind).toBe('workflow-shorthand');
     expect(steps[0].substeps).toHaveLength(4);
     expect(steps[0].substeps?.map((s) => s.workflows)).toEqual([
       ['review-technical-accuracy.runbook.md'],
