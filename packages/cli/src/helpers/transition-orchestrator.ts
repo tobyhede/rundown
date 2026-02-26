@@ -21,20 +21,31 @@ import {
   type StepTransitionedPayload,
 } from '@rundown-org/core';
 
+/** Side-effect policy applied when a runbook reaches a terminal state. */
 export interface TerminalSideEffectsPolicy {
+  /** Whether to pop the runbook from the session stack. */
   popRunbook: boolean;
+  /** Whether to update the parent runbook's agent binding. */
   updateParentBinding: boolean;
+  /** Result to propagate to the parent agent binding. */
   parentResult: 'pass' | 'fail';
 }
 
+/** Policy governing side effects for each terminal outcome. */
 export interface TransitionOrchestrationPolicy {
+  /** Side effects when the runbook completes successfully. */
   onComplete: TerminalSideEffectsPolicy;
+  /** Side effects when the runbook is stopped (failure). */
   onStopped: TerminalSideEffectsPolicy;
 }
 
+/** Event sink for transition lifecycle events. */
 export interface TransitionEventSink {
+  /** Called when a step transition occurs. */
   onStepTransitioned(payload: StepTransitionedPayload): void;
+  /** Called when the runbook completes successfully. */
   onRunbookCompleted(payload: RunbookCompletedPayload): void;
+  /** Called when the runbook is stopped (failure). */
   onRunbookStopped(payload: RunbookStoppedPayload): void;
 }
 
@@ -71,6 +82,7 @@ interface OrchestrateTransitionArgs {
   command?: string;
 }
 
+/** Result of orchestrating a single step transition. */
 export type OrchestrateTransitionResult =
   | {
       status: 'continue';

@@ -41,11 +41,13 @@ export function registerPassCommand(program: Command): void {
             // Handle agent binding completion (substep case)
             // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
             if (options.agent) {
-              const handled = await handleAgentBinding(ctx, options.agent, passConfig);
-              if (handled) return;
+              const agentResult = await handleAgentBinding(ctx, options.agent, passConfig);
+              if (agentResult === 'stopped') process.exit(1);
+              if (agentResult === 'handled') return;
             }
 
-            await executeTransition(ctx, passConfig);
+            const result = await executeTransition(ctx, passConfig);
+            if (result === 'stopped') process.exit(1);
           } finally {
             ctx.actor.stop();
           }

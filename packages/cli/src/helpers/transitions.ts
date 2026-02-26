@@ -15,6 +15,7 @@ import {
   ExecutionLifecycleService,
   extractLastAction,
   parseActionType,
+  type ActionType,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
@@ -30,7 +31,11 @@ import {
   type StepTransitionedPayload,
 } from '@rundown-org/core';
 import { getRunbookFromState } from './runbook-loader.js';
-import { drainResolvedCompletions, runExecutionLoop } from '../services/execution.js';
+import {
+  drainResolvedCompletions,
+  findStepOrThrow,
+  runExecutionLoop,
+} from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import {
@@ -38,11 +43,7 @@ import {
   type TransitionEventSink,
   type TransitionOrchestrationPolicy,
 } from './transition-orchestrator.js';
-
-/**
- * Action type derived from formatted action string.
- */
-export type ActionType = 'GOTO' | 'RETRY' | 'CONTINUE' | 'COMPLETE' | 'STOP';
+export type { ActionType } from '@rundown-org/core';
 
 /**
  * Configuration for transition behavior.
@@ -72,6 +73,8 @@ export interface TransitionConfig {
 
 /**
  * Canonical PASS transition behavior.
+ *
+ * @returns TransitionConfig for PASS transitions
  */
 export function createPassTransitionConfig(): TransitionConfig {
   return {
@@ -97,6 +100,8 @@ export function createPassTransitionConfig(): TransitionConfig {
 
 /**
  * Canonical FAIL transition behavior.
+ *
+ * @returns TransitionConfig for FAIL transitions
  */
 export function createFailTransitionConfig(): TransitionConfig {
   return {
@@ -320,12 +325,18 @@ function resolveBindingTarget(
  *
  * Agent completions are accepted only for the active frame+entry identity.
  * Accepted completions are recorded and drained through the shared transition path.
+ *
+ * @param ctx - Transition context
+ * @param agentId - Agent ID completing the step
+ * @param config - Transition configuration (pass or fail semantics)
+ * @returns 'handled' if completion was processed, 'stopped' if runbook stopped, 'not-applicable' if no binding exists
+ * @throws Error if binding is stale, child runbook is still active, or target identity is stale
  */
 export async function handleAgentBinding(
   ctx: TransitionContext,
   agentId: string,
   config: TransitionConfig,
-): Promise<boolean> {
+): Promise<'handled' | 'stopped' | 'not-applicable'> {
   const { output, manager, lifecycleService, state, steps, actorService, sessionService, cwd } =
     ctx;
   const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
@@ -335,7 +346,7 @@ export async function handleAgentBinding(
   if (!binding) {
     // No binding - this is a standalone runbook in agent's stack
     // Continue to main pass/fail flow
-    return false;
+    return 'not-applicable';
   }
 
   if (binding.status !== 'running') {
@@ -375,11 +386,13 @@ export async function handleAgentBinding(
     targetEntry: target.entry,
   });
 
+  // Derive transition config from child result, not from the outer pass/fail command
   const transitionConfig =
     result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
   if (!target.substep) {
-    await executeTransition(ctx, transitionConfig);
-    return true;
+    const execResult = await executeTransition(ctx, transitionConfig);
+    if (execResult === 'stopped') return 'stopped';
+    return 'handled';
   }
 
   const existing = await lifecycleService.getResolvedCompletion(
@@ -432,11 +445,11 @@ export async function handleAgentBinding(
 
   if (drained.status === 'stopped') {
     output.flush();
-    process.exit(1);
+    return 'stopped';
   }
   if (drained.status === 'done') {
     output.flush();
-    return true;
+    return 'handled';
   }
 
   if (drained.applied > 0) {
@@ -451,9 +464,9 @@ export async function handleAgentBinding(
     );
     output.flush();
     if (loopResult === 'stopped') {
-      process.exit(1);
+      return 'stopped';
     }
-    return true;
+    return 'handled';
   }
 
   output.status(
@@ -469,7 +482,7 @@ export async function handleAgentBinding(
     },
   );
   output.flush();
-  return true;
+  return 'handled';
 }
 
 /**
@@ -485,12 +498,12 @@ export async function handleAgentBinding(
 export async function executeTransition(
   ctx: TransitionContext,
   config: TransitionConfig,
-): Promise<void> {
+): Promise<'continue' | 'stopped'> {
   const { output, manager, actorService, state, steps, actor, cwd, agentId, lifecycleService } =
     ctx;
   const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
   const activeState = ensured.state;
-  const activeStep = steps.find((s) => s.name === activeState.step) ?? steps[0];
+  const activeStep = findStepOrThrow(steps, activeState.step);
   const isSubstepCompletion = !!(activeState.substep && activeStep.substeps?.length);
 
   if (isSubstepCompletion) {
@@ -537,15 +550,15 @@ export async function executeTransition(
     });
     if (drained.status === 'stopped') {
       output.flush();
-      process.exit(1);
+      return 'stopped';
     }
     if (drained.status === 'done') {
       output.flush();
-      return;
+      return 'continue';
     }
     if (drained.applied === 0) {
       output.flush();
-      return;
+      return 'continue';
     }
 
     const loopResult = await runExecutionLoop(
@@ -559,14 +572,14 @@ export async function executeTransition(
     );
     output.flush();
     if (loopResult === 'stopped') {
-      process.exit(1);
+      return 'stopped';
     }
-    return;
+    return 'continue';
   }
 
   // Capture previous state before mutation.
   const previousState = { ...activeState };
-  const currentStep = steps.find((s) => s.name === previousState.step) ?? steps[0];
+  const currentStep = findStepOrThrow(steps, previousState.step);
 
   actor.send({ type: config.eventType });
   const { state: actorUpdatedState, snapshot: rawSnapshot } = await actorService.updateFromActor(
@@ -619,11 +632,11 @@ export async function executeTransition(
 
   if (orchestration.status === 'stopped') {
     output.flush();
-    process.exit(1);
+    return 'stopped';
   }
   if (orchestration.status === 'done') {
     output.flush();
-    return;
+    return 'continue';
   }
 
   const emitter = createBridgedEmitter(updatedState, output);
@@ -639,6 +652,7 @@ export async function executeTransition(
 
   output.flush();
   if (loopResult === 'stopped') {
-    process.exit(1);
+    return 'stopped';
   }
+  return 'continue';
 }

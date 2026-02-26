@@ -113,6 +113,8 @@ describe('execution service', () => {
       });
     });
 
+    // Shorthand-canonicalized workflow steps (e.g., `## 2. Review`) get an implicit
+    // substep `.1`, so Step resolves to `2.1` rather than just `2`.
     it('returns Step as N.1 for shorthand-canonicalized workflow steps', () => {
       const vars = buildStepVariables('2', '1');
       expect(vars).toMatchObject({

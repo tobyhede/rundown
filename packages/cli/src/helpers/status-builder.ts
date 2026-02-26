@@ -205,7 +205,7 @@ export function buildActiveStatus(
   const activeFrameKey = activeState.activeFrameKey;
   const activeEntry = activeState.activeEntry;
   const unresolved =
-    currentStep?.substeps?.length && activeFrameKey && activeEntry
+    currentStep?.substeps?.length && activeFrameKey && activeEntry !== undefined
       ? countUnresolvedSubsteps(
           currentStep.substeps,
           activeState.resolvedCompletions,

@@ -125,7 +125,8 @@ describe('FOR loop transitions integration', () => {
       runCli('run --prompted agg-one-fail.runbook.md', workspace);
 
       // Iteration 1: pass
-      runCli('pass', workspace);
+      const iter1 = runCli('pass', workspace);
+      expect(iter1.exitCode).toBe(0);
 
       // Iteration 2: fail → BREAK at iteration level → step-level PASS ALL fails → STOP
       const result = runCli('fail', workspace);
@@ -146,7 +147,8 @@ describe('FOR loop transitions integration', () => {
       runCli('run --prompted agg-any-pass.runbook.md', workspace);
 
       // Iteration 1: fail → iteration-level CONTINUE (no BREAK)
-      runCli('fail', workspace);
+      const iter1 = runCli('fail', workspace);
+      expect(iter1.exitCode).toBe(0);
 
       // Iteration 2: pass → iteration-level CONTINUE → loop ends
       // Step-level PASS ANY: [fail, pass] → at least one passed → CONTINUE to step 2
@@ -171,7 +173,8 @@ describe('FOR loop transitions integration', () => {
       runCli('run --prompted agg-break.runbook.md', workspace);
 
       // Iteration 1: pass
-      runCli('pass', workspace);
+      const iter1 = runCli('pass', workspace);
+      expect(iter1.exitCode).toBe(0);
 
       // Iteration 2: fail → BREAK (skips iteration 3)
       // Only 2 rd commands needed before terminal state

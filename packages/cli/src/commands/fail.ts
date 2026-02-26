@@ -41,11 +41,13 @@ export function registerFailCommand(program: Command): void {
             // Handle agent binding completion (substep case)
             // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
             if (options.agent) {
-              const handled = await handleAgentBinding(ctx, options.agent, failConfig);
-              if (handled) return;
+              const agentResult = await handleAgentBinding(ctx, options.agent, failConfig);
+              if (agentResult === 'stopped') process.exit(1);
+              if (agentResult === 'handled') return;
             }
 
-            await executeTransition(ctx, failConfig);
+            const result = await executeTransition(ctx, failConfig);
+            if (result === 'stopped') process.exit(1);
           } finally {
             ctx.actor.stop();
           }

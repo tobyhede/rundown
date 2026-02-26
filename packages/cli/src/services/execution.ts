@@ -173,6 +173,22 @@ export function buildStepVariables(
   return vars;
 }
 
+/**
+ * Find a step by name, throwing if not found.
+ *
+ * Replaces silent `steps[0]` fallbacks that mask state corruption.
+ *
+ * @param steps - Parsed runbook steps
+ * @param stepName - Step name to find
+ * @returns The matching step
+ * @throws Error if step is not found (indicates state corruption)
+ */
+export function findStepOrThrow(steps: Step[], stepName: string): Step {
+  const step = steps.find((s) => s.name === stepName);
+  if (!step) throw new Error(`Step '${stepName}' not found — possible state corruption`);
+  return step;
+}
+
 interface ApplyResultTransitionArgs {
   manager: RunbookStateManager;
   actorService: RunbookActorService;
@@ -260,6 +276,7 @@ async function applyResultTransition({
   return { status: 'stopped' };
 }
 
+/** Arguments for draining resolved substep completions. */
 export interface DrainResolvedCompletionsArgs {
   manager: RunbookStateManager;
   actorService: RunbookActorService;
@@ -275,6 +292,7 @@ export interface DrainResolvedCompletionsArgs {
   command?: string;
 }
 
+/** Result of draining resolved substep completions. */
 export type DrainResolvedCompletionsResult =
   | {
       status: 'continue';
@@ -307,9 +325,10 @@ export async function drainResolvedCompletions({
   let state = currentState;
   let applied = 0;
 
+  // Loop invariant: `state` always reflects the latest persisted runbook state.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
-    const currentStep = steps.find((s) => s.name === state.step) ?? steps[0];
+    const currentStep = findStepOrThrow(steps, state.step);
     if (!currentStep.substeps?.length || !state.substep) {
       return { status: 'continue', state, unresolved: 0, applied };
     }
@@ -407,8 +426,7 @@ export async function runExecutionLoop(
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
-    const currentStepIndex = steps.findIndex((s) => s.name === currentState.step);
-    const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
+    const currentStep = findStepOrThrow(steps, currentState.step);
 
     const totalSteps = countNumberedSteps(steps);
 

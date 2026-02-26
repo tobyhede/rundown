@@ -21,6 +21,17 @@ import {
 } from '@rundown-org/core';
 import type { OutputRenderer, RendererOptions } from './types.js';
 
+type JsonPosition = {
+  current: string;
+  total: number;
+  substep?: string;
+  at?: string;
+  for?: { index: number; end?: number };
+  frameKey?: string;
+  entry?: number;
+  unresolved?: number;
+};
+
 /**
  * Collected JSON output from events.
  */
@@ -32,39 +43,10 @@ interface JsonOutput {
   code?: string;
   data?: Record<string, unknown>;
   items?: unknown[];
-  from?: {
-    current: string;
-    total: number | string;
-    substep?: string;
-    at?: string;
-    for?: { index: number; end?: number };
-    frameKey?: string;
-    entry?: number;
-    unresolved?: number;
-  };
-  to?: {
-    current: string;
-    total: number | string;
-    substep?: string;
-    at?: string;
-    for?: { index: number; end?: number };
-    frameKey?: string;
-    entry?: number;
-    unresolved?: number;
-  };
+  from?: JsonPosition;
+  to?: JsonPosition;
   [key: string]: unknown;
 }
-
-type JsonPosition = {
-  current: string;
-  total: number;
-  substep?: string;
-  at?: string;
-  for?: { index: number; end?: number };
-  frameKey?: string;
-  entry?: number;
-  unresolved?: number;
-};
 
 /**
  * Renders output events as JSON.

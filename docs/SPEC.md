@@ -73,6 +73,7 @@ Nested steps defined by H3 (`###`) headers.
 
 ### 3.3 Runbook List Shorthand
 List of external runbooks to execute.
+
 ```markdown
 - ./deploy-db.runbook.md
 - ./deploy-api.runbook.md
@@ -119,7 +120,7 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 **Defaults**:
 *   If only `PASS` defined: `FAIL` -> `STOP`.
 *   If only `FAIL` defined: `PASS` -> `CONTINUE`.
-*   If neither: `PASS: CONTINUE`, `FAIL: STOP`.
+*   If neither is defined: `PASS: CONTINUE`, `FAIL: STOP`.
 
 ### 4.2 Actions
 

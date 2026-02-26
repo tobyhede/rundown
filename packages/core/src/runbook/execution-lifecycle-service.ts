@@ -126,6 +126,7 @@ export class ExecutionLifecycleService {
     if (!base.activeFrameKey || base.activeEntry === undefined) {
       entry = knownEntry > 0 ? knownEntry : 1;
     } else if (reenteredSameFrame || switchedFrame) {
+      // Bump entry on re-entry (GOTO/RETRY) or frame switch to isolate completion scopes
       entry = Math.max(knownEntry, entry) + 1;
     } else if (base.activeFrameKey !== toFrameKey) {
       entry = Math.max(knownEntry, entry) + 1;

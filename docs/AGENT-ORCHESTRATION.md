@@ -291,7 +291,7 @@ STATUS: FAIL
 | `FAIL` | Agent encountered issues or rejected the work |
 | `BLOCKED` | Agent could not proceed (used in plan execution) |
 
-The plugin parses this from agent output and translates it to `rd pass --agent <id>` or `rd fail --agent <id>`.
+The plugin parses this from agent output and translates it to `rd pass --agent <id>` or `rd fail --agent <id>`. See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
 
 Routing behavior:
 - Agent completion and plain `pass/fail` share one record-and-drain transition path.

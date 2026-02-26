@@ -570,6 +570,16 @@ export async function startRunbook(
 }
 
 /**
+ * Infer entry number from persisted frame state when not explicitly set.
+ */
+function inferEntryFromState(state: RunbookState, frameKey: string): number | undefined {
+  const known = state.frameEntries?.[frameKey];
+  if (state.activeFrameKey === frameKey && state.activeEntry) return state.activeEntry;
+  if (known && known > 0) return known;
+  return undefined;
+}
+
+/**
  * Mode 3: Bind agent to pending step, optionally starting child runbook.
  *
  * @param ctx - Pipeline context
@@ -613,15 +623,7 @@ export async function bindAgent(
   const normalizedFrameKey =
     pending.targetFrameKey ??
     lifecycleService.buildTargetFrameKey(pending.targetStep, pending.targetIteration);
-  const normalizedEntry =
-    pending.targetEntry ??
-    (() => {
-      const known = state.frameEntries?.[normalizedFrameKey];
-      if (state.activeFrameKey === normalizedFrameKey && state.activeEntry)
-        return state.activeEntry;
-      if (known && known > 0) return known;
-      return undefined;
-    })();
+  const normalizedEntry = pending.targetEntry ?? inferEntryFromState(state, normalizedFrameKey);
   if (!normalizedEntry) {
     return {
       ok: false,
