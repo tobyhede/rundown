@@ -54,7 +54,7 @@ async function writeForRunbook(
 
   const content = `## 1. Process
 - FOR i IN 1 TO ${String(iterations)}
-${iterLines ? iterLines + '\n' : ''}- PASS ${stepPassMod}: ${stepPass}
+${iterLines ? `${iterLines}\n` : ''}- PASS ${stepPassMod}: ${stepPass}
 - FAIL ${stepFailMod}: ${stepFail}
 
 ### 1.1 Check
