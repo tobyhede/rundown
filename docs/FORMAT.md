@@ -99,7 +99,7 @@ where action is:
 Context constraints:
 - `NEXT` is only valid inside substeps of a FOR step
 - `BREAK` is valid inside substeps of a FOR step and FOR-level nested transitions
-- FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions `CONTINUE`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
+- FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions: `CONTINUE` (advance to next iteration), `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
 
 where message is:
   name | "\"" text "\""

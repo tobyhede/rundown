@@ -49,6 +49,12 @@ export interface TransitionEventSink {
   onRunbookStopped(payload: RunbookStoppedPayload): void;
 }
 
+/**
+ * Create a {@link TransitionEventSink} that delegates to an event emitter.
+ *
+ * @param emitter - Event emitter with an `emit` method for forwarding transition events
+ * @returns TransitionEventSink that forwards step-transitioned, runbook-completed, and runbook-stopped events
+ */
 export function transitionSinkFromEmitter(
   emitter: Pick<ExecutionEventEmitter, 'emit'>,
 ): TransitionEventSink {

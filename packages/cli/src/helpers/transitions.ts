@@ -650,6 +650,9 @@ export async function handleAgentCompletion(
  *
  * @param ctx - Transition context
  * @param config - Transition configuration
+ * @returns `'continue'` if the runbook should keep running, `'stopped'` if it reached a terminal state
+ * @throws Error from `findStepOrThrow` if the active step is missing (state corruption),
+ *   from `ensureActiveEntry` on lifecycle violations, or from orchestration failures
  */
 export async function executeTransition(
   ctx: TransitionContext,

@@ -67,11 +67,13 @@ Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and 
 *   **Stdio**: Inherited.
 
 ### 3.2 Substeps
+
 Nested steps defined by H3 (`###`) headers.
 *   **Identifiers**: `### 1`, `### 1.1` (sequential), or `### Name` (named).
 *   **Aggregation**: Parent step outcome is derived from substeps via transitions (`ALL`/`ANY`).
 
 ### 3.3 Runbook List Shorthand
+
 List of external runbooks to execute.
 
 ```markdown

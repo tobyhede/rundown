@@ -34,10 +34,12 @@ export function formatPosition(pos: StepPosition): string {
  *
  * Unlike formatPosition which shows "n/N", this shows just the step number
  * with optional substep (e.g., "1" or "2.1"). Used in action blocks where
- * the total is redundant information.
+ * the total is redundant information. When the position includes a FOR loop
+ * context, `derivePositionAt` incorporates the iteration index (e.g., "2.3"
+ * for step 2 iteration 3, or "2.3.1" for step 2 iteration 3 substep 1).
  *
  * @param pos - The StepPosition to format
- * @returns Formatted step number string (e.g., "1", "2.1", "RECOVER")
+ * @returns Formatted step number string (e.g., "1", "2.1", "2.3", "2.3.1", "RECOVER")
  */
 export function formatStepNumber(pos: StepPosition): string {
   return derivePositionAt(pos);

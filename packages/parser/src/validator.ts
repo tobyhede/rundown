@@ -41,7 +41,7 @@ function getErrorContext(step: Step, substepId?: string): string {
  * Checks for conformance with:
  * - Step pattern rules (numeric vs named steps)
  * - Sequential numbering for numeric steps
- * - Exclusivity rule (step must have exactly one of: body, substeps, or runbook list)
+ * - Exclusivity rule (step may have at most one of: body or substeps)
  * - GOTO target validity and self-loop detection
  * - Schema validation for each step structure
  *

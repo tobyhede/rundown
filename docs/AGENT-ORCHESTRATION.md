@@ -297,6 +297,7 @@ Routing behavior:
 - Agent completion and plain `pass/fail` share one record-and-drain transition path.
 - Completion keys are scoped to `frame + entry + substep`; stale completions from previous entries are rejected.
 - Resolved completions drain in deterministic substep order, and step-level transition does not execute until the current scope has no unresolved substeps.
+- When a completion arrives for a frontier substep that is not at the active cursor, it is **deferred** — stored and applied when the cursor reaches that substep. See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
 
 **Important:** The STATUS line should appear at the end of the agent's response. If no STATUS line is found, the plugin treats the result based on the agent's exit behaviour.
 
