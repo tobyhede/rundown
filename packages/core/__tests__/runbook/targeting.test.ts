@@ -3,10 +3,15 @@ import {
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
+  buildStepPosition,
+  buildTargetKey,
+  deriveActiveFrame,
   deriveExecutionAt,
   derivePositionAt,
+  getActiveForContext,
   parseCompletionKey,
 } from '../../src/runbook/targeting.js';
+import type { ForContext, RunbookState } from '../../src/runbook/types.js';
 
 describe('targeting helpers', () => {
   describe('deriveExecutionAt', () => {
@@ -152,6 +157,217 @@ describe('targeting helpers', () => {
       const after = new Date().toISOString();
       expect(completion.completedAt >= before).toBe(true);
       expect(completion.completedAt <= after).toBe(true);
+    });
+  });
+
+  describe('buildTargetKey', () => {
+    it('returns step only key', () => {
+      expect(buildTargetKey('1')).toBe('1||');
+    });
+
+    it('returns step with substep key', () => {
+      expect(buildTargetKey('1', 'sub')).toBe('1|sub|');
+    });
+
+    it('returns step with iteration key', () => {
+      expect(buildTargetKey('1', undefined, 2)).toBe('1||2');
+    });
+
+    it('returns step with both substep and iteration key', () => {
+      expect(buildTargetKey('1', 'sub', 2)).toBe('1|sub|2');
+    });
+  });
+
+  describe('getActiveForContext', () => {
+    it('returns undefined for empty forStack', () => {
+      expect(getActiveForContext([], '1')).toBeUndefined();
+    });
+
+    it('returns undefined for undefined forStack', () => {
+      expect(getActiveForContext(undefined, '1')).toBeUndefined();
+    });
+
+    it('returns undefined when top stepId does not match', () => {
+      const forStack: readonly ForContext[] = [
+        {
+          stepId: '2',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          implicit: false,
+          source: { kind: 'range' },
+        },
+      ];
+      expect(getActiveForContext(forStack, '1')).toBeUndefined();
+    });
+
+    it('returns undefined when top context is implicit', () => {
+      const forStack: readonly ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 1,
+          implicit: true,
+          source: { kind: 'range' },
+        },
+      ];
+      expect(getActiveForContext(forStack, '1')).toBeUndefined();
+    });
+
+    it('returns matching explicit context', () => {
+      const context: ForContext = {
+        stepId: '1',
+        iteration: 2,
+        start: 1,
+        end: 3,
+        implicit: false,
+        source: { kind: 'range' },
+      };
+      const forStack: readonly ForContext[] = [context];
+      expect(getActiveForContext(forStack, '1')).toBe(context);
+    });
+  });
+
+  describe('deriveActiveFrame', () => {
+    it('returns frame without iteration for non-loop state', () => {
+      const state = { step: '1', forStack: undefined } as unknown as RunbookState;
+      const frame = deriveActiveFrame(state);
+      expect(frame).toEqual({
+        frameKey: '1|',
+        step: '1',
+      });
+      expect(frame.iteration).toBeUndefined();
+    });
+
+    it('returns frame with iteration for loop state with matching forStack', () => {
+      const forStack: readonly ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          implicit: false,
+          source: { kind: 'range' },
+        },
+      ];
+      const state = {
+        step: '1',
+        forStack,
+      } as unknown as RunbookState;
+      const frame = deriveActiveFrame(state);
+      expect(frame).toEqual({
+        frameKey: '1|2',
+        step: '1',
+        iteration: 2,
+      });
+    });
+
+    it('returns frame without iteration when forStack does not match step', () => {
+      const forStack: readonly ForContext[] = [
+        {
+          stepId: '2',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          implicit: false,
+          source: { kind: 'range' },
+        },
+      ];
+      const state = {
+        step: '1',
+        forStack,
+      } as unknown as RunbookState;
+      const frame = deriveActiveFrame(state);
+      expect(frame).toEqual({
+        frameKey: '1|',
+        step: '1',
+      });
+      expect(frame.iteration).toBeUndefined();
+    });
+  });
+
+  describe('buildStepPosition', () => {
+    it('builds basic position with step and total', () => {
+      const position = buildStepPosition('1', 3, undefined);
+      expect(position).toEqual({
+        current: '1',
+        total: 3,
+      });
+      expect(position.substep).toBeUndefined();
+      expect(position.for).toBeUndefined();
+    });
+
+    it('builds position with substep', () => {
+      const position = buildStepPosition('1', 3, '1');
+      expect(position).toEqual({
+        current: '1',
+        total: 3,
+        substep: '1',
+      });
+      expect(position.for).toBeUndefined();
+    });
+
+    it('builds position with forStack matching step', () => {
+      const forStack: readonly ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 5,
+          implicit: false,
+          source: { kind: 'range' },
+        },
+      ];
+      const position = buildStepPosition('1', 3, undefined, forStack);
+      expect(position).toEqual({
+        current: '1',
+        total: 3,
+        for: {
+          index: 2,
+          end: 5,
+        },
+      });
+    });
+
+    it('returns no for field when forStack does not match step', () => {
+      const forStack: readonly ForContext[] = [
+        {
+          stepId: '2',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          implicit: false,
+          source: { kind: 'range' },
+        },
+      ];
+      const position = buildStepPosition('1', 3, undefined, forStack);
+      expect(position).toEqual({
+        current: '1',
+        total: 3,
+      });
+      expect(position.for).toBeUndefined();
+    });
+
+    it('omits end field when forStack end is undefined', () => {
+      const forStack: readonly ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          implicit: false,
+          source: { kind: 'file', path: '/data.txt', format: 'text', snapshot: null },
+        },
+      ];
+      const position = buildStepPosition('1', 3, undefined, forStack);
+      expect(position).toEqual({
+        current: '1',
+        total: 3,
+        for: {
+          index: 1,
+        },
+      });
+      expect(position.for?.end).toBeUndefined();
     });
   });
 });

@@ -5,10 +5,11 @@ import {
   renderTransitions,
   renderSubstep,
   renderStep,
+  renderRunbook,
 } from '../../src/runbook/renderer/renderer.js';
 import { parseRunbook } from '../../src/runbook/index.js';
 import { parseRunbookDocument } from '@rundown-org/parser';
-import type { Step, Substep } from '../../src/runbook/types.js';
+import type { Step, Substep, Runbook } from '../../src/runbook/types.js';
 
 describe('renderAction', () => {
   it('renders CONTINUE', () => {
@@ -37,6 +38,18 @@ describe('renderAction', () => {
 
   it('renders GOTO NEXT', () => {
     expect(renderAction({ type: 'GOTO', target: { step: 'NEXT' } })).toBe('GOTO NEXT');
+  });
+
+  it('renders NEXT', () => {
+    expect(renderAction({ type: 'NEXT' })).toBe('NEXT');
+  });
+
+  it('renders BREAK', () => {
+    expect(renderAction({ type: 'BREAK' })).toBe('BREAK');
+  });
+
+  it('renders COMPLETE with message', () => {
+    expect(renderAction({ type: 'COMPLETE', message: 'all done' })).toBe('COMPLETE "all done"');
   });
 });
 
@@ -151,17 +164,70 @@ describe('renderStep', () => {
     expect(result).toContain('- review-technical-accuracy.runbook.md');
     expect(result).not.toContain('### 2.1');
   });
+
+  it('renders shorthand workflow substep with prompt', () => {
+    const step: Step = {
+      name: '2',
+      description: 'Review the plan',
+      substeps: [
+        {
+          id: '1',
+          description: '',
+          prompt: 'Review the following items carefully.',
+          workflows: ['review.runbook.md'],
+        },
+      ],
+    };
+    const result = renderStep(step);
+    expect(result).toContain('Review the following items carefully.');
+    expect(result).toContain('- review.runbook.md');
+    expect(result).not.toContain('### 2.1');
+  });
 });
 
-describe('renderStep', () => {
-  it('renders static step unchanged', () => {
+describe('renderForClause coverage', () => {
+  it('renders FOR with source and default start', () => {
     const step: Step = {
       name: '1',
-      description: 'Setup',
+      description: 'Iterate',
+      forClause: { variable: 'item', start: 1, end: undefined, source: 'items' },
+      substeps: [{ id: '1', description: 'Process' }],
     };
+    const result = renderStep(step);
+    expect(result).toContain('- FOR item IN {{ items }}');
+  });
 
-    const rendered = renderStep(step);
-    expect(rendered).toContain('## 1. Setup');
+  it('renders FOR with windowed source', () => {
+    const step: Step = {
+      name: '1',
+      description: 'Iterate',
+      forClause: { variable: 'item', start: 2, end: 5, source: 'items' },
+      substeps: [{ id: '1', description: 'Process' }],
+    };
+    const result = renderStep(step);
+    expect(result).toContain('- FOR item IN 2 TO 5 OF {{ items }}');
+  });
+
+  it('renders FOR with unnamed variable and explicit start', () => {
+    const step: Step = {
+      name: '1',
+      description: 'Iterate',
+      forClause: { start: 2, end: 5 },
+      substeps: [{ id: '1', description: 'Process' }],
+    };
+    const result = renderStep(step);
+    expect(result).toContain('- FOR 2 TO 5');
+  });
+
+  it('renders FOR with unnamed variable and implicit start', () => {
+    const step: Step = {
+      name: '1',
+      description: 'Iterate',
+      forClause: { start: 1, end: 5 },
+      substeps: [{ id: '1', description: 'Process' }],
+    };
+    const result = renderStep(step);
+    expect(result).toContain('- FOR 5');
   });
 });
 
@@ -373,5 +439,41 @@ echo check
       retry: 0,
       action: { type: 'BREAK' },
     });
+  });
+});
+
+describe('renderRunbook', () => {
+  it('renders runbook with title and description', () => {
+    const runbook: Runbook = {
+      title: 'My Runbook',
+      description: 'A test runbook',
+      steps: [
+        { name: '1', description: 'First step' },
+        { name: '2', description: 'Second step' },
+      ],
+    };
+    const result = renderRunbook(runbook);
+    expect(result).toContain('# My Runbook');
+    expect(result).toContain('A test runbook');
+    expect(result).toContain('## 1. First step');
+    expect(result).toContain('## 2. Second step');
+  });
+
+  it('renders runbook without title', () => {
+    const runbook: Runbook = {
+      steps: [{ name: '1', description: 'Only step' }],
+    };
+    const result = renderRunbook(runbook);
+    expect(result).not.toMatch(/^# /m);
+    expect(result).toContain('## 1. Only step');
+  });
+
+  it('renders runbook with empty steps', () => {
+    const runbook: Runbook = {
+      title: 'Empty',
+      steps: [],
+    };
+    const result = renderRunbook(runbook);
+    expect(result).toContain('# Empty');
   });
 });
