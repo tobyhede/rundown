@@ -124,11 +124,13 @@ export class ExecutionLifecycleService {
       fromFrameKey !== undefined && toFrameKey !== fromFrameKey && nextState !== undefined;
 
     if (!base.activeFrameKey || base.activeEntry === undefined) {
+      // First-time initialization: use known history or start at 1
       entry = knownEntry > 0 ? knownEntry : 1;
     } else if (reenteredSameFrame || switchedFrame) {
       // Bump entry on re-entry (GOTO/RETRY) or frame switch to isolate completion scopes
       entry = Math.max(knownEntry, entry) + 1;
     } else if (base.activeFrameKey !== toFrameKey) {
+      // Frame key drift without explicit transition — also bumps to isolate scopes
       entry = Math.max(knownEntry, entry) + 1;
     }
 

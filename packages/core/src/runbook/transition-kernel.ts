@@ -16,6 +16,25 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+/**
+ * Narrow an XState snapshot to its context object.
+ *
+ * @param snapshot - Raw XState snapshot object to inspect
+ * @returns The snapshot context if valid, otherwise undefined
+ */
+function narrowSnapshotContext(snapshot: unknown): SnapshotContext | undefined {
+  if (
+    snapshot &&
+    typeof snapshot === 'object' &&
+    'context' in snapshot &&
+    snapshot.context &&
+    typeof snapshot.context === 'object'
+  ) {
+    return snapshot.context as SnapshotContext;
+  }
+  return undefined;
+}
+
 function isLastAction(value: unknown): value is LastAction {
   if (!isObjectRecord(value) || typeof value.type !== 'string') return false;
 
@@ -54,16 +73,9 @@ function isLastAction(value: unknown): value is LastAction {
  * @returns The validated LastAction if present in the snapshot context, otherwise undefined
  */
 export function extractLastAction(snapshot: unknown): LastAction | undefined {
-  if (
-    snapshot &&
-    typeof snapshot === 'object' &&
-    'context' in snapshot &&
-    snapshot.context &&
-    typeof snapshot.context === 'object' &&
-    'lastAction' in snapshot.context
-  ) {
-    const action = (snapshot.context as SnapshotContext).lastAction;
-    return isLastAction(action) ? action : undefined;
+  const ctx = narrowSnapshotContext(snapshot);
+  if (ctx && 'lastAction' in ctx) {
+    return isLastAction(ctx.lastAction) ? ctx.lastAction : undefined;
   }
   return undefined;
 }
@@ -75,15 +87,9 @@ export function extractLastAction(snapshot: unknown): LastAction | undefined {
  * @returns The retry limit from the snapshot context, or 0 if not present
  */
 export function extractRetryMax(snapshot: unknown): number {
-  if (
-    snapshot &&
-    typeof snapshot === 'object' &&
-    'context' in snapshot &&
-    snapshot.context &&
-    typeof snapshot.context === 'object' &&
-    'retryMax' in snapshot.context
-  ) {
-    return (snapshot.context as SnapshotContext).retryMax ?? 0;
+  const ctx = narrowSnapshotContext(snapshot);
+  if (ctx && 'retryMax' in ctx) {
+    return ctx.retryMax ?? 0;
   }
   return 0;
 }
@@ -98,15 +104,9 @@ export function extractRetryMax(snapshot: unknown): number {
  * @returns The iteration-level retry count if positive, otherwise the fallback retryCount
  */
 export function extractRetryDisplayCount(snapshot: unknown, retryCount: number): number {
-  if (
-    snapshot &&
-    typeof snapshot === 'object' &&
-    'context' in snapshot &&
-    snapshot.context &&
-    typeof snapshot.context === 'object' &&
-    'iterationRetryCount' in snapshot.context
-  ) {
-    const iterationRetryCount = (snapshot.context as SnapshotContext).iterationRetryCount ?? 0;
+  const ctx = narrowSnapshotContext(snapshot);
+  if (ctx && 'iterationRetryCount' in ctx) {
+    const iterationRetryCount = ctx.iterationRetryCount ?? 0;
     if (iterationRetryCount > 0) return iterationRetryCount;
   }
   return retryCount;
@@ -119,15 +119,9 @@ export function extractRetryDisplayCount(snapshot: unknown, retryCount: number):
  * @returns The last message string if present, otherwise undefined
  */
 export function extractLastMessage(snapshot: unknown): string | undefined {
-  if (
-    snapshot &&
-    typeof snapshot === 'object' &&
-    'context' in snapshot &&
-    snapshot.context &&
-    typeof snapshot.context === 'object' &&
-    'lastMessage' in snapshot.context
-  ) {
-    const msg = (snapshot.context as Record<string, unknown>).lastMessage;
+  const ctx = narrowSnapshotContext(snapshot);
+  if (ctx && 'lastMessage' in ctx) {
+    const msg = (ctx as Record<string, unknown>).lastMessage;
     return typeof msg === 'string' ? msg : undefined;
   }
   return undefined;

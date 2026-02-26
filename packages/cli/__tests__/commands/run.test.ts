@@ -131,8 +131,8 @@ describe('start command', () => {
     });
 
     it('accepts substep format', async () => {
-      runCli('stop', workspace);
-      runCli('run --prompted runbooks/substeps.runbook.md', workspace);
+      expect(runCli('stop', workspace).exitCode).toBe(0);
+      expect(runCli('run --prompted runbooks/substeps.runbook.md', workspace).exitCode).toBe(0);
 
       const result = runCli('run --step 1.1', workspace);
 
@@ -166,8 +166,8 @@ describe('start command', () => {
     });
 
     it('should queue step with runbook file', async () => {
-      runCli('stop', workspace);
-      runCli('run --prompted runbooks/substeps.runbook.md', workspace);
+      expect(runCli('stop', workspace).exitCode).toBe(0);
+      expect(runCli('run --prompted runbooks/substeps.runbook.md', workspace).exitCode).toBe(0);
 
       const result = runCli('run --step 1.1 runbooks/simple.runbook.md', workspace);
 

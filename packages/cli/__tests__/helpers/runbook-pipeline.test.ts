@@ -73,7 +73,7 @@ const { validateSources, prepareRunbook, queueStep, startRunbook, bindAgent } = 
   '../../src/helpers/runbook-pipeline'
 );
 
-function makeStep(overrides: Partial<any> = {}): any {
+function makeStep(overrides: Record<string, unknown> = {}): any {
   return {
     name: '1',
     description: 'Test Step',
@@ -85,7 +85,7 @@ function makeStep(overrides: Partial<any> = {}): any {
   } as any;
 }
 
-function makeLifecycle(overrides: Partial<any> = {}): any {
+function makeLifecycle(overrides: Record<string, unknown> = {}): any {
   return {
     ensureActiveEntry: jest
       .fn<any>()
@@ -540,6 +540,7 @@ describe('queueStep', () => {
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
     }
+    expect(ctx.lifecycleService.pushPendingStep).not.toHaveBeenCalled();
   });
 });
 

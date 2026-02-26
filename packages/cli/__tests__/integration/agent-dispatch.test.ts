@@ -183,6 +183,27 @@ Do the work.
       await writeFile(join(ws.cwd, name), content);
     }
 
+    async function writeMultiChildRunbook(ws: TestWorkspace): Promise<void> {
+      const parentContent = `## 1. Dispatch tasks
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+### 1.1 Task A
+- task-a.runbook.md
+
+### 1.2 Task B
+- task-b.runbook.md
+
+## 2. Summary
+- PASS: COMPLETE
+
+All tasks done.
+`;
+      await writeFile(join(ws.cwd, 'multi-child.runbook.md'), parentContent);
+      await writeChildRunbook(ws, 'task-a.runbook.md');
+      await writeChildRunbook(ws, 'task-b.runbook.md');
+    }
+
     it('child runbook pass — agent completes child, parent advances', async () => {
       const parentContent = `## 1. Work
 - PASS ALL: CONTINUE
@@ -250,24 +271,7 @@ Final.
     });
 
     it('multi-substep with child runbooks — sequential dispatch', async () => {
-      const parentContent = `## 1. Dispatch tasks
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
-
-### 1.1 Task A
-- task-a.runbook.md
-
-### 1.2 Task B
-- task-b.runbook.md
-
-## 2. Summary
-- PASS: COMPLETE
-
-All tasks done.
-`;
-      await writeFile(join(workspace.cwd, 'multi-child.runbook.md'), parentContent);
-      await writeChildRunbook(workspace, 'task-a.runbook.md');
-      await writeChildRunbook(workspace, 'task-b.runbook.md');
+      await writeMultiChildRunbook(workspace);
 
       // Start parent at 1.1
       let result = runCli('run --prompted multi-child.runbook.md', workspace);
@@ -300,24 +304,7 @@ All tasks done.
     });
 
     it('multi-substep with child — second child fails', async () => {
-      const parentContent = `## 1. Dispatch tasks
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
-
-### 1.1 Task A
-- task-a.runbook.md
-
-### 1.2 Task B
-- task-b.runbook.md
-
-## 2. Summary
-- PASS: COMPLETE
-
-All tasks done.
-`;
-      await writeFile(join(workspace.cwd, 'multi-child.runbook.md'), parentContent);
-      await writeChildRunbook(workspace, 'task-a.runbook.md');
-      await writeChildRunbook(workspace, 'task-b.runbook.md');
+      await writeMultiChildRunbook(workspace);
 
       // Start parent
       expect(runCli('run --prompted multi-child.runbook.md', workspace).exitCode).toBe(0);
@@ -332,6 +319,111 @@ All tasks done.
       expect(runCli('run --step 1 task-b.runbook.md', workspace).exitCode).toBe(0);
       expect(runCli('run --agent agent-2', workspace).exitCode).toBe(0);
       result = runCli('fail --agent agent-2', workspace);
+      expect(result.exitCode).toBe(1);
+    });
+  });
+
+  // ===========================================================================
+  // Group 4: Step-Level Child Runbooks (No Substeps)
+  // ===========================================================================
+  describe('step-level child runbooks (no substeps)', () => {
+    async function writeChildRunbook(ws: TestWorkspace, name: string): Promise<void> {
+      const content = `## 1. Execute
+- PASS: COMPLETE
+
+Do the work.
+`;
+      await writeFile(join(ws.cwd, name), content);
+    }
+
+    it('step-level child pass — auto-advances parent to next step', async () => {
+      const parentContent = `## 1. Work
+- PASS: CONTINUE
+
+- child.runbook.md
+
+## 2. Done
+- PASS: COMPLETE
+
+Final.
+`;
+      await writeFile(join(workspace.cwd, 'step-child.runbook.md'), parentContent);
+      await writeChildRunbook(workspace, 'child.runbook.md');
+
+      // Start parent
+      let result = runCli('run --prompted step-child.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Queue step 1 with child runbook (no substep)
+      result = runCli('run --step 1 child.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Bind agent
+      result = runCli('run --agent agent-1', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('bound');
+
+      // Agent passes child → auto-advances parent from step 1 to step 2
+      result = runCli('pass --agent agent-1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Complete step 2
+      result = runCli('pass', workspace);
+      expect(result.stdout).toContain('COMPLETE');
+    });
+
+    it('step-level child pass — single-step parent completes', async () => {
+      const parentContent = `## 1. Work
+- PASS: COMPLETE
+
+- child.runbook.md
+`;
+      await writeFile(join(workspace.cwd, 'step-child-complete.runbook.md'), parentContent);
+      await writeChildRunbook(workspace, 'child.runbook.md');
+
+      // Start parent
+      let result = runCli('run --prompted step-child-complete.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Queue step 1 with child runbook (no substep)
+      result = runCli('run --step 1 child.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Bind agent
+      result = runCli('run --agent agent-1', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('bound');
+
+      // Agent passes child → auto-completes parent (PASS: COMPLETE)
+      result = runCli('pass --agent agent-1', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('COMPLETE');
+    });
+
+    it('step-level child fail — auto-stops parent', async () => {
+      const parentContent = `## 1. Work
+- PASS: CONTINUE
+- FAIL: STOP
+
+- child.runbook.md
+
+## 2. Done
+- PASS: COMPLETE
+
+Final.
+`;
+      await writeFile(join(workspace.cwd, 'step-child-fail.runbook.md'), parentContent);
+      await writeChildRunbook(workspace, 'child.runbook.md');
+
+      // Start parent
+      runCli('run --prompted step-child-fail.runbook.md', workspace);
+
+      // Queue and bind
+      runCli('run --step 1 child.runbook.md', workspace);
+      runCli('run --agent agent-1', workspace);
+
+      // Agent fails child → auto-propagates FAIL to parent → STOP
+      const result = runCli('fail --agent agent-1', workspace);
       expect(result.exitCode).toBe(1);
     });
   });

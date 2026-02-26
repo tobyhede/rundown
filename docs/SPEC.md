@@ -102,7 +102,7 @@ Runtime dispatch/completion identity is canonicalized as:
 
 `step + substep + iteration`
 
-Execution path notation such as `1.2.1` (`STEP.INDEX.SUBSTEP`) is display-only. It is not authoring syntax and not a canonical identifier.
+Execution path notation such as `1.2.1` (`STEP.INDEX.SUBSTEP`) is display-only. It is neither authoring syntax nor a canonical identifier.
 
 ## 4. Control Flow
 
