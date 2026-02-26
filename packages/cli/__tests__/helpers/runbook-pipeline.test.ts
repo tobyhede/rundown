@@ -286,6 +286,58 @@ describe('queueStep', () => {
     }
   });
 
+  it('allows step-level dispatch when state.substep is already set', async () => {
+    (
+      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+    ).mockReturnValue({ step: '2' });
+    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2.1');
+
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({
+      steps: [
+        {
+          name: '2',
+          substeps: [
+            { id: '1', description: 'A' },
+            { id: '2', description: 'B' },
+          ],
+        },
+      ],
+    } as any);
+
+    const mockPush = jest.fn<any>().mockResolvedValue(undefined);
+    const ctx = {
+      output: {} as any,
+      manager: {} as any,
+      actorService: {} as any,
+      sessionService: {
+        getActive: jest.fn<any>().mockResolvedValue({
+          id: 'test-id',
+          step: '2',
+          substep: '1',
+          runbook: 'test.runbook.md',
+          runbookSrc: '## 2',
+          templateVars: {},
+          sources: {},
+        }),
+      },
+      lifecycleService: makeLifecycle({ pushPendingStep: mockPush }),
+      cwd: '/test',
+    };
+
+    const result = await queueStep(ctx as any, '2');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.stepId).toBe('2.1');
+    }
+    expect(mockPush).toHaveBeenCalledWith(
+      'test-id',
+      expect.objectContaining({ targetSubstep: '1' }),
+    );
+  });
+
   it('infers child runbook when substep has exactly one workflow and file is omitted', async () => {
     (
       core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>

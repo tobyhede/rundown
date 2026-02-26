@@ -407,7 +407,7 @@ export async function queueStep(
   const currentStep = runbookSteps.find((s) => s.name === state.step);
   const hasSubsteps = (currentStep?.substeps?.length ?? 0) > 0;
 
-  if (hasSubsteps && !stepId.substep) {
+  if (hasSubsteps && !stepId.substep && !state.substep) {
     const available = currentStep?.substeps?.map((s) => `${state.step}.${s.id}`) ?? [];
     return {
       ok: false,
