@@ -160,7 +160,11 @@ The agent type (`code-review-agent`, `test-agent`) drives context injection — 
 - If the active step is in a FOR loop, queueing is constrained to the active iteration frontier.
 - Canonical target identity is `step + substep + iteration`.
 - Display path (`STEP.INDEX.SUBSTEP`, e.g. `2.3.1`) is output-only.
-- Completion acceptance is scoped by frame+entry identity so stale completions from prior re-entry are rejected.
+- Completion acceptance is scoped by frame + entry identity so stale completions from prior re-entry are rejected.
+- `frame` and `entry` are internal runtime identity terms, not runbook authoring syntax.
+- `frame = step|iteration`
+- `entry = re-entry counter for that frame`
+- Completion routing uses `frame + entry + substep` to reject stale completions after re-entry.
 
 ---
 

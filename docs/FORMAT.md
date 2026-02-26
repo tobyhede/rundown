@@ -223,9 +223,9 @@ Canonical runtime targeting is `step + substep + iteration`.
 | `{{Index}}` | Current loop iteration number (1-based) | Inside FOR steps |
 | `{{step}}` | Lowercase alias for current step identifier | Always |
 | `{{index}}` | Lowercase alias for current loop iteration number | Inside FOR steps |
-| `{{context.current.*}}` | Canonical current-frame runtime context (`step`, `substep`, `index`, `at`) | Always |
-| `{{context.parent.*}}` | Parent runbook frame context | Nested runbooks |
-| `{{context.ancestors.N.*}}` | Ancestor frame context (`0` = nearest parent) | Nested runbooks |
+| `{{context.current.*}}` | Canonical current runbook context (`step`, `substep`, `index`, `at`) | Always |
+| `{{context.parent.*}}` | Parent runbook context | Nested runbooks |
+| `{{context.ancestors.N.*}}` | Ancestor runbook contexts (`0` = nearest parent) | Nested runbooks |
 | `{{context.vars.NAME}}` | User/config/frontmatter variables under canonical namespace | Always |
 
 `{{Step}}`/`{{Index}}` and lowercase aliases are expanded per-step/per-iteration. For data source loops, the named variable holds the data element while `{{Index}}`/`{{index}}` holds the iteration number. Runtime keys (`step`, `index`, `context`, `Step`, `Index`) are reserved and cannot be overridden by user variables.

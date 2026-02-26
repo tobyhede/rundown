@@ -268,7 +268,7 @@ See [SPEC.md Iteration (FOR)](./SPEC.md#5-iteration-for) for the full grammar an
 
 The named loop variable plus runtime step/index aliases are expanded per-iteration:
 - `{{Index}}` / `{{index}}` - Current iteration number (1-based), available inside all FOR substeps
-- `{{Step}}` / `{{step}}` - Qualified current-frame execution location (for shorthand runbook-list steps this is `N.1`, `N.2`, ...)
+- `{{Step}}` / `{{step}}` - Qualified current runbook-context execution location (for shorthand runbook-list steps this is `N.1`, `N.2`, ...)
 - `{{var}}` - Named loop variable. For numeric ranges, equals the iteration index. For data sources (array/file), holds the current data element.
 
 These are expanded per-iteration, unlike template variables which are expanded once at `rd run` time.
@@ -480,7 +480,7 @@ Key fields:
 - `forStack[].currentValue`: Data element at the current iteration (array/file sources)
 - `iterationResults`: Array of per-iteration outcomes (`"pass"` or `"fail"`) for the current loop
 - `pendingSteps[].target*`: Canonical dispatch target identity (`step + substep + iteration`)
-- `agentBindings[].target*`: Bound agent target identity (same model as pending steps, plus frame+entry where stamped)
+- `agentBindings[].target*`: Bound agent target identity (same model as pending steps, plus frame + entry where stamped)
 - `resolvedCompletions`: Completion records keyed by `frame + entry + substep`
 - `frameEntries` / `activeFrameKey` / `activeEntry`: Re-entry-safe frame identity used to reject stale completions
 - `snapshot`: XState persisted snapshot for state restoration
@@ -557,13 +557,13 @@ Variable names must match the pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`:
 
 Runtime templating now uses a canonical namespaced context model for nested runbooks:
 - `{{context.current.step}}`, `{{context.current.substep}}`, `{{context.current.index}}`, `{{context.current.at}}`
-- `{{context.parent.*}}` for nearest parent frame
+- `{{context.parent.*}}` for nearest parent runbook context
 - `{{context.ancestors.0.*}}`, `{{context.ancestors.1.*}}`, ... for deeper ancestry (0 = nearest parent)
 - `{{context.vars.NAME}}` for user/config/frontmatter variables
 
 Top-level aliases are retained for ergonomics:
-- `{{Step}}` / `{{step}}` always refer to the current frame
-- `{{Index}}` / `{{index}}` always refer to the current frame loop index
+- `{{Step}}` / `{{step}}` always refer to the current runbook context
+- `{{Index}}` / `{{index}}` always refer to the current runbook context loop index
 
 ### Undefined Variables
 
@@ -880,8 +880,15 @@ Dispatch/completion rules:
 - Dispatch frontier is the current step only; when FOR is active, frontier is current iteration only.
 - Canonical target identity is `step + substep + iteration`.
 - Expanded path (`STEP.INDEX.SUBSTEP`, e.g. `1.2.1`) is display-only.
-- Completion routing is frame-entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
+- Completion routing is frame + entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
 - `pass/fail --agent` and plain `pass/fail` both record completion and use the same deterministic drain path.
+
+### Runtime Identity Glossary
+
+- **Frame (internal):** Execution scope key `step|iteration` (for example `2|` or `2|3`).
+- **Entry (internal):** Monotonic re-entry counter for a frame (`1`, `2`, `3`, ...).
+- **Completion key (internal):** `frame + entry + substep`.
+- **Why both frame and entry:** Re-entering the same frame (for example via `GOTO` or `RETRY`) increments `entry`, so completions from older entries are rejected as stale.
 
 ---
 
@@ -1007,7 +1014,7 @@ rd pass --agent subagent-1    # or: rd fail --agent subagent-1
 - Child runbook can be explicit (`rd run --step 2.1 task.runbook.md`) or inferred when the substep has exactly one workflow
 - If a substep has multiple workflows, an explicit runbook argument is required
 - Subagent uses `--agent` flag on all commands (`run`, `pass`, `fail`)
-- Completions are validated against frame+entry identity; stale completions from prior re-entry are rejected explicitly
+- Completions are validated against frame + entry identity; stale completions from prior re-entry are rejected explicitly
 - Valid completions are recorded and drained in deterministic substep order before step-level transition
 
 ### Pattern 2: Agent-Controlled Branching

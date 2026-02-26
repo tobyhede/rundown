@@ -178,11 +178,11 @@ Variables use Handlebars syntax: `{{variable}}`.
 | Source | Scope | Description |
 | :--- | :--- | :--- |
 | CLI (`--var`) | Global | Expanded at startup. |
-| `{{Step}}`, `{{step}}` | Step | Current execution identifier for this runbook frame (e.g., `1`, `1.2`). |
-| `{{Index}}`, `{{index}}` | Loop | Current iteration number for this runbook frame. |
-| `{{context.current.*}}` | Step/Loop | Canonical current-frame context (`step`, `substep`, `index`, `at`). |
-| `{{context.parent.*}}` | Nested | Parent frame context when running a child runbook. |
-| `{{context.ancestors.N.*}}` | Nested | Ancestor frame context (`0` is nearest parent). |
+| `{{Step}}`, `{{step}}` | Step | Current execution identifier for this runbook context (e.g., `1`, `1.2`). |
+| `{{Index}}`, `{{index}}` | Loop | Current iteration number for this runbook context. |
+| `{{context.current.*}}` | Step/Loop | Canonical current runbook context (`step`, `substep`, `index`, `at`). |
+| `{{context.parent.*}}` | Nested | Parent runbook context when running a child runbook. |
+| `{{context.ancestors.N.*}}` | Nested | Ancestor runbook contexts (`0` is nearest parent). |
 | `{{context.vars.NAME}}` | Global | User/config/frontmatter variable namespace. |
 | Loop Var | Loop | Current item/index (e.g., `{{batch}}`). |
 
