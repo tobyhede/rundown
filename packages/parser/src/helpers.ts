@@ -53,8 +53,8 @@ export function parseQuotedOrIdentifier(text: string): string {
  * - "ErrorHandler.Recover Description (agent)" (named with agent type)
  */
 export interface ParsedSubstepHeader {
-  /** Reference to parent step: "1" or named identifier like "ErrorHandler" */
-  stepRef: string;
+  /** Reference to parent step: "1" or named identifier like "ErrorHandler". Undefined for short form (parent inferred from context). */
+  stepRef?: string;
   /** Substep identifier: numeric string or named identifier */
   id: string;
   /** Human-readable description from the header */
@@ -118,9 +118,8 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
     if (number <= 0 || number > MAX_STEP_NUMBER) return null;
 
     const description = stripSeparator(trimmed.slice(numEnd));
-    if (!description) return null;
 
-    return { name: numberStr, description };
+    return { name: numberStr, description: description || `Step ${numberStr}` };
   }
 
   // Check for named step: Name or Name Description
@@ -190,6 +189,41 @@ function isValidSubstepId(s: string): boolean {
 export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
+
+  // Handle short form: bare positive integer (e.g., "1", "2 Description", "3 Review (agent)")
+  const spaceIdx = trimmed.indexOf(' ');
+  const firstToken = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
+  if (/^\d+$/.test(firstToken)) {
+    const num = parseInt(firstToken, 10);
+    if (num > 0) {
+      let description = '';
+      let agentType: string | undefined;
+
+      if (spaceIdx !== -1) {
+        const remainder = trimmed.slice(spaceIdx + 1).trim();
+        if (remainder) {
+          // Check for agent suffix: "description (agent-type)"
+          const lastParenOpen = remainder.lastIndexOf(' (');
+          if (lastParenOpen > 0 && remainder.endsWith(')')) {
+            const possibleAgent = remainder.slice(lastParenOpen + 2, -1).trim();
+            if (possibleAgent) {
+              description = remainder.slice(0, lastParenOpen).trim();
+              agentType = possibleAgent;
+            } else {
+              description = remainder;
+            }
+          } else if (remainder.startsWith('(') && remainder.endsWith(')')) {
+            // Just agent, no description: "(agent-type)"
+            agentType = remainder.slice(1, -1).trim();
+          } else {
+            description = remainder;
+          }
+        }
+      }
+
+      return { id: firstToken, description, agentType };
+    }
+  }
 
   // Find the dot separating step reference from substep ID
   const dotIndex = trimmed.indexOf('.');
@@ -735,7 +769,9 @@ export function isExecutableCodeBlock(lang: string | null | undefined): boolean 
   const parts = lang.split(/\s+/);
   const tag = parts[0]?.toLowerCase();
   if (!tag) return false;
-  return EXECUTABLE_TAGS.includes(tag);
+  if (!EXECUTABLE_TAGS.includes(tag)) return false;
+  if (parts.length > 1 && parts[1]?.toLowerCase() === 'prompt') return false;
+  return true;
 }
 
 /**
@@ -750,9 +786,13 @@ export function isPromptCodeBlock(lang: string | null | undefined): boolean | nu
   if (!lang) return null;
   const trimmed = lang.trim();
   if (!trimmed) return null;
-  const tag = trimmed.split(/\s+/)[0]?.toLowerCase();
+  const parts = trimmed.split(/\s+/);
+  const tag = parts[0]?.toLowerCase();
   if (tag === 'prompt') return true;
-  if (EXECUTABLE_TAGS.includes(tag)) return false;
+  if (EXECUTABLE_TAGS.includes(tag)) {
+    if (parts.length > 1 && parts[1]?.toLowerCase() === 'prompt') return true;
+    return false;
+  }
   return null;
 }
 

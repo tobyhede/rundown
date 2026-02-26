@@ -240,7 +240,7 @@ export function parseRunbookDocument(
       const parsed = extractSubstepHeader(headingText);
 
       if (parsed) {
-        if (parsed.stepRef !== currentStep.name) {
+        if (parsed.stepRef !== undefined && parsed.stepRef !== currentStep.name) {
           throw new RunbookSyntaxError(
             `Substep ${headingText} does not belong to step ${currentStep.name}`,
           );
@@ -271,16 +271,20 @@ export function parseRunbookDocument(
     if (node.type === 'code' && currentStep) {
       const codeNode = node as Code;
 
+      // mdast splits the info string into lang and meta — reconstruct for helpers
+      const fullLang =
+        codeNode.lang && codeNode.meta ? `${codeNode.lang} ${codeNode.meta}` : codeNode.lang;
+
       // Determine command based on code block type
       let cmd: Command | undefined;
 
-      if (isExecutableCodeBlock(codeNode.lang)) {
+      if (isExecutableCodeBlock(fullLang)) {
         // bash/sh/shell → direct command
         cmd = {
           code: codeNode.value.trim(),
           lang: codeNode.lang?.split(/\s+/)[0],
         };
-      } else if (isPromptCodeBlock(codeNode.lang)) {
+      } else if (isPromptCodeBlock(fullLang)) {
         // prompt → rd prompt command (outputs with fences)
         const escaped = escapeForShellSingleQuote(codeNode.value.trim());
         cmd = {

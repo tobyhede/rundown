@@ -1625,3 +1625,58 @@ Here is a list:
     expect(doc.description).toContain('Here is a list:');
   });
 });
+
+describe('C1: bash prompt code block is display-only', () => {
+  it('parses bash prompt as prompt block, not executable', () => {
+    const md = `## 1. Display example
+
+\`\`\`bash prompt
+rd prompt 'Hello world'
+\`\`\`
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].command).toBeDefined();
+    expect(steps[0].command!.lang).toBe('prompt');
+    expect(steps[0].command!.code).toContain('rd prompt');
+  });
+});
+
+describe('C2: substep short form', () => {
+  it('parses bare numeric substep under a step', () => {
+    const md = `## 1. Parent step
+
+### 1 First substep
+
+Do something.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps![0].id).toBe('1');
+  });
+
+  it('parses bare numeric substep with description', () => {
+    const md = `## 1. Parent step
+
+### 2 Review code
+
+Review the code carefully.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps![0].id).toBe('2');
+    expect(steps[0].substeps![0].description).toBe('Review code');
+  });
+});
+
+describe('E3: bare numeric step headers', () => {
+  it('parses ## 1 as a valid step', () => {
+    const md = `## 1
+
+Do something.
+`;
+    const steps = parseRunbook(md);
+    expect(steps).toHaveLength(1);
+    expect(steps[0].name).toBe('1');
+    expect(steps[0].description).toBe('Step 1');
+  });
+});

@@ -24,7 +24,7 @@ export const MAX_FOR_BOUND = 10_000;
  * Matches strings like `{{VarName}}` where the variable name follows
  * standard identifier rules (letter/underscore start, alphanumeric body).
  */
-export const TEMPLATE_VAR_PATTERN = /^\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}$/;
+export const TEMPLATE_VAR_PATTERN = /^\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}$/;
 
 /**
  * Zod schema for Command
@@ -209,5 +209,9 @@ export const StepSchema = z.object({
 export const RunbookSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
+  name: z.string().optional(),
+  version: z.string().optional(),
+  author: z.string().optional(),
+  tags: z.array(z.string()).readonly().optional(),
   steps: z.array(StepSchema),
 });

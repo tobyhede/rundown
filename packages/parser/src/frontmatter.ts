@@ -23,7 +23,10 @@ export const RunbookFrontmatterSchema = z
     name: z
       .string()
       .min(1)
-      .regex(/^[a-z0-9-]+$/i, 'Name must contain only alphanumeric characters and hyphens')
+      .regex(
+        /^[a-zA-Z0-9_-]+$/,
+        'Name must contain only alphanumeric characters, underscores, and hyphens',
+      )
       .optional(),
     description: z.string().optional(),
     version: z.string().optional(),

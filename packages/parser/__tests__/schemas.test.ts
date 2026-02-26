@@ -5,6 +5,7 @@ import {
   StepIdSchema,
   ForClauseSchema,
   ActionSchema,
+  RunbookSchema,
 } from '../src/schemas.js';
 
 describe('TransitionsSchema with kind', () => {
@@ -443,5 +444,55 @@ describe('StepIdSchema with AT field', () => {
 
   it('rejects AT with invalid template format', () => {
     expect(StepIdSchema.safeParse({ step: '3', at: '{Index}' }).success).toBe(false);
+  });
+
+  it('accepts AT with whitespace in template variable', () => {
+    expect(StepIdSchema.safeParse({ step: '3', at: '{{ Index }}' }).success).toBe(true);
+  });
+
+  it('accepts AT with leading whitespace only', () => {
+    expect(StepIdSchema.safeParse({ step: '3', at: '{{ Index}}' }).success).toBe(true);
+  });
+
+  it('accepts AT with trailing whitespace only', () => {
+    expect(StepIdSchema.safeParse({ step: '3', at: '{{Index }}' }).success).toBe(true);
+  });
+});
+
+describe('E5: RunbookSchema with metadata fields', () => {
+  it('validates runbook with all metadata fields', () => {
+    const result = RunbookSchema.safeParse({
+      title: 'My Runbook',
+      description: 'A test runbook',
+      name: 'my-runbook',
+      version: '1.0.0',
+      author: 'Test Author',
+      tags: ['test', 'automation'],
+      steps: [{ name: '1', description: 'Step 1' }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('validates runbook with only steps (all metadata optional)', () => {
+    const result = RunbookSchema.safeParse({
+      steps: [{ name: '1', description: 'Step 1' }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects non-string tags', () => {
+    const result = RunbookSchema.safeParse({
+      steps: [{ name: '1', description: 'Step 1' }],
+      tags: [123, true],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('validates runbook with empty tags array', () => {
+    const result = RunbookSchema.safeParse({
+      steps: [{ name: '1', description: 'Step 1' }],
+      tags: [],
+    });
+    expect(result.success).toBe(true);
   });
 });

@@ -148,8 +148,8 @@ where frontmatter is:
 Additional fields beyond those listed are preserved in the parsed frontmatter (open schema). This allows forward-compatible extensions and user-defined metadata.
 
 where slug is:
-  [a-z0-9-]+
-  (lowercase alphanumeric with hyphens)
+  [a-zA-Z0-9_-]+
+  (alphanumeric with underscores and hyphens)
 
 where tag_list is:
   "- " tag { "- " tag }
