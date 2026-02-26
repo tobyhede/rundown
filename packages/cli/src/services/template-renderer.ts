@@ -83,9 +83,6 @@ function resolveTemplatePath(path: string, variables: Record<string, unknown>): 
   }
 
   if (!path.includes('.')) {
-    if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
-      return renderTemplateValue(variables[path]);
-    }
     return undefined;
   }
 
@@ -144,7 +141,7 @@ export function expandForClauseVariables(
     return line.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
       // Don't expand source references — they're consumed by the parser as data source identifiers.
       if (sourceKeys?.has(path)) return match;
-      return resolveTemplatePath(path, variables as Record<string, unknown>) ?? match;
+      return resolveTemplatePath(path, variables) ?? match;
     });
   });
 }

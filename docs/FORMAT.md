@@ -83,6 +83,7 @@ where runbooks is:
   - runbook_path [ ... ]
 
 Step-level `runbooks` syntax is shorthand for implicit sequential substeps (`### N.1`, `### N.2`, ...), one workflow path per generated substep.
+If prompt text appears before a step-level `runbooks` shorthand body, it is attached to the first generated implicit substep only.
 
 where transition is:
   - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result

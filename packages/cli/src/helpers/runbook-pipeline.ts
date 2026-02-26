@@ -162,6 +162,19 @@ function buildContextVars(vars: Readonly<Record<string, string>>): Record<string
   return contextVars;
 }
 
+const MAX_INHERITED_CONTEXT_LINEAGE_DEPTH = 32;
+
+class InheritedContextBuildError extends Error {
+  readonly code = 'STATE_CORRUPTION';
+  readonly details: Record<string, unknown>;
+
+  constructor(message: string, details: Record<string, unknown>) {
+    super(message);
+    this.name = 'InheritedContextBuildError';
+    this.details = details;
+  }
+}
+
 interface FrameSnapshot {
   step: string;
   substep?: string;
@@ -208,9 +221,33 @@ async function buildInheritedContextVars(
 ): Promise<Record<string, string>> {
   const vars: Record<string, string> = {};
   const lineage: RunbookState[] = [];
+  const lineageIds: string[] = [];
+  const visited = new Set<string>();
 
   let cursor: RunbookState | null = parentState;
   while (cursor) {
+    if (visited.has(cursor.id)) {
+      throw new InheritedContextBuildError(
+        `Detected parent runbook cycle while building inherited context at runbook "${cursor.id}".`,
+        {
+          reason: 'PARENT_CYCLE',
+          repeatedRunbookId: cursor.id,
+          lineage: lineageIds,
+        },
+      );
+    }
+    if (lineage.length >= MAX_INHERITED_CONTEXT_LINEAGE_DEPTH) {
+      throw new InheritedContextBuildError(
+        `Parent runbook lineage exceeds maximum depth (${String(MAX_INHERITED_CONTEXT_LINEAGE_DEPTH)}).`,
+        {
+          reason: 'PARENT_LINEAGE_DEPTH_EXCEEDED',
+          maxDepth: MAX_INHERITED_CONTEXT_LINEAGE_DEPTH,
+          lineage: lineageIds,
+        },
+      );
+    }
+    visited.add(cursor.id);
+    lineageIds.push(cursor.id);
     lineage.push(cursor);
     if (!cursor.parentRunbookId) break;
     cursor = await manager.load(cursor.parentRunbookId);
@@ -658,7 +695,20 @@ export async function bindAgent(
 
   // If pending step has a runbook, start child runbook
   if (normalizedPending.runbook) {
-    const inheritedContextVars = await buildInheritedContextVars(manager, state);
+    let inheritedContextVars: Record<string, string>;
+    try {
+      inheritedContextVars = await buildInheritedContextVars(manager, state);
+    } catch (error) {
+      if (error instanceof InheritedContextBuildError) {
+        return {
+          ok: false,
+          error: error.message,
+          code: error.code,
+          details: { agent: agentId, runbookId: state.id, ...error.details },
+        };
+      }
+      throw error;
+    }
     const prepResult = await prepareRunbook(normalizedPending.runbook, varOpts, cwd, {
       inheritedContextVars,
     });

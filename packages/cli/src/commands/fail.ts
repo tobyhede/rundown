@@ -35,6 +35,7 @@ export function registerFailCommand(program: Command): void {
             return;
           }
 
+          let shouldExitWithError = false;
           try {
             const failConfig = createFailTransitionConfig();
 
@@ -42,14 +43,20 @@ export function registerFailCommand(program: Command): void {
             // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
             if (options.agent) {
               const agentResult = await handleAgentBinding(ctx, options.agent, failConfig);
-              if (agentResult === 'stopped') process.exit(1);
+              if (agentResult === 'stopped') {
+                shouldExitWithError = true;
+                return;
+              }
               if (agentResult === 'handled') return;
             }
 
             const result = await executeTransition(ctx, failConfig);
-            if (result === 'stopped') process.exit(1);
+            if (result === 'stopped') shouldExitWithError = true;
           } finally {
             ctx.actor.stop();
+          }
+          if (shouldExitWithError) {
+            process.exitCode = 1;
           }
         },
         { json: options.json },

@@ -406,6 +406,14 @@ describe('expandLoopVariablesForCommand', () => {
     const result = expandLoopVariables('val={{item.0}}', { item: ['a', 'b', 'c'] });
     expect(result).toBe('val=a');
   });
+
+  it('prefers exact flattened key over dotted traversal for same placeholder', () => {
+    const variables: Record<string, unknown> = {
+      context: { parent: { index: '2' } },
+      'context.parent.index': '7',
+    };
+    expect(expandLoopVariables('Index={{context.parent.index}}', variables)).toBe('Index=7');
+  });
 });
 
 describe('expandForClauseVariables', () => {

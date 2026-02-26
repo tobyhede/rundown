@@ -80,6 +80,7 @@ List of external runbooks to execute.
 ```
 
 At step level, this syntax is canonicalized to implicit sequential substeps (`1`, `2`, ...), one workflow per substep.
+When step-level prompt text appears above this shorthand body, it is attached to the first generated implicit substep only.
 These two forms are execution-equivalent:
 
 ```markdown

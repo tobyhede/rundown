@@ -198,6 +198,28 @@ describe('prepareRunbook', () => {
     }
   });
 
+  it('adds context.vars aliases to merged template variables', async () => {
+    resolveRunbookFile.mockResolvedValue('/test/good.md');
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({ steps: [makeStep()] } as any);
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { region: 'us-west' },
+      sources: {},
+    });
+
+    const result = await prepareRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        region: 'us-west',
+        'context.vars.region': 'us-west',
+      }),
+    );
+  });
+
   it('returns error when validateSources throws', async () => {
     resolveRunbookFile.mockResolvedValue('/test/sourced.md');
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
@@ -660,7 +682,9 @@ describe('bindAgent', () => {
       } as any,
       actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
       sessionService: {
-        getActive: jest.fn<any>().mockResolvedValue({ id: 'parent-id', prompted: true }),
+        getActive: jest
+          .fn<any>()
+          .mockResolvedValue({ id: 'parent-id', step: '2', substep: '1', prompted: true }),
         pushRunbook: jest.fn<any>().mockResolvedValue(undefined),
       },
       lifecycleService: makeLifecycle({
@@ -693,5 +717,181 @@ describe('bindAgent', () => {
     expect(mockUpdateAgentBinding).toHaveBeenCalledWith('parent-id', 'agent-1', {
       childRunbookId: 'child-id',
     });
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        'context.parent.step': '2',
+        'context.parent.substep': '1',
+        'context.parent.at': '2.1',
+        'context.ancestors.0.step': '2',
+      }),
+    );
+  });
+
+  it('includes multi-level inherited context for child runbook launches', async () => {
+    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2');
+    resolveRunbookFile.mockResolvedValue('/test/child.runbook.md');
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({ steps: [makeStep()] } as any);
+    runExecutionLoop.mockResolvedValue('done');
+
+    const managerLoad = jest.fn<any>().mockImplementation(async (id: string) => {
+      if (id === 'grand-id') {
+        return { id: 'grand-id', step: '1', substep: '3' };
+      }
+      return null;
+    });
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as any,
+      manager: {
+        bindAgent: jest.fn<any>().mockResolvedValue(undefined),
+        create: jest.fn<any>().mockResolvedValue({ id: 'child-id', title: 'Child' }),
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        updateAgentBinding: jest.fn<any>().mockResolvedValue(undefined),
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+        load: managerLoad,
+      } as any,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: {
+        getActive: jest.fn<any>().mockResolvedValue({
+          id: 'parent-id',
+          step: '2',
+          substep: '1',
+          parentRunbookId: 'grand-id',
+          prompted: true,
+        }),
+        pushRunbook: jest.fn<any>().mockResolvedValue(undefined),
+      },
+      lifecycleService: makeLifecycle({
+        popPendingStep: jest.fn<any>().mockResolvedValue({
+          stepId: { step: '2' },
+          targetStep: '2',
+          targetFrameKey: '2|',
+          targetEntry: 1,
+          runbook: 'child.runbook.md',
+        }),
+      }),
+      cwd: '/test',
+    };
+
+    const result = await bindAgent(ctx as any, 'agent-1', {});
+
+    expect(result.ok).toBe(true);
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        'context.parent.step': '2',
+        'context.parent.parent.step': '1',
+        'context.ancestors.0.step': '2',
+        'context.ancestors.1.step': '1',
+      }),
+    );
+    expect(managerLoad).toHaveBeenCalledWith('grand-id');
+  });
+
+  it('fails fast when inherited parent lineage contains a cycle', async () => {
+    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2');
+
+    const managerLoad = jest.fn<any>().mockImplementation(async (id: string) => {
+      if (id === 'a') {
+        return { id: 'a', step: '10', parentRunbookId: 'b' };
+      }
+      if (id === 'b') {
+        return { id: 'b', step: '11', parentRunbookId: 'a' };
+      }
+      return null;
+    });
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as any,
+      manager: {
+        bindAgent: jest.fn<any>().mockResolvedValue(undefined),
+        load: managerLoad,
+      } as any,
+      actorService: {} as any,
+      sessionService: {
+        getActive: jest.fn<any>().mockResolvedValue({
+          id: 'parent-id',
+          step: '2',
+          substep: '1',
+          parentRunbookId: 'a',
+          prompted: true,
+        }),
+      },
+      lifecycleService: makeLifecycle({
+        popPendingStep: jest.fn<any>().mockResolvedValue({
+          stepId: { step: '2' },
+          targetStep: '2',
+          targetFrameKey: '2|',
+          targetEntry: 1,
+          runbook: 'child.runbook.md',
+        }),
+      }),
+      cwd: '/test',
+    };
+
+    const result = await bindAgent(ctx as any, 'agent-1', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('STATE_CORRUPTION');
+      expect(result.error).toContain('cycle');
+    }
+    expect(resolveRunbookFile).not.toHaveBeenCalled();
+  });
+
+  it('fails fast when inherited parent lineage exceeds max depth', async () => {
+    (core.stepIdToString as jest.MockedFunction<typeof core.stepIdToString>).mockReturnValue('2');
+
+    const chain = new Map<string, any>();
+    for (let i = 1; i <= 40; i += 1) {
+      chain.set(`n${String(i)}`, {
+        id: `n${String(i)}`,
+        step: String(i),
+        parentRunbookId: i < 40 ? `n${String(i + 1)}` : undefined,
+      });
+    }
+    const managerLoad = jest
+      .fn<any>()
+      .mockImplementation(async (id: string) => chain.get(id) ?? null);
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as any,
+      manager: {
+        bindAgent: jest.fn<any>().mockResolvedValue(undefined),
+        load: managerLoad,
+      } as any,
+      actorService: {} as any,
+      sessionService: {
+        getActive: jest.fn<any>().mockResolvedValue({
+          id: 'root',
+          step: '2',
+          substep: '1',
+          parentRunbookId: 'n1',
+          prompted: true,
+        }),
+      },
+      lifecycleService: makeLifecycle({
+        popPendingStep: jest.fn<any>().mockResolvedValue({
+          stepId: { step: '2' },
+          targetStep: '2',
+          targetFrameKey: '2|',
+          targetEntry: 1,
+          runbook: 'child.runbook.md',
+        }),
+      }),
+      cwd: '/test',
+    };
+
+    const result = await bindAgent(ctx as any, 'agent-1', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('STATE_CORRUPTION');
+      expect(result.error).toContain('maximum depth');
+    }
+    expect(resolveRunbookFile).not.toHaveBeenCalled();
   });
 });
