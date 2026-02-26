@@ -76,15 +76,15 @@ Final step.
       await writeReviewRunbook(workspace);
 
       // Start runbook at substep 1.1
-      runCli('run --prompted review.runbook.md', workspace);
+      expect(runCli('run --prompted review.runbook.md', workspace).exitCode).toBe(0);
 
       // Queue substep 1.1 and bind agent-1
-      runCli('run --step 1.1', workspace);
-      runCli('run --agent agent-1', workspace);
+      expect(runCli('run --step 1.1', workspace).exitCode).toBe(0);
+      expect(runCli('run --agent agent-1', workspace).exitCode).toBe(0);
 
       // Queue substep 1.2 and bind agent-2
-      runCli('run --step 1.2', workspace);
-      runCli('run --agent agent-2', workspace);
+      expect(runCli('run --step 1.2', workspace).exitCode).toBe(0);
+      expect(runCli('run --agent agent-2', workspace).exitCode).toBe(0);
 
       // Non-cursor fail (1.2): recorded
       let result = runCli('fail --agent agent-2', workspace);
@@ -158,11 +158,11 @@ Deploy to production.
       await writePipelineRunbook(workspace);
 
       // Start at substep 1.1
-      runCli('run --prompted pipeline.runbook.md', workspace);
+      expect(runCli('run --prompted pipeline.runbook.md', workspace).exitCode).toBe(0);
 
       // Bind agent-1 to 1.1
-      runCli('run --step 1', workspace);
-      runCli('run --agent agent-1', workspace);
+      expect(runCli('run --step 1', workspace).exitCode).toBe(0);
+      expect(runCli('run --agent agent-1', workspace).exitCode).toBe(0);
 
       // Fail 1.1 → FAIL ANY: STOP
       const result = runCli('fail --agent agent-1', workspace);
@@ -238,11 +238,11 @@ Final.
       await writeChildRunbook(workspace, 'child.runbook.md');
 
       // Start parent
-      runCli('run --prompted single-child-fail.runbook.md', workspace);
+      expect(runCli('run --prompted single-child-fail.runbook.md', workspace).exitCode).toBe(0);
 
       // Queue with child and bind
-      runCli('run --step 1 child.runbook.md', workspace);
-      runCli('run --agent agent-1', workspace);
+      expect(runCli('run --step 1 child.runbook.md', workspace).exitCode).toBe(0);
+      expect(runCli('run --agent agent-1', workspace).exitCode).toBe(0);
 
       // Agent fails child → FAIL ANY: STOP
       const result = runCli('fail --agent agent-1', workspace);
@@ -320,17 +320,17 @@ All tasks done.
       await writeChildRunbook(workspace, 'task-b.runbook.md');
 
       // Start parent
-      runCli('run --prompted multi-child.runbook.md', workspace);
+      expect(runCli('run --prompted multi-child.runbook.md', workspace).exitCode).toBe(0);
 
       // 1.1 passes → auto-advances parent cursor to 1.2
-      runCli('run --step 1 task-a.runbook.md', workspace);
-      runCli('run --agent agent-1', workspace);
+      expect(runCli('run --step 1 task-a.runbook.md', workspace).exitCode).toBe(0);
+      expect(runCli('run --agent agent-1', workspace).exitCode).toBe(0);
       let result = runCli('pass --agent agent-1', workspace);
       expect(result.exitCode).toBe(0);
 
       // 1.2 fails → auto-propagates FAIL to parent → FAIL ANY: STOP
-      runCli('run --step 1 task-b.runbook.md', workspace);
-      runCli('run --agent agent-2', workspace);
+      expect(runCli('run --step 1 task-b.runbook.md', workspace).exitCode).toBe(0);
+      expect(runCli('run --agent agent-2', workspace).exitCode).toBe(0);
       result = runCli('fail --agent agent-2', workspace);
       expect(result.exitCode).toBe(1);
     });

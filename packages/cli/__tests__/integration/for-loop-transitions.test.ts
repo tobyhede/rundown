@@ -122,10 +122,10 @@ describe('FOR loop transitions integration', () => {
       });
 
       // Start runbook in prompted mode
-      runCli('run --prompted agg-one-fail.runbook.md', workspace);
+      expect(runCli('run --prompted agg-one-fail.runbook.md', workspace).exitCode).toBe(0);
 
       // Iteration 1: pass
-      runCli('pass', workspace);
+      expect(runCli('pass', workspace).exitCode).toBe(0);
 
       // Iteration 2: fail → BREAK at iteration level → step-level PASS ALL fails → STOP
       const result = runCli('fail', workspace);
@@ -143,10 +143,10 @@ describe('FOR loop transitions integration', () => {
       });
 
       // Start runbook
-      runCli('run --prompted agg-any-pass.runbook.md', workspace);
+      expect(runCli('run --prompted agg-any-pass.runbook.md', workspace).exitCode).toBe(0);
 
       // Iteration 1: fail → iteration-level CONTINUE (no BREAK)
-      runCli('fail', workspace);
+      expect(runCli('fail', workspace).exitCode).toBe(0);
 
       // Iteration 2: pass → iteration-level CONTINUE → loop ends
       // Step-level PASS ANY: [fail, pass] → at least one passed → CONTINUE to step 2
@@ -168,10 +168,10 @@ describe('FOR loop transitions integration', () => {
       });
 
       // Start runbook
-      runCli('run --prompted agg-break.runbook.md', workspace);
+      expect(runCli('run --prompted agg-break.runbook.md', workspace).exitCode).toBe(0);
 
       // Iteration 1: pass
-      runCli('pass', workspace);
+      expect(runCli('pass', workspace).exitCode).toBe(0);
 
       // Iteration 2: fail → BREAK (skips iteration 3)
       // Only 2 rd commands needed before terminal state
@@ -193,7 +193,7 @@ describe('FOR loop transitions integration', () => {
       });
 
       // Start runbook
-      runCli('run --prompted retry-break.runbook.md', workspace);
+      expect(runCli('run --prompted retry-break.runbook.md', workspace).exitCode).toBe(0);
 
       // Iteration 1, attempt 1: fail → RETRY (1/2)
       let result = runCli('fail', workspace);
@@ -219,7 +219,7 @@ describe('FOR loop transitions integration', () => {
       });
 
       // Start runbook
-      runCli('run --prompted retry-continue.runbook.md', workspace);
+      expect(runCli('run --prompted retry-continue.runbook.md', workspace).exitCode).toBe(0);
 
       // Iteration 1, attempt 1: fail → RETRY (1/1)
       let result = runCli('fail', workspace);
@@ -245,7 +245,7 @@ describe('FOR loop transitions integration', () => {
       });
 
       // Start runbook
-      runCli('run --prompted retry-success.runbook.md', workspace);
+      expect(runCli('run --prompted retry-success.runbook.md', workspace).exitCode).toBe(0);
 
       // Iteration 1, attempt 1: fail → RETRY
       let result = runCli('fail', workspace);
@@ -449,22 +449,22 @@ Final step.
       await writeForMultiSubstep(workspace);
 
       // Start at substep 1.1 (iteration 1)
-      runCli('run --prompted for-multi.runbook.md', workspace);
+      expect(runCli('run --prompted for-multi.runbook.md', workspace).exitCode).toBe(0);
 
       // Iteration 1: pass both substeps
-      runCli('run --step 1', workspace);
-      runCli('run --agent agent-1a', workspace);
+      expect(runCli('run --step 1', workspace).exitCode).toBe(0);
+      expect(runCli('run --agent agent-1a', workspace).exitCode).toBe(0);
       let result = runCli('pass --agent agent-1a', workspace);
       expect(result.exitCode).toBe(0);
 
-      runCli('run --step 1', workspace);
-      runCli('run --agent agent-1b', workspace);
+      expect(runCli('run --step 1', workspace).exitCode).toBe(0);
+      expect(runCli('run --agent agent-1b', workspace).exitCode).toBe(0);
       result = runCli('pass --agent agent-1b', workspace);
       expect(result.exitCode).toBe(0);
 
       // Iteration 2, substep 1.1: fail → BREAK → STOP
-      runCli('run --step 1', workspace);
-      runCli('run --agent agent-2a', workspace);
+      expect(runCli('run --step 1', workspace).exitCode).toBe(0);
+      expect(runCli('run --agent agent-2a', workspace).exitCode).toBe(0);
       result = runCli('fail --agent agent-2a', workspace);
       expect(result.exitCode).toBe(1);
     });
