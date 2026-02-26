@@ -50,7 +50,6 @@ export interface StatusOutputData {
     current: string;
     total: number;
     substep?: string;
-    at?: string;
     for?: { index: number; end?: number };
     frameKey?: string;
     entry?: number;
