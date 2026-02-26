@@ -212,12 +212,8 @@ Final.
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('bound');
 
-      // Agent passes child → binding done → resolved completion recorded
+      // Agent passes child → auto-advances parent from 1.1 to step 2
       result = runCli('pass --agent agent-1', workspace);
-      expect(result.exitCode).toBe(0);
-
-      // Drain resolved completion → advance from 1.1 to step 2
-      result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // Complete step 2
@@ -283,11 +279,8 @@ All tasks done.
       result = runCli('run --agent agent-1', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('bound');
+      // Agent passes child → auto-advances parent cursor to 1.2
       result = runCli('pass --agent agent-1', workspace);
-      expect(result.exitCode).toBe(0);
-
-      // Drain 1.1 → advance cursor to 1.2
-      result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // Queue 1.2 with child, bind, pass
@@ -296,11 +289,9 @@ All tasks done.
       result = runCli('run --agent agent-2', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('bound');
-      result = runCli('pass --agent agent-2', workspace);
-      expect(result.exitCode).toBe(0);
 
-      // Drain 1.2 → advance to step 2
-      result = runCli('pass', workspace);
+      // Agent passes child → auto-advances parent to step 2
+      result = runCli('pass --agent agent-2', workspace);
       expect(result.exitCode).toBe(0);
 
       // Complete step 2
@@ -331,17 +322,13 @@ All tasks done.
       // Start parent
       runCli('run --prompted multi-child.runbook.md', workspace);
 
-      // 1.1 passes
+      // 1.1 passes → auto-advances parent cursor to 1.2
       runCli('run --step 1 task-a.runbook.md', workspace);
       runCli('run --agent agent-1', workspace);
       let result = runCli('pass --agent agent-1', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Drain 1.1 → advance cursor to 1.2
-      result = runCli('pass', workspace);
-      expect(result.exitCode).toBe(0);
-
-      // 1.2 fails → FAIL ANY: STOP
+      // 1.2 fails → auto-propagates FAIL to parent → FAIL ANY: STOP
       runCli('run --step 1 task-b.runbook.md', workspace);
       runCli('run --agent agent-2', workspace);
       result = runCli('fail --agent agent-2', workspace);

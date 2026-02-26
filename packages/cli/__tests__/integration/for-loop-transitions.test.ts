@@ -320,10 +320,7 @@ Complete the work.
       result = runCli('pass --agent agent-1', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Advance parent past iteration 1 substep → moves to iteration 2
-      result = runCli('pass', workspace);
-      expect(result.exitCode).toBe(0);
-
+      // Auto-advanced parent past iteration 1 substep → moves to iteration 2
       // Iteration 2: queue step for agent, bind agent, agent passes
       result = runCli('run --step 1', workspace);
       expect(result.exitCode).toBe(0);
@@ -335,10 +332,7 @@ Complete the work.
       result = runCli('pass --agent agent-2', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Advance parent past iteration 2 substep → FOR loop ends → step 2
-      result = runCli('pass', workspace);
-      expect(result.exitCode).toBe(0);
-
+      // Auto-advanced parent past iteration 2 substep → FOR loop ends → step 2
       // Pass step 2 to complete
       result = runCli('pass', workspace);
       expect(result.stdout).toContain('COMPLETE');
@@ -362,10 +356,7 @@ Complete the work.
       result = runCli('pass --agent agent-1', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Advance parent past iteration 1 substep → moves to iteration 2
-      result = runCli('pass', workspace);
-      expect(result.exitCode).toBe(0);
-
+      // Auto-advanced parent past iteration 1 substep → moves to iteration 2
       // Iteration 2: agent fails
       result = runCli('run --step 1', workspace);
       expect(result.exitCode).toBe(0);
@@ -374,12 +365,8 @@ Complete the work.
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('bound');
 
-      // Agent fails child → child stops (no FAIL transition → default STOP)
+      // Agent fails child → child stops → auto-propagates FAIL to parent → BREAK → STOP
       result = runCli('fail --agent agent-2', workspace);
-      expect(result.exitCode).toBe(1);
-
-      // Advance parent substep with fail → BREAK → step-level PASS ALL fails → STOP
-      result = runCli('fail', workspace);
       expect(result.exitCode).toBe(1);
     });
   });

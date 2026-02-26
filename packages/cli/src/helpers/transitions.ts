@@ -486,6 +486,138 @@ export async function handleAgentBinding(
 }
 
 /**
+ * Propagate child runbook completion to the parent's substep.
+ *
+ * After `executeTransition` completes a child runbook, this function detects
+ * whether the child was popped (agent stack empty) and, if so, records a
+ * resolved completion on the parent's substep and drains it through the
+ * normal transition path.
+ *
+ * Child COMPLETE maps to PASS; child STOPPED maps to FAIL.
+ *
+ * @param ctx - Transition context (scoped to the child's agent)
+ * @param agentId - Agent ID whose child runbook just completed
+ * @returns 'handled' if parent was advanced, 'stopped' if parent stopped, 'not-applicable' if no propagation needed
+ */
+export async function handleAgentCompletion(
+  ctx: TransitionContext,
+  agentId: string,
+): Promise<'handled' | 'stopped' | 'not-applicable'> {
+  const { manager, sessionService, lifecycleService, output, cwd } = ctx;
+
+  // 1. Check if agent stack is empty (child was popped)
+  const agentActive = await sessionService.getActive(agentId);
+  if (agentActive) return 'not-applicable'; // Child still running
+
+  // 2. Load parent state (default stack)
+  const parentState = await sessionService.getActive();
+  if (!parentState) return 'not-applicable';
+
+  // 3. Get binding
+  const binding = await manager.getAgentBinding(parentState.id, agentId);
+  if (!binding) return 'not-applicable';
+
+  // 4. Load parent steps
+  const readonlySteps = getRunbookFromState(parentState, cwd);
+  const parentSteps = [...readonlySteps];
+
+  // 5. Read binding.result as the child's terminal result
+  const result = binding.result;
+  if (!result) return 'not-applicable'; // No result yet
+
+  // 6. Determine transition config from child result
+  const transitionConfig =
+    result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
+
+  // 7. Resolve target from binding
+  const target = resolveBindingTarget(parentState, parentSteps, binding);
+
+  // 8. Stale check
+  const cursor = activeCursorTarget(parentState);
+  if (target.frameKey !== cursor.frameKey || target.entry !== cursor.entry) {
+    throw new Error(
+      `Rejected stale agent completion propagation. Current frame=${cursor.frameKey}, entry=${String(cursor.entry)} (${cursor.at}). ` +
+        `Attempted frame=${target.frameKey}, entry=${String(target.entry)} (${target.at}).`,
+    );
+  }
+
+  // 9. Substep path
+  if (!target.substep) {
+    // Non-substep path: not applicable for now.
+    // Child runbooks are always under substep headings in practice.
+    return 'not-applicable';
+  }
+
+  const existing = await lifecycleService.getResolvedCompletion(
+    parentState.id,
+    target.completionKey,
+  );
+  if (!existing) {
+    const completion = buildResolvedCompletion({
+      agentId,
+      result,
+      targetStep: target.step,
+      targetSubstep: target.substep,
+      targetIteration: target.iteration,
+      targetFrameKey: target.frameKey,
+      targetEntry: target.entry,
+    });
+    await lifecycleService.upsertResolvedCompletion(
+      parentState.id,
+      target.completionKey,
+      completion,
+    );
+  }
+
+  // Create a new actor service for the parent runbook
+  const parentActorService = new RunbookActorService(manager);
+  const emitter = createBridgedEmitter(parentState, output);
+  const drained = await drainResolvedCompletions({
+    manager,
+    actorService: parentActorService,
+    sessionService,
+    lifecycleService,
+    emitter,
+    runbookId: parentState.id,
+    steps: parentSteps,
+    currentState: parentState,
+    transitionPolicy: transitionConfig.policy,
+    computeActionResult: transitionConfig.computeActionResult,
+    agentId: undefined, // Default stack operations
+  });
+
+  if (drained.status === 'stopped') {
+    output.flush();
+    return 'stopped';
+  }
+  if (drained.status === 'done') {
+    output.flush();
+    return 'handled';
+  }
+
+  if (drained.applied > 0) {
+    const loopResult = await runExecutionLoop(
+      manager,
+      parentState.id,
+      parentSteps,
+      cwd,
+      !!drained.state.prompted,
+      emitter,
+      undefined, // Default stack
+    );
+    output.flush();
+    if (loopResult === 'stopped') {
+      return 'stopped';
+    }
+    return 'handled';
+  }
+
+  // applied === 0: waiting for other substeps
+  output.flush();
+  return 'handled';
+}
+
+/**
  * Execute a transition with the given configuration.
  *
  * Main entry point for transition execution. Sends event to actor,

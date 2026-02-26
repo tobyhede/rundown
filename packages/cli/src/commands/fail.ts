@@ -9,6 +9,7 @@ import {
   createFailTransitionConfig,
   executeTransition,
   handleAgentBinding,
+  handleAgentCompletion,
 } from '../helpers/transitions.js';
 
 /**
@@ -52,6 +53,12 @@ export function registerFailCommand(program: Command): void {
 
             const result = await executeTransition(ctx, failConfig);
             if (result === 'stopped') shouldExitWithError = true;
+
+            // After child completes, propagate result to parent substep
+            if (options.agent) {
+              const completionResult = await handleAgentCompletion(ctx, options.agent);
+              if (completionResult === 'stopped') shouldExitWithError = true;
+            }
           } finally {
             ctx.actor.stop();
           }
