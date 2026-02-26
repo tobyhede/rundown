@@ -185,13 +185,14 @@ Variables use Handlebars syntax: `{{variable}}`.
 | `{{Step}}`, `{{step}}` | Step | Current execution identifier for this runbook context (e.g., `1`, `1.2`). |
 | `{{Index}}`, `{{index}}` | Loop | Current iteration number for this runbook context. |
 | `{{context.current.*}}` | Step/Loop | Canonical current runbook context (`step`, `substep`, `index`, `at`). |
-| `{{context.parent.*}}` | Nested | Parent runbook context when running a child runbook. |
+| `{{context.parent.*}}` | Nested | Parent runbook structural context and template variables (`vars.*`). |
 | `{{context.ancestors.N.*}}` | Nested | Ancestor runbook contexts (`0` is nearest parent). |
 | `{{context.vars.NAME}}` | Global | User/config/frontmatter variable namespace. |
 | Loop Var | Loop | Current item/index (e.g., `{{batch}}`). |
 
 *   **Undefined**: Preserved as literal text.
 *   **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
+*   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
 *   **Reserved keys**: Runtime keys (`step`, `index`, `context`, `Step`, `Index`) are reserved and cannot be overridden by user variables.
 

@@ -208,12 +208,31 @@ function writeFrameContext(
 }
 
 /**
+ * Write a frame's resolved template variables into the target under `prefix.vars.*`.
+ *
+ * Keys that start with `context.` are excluded to prevent recursive nesting
+ * (e.g., `context.vars.X`, `context.parent.step` are already structural aliases).
+ */
+function writeFrameVars(
+  target: Record<string, string>,
+  prefix: string,
+  templateVars: Readonly<Record<string, string>> | undefined,
+): void {
+  if (!templateVars) return;
+  for (const [key, value] of Object.entries(templateVars)) {
+    if (key.startsWith('context.')) continue;
+    target[`${prefix}.vars.${key}`] = value;
+  }
+}
+
+/**
  * Build frozen ancestry context variables for child runbook launches.
  *
  * Produces:
- * - context.parent.*
- * - context.parent.parent.* (chain form)
- * - context.ancestors.N.* (array-like addressing)
+ * - context.parent.* (structural: step, substep, index, at)
+ * - context.parent.vars.* (parent's resolved template variables)
+ * - context.parent.parent.* / context.parent.parent.vars.* (chain form)
+ * - context.ancestors.N.* / context.ancestors.N.vars.* (array-like addressing)
  */
 async function buildInheritedContextVars(
   manager: RunbookStateManager,
@@ -256,12 +275,14 @@ async function buildInheritedContextVars(
   for (let i = 0; i < lineage.length; i += 1) {
     const frame = snapshotFrame(lineage[i]);
     writeFrameContext(vars, `context.ancestors.${String(i)}`, frame);
+    writeFrameVars(vars, `context.ancestors.${String(i)}`, lineage[i].templateVars);
   }
 
   let parentPath = 'context.parent';
   for (let i = 0; i < lineage.length; i += 1) {
     const frame = snapshotFrame(lineage[i]);
     writeFrameContext(vars, parentPath, frame);
+    writeFrameVars(vars, parentPath, lineage[i].templateVars);
     parentPath += '.parent';
   }
 
