@@ -140,6 +140,18 @@ describe('renderStep', () => {
     expect(result).toContain('```');
   });
 
+  it('renders step with non-bash command language', () => {
+    const step: Step = {
+      name: '1',
+      description: 'Run script',
+      command: { code: 'print("hello")', lang: 'python' },
+    };
+    const result = renderStep(step);
+    expect(result).toContain('```python');
+    expect(result).toContain('print("hello")');
+    expect(result).not.toContain('```bash');
+  });
+
   it('renders FOR clause before transitions', () => {
     const step: Step = {
       name: '2',
@@ -284,6 +296,25 @@ More description`;
     expect(parsed2[0].description).toBe('First step');
     expect(parsed2[1].name).toBe('2');
     expect(parsed2[1].description).toBe('Second step');
+  });
+
+  it('round-trips command with sh language', () => {
+    const original = `## 1. Run script
+
+\`\`\`sh
+echo hello
+\`\`\`
+
+## 2. Next step`;
+
+    const parsed1 = parseRunbook(original);
+    expect(parsed1[0].command?.lang).toBe('sh');
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    expect(rendered).toContain('```sh');
+
+    const parsed2 = parseRunbook(rendered);
+    expect(parsed2[0].command?.lang).toBe('sh');
   });
 
   it('round-trips runbook with substeps', () => {

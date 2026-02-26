@@ -183,7 +183,7 @@ export function renderStep(step: Step): string {
 
   // Command
   if (step.command) {
-    lines.push(renderCodeFence(step.command.code, 'bash'));
+    lines.push(renderCodeFence(step.command.code, step.command.lang ?? 'bash'));
     lines.push('');
   }
 
