@@ -470,7 +470,13 @@ export async function queueStep(
         state.sources,
         state.templateVars,
       );
-      inferredRunbook = expandLoopVariables(workflows[0], stepVars);
+      let expanded = expandLoopVariables(workflows[0], stepVars);
+      // Resolve workflow reference relative to the parent runbook's directory
+      const parentDir = state.runbookPath ? path.dirname(state.runbookPath) : '';
+      if (parentDir && parentDir !== '.') {
+        expanded = path.join(parentDir, expanded);
+      }
+      inferredRunbook = expanded;
     } else if (workflows.length > 1) {
       return {
         ok: false,

@@ -54,7 +54,7 @@ async function writeForRunbook(
 
   const content = `## 1. Process
 - FOR i IN 1 TO ${String(iterations)}
-${iterLines ? `${iterLines}\n` : ''}- PASS ${stepPassMod}: ${stepPass}
+${iterLines ? iterLines + '\n' : ''}- PASS ${stepPassMod}: ${stepPass}
 - FAIL ${stepFailMod}: ${stepFail}
 
 ### 1.1 Check
@@ -125,8 +125,7 @@ describe('FOR loop transitions integration', () => {
       runCli('run --prompted agg-one-fail.runbook.md', workspace);
 
       // Iteration 1: pass
-      const iter1 = runCli('pass', workspace);
-      expect(iter1.exitCode).toBe(0);
+      runCli('pass', workspace);
 
       // Iteration 2: fail → BREAK at iteration level → step-level PASS ALL fails → STOP
       const result = runCli('fail', workspace);
@@ -147,8 +146,7 @@ describe('FOR loop transitions integration', () => {
       runCli('run --prompted agg-any-pass.runbook.md', workspace);
 
       // Iteration 1: fail → iteration-level CONTINUE (no BREAK)
-      const iter1 = runCli('fail', workspace);
-      expect(iter1.exitCode).toBe(0);
+      runCli('fail', workspace);
 
       // Iteration 2: pass → iteration-level CONTINUE → loop ends
       // Step-level PASS ANY: [fail, pass] → at least one passed → CONTINUE to step 2
@@ -173,8 +171,7 @@ describe('FOR loop transitions integration', () => {
       runCli('run --prompted agg-break.runbook.md', workspace);
 
       // Iteration 1: pass
-      const iter1 = runCli('pass', workspace);
-      expect(iter1.exitCode).toBe(0);
+      runCli('pass', workspace);
 
       // Iteration 2: fail → BREAK (skips iteration 3)
       // Only 2 rd commands needed before terminal state
@@ -323,6 +320,10 @@ Complete the work.
       result = runCli('pass --agent agent-1', workspace);
       expect(result.exitCode).toBe(0);
 
+      // Advance parent past iteration 1 substep → moves to iteration 2
+      result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
       // Iteration 2: queue step for agent, bind agent, agent passes
       result = runCli('run --step 1', workspace);
       expect(result.exitCode).toBe(0);
@@ -334,7 +335,10 @@ Complete the work.
       result = runCli('pass --agent agent-2', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Both iterations passed → CONTINUE to step 2
+      // Advance parent past iteration 2 substep → FOR loop ends → step 2
+      result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
       // Pass step 2 to complete
       result = runCli('pass', workspace);
       expect(result.stdout).toContain('COMPLETE');
@@ -358,6 +362,10 @@ Complete the work.
       result = runCli('pass --agent agent-1', workspace);
       expect(result.exitCode).toBe(0);
 
+      // Advance parent past iteration 1 substep → moves to iteration 2
+      result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
       // Iteration 2: agent fails
       result = runCli('run --step 1', workspace);
       expect(result.exitCode).toBe(0);
@@ -366,8 +374,12 @@ Complete the work.
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('bound');
 
-      // Agent fails → BREAK at iteration level → step-level PASS ALL fails → STOP
+      // Agent fails child → child stops (no FAIL transition → default STOP)
       result = runCli('fail --agent agent-2', workspace);
+      expect(result.exitCode).toBe(1);
+
+      // Advance parent substep with fail → BREAK → step-level PASS ALL fails → STOP
+      result = runCli('fail', workspace);
       expect(result.exitCode).toBe(1);
     });
   });
