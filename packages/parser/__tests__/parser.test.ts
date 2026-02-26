@@ -1068,7 +1068,7 @@ Review the tasks carefully.
     expect(sub?.workflows).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
   });
 
-  it('canonicalizes step-level runbook refs into implicit per-workflow substeps', () => {
+  it('canonicalizes step-level runbook refs into runbook-list-derived substeps', () => {
     const md = `## 1 Step
 - PASS: CONTINUE
 - FAIL: STOP
@@ -1078,7 +1078,7 @@ Review the tasks carefully.
 `;
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
-    expect(steps[0].bodyKind).toBe('workflow-shorthand');
+    expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
     expect(steps[0].substeps).toHaveLength(2);
     expect(steps[0].substeps?.[0]).toMatchObject({
       id: '1',
@@ -1111,7 +1111,7 @@ Review this checklist.
     });
   });
 
-  it('canonicalizes FOR + step-level runbook list into per-workflow substeps', () => {
+  it('canonicalizes FOR + step-level runbook list into runbook-list-derived substeps', () => {
     const md = `## 1. Review the plan
 - FOR pass IN 1 TO 2
 - FAIL ANY: GOTO Synthesize
@@ -1126,7 +1126,7 @@ Review this checklist.
 `;
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
-    expect(steps[0].bodyKind).toBe('workflow-shorthand');
+    expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
     expect(steps[0].substeps).toHaveLength(4);
     expect(steps[0].substeps?.map((s) => s.workflows)).toEqual([
       ['review-technical-accuracy.runbook.md'],

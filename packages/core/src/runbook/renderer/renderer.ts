@@ -1,7 +1,6 @@
 import type { Step, Action, Transitions, TransitionObject, Substep, Runbook } from '../types.js';
 import { stepIdToString } from '../step-id.js';
-
-type WorkflowShorthandStep = Step & { bodyKind?: 'workflow-shorthand' };
+import { renderCodeFence, renderHeading } from './primitives.js';
 
 /**
  * Render an Action to DSL string.
@@ -65,11 +64,13 @@ export function renderTransitions(transitions: Transitions): string {
 export function renderSubstep(substep: Substep, parentStepName: string): string {
   const agentSuffix = substep.agentType ? ` (${substep.agentType})` : '';
   const lines: string[] = [];
-  lines.push(`### ${parentStepName}.${substep.id} ${substep.description}${agentSuffix}`);
+  lines.push(
+    renderHeading(3, `${parentStepName}.${substep.id}`, `${substep.description}${agentSuffix}`),
+  );
   if (substep.workflows?.length) {
     lines.push('');
-    for (const wf of substep.workflows) {
-      lines.push(`- ${wf}`);
+    for (const runbookPath of substep.workflows) {
+      lines.push(`- ${runbookPath}`);
     }
   }
   return lines.join('\n');
@@ -123,8 +124,8 @@ function renderForClause(forClause: NonNullable<Step['forClause']>): string[] {
   return lines;
 }
 
-function getShorthandWorkflowSubsteps(step: Step): readonly Substep[] | undefined {
-  if ((step as WorkflowShorthandStep).bodyKind !== 'workflow-shorthand') return undefined;
+function getShorthandRunbookSubsteps(step: Step): readonly Substep[] | undefined {
+  if (step.substepsDerivedFromRunbookList !== true) return undefined;
   return step.substeps;
 }
 
@@ -142,7 +143,7 @@ export function renderStep(step: Step): string {
 
   // Header - use step.name directly
   const stepId = step.name;
-  lines.push(`## ${stepId}. ${step.description}`);
+  lines.push(renderHeading(2, stepId, step.description, '. '));
   lines.push('');
 
   if (step.forClause) {
@@ -158,7 +159,7 @@ export function renderStep(step: Step): string {
     lines.push('');
   }
 
-  const shorthandSubsteps = getShorthandWorkflowSubsteps(step);
+  const shorthandSubsteps = getShorthandRunbookSubsteps(step);
   if (shorthandSubsteps?.length) {
     const firstPrompt = shorthandSubsteps[0]?.prompt;
     if (firstPrompt) {
@@ -166,9 +167,9 @@ export function renderStep(step: Step): string {
       lines.push('');
     }
     for (const shorthandSubstep of shorthandSubsteps) {
-      const wf = shorthandSubstep.workflows?.[0];
-      if (!wf) continue;
-      lines.push(`- ${wf}`);
+      const runbookPath = shorthandSubstep.workflows?.[0];
+      if (!runbookPath) continue;
+      lines.push(`- ${runbookPath}`);
     }
     lines.push('');
     return lines.join('\n').trim();
@@ -182,9 +183,7 @@ export function renderStep(step: Step): string {
 
   // Command
   if (step.command) {
-    lines.push('```bash');
-    lines.push(step.command.code);
-    lines.push('```');
+    lines.push(renderCodeFence(step.command.code, 'bash'));
     lines.push('');
   }
 

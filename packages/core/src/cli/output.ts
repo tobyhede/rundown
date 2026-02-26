@@ -4,7 +4,7 @@ import { derivePositionAt } from '../runbook/targeting.js';
 import type { RunbookMetadata, StepPosition, ActionBlockData } from './types.js';
 import type { OutputWriter } from './writer.js';
 import { getWriter } from './context.js';
-import { renderStepForCLI } from './render.js';
+import { buildDisplayStepModel, renderStepForCLI } from './render.js';
 import { success, failure, warning, info, dim, colorizeStatus, colorizeResult } from './colors.js';
 
 const SEPARATOR = '-----';
@@ -144,7 +144,8 @@ export function printStepBlock(
   writer: OutputWriter = getWriter(),
 ): void {
   writer.writeLine('');
-  writer.writeLine(renderStepForCLI(item, pos.current, pos.substep, showCommand));
+  const model = buildDisplayStepModel(item, pos.current, showCommand);
+  writer.writeLine(renderStepForCLI(model));
 }
 
 /**

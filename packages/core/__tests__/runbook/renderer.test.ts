@@ -148,10 +148,10 @@ describe('renderStep', () => {
     expect(result).toContain('- FAIL ALL: GOTO Synthesize');
   });
 
-  it('renders shorthand for implicit workflow-only substep', () => {
+  it('renders shorthand for runbook-list-derived substep', () => {
     const step = {
       name: '2',
-      bodyKind: 'workflow-shorthand',
+      substepsDerivedFromRunbookList: true,
       description: 'Review the plan',
       substeps: [
         {
@@ -166,10 +166,10 @@ describe('renderStep', () => {
     expect(result).not.toContain('### 2.1');
   });
 
-  it('renders shorthand workflow substep with prompt', () => {
+  it('renders shorthand runbook-list-derived substep with prompt', () => {
     const step = {
       name: '2',
-      bodyKind: 'workflow-shorthand',
+      substepsDerivedFromRunbookList: true,
       description: 'Review the plan',
       substeps: [
         {
@@ -358,7 +358,7 @@ More description`;
     const parsed2 = parseRunbook(rendered);
 
     expect(parsed2[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
-    expect((parsed2[0] as Step & { bodyKind?: string }).bodyKind).toBe('workflow-shorthand');
+    expect(parsed2[0].substepsDerivedFromRunbookList).toBe(true);
     expect(parsed2[0].substeps?.map((substep) => substep.workflows)).toEqual([
       ['review-technical-accuracy.runbook.md'],
       ['review-structural-integrity.runbook.md'],

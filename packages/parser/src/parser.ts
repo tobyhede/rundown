@@ -568,20 +568,20 @@ function finalizeStep(
         `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
       );
     }
-    // Canonicalize each step-level workflow bullet into its own synthetic substep.
+    // Canonicalize each step-level runbook bullet into its own synthetic substep.
     // To avoid repeating step-level prompt text for every synthetic substep, attach it
     // only to the first generated substep.
-    const syntheticSubsteps: Substep[] = runbooks.map((workflow, index) => ({
+    const syntheticSubsteps: Substep[] = runbooks.map((runbookPath, index) => ({
       id: String(index + 1),
       description: '',
       prompt: index === 0 ? prompt : undefined,
-      workflows: [workflow],
+      workflows: [runbookPath],
       line: step.line,
     }));
 
     return {
       name: step.name,
-      bodyKind: 'workflow-shorthand',
+      substepsDerivedFromRunbookList: true,
       forClause: step.forClause,
       description: step.description,
       transitions: transitions ?? undefined,

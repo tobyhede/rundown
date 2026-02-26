@@ -1,50 +1,74 @@
 import type { Step, Substep } from '../runbook/types.js';
+import { renderCodeFence, renderHeading } from '../runbook/renderer/primitives.js';
 
 type RenderableItem = Step | Substep;
 
 /**
- * Render a step or substep for CLI output.
- *
- * Generates a simplified Markdown representation optimized for CLI display.
- * Includes the heading, prompt, and command block while ignoring transitions
- * and nested runbook details that are not part of the CLI view.
- *
- * @param item - The Step or Substep to render
- * @param instanceNumber - Current instance number for step/substep display
- * @param _substepNumber - Current substep number for nested substep display
- * @param showCommand - Whether to include the command code block in the output
- * @returns Markdown string suitable for CLI output
+ * Normalized display model for CLI step/substep rendering.
  */
-export function renderStepForCLI(
+export interface DisplayStepModel {
+  readonly headingLevel: 2 | 3;
+  readonly headingId: string;
+  readonly description: string;
+  readonly prompt?: string;
+  readonly command?: {
+    readonly code: string;
+    readonly lang?: string;
+  };
+}
+
+/**
+ * Normalize a step or substep into a display model for CLI rendering.
+ *
+ * Converts runtime step/substep items into a format-only model so rendering
+ * can stay branch-free.
+ *
+ * @param item - The Step or Substep to normalize
+ * @param instanceNumber - Current instance number for step/substep display
+ * @param showCommand - Whether to include the command code block in the output
+ * @returns Normalized display model
+ */
+export function buildDisplayStepModel(
   item: Readonly<RenderableItem>,
   instanceNumber?: string,
-  _substepNumber?: string,
   showCommand?: boolean,
-): string {
-  const lines: string[] = [];
-
+): DisplayStepModel {
   const isStep = 'name' in item;
   const id = isStep ? item.name : item.id;
-  const description = item.description.trim();
+  return {
+    headingLevel: isStep ? 2 : 3,
+    headingId: isStep ? id : instanceNumber ? `${instanceNumber}.${id}` : id,
+    description: item.description.trim(),
+    ...(item.prompt ? { prompt: item.prompt } : {}),
+    ...(showCommand && item.command
+      ? {
+          command: {
+            code: item.command.code,
+            ...(item.command.lang ? { lang: item.command.lang } : {}),
+          },
+        }
+      : {}),
+  };
+}
 
-  const headingPrefix = isStep ? '##' : '###';
-  const headingId = isStep ? id : instanceNumber ? `${instanceNumber}.${id}` : id;
-  const heading = description
-    ? `${headingPrefix} ${headingId}. ${description}`
-    : `${headingPrefix} ${headingId}`;
+/**
+ * Render a normalized CLI display model.
+ *
+ * @param model - Normalized display model
+ * @returns Markdown string suitable for CLI output
+ */
+export function renderStepForCLI(model: Readonly<DisplayStepModel>): string {
+  const lines: string[] = [];
+  lines.push(renderHeading(model.headingLevel, model.headingId, model.description, '. '));
 
-  lines.push(heading);
-
-  if (item.prompt) {
+  if (model.prompt) {
     lines.push('');
-    lines.push(item.prompt);
+    lines.push(model.prompt);
   }
 
-  if (showCommand && item.command) {
+  if (model.command) {
     lines.push('');
-    lines.push(`\`\`\`${item.command.lang ?? ''}`);
-    lines.push(item.command.code);
-    lines.push('```');
+    lines.push(renderCodeFence(model.command.code, model.command.lang));
   }
 
   // Command is not rendered here - it's shown via printCommandExec() with colored prompt
