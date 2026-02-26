@@ -44,7 +44,7 @@ export function registerFailCommand(program: Command): void {
             if (options.agent) {
               const agentResult = await handleAgentBinding(ctx, options.agent, failConfig);
               if (agentResult === 'stopped') {
-                shouldExitWithError = true;
+                process.exitCode = 1;
                 return;
               }
               if (agentResult === 'handled') return;
