@@ -19,6 +19,7 @@ import { registerPromptCommand } from './commands/prompt.js';
 import { registerScenariosCommand } from './commands/scenarios.js';
 import { registerDelegateCommand } from './commands/delegate.js';
 import { registerClaimCommand } from './commands/claim.js';
+import { registerAbortCommand } from './commands/abort.js';
 import { setColorEnabled } from '@rundown-org/core';
 import { initializePolicyContext, parsePolicyCliOptions } from './services/policy-context.js';
 import { outputCommandSchema } from './services/schema-service.js';
@@ -94,5 +95,6 @@ registerPromptCommand(program);
 registerScenariosCommand(program);
 registerDelegateCommand(program);
 registerClaimCommand(program);
+registerAbortCommand(program);
 
 program.parse();

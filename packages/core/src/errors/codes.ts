@@ -265,6 +265,21 @@ export const ErrorCodes = {
     description: 'Could not acquire delegation lock. Another operation may be in progress.',
     docSlug: 'delegation-lock-timeout',
   },
+  DELEGATION_ALREADY_CLAIMED: {
+    code: 'RD-811',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation already claimed',
+    description:
+      'This delegation has been claimed by a child run. Use --force to cancel in-flight.',
+    docSlug: 'delegation-already-claimed',
+  },
+  DELEGATION_ALREADY_RESOLVED: {
+    code: 'RD-812',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation already resolved',
+    description: 'This delegation has already been resolved. Propagation already completed.',
+    docSlug: 'delegation-already-resolved',
+  },
 
   // Generic
   UNKNOWN_ERROR: {

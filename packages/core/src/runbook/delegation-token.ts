@@ -52,12 +52,19 @@ export function generateDelegationToken(): string {
  * Format: `rdtk_` prefix + first 3 body chars + `...` + last 4 body chars.
  * Example: `rdtk_6H3...D5XY`
  *
+ * Short or non-prefixed strings are returned as-is.
+ *
  * @param token - The full delegation token
  * @returns Truncated token string for display
  */
 export function truncateDelegationToken(token: string): string {
+  if (!token.startsWith(TOKEN_PREFIX)) {
+    return token;
+  }
   const body = token.slice(TOKEN_PREFIX.length);
-  if (body.length <= 7) return token;
+  if (body.length <= 7) {
+    return token;
+  }
   return `${TOKEN_PREFIX}${body.slice(0, 3)}...${body.slice(-4)}`;
 }
 

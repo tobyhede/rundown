@@ -227,6 +227,28 @@ export const ActionResponseSchema = z
   .passthrough();
 
 // ============================================================================
+// Delegation Status Schema
+// ============================================================================
+
+/**
+ * Delegation status entry for status display.
+ */
+export const DelegationStatusEntrySchema = z
+  .object({
+    /** Substep ID that owns the delegation (e.g., "1.1") */
+    substep: z.string().describe('Substep ID owning the delegation'),
+    /** Path to the child runbook */
+    runbook: z.string().describe('Child runbook path'),
+    /** Current delegation state */
+    state: z
+      .enum(['pending', 'claimed', 'cancelled'])
+      .describe('Delegation state: pending, claimed, or cancelled'),
+    /** Child run ID (when claimed) */
+    childRunId: z.string().optional().describe('Child run ID when delegation is claimed'),
+  })
+  .describe('Delegation status entry');
+
+// ============================================================================
 // Status Command Schema
 // ============================================================================
 
@@ -277,6 +299,11 @@ export const StatusResponseSchema = z
       })
       .optional()
       .describe('Last action information'),
+    /** Active delegations on the current step */
+    delegations: z
+      .array(DelegationStatusEntrySchema)
+      .optional()
+      .describe('Active delegations on the current step'),
     // Flat structure fields
     file: z.string().optional().describe('Path to the active runbook file'),
     state: z.string().optional().describe('Current runbook execution state'),
@@ -631,6 +658,9 @@ export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 
 /** Action response (pass, fail, goto, stop, complete) */
 export type ActionResponse = z.infer<typeof ActionResponseSchema>;
+
+/** Delegation status entry */
+export type DelegationStatusEntry = z.infer<typeof DelegationStatusEntrySchema>;
 
 /** Status response */
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;

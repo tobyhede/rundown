@@ -82,7 +82,9 @@ export {
 export {
   ActionResponseSchema,
   StatusResponseSchema,
+  DelegationStatusEntrySchema,
   type ActionResponse,
+  type DelegationStatusEntry,
   type StatusResponse as SchemaStatusResponse,
 } from './schema.js';
 

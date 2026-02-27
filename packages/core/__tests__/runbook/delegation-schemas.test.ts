@@ -5,6 +5,7 @@ import {
   AncestorSnapshotSchema,
   RunbookStateSchema,
 } from '../../src/schemas.js';
+import { DelegationStatusEntrySchema, StatusResponseSchema } from '../../src/output/zod-schemas.js';
 
 describe('AncestorSnapshotSchema', () => {
   it('accepts valid ancestor snapshot', () => {
@@ -223,6 +224,61 @@ describe('RunbookStateSchema round-trip with delegation', () => {
       expect(ss?.delegation?.contextSnapshot.ancestors).toHaveLength(1);
       expect(ss?.delegation?.childRunId).toBe('child-run-789');
     }
+  });
+});
+
+describe('DelegationStatusEntrySchema', () => {
+  it('validates a pending entry', () => {
+    const entry = { substep: '1.1', runbook: 'child.md', state: 'pending' };
+    expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
+  });
+
+  it('validates a claimed entry with childRunId', () => {
+    const entry = {
+      substep: '1.1',
+      runbook: 'child.md',
+      state: 'claimed',
+      childRunId: 'run_abc123',
+    };
+    expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
+  });
+
+  it('validates a cancelled entry', () => {
+    const entry = { substep: '1.1', runbook: 'child.md', state: 'cancelled' };
+    expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
+  });
+
+  it('rejects invalid state', () => {
+    const entry = { substep: '1.1', runbook: 'child.md', state: 'resolved' };
+    expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
+  });
+
+  it('rejects missing required fields', () => {
+    expect(() => DelegationStatusEntrySchema.parse({})).toThrow();
+  });
+});
+
+describe('StatusResponseSchema with delegations', () => {
+  it('accepts delegations field', () => {
+    const status = {
+      active: true,
+      stashed: false,
+      delegations: [
+        { substep: '1.1', runbook: 'review.md', state: 'pending' },
+        { substep: '1.2', runbook: 'test.md', state: 'claimed', childRunId: 'run_xyz' },
+      ],
+    };
+    expect(() => StatusResponseSchema.parse(status)).not.toThrow();
+  });
+
+  it('validates without delegations (backward compat)', () => {
+    const status = { active: true, stashed: false };
+    expect(() => StatusResponseSchema.parse(status)).not.toThrow();
+  });
+
+  it('validates with empty delegations array', () => {
+    const status = { active: true, stashed: false, delegations: [] };
+    expect(() => StatusResponseSchema.parse(status)).not.toThrow();
   });
 });
 

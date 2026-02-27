@@ -12,6 +12,26 @@ import type {
 } from './types.js';
 
 /**
+ * Options for aborting a delegation.
+ */
+export interface AbortDelegationOptions {
+  /** Current parent runbook state (loaded under lock). */
+  readonly parentState: RunbookState;
+  /** Substep ID that owns the delegation. */
+  readonly substepId: string;
+  /** Force cancel even if a child run has claimed the token. */
+  readonly force?: boolean;
+}
+
+/**
+ * Result of aborting a delegation.
+ */
+export type AbortDelegationResult =
+  | { readonly status: 'cancelled'; readonly updatedSubstepStates: readonly SubstepState[] }
+  | { readonly status: 'already_cancelled' }
+  | { readonly status: 'needs_force'; readonly childRunId: string };
+
+/**
  * Options for creating a delegation.
  */
 export interface DelegateOptions {
@@ -167,4 +187,53 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
     delegation,
     updatedSubstepStates,
   };
+}
+
+/**
+ * Abort a delegation on a substep.
+ *
+ * Pure function — no I/O, no persistence. The caller is responsible for
+ * persisting the returned `updatedSubstepStates` into the runbook state.
+ *
+ * @param options - Abort delegation options
+ * @returns Abort result indicating outcome
+ * @throws {RundownError} RD-801 if substep not found or has no delegation
+ */
+export function abortDelegation(options: AbortDelegationOptions): AbortDelegationResult {
+  const { parentState, substepId, force } = options;
+
+  // 1. Find substep
+  const existingStates = parentState.substepStates ?? [];
+  const targetSubstep = existingStates.find((ss) => ss.id === substepId);
+
+  if (!targetSubstep?.delegation) {
+    throw Errors.delegationStepNotFound(substepId);
+  }
+
+  const delegation = targetSubstep.delegation;
+
+  // 2. Already cancelled → idempotent return
+  if (delegation.cancelledAt !== null) {
+    return { status: 'already_cancelled' };
+  }
+
+  // 3. Claimed but no --force → needs_force
+  if (delegation.childRunId !== null && !force) {
+    return { status: 'needs_force', childRunId: delegation.childRunId };
+  }
+
+  // 4. Set cancelledAt
+  const updatedDelegation: StepDelegation = {
+    ...delegation,
+    cancelledAt: new Date().toISOString(),
+  };
+
+  const updatedSubstepStates = existingStates.map((ss) => {
+    if (ss.id === substepId) {
+      return { ...ss, delegation: updatedDelegation };
+    }
+    return ss;
+  });
+
+  return { status: 'cancelled', updatedSubstepStates };
 }

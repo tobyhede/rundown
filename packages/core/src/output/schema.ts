@@ -33,6 +33,7 @@ export {
   // Action schemas
   ActionResponseSchema,
   StatusResponseSchema,
+  DelegationStatusEntrySchema,
   // List schemas
   ActiveRunbookEntrySchema,
   AvailableRunbookEntrySchema,
@@ -69,6 +70,7 @@ export {
   type SuccessResponse,
   type ErrorResponse,
   type ActionResponse,
+  type DelegationStatusEntry,
   type StatusResponse,
   type ActiveRunbookEntry,
   type AvailableRunbookEntry,
