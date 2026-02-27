@@ -4,6 +4,7 @@ import {
   runCli,
   getActiveState,
   readRunbookState,
+  type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -332,6 +333,137 @@ Review the deployment.
       const completed = getVariables(finalParent!).completed;
       // Either on step 2 or completed
       expect(step === '2' || completed === true).toBe(true);
+    });
+  });
+
+  describe('edge cases', () => {
+    it('handles completion when parent has no substep states', async () => {
+      // Create a parent runbook without substeps
+      const simpleParentContent = `## 1. Task
+- PASS: COMPLETE
+- FAIL: STOP
+
+Do the task.
+`;
+      await writeFile(join(workspace.cwd, 'simple-parent.runbook.md'), simpleParentContent);
+
+      // This scenario shouldn't normally happen with delegation, but test defensive handling
+      // Start a simple parent that completes immediately
+      const result = runCli('run simple-parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('handles propagation when parent is already completed', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      // Start parent
+      let result = runCli('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      // Delegate substep 1.1
+      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = extractToken(result.stdout);
+
+      // Manually complete the parent before claiming
+      result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(0);
+      result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Now claim and complete child - parent already done
+      result = runCli(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      result = runCli('pass', workspace);
+      // Should succeed even though parent is already done
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('handles concurrent delegation completions gracefully', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      // Start parent
+      let result = runCli('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Delegate both substeps
+      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token1 = extractToken(result.stdout);
+
+      result = runCli('delegate child.runbook.md --step 1.2', workspace);
+      expect(result.exitCode).toBe(0);
+      const token2 = extractToken(result.stdout);
+
+      // Claim both
+      result = runCli(`claim ${token1}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      result = runCli(`claim ${token2}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Complete both in quick succession
+      // First completion
+      result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Second completion
+      result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Both should complete successfully
+    });
+
+    it('handles pass command without delegation linkage', async () => {
+      await writeChildRunbook();
+
+      // Start a standalone child runbook (no parent)
+      let result = runCli('run --prompted child.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Pass should work normally without propagation
+      result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const state = await getActiveState(workspace);
+      expect(getVariables(state!).completed).toBe(true);
+    });
+
+    it('handles fail command without delegation linkage', async () => {
+      await writeChildRunbook();
+
+      // Start a standalone child runbook (no parent)
+      let result = runCli('run --prompted child.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Fail should work normally without propagation
+      result = runCli('fail', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const state = await getActiveState(workspace);
+      expect(getVariables(state!).stopped).toBe(true);
+    });
+
+    it('handles stop command without delegation linkage', async () => {
+      await writeChildRunbook();
+
+      // Start a standalone child runbook (no parent)
+      let result = runCli('run --prompted child.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Stop should work normally without propagation
+      result = runCli('stop "User cancelled"', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // State should be deleted
+      const state = await getActiveState(workspace);
+      expect(state).toBeNull();
     });
   });
 });

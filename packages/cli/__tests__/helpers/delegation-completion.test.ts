@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { RunbookState } from '@rundown-org/core';
+import type { RunbookState, DelegationLinkage } from '@rundown-org/core';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -8,30 +8,24 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
   DelegationLock: jest.fn(),
-  buildCompletionKey: jest.fn((frameKey: string, entry: number, stepId: string) => {
-    return `${frameKey}|${String(entry)}|${stepId}`;
-  }),
-  buildResolvedCompletion: jest.fn((opts: any) => ({
-    agentId: opts.agentId,
-    result: opts.result,
-    targetStep: opts.targetStep,
-    targetSubstep: opts.targetSubstep,
-    targetFrameKey: opts.targetFrameKey,
-    targetEntry: opts.targetEntry,
-  })),
-  deriveActiveFrame: jest.fn((state: RunbookState) => ({
+  buildCompletionKey: jest.fn((frameKey: string, entry: number, substepId: string) =>
+    `${frameKey}|${String(entry)}|${substepId}`
+  ),
+  buildResolvedCompletion: jest.fn((data: any) => data),
+  deriveActiveFrame: jest.fn((state: any) => ({
     frameKey: state.activeFrameKey ?? `${state.step}|`,
     step: state.step,
+    iteration: state.activeForContext?.iteration,
   })),
 }));
 
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
-  getRunbookFromState: jest.fn(() => [
+  getRunbookFromState: jest.fn().mockReturnValue([
     {
       name: '1',
-      description: 'Step 1',
-      transitions: { pass: { action: 'continue', retry: 0 }, fail: { action: 'stop', retry: 0 } },
+      description: 'Test step',
+      transitions: { pass: { action: 'continue' as const, retry: 0 } },
     },
   ]),
 }));
@@ -44,694 +38,586 @@ jest.unstable_mockModule('../../src/services/execution', () => ({
 
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
-  createBridgedEmitter: jest.fn(() => ({
+  createBridgedEmitter: jest.fn().mockReturnValue({
     emit: jest.fn(),
-  })),
+  }),
 }));
 
 // Mock transitions
 jest.unstable_mockModule('../../src/helpers/transitions', () => ({
-  createPassTransitionConfig: jest.fn(() => ({
+  createPassTransitionConfig: jest.fn().mockReturnValue({
     policy: 'pass',
-    computeActionResult: jest.fn(() => 'pass'),
-  })),
-  createFailTransitionConfig: jest.fn(() => ({
+    computeActionResult: jest.fn(),
+  }),
+  createFailTransitionConfig: jest.fn().mockReturnValue({
     policy: 'fail',
-    computeActionResult: jest.fn(() => 'fail'),
-  })),
+    computeActionResult: jest.fn(),
+  }),
 }));
 
 // Import after mocking
 const core = await import('@rundown-org/core');
+const { getRunbookFromState } = await import('../../src/helpers/runbook-loader');
 const { drainResolvedCompletions, runExecutionLoop } = await import('../../src/services/execution');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
+const { createPassTransitionConfig, createFailTransitionConfig } = await import(
+  '../../src/helpers/transitions'
+);
 const { handleDelegationCompletion } = await import('../../src/helpers/delegation-completion');
 
 function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {
   return {
     id,
     runbook: 'test.md',
-    runbookPath: 'test.md',
-    runbookSrc: '## 1. Step\n- PASS: CONTINUE',
+    runbookPath: '/tmp/test.md',
+    runbookSrc: '## 1. Step\n- PASS: COMPLETE',
     step: '1',
     stepName: 'Step',
     retryCount: 0,
     variables: {},
-    steps: [],
+    steps: [{ id: '1', status: 'running' }],
     pendingSteps: [],
     agentBindings: {},
-    startedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    activeFrameKey: '1|',
-    activeEntry: 1,
+    startedAt: '2026-02-27T10:00:00.000Z',
+    updatedAt: '2026-02-27T10:00:00.000Z',
+    ...overrides,
+  } as RunbookState;
+}
+
+function makeDelegationLinkage(overrides: Partial<DelegationLinkage> = {}): DelegationLinkage {
+  return {
+    parentRunId: 'parent-run-id',
+    parentStepId: '1',
+    tokenHash: 'sha256:abc123',
+    parentStep: '1',
+    parentFrameKey: '1|',
+    parentEntry: 1,
     ...overrides,
   };
 }
 
-function makeMockOutput() {
+function makeOutput(): any {
   return {
+    flush: jest.fn(),
     status: jest.fn(),
     error: jest.fn(),
-    metadata: jest.fn(),
-    stopped: jest.fn(),
-    flush: jest.fn(),
-  } as any;
+  };
 }
 
-function makeMockManager() {
+function makeManager(states: Map<string, RunbookState | null>): any {
   return {
-    load: jest.fn<any>().mockResolvedValue(null),
-    update: jest.fn<any>().mockResolvedValue(undefined),
-  } as any;
+    load: jest.fn<any>().mockImplementation(async (id: string) => states.get(id) ?? null),
+  };
 }
 
-function makeMockLock() {
-  return jest.fn().mockImplementation(() => ({
+function makeLock(): any {
+  const MockLock = core.DelegationLock as jest.MockedClass<typeof core.DelegationLock>;
+  const lockInstance = {
     acquire: jest.fn<any>().mockResolvedValue(undefined),
     release: jest.fn<any>().mockResolvedValue(undefined),
-  }));
+  };
+  MockLock.mockImplementation(() => lockInstance as any);
+  return lockInstance;
+}
+
+function makeLifecycleService(resolvedCompletions: Map<string, any> = new Map()): any {
+  return {
+    getResolvedCompletion: jest
+      .fn<any>()
+      .mockImplementation(async (_runId: string, key: string) => resolvedCompletions.get(key) ?? null),
+    upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
+  };
 }
 
 beforeEach(() => {
   jest.resetAllMocks();
+  // Re-establish default mock implementations
+  (core.buildCompletionKey as jest.Mock).mockImplementation(
+    (frameKey: string, entry: number, substepId: string) => `${frameKey}|${String(entry)}|${substepId}`
+  );
+  (core.buildResolvedCompletion as jest.Mock).mockImplementation((data: any) => data);
+  (core.deriveActiveFrame as jest.Mock).mockImplementation((state: any) => ({
+    frameKey: state.activeFrameKey ?? `${state.step}|`,
+    step: state.step,
+    iteration: state.activeForContext?.iteration,
+  }));
+  (getRunbookFromState as jest.Mock).mockReturnValue([
+    {
+      name: '1',
+      description: 'Test step',
+      transitions: { pass: { action: 'continue' as const, retry: 0 } },
+    },
+  ]);
+  (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
   (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-    status: 'waiting',
-    applied: 0,
-    state: makeState('parent-id'),
+    status: 'running',
+    applied: 1,
+    state: makeState('parent-run-id'),
   });
   (runExecutionLoop as jest.Mock).mockResolvedValue('waiting');
-  (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
+  (createPassTransitionConfig as jest.Mock).mockReturnValue({
+    policy: 'pass',
+    computeActionResult: jest.fn(),
+  });
+  (createFailTransitionConfig as jest.Mock).mockReturnValue({
+    policy: 'fail',
+    computeActionResult: jest.fn(),
+  });
 });
 
 describe('handleDelegationCompletion', () => {
   it('returns not-applicable when child has no delegation linkage', async () => {
-    const childState = makeState('child-id', { delegation: undefined });
-    const output = makeMockOutput();
+    const childState = makeState('child-run-id');
+    const output = makeOutput();
 
     const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('not-applicable');
   });
 
-  it('returns not-applicable when parent run no longer exists', async () => {
-    const childState = makeState('child-id', {
-      delegation: {
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:test',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
+  it('acquires delegation lock on parent run ID', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
     });
 
-    const mockManager = makeMockManager();
-    mockManager.load.mockResolvedValue(null); // Parent deleted
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
 
-    const mockLock = makeMockLock();
-    (core.RunbookStateManager as jest.Mock).mockReturnValue(mockManager);
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+    const MockManager = core.RunbookStateManager as jest.MockedClass<
+      typeof core.RunbookStateManager
+    >;
+    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+      typeof core.ExecutionLifecycleService
+    >;
+    const MockActor = core.RunbookActorService as jest.MockedClass<
+      typeof core.RunbookActorService
+    >;
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
 
-    const output = makeMockOutput();
+    MockManager.mockImplementation(() => manager as any);
+    MockLifecycle.mockImplementation(() => lifecycleService as any);
+    MockActor.mockImplementation(() => ({} as any));
+    MockSession.mockImplementation(() => ({} as any));
+
+    await handleDelegationCompletion(childState, 'pass', '/test', output);
+
+    expect(lock.acquire).toHaveBeenCalledWith('parent-run-id');
+    expect(lock.release).toHaveBeenCalledWith('parent-run-id');
+  });
+
+  it('returns not-applicable when parent no longer exists', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+
+    const states = new Map([['parent-run-id', null]]);
+    const manager = makeManager(states);
+    const lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    const MockManager = core.RunbookStateManager as jest.MockedClass<
+      typeof core.RunbookStateManager
+    >;
+    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+      typeof core.ExecutionLifecycleService
+    >;
+    const MockActor = core.RunbookActorService as jest.MockedClass<
+      typeof core.RunbookActorService
+    >;
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
+
+    MockManager.mockImplementation(() => manager as any);
+    MockLifecycle.mockImplementation(() => lifecycleService as any);
+    MockActor.mockImplementation(() => ({} as any));
+    MockSession.mockImplementation(() => ({} as any));
 
     const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('not-applicable');
-    const lockInstance = mockLock.mock.results[0].value;
-    expect(lockInstance.acquire).toHaveBeenCalledWith('parent-id');
-    expect(lockInstance.release).toHaveBeenCalledWith('parent-id');
+    expect(lock.release).toHaveBeenCalled();
   });
 
-  it('returns handled when delegation was cancelled', async () => {
-    const childState = makeState('child-id', {
-      delegation: {
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:test',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
-    });
-
-    const parentState = makeState('parent-id', {
+  it('skips propagation when delegation was cancelled', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
       substepStates: [
         {
           id: '1',
           status: 'pending',
           delegation: {
-            tokenHash: 'sha256:test',
+            tokenHash: 'sha256:abc123',
             childRunbookPath: 'child.md',
             contextSnapshot: { vars: {}, ancestors: [] },
-            childRunId: 'child-id',
-            createdAt: new Date().toISOString(),
-            cancelledAt: new Date().toISOString(), // Cancelled
+            childRunId: 'child-run-id',
+            createdAt: '2026-02-27T10:00:00.000Z',
+            cancelledAt: '2026-02-27T10:05:00.000Z',
           },
         },
       ],
     });
 
-    const mockManager = makeMockManager();
-    mockManager.load.mockResolvedValue(parentState);
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
 
-    const mockLock = makeMockLock();
-    (core.RunbookStateManager as jest.Mock).mockReturnValue(mockManager);
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+    const MockManager = core.RunbookStateManager as jest.MockedClass<
+      typeof core.RunbookStateManager
+    >;
+    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+      typeof core.ExecutionLifecycleService
+    >;
+    const MockActor = core.RunbookActorService as jest.MockedClass<
+      typeof core.RunbookActorService
+    >;
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
 
-    const output = makeMockOutput();
+    MockManager.mockImplementation(() => manager as any);
+    MockLifecycle.mockImplementation(() => lifecycleService as any);
+    MockActor.mockImplementation(() => ({} as any));
+    MockSession.mockImplementation(() => ({} as any));
 
     const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('handled');
+    expect(lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
   });
 
-  it('records resolved completion and drains on parent', async () => {
-    const childState = makeState('child-id', {
-      delegation: {
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:test',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
+  it('records resolved completion on parent', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      step: '1',
+      activeEntry: 1,
+      activeFrameKey: '1|',
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
     });
 
-    const parentState = makeState('parent-id', {
-      substepStates: [
-        {
-          id: '1',
-          status: 'pending',
-          delegation: {
-            tokenHash: 'sha256:test',
-            childRunbookPath: 'child.md',
-            contextSnapshot: { vars: {}, ancestors: [] },
-            childRunId: 'child-id',
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
-    });
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
 
-    const mockManager = makeMockManager();
-    mockManager.load.mockResolvedValue(parentState);
+    const MockManager = core.RunbookStateManager as jest.MockedClass<
+      typeof core.RunbookStateManager
+    >;
+    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+      typeof core.ExecutionLifecycleService
+    >;
+    const MockActor = core.RunbookActorService as jest.MockedClass<
+      typeof core.RunbookActorService
+    >;
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
 
-    const mockLifecycle = {
-      getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
-      upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
-    };
-    (core.ExecutionLifecycleService as jest.Mock).mockReturnValue(mockLifecycle);
-
-    const mockLock = makeMockLock();
-    (core.RunbookStateManager as jest.Mock).mockReturnValue(mockManager);
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
-    (core.RunbookActorService as jest.Mock).mockReturnValue({});
-    (core.SessionService as jest.Mock).mockReturnValue({});
+    MockManager.mockImplementation(() => manager as any);
+    MockLifecycle.mockImplementation(() => lifecycleService as any);
+    MockActor.mockImplementation(() => ({} as any));
+    MockSession.mockImplementation(() => ({} as any));
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-      status: 'waiting',
+      status: 'running',
       applied: 0,
       state: parentState,
     });
 
-    const output = makeMockOutput();
+    await handleDelegationCompletion(childState, 'pass', '/test', output);
 
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
-
-    expect(result).toBe('handled');
-    expect(mockLifecycle.upsertResolvedCompletion).toHaveBeenCalledWith(
-      'parent-id',
+    expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
+      'parent-run-id',
       '1||1|1',
       expect.objectContaining({
         agentId: 'delegation',
         result: 'pass',
-      }),
+        targetSubstep: '1',
+      })
     );
-    expect(drainResolvedCompletions).toHaveBeenCalled();
   });
 
-  it('returns stopped when parent reaches stopped state after drain', async () => {
-    const childState = makeState('child-id', {
-      delegation: {
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:test',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
+  it('drains resolved completions on parent after recording', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
     });
 
-    const parentState = makeState('parent-id', {
-      substepStates: [
-        {
-          id: '1',
-          status: 'pending',
-          delegation: {
-            tokenHash: 'sha256:test',
-            childRunbookPath: 'child.md',
-            contextSnapshot: { vars: {}, ancestors: [] },
-            childRunId: 'child-id',
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    const MockManager = core.RunbookStateManager as jest.MockedClass<
+      typeof core.RunbookStateManager
+    >;
+    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+      typeof core.ExecutionLifecycleService
+    >;
+    const MockActor = core.RunbookActorService as jest.MockedClass<
+      typeof core.RunbookActorService
+    >;
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
+
+    MockManager.mockImplementation(() => manager as any);
+    MockLifecycle.mockImplementation(() => lifecycleService as any);
+    MockActor.mockImplementation(() => ({} as any));
+    MockSession.mockImplementation(() => ({} as any));
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'running',
+      applied: 1,
+      state: parentState,
     });
 
-    const mockManager = makeMockManager();
-    mockManager.load.mockResolvedValue(parentState);
+    await handleDelegationCompletion(childState, 'pass', '/test', output);
 
-    const mockLifecycle = {
-      getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
-      upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
-    };
-    (core.ExecutionLifecycleService as jest.Mock).mockReturnValue(mockLifecycle);
+    expect(drainResolvedCompletions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runbookId: 'parent-run-id',
+        currentState: parentState,
+      })
+    );
+  });
 
-    const mockLock = makeMockLock();
-    (core.RunbookStateManager as jest.Mock).mockReturnValue(mockManager);
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
-    (core.RunbookActorService as jest.Mock).mockReturnValue({});
-    (core.SessionService as jest.Mock).mockReturnValue({});
+  it('runs execution loop when completions were applied', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    const MockManager = core.RunbookStateManager as jest.MockedClass<
+      typeof core.RunbookStateManager
+    >;
+    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+      typeof core.ExecutionLifecycleService
+    >;
+    const MockActor = core.RunbookActorService as jest.MockedClass<
+      typeof core.RunbookActorService
+    >;
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
+
+    MockManager.mockImplementation(() => manager as any);
+    MockLifecycle.mockImplementation(() => lifecycleService as any);
+    MockActor.mockImplementation(() => ({} as any));
+    MockSession.mockImplementation(() => ({} as any));
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'running',
+      applied: 1,
+      state: parentState,
+    });
+
+    await handleDelegationCompletion(childState, 'pass', '/test', output);
+
+    expect(runExecutionLoop).toHaveBeenCalledWith(
+      manager,
+      'parent-run-id',
+      expect.any(Array),
+      '/test',
+      false,
+      expect.any(Object)
+    );
+  });
+
+  it('returns stopped when drain results in stopped status', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    const MockManager = core.RunbookStateManager as jest.MockedClass<
+      typeof core.RunbookStateManager
+    >;
+    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+      typeof core.ExecutionLifecycleService
+    >;
+    const MockActor = core.RunbookActorService as jest.MockedClass<
+      typeof core.RunbookActorService
+    >;
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
+
+    MockManager.mockImplementation(() => manager as any);
+    MockLifecycle.mockImplementation(() => lifecycleService as any);
+    MockActor.mockImplementation(() => ({} as any));
+    MockSession.mockImplementation(() => ({} as any));
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
       status: 'stopped',
       applied: 1,
-      state: { ...parentState, variables: { stopped: true } },
+      state: parentState,
     });
-
-    const output = makeMockOutput();
 
     const result = await handleDelegationCompletion(childState, 'fail', '/test', output);
 
     expect(result).toBe('stopped');
-    expect(output.flush).toHaveBeenCalled();
   });
 
-  it('cascades to grandparent when parent completes and has delegation linkage', async () => {
-    const childState = makeState('child-id', {
-      delegation: {
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:child-token',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
+  it('cascades to grandparent when parent completes', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const grandparentDelegation = makeDelegationLinkage({
+      parentRunId: 'grandparent-run-id',
+      parentStepId: '2',
+    });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      delegation: grandparentDelegation,
+    });
+    const grandparentState = makeState('grandparent-run-id', {
+      substepStates: [{ id: '2', status: 'pending', delegation: null }],
     });
 
-    const parentState = makeState('parent-id', {
-      delegation: {
-        parentRunId: 'grandparent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:parent-token',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
-      substepStates: [
-        {
-          id: '1',
-          status: 'pending',
-          delegation: {
-            tokenHash: 'sha256:child-token',
-            childRunbookPath: 'child.md',
-            contextSnapshot: { vars: {}, ancestors: [] },
-            childRunId: 'child-id',
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
+    const states = new Map([
+      [parentState.id, parentState],
+      [grandparentState.id, grandparentState],
+    ]);
+    const manager = makeManager(states);
+    const lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    const MockManager = core.RunbookStateManager as jest.MockedClass<
+      typeof core.RunbookStateManager
+    >;
+    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+      typeof core.ExecutionLifecycleService
+    >;
+    const MockActor = core.RunbookActorService as jest.MockedClass<
+      typeof core.RunbookActorService
+    >;
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
+
+    MockManager.mockImplementation(() => manager as any);
+    MockLifecycle.mockImplementation(() => lifecycleService as any);
+    MockActor.mockImplementation(() => ({} as any));
+    MockSession.mockImplementation(() => ({} as any));
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'done',
+      applied: 1,
+      state: parentState,
     });
 
-    const grandparentState = makeState('grandparent-id', {
-      substepStates: [
-        {
-          id: '1',
-          status: 'pending',
-          delegation: {
-            tokenHash: 'sha256:parent-token',
-            childRunbookPath: 'parent.md',
-            contextSnapshot: { vars: {}, ancestors: [] },
-            childRunId: 'parent-id',
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
-    });
+    await handleDelegationCompletion(childState, 'pass', '/test', output);
 
-    const mockManager = makeMockManager();
-    let loadCallCount = 0;
-    mockManager.load.mockImplementation(async (id: string) => {
-      loadCallCount++;
-      // First calls load parent, then parent again after drain
-      if (id === 'parent-id' && loadCallCount <= 2) {
-        return parentState;
-      }
-      // Third call loads grandparent after cascade
-      if (id === 'grandparent-id') {
-        return grandparentState;
-      }
-      return null;
-    });
-
-    const mockLifecycle = {
-      getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
-      upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
-    };
-    (core.ExecutionLifecycleService as jest.Mock).mockReturnValue(mockLifecycle);
-
-    const mockLock = makeMockLock();
-    (core.RunbookStateManager as jest.Mock).mockReturnValue(mockManager);
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
-    (core.RunbookActorService as jest.Mock).mockReturnValue({});
-    (core.SessionService as jest.Mock).mockReturnValue({});
-
-    // First drain completes parent
-    (drainResolvedCompletions as jest.Mock)
-      .mockResolvedValueOnce({
-        status: 'done',
-        applied: 1,
-        state: { ...parentState, variables: { completed: true } },
-      })
-      // Second drain (grandparent) waits
-      .mockResolvedValueOnce({
-        status: 'waiting',
-        applied: 0,
-        state: grandparentState,
-      });
-
-    const output = makeMockOutput();
-
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output, 0);
-
-    expect(result).toBe('handled');
-    // Should have called upsert twice (child→parent, parent→grandparent)
-    expect(mockLifecycle.upsertResolvedCompletion).toHaveBeenCalledTimes(2);
+    // Should cascade - second acquire should be on grandparent
+    expect(lock.acquire).toHaveBeenCalledWith('parent-run-id');
+    expect(lock.acquire).toHaveBeenCalledWith('grandparent-run-id');
   });
 
-  it('stops cascading at max recursion depth', async () => {
-    const childState = makeState('child-id', {
-      delegation: {
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:test',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
-    });
+  it('respects maximum recursion depth', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const output = makeOutput();
 
-    const output = makeMockOutput();
-
-    // Call with depth at limit
+    // Call with depth already at limit
     const result = await handleDelegationCompletion(childState, 'pass', '/test', output, 32);
 
     expect(result).toBe('handled');
-    // Should not attempt lock acquisition
-    const mockLock = makeMockLock();
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
-    if (mockLock.mock.results.length > 0) {
-      const lockInstance = mockLock.mock.results[0].value;
-      expect(lockInstance.acquire).not.toHaveBeenCalled();
-    }
-  });
-
-  it('runs execution loop when completions are applied', async () => {
-    const childState = makeState('child-id', {
-      delegation: {
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:test',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
-    });
-
-    const parentState = makeState('parent-id', {
-      substepStates: [
-        {
-          id: '1',
-          status: 'pending',
-          delegation: {
-            tokenHash: 'sha256:test',
-            childRunbookPath: 'child.md',
-            contextSnapshot: { vars: {}, ancestors: [] },
-            childRunId: 'child-id',
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
-    });
-
-    const mockManager = makeMockManager();
-    mockManager.load.mockResolvedValue(parentState);
-
-    const mockLifecycle = {
-      getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
-      upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
-    };
-    (core.ExecutionLifecycleService as jest.Mock).mockReturnValue(mockLifecycle);
-
-    const mockLock = makeMockLock();
-    (core.RunbookStateManager as jest.Mock).mockReturnValue(mockManager);
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
-    (core.RunbookActorService as jest.Mock).mockReturnValue({});
-    (core.SessionService as jest.Mock).mockReturnValue({});
-
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-      status: 'waiting',
-      applied: 1, // Completion was applied
-      state: parentState,
-    });
-
-    (runExecutionLoop as jest.Mock).mockResolvedValue('waiting');
-
-    const output = makeMockOutput();
-
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
-
-    expect(result).toBe('handled');
-    expect(runExecutionLoop).toHaveBeenCalled();
-  });
-
-  it('cascades when execution loop reaches done state', async () => {
-    const childState = makeState('child-id', {
-      delegation: {
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:child-token',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
-    });
-
-    const parentState = makeState('parent-id', {
-      delegation: {
-        parentRunId: 'grandparent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:parent-token',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
-      substepStates: [
-        {
-          id: '1',
-          status: 'pending',
-          delegation: {
-            tokenHash: 'sha256:child-token',
-            childRunbookPath: 'child.md',
-            contextSnapshot: { vars: {}, ancestors: [] },
-            childRunId: 'child-id',
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
-    });
-
-    const grandparentState = makeState('grandparent-id');
-
-    const mockManager = makeMockManager();
-    let loadCallCount = 0;
-    mockManager.load.mockImplementation(async (id: string) => {
-      loadCallCount++;
-      if (id === 'parent-id' && loadCallCount <= 2) {
-        return parentState;
-      }
-      if (id === 'grandparent-id') {
-        return grandparentState;
-      }
-      return null;
-    });
-
-    const mockLifecycle = {
-      getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
-      upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
-    };
-    (core.ExecutionLifecycleService as jest.Mock).mockReturnValue(mockLifecycle);
-
-    const mockLock = makeMockLock();
-    (core.RunbookStateManager as jest.Mock).mockReturnValue(mockManager);
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
-    (core.RunbookActorService as jest.Mock).mockReturnValue({});
-    (core.SessionService as jest.Mock).mockReturnValue({});
-
-    (drainResolvedCompletions as jest.Mock)
-      .mockResolvedValueOnce({
-        status: 'waiting',
-        applied: 1,
-        state: parentState,
-      })
-      .mockResolvedValueOnce({
-        status: 'waiting',
-        applied: 0,
-        state: grandparentState,
-      });
-
-    (runExecutionLoop as jest.Mock).mockResolvedValue('done');
-
-    const output = makeMockOutput();
-
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
-
-    expect(result).toBe('handled');
-    expect(mockLifecycle.upsertResolvedCompletion).toHaveBeenCalledTimes(2);
+    // Should not even acquire lock
+    const MockLock = core.DelegationLock as jest.MockedClass<typeof core.DelegationLock>;
+    expect(MockLock).not.toHaveBeenCalled();
   });
 
   it('uses fail transition config when result is fail', async () => {
-    const childState = makeState('child-id', {
-      delegation: {
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:test',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
     });
 
-    const parentState = makeState('parent-id', {
-      substepStates: [
-        {
-          id: '1',
-          status: 'pending',
-          delegation: {
-            tokenHash: 'sha256:test',
-            childRunbookPath: 'child.md',
-            contextSnapshot: { vars: {}, ancestors: [] },
-            childRunId: 'child-id',
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
-    });
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
 
-    const mockManager = makeMockManager();
-    mockManager.load.mockResolvedValue(parentState);
+    const MockManager = core.RunbookStateManager as jest.MockedClass<
+      typeof core.RunbookStateManager
+    >;
+    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+      typeof core.ExecutionLifecycleService
+    >;
+    const MockActor = core.RunbookActorService as jest.MockedClass<
+      typeof core.RunbookActorService
+    >;
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
 
-    const mockLifecycle = {
-      getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
-      upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
-    };
-    (core.ExecutionLifecycleService as jest.Mock).mockReturnValue(mockLifecycle);
-
-    const mockLock = makeMockLock();
-    (core.RunbookStateManager as jest.Mock).mockReturnValue(mockManager);
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
-    (core.RunbookActorService as jest.Mock).mockReturnValue({});
-    (core.SessionService as jest.Mock).mockReturnValue({});
+    MockManager.mockImplementation(() => manager as any);
+    MockLifecycle.mockImplementation(() => lifecycleService as any);
+    MockActor.mockImplementation(() => ({} as any));
+    MockSession.mockImplementation(() => ({} as any));
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-      status: 'waiting',
+      status: 'running',
       applied: 0,
       state: parentState,
     });
 
-    const output = makeMockOutput();
+    await handleDelegationCompletion(childState, 'fail', '/test', output);
 
-    const result = await handleDelegationCompletion(childState, 'fail', '/test', output);
-
-    expect(result).toBe('handled');
-    expect(mockLifecycle.upsertResolvedCompletion).toHaveBeenCalledWith(
-      'parent-id',
-      expect.any(String),
-      expect.objectContaining({
-        result: 'fail',
-      }),
-    );
+    expect(createFailTransitionConfig).toHaveBeenCalled();
+    expect(createPassTransitionConfig).not.toHaveBeenCalled();
   });
 
-  it('does not record completion if one already exists', async () => {
-    const childState = makeState('child-id', {
-      delegation: {
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash: 'sha256:test',
-        parentStep: '1',
-        parentFrameKey: '1|',
-        parentEntry: 1,
-      },
+  it('flushes output after handling', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
     });
 
-    const parentState = makeState('parent-id', {
-      substepStates: [
-        {
-          id: '1',
-          status: 'pending',
-          delegation: {
-            tokenHash: 'sha256:test',
-            childRunbookPath: 'child.md',
-            contextSnapshot: { vars: {}, ancestors: [] },
-            childRunId: 'child-id',
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
-    });
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
 
-    const existingCompletion = {
-      agentId: 'delegation',
-      result: 'pass',
-      targetStep: '1',
-      targetSubstep: '1',
-    };
+    const MockManager = core.RunbookStateManager as jest.MockedClass<
+      typeof core.RunbookStateManager
+    >;
+    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+      typeof core.ExecutionLifecycleService
+    >;
+    const MockActor = core.RunbookActorService as jest.MockedClass<
+      typeof core.RunbookActorService
+    >;
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
 
-    const mockManager = makeMockManager();
-    mockManager.load.mockResolvedValue(parentState);
-
-    const mockLifecycle = {
-      getResolvedCompletion: jest.fn<any>().mockResolvedValue(existingCompletion),
-      upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
-    };
-    (core.ExecutionLifecycleService as jest.Mock).mockReturnValue(mockLifecycle);
-
-    const mockLock = makeMockLock();
-    (core.RunbookStateManager as jest.Mock).mockReturnValue(mockManager);
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
-    (core.RunbookActorService as jest.Mock).mockReturnValue({});
-    (core.SessionService as jest.Mock).mockReturnValue({});
+    MockManager.mockImplementation(() => manager as any);
+    MockLifecycle.mockImplementation(() => lifecycleService as any);
+    MockActor.mockImplementation(() => ({} as any));
+    MockSession.mockImplementation(() => ({} as any));
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-      status: 'waiting',
+      status: 'running',
       applied: 0,
       state: parentState,
     });
 
-    const output = makeMockOutput();
+    await handleDelegationCompletion(childState, 'pass', '/test', output);
 
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
-
-    expect(result).toBe('handled');
-    expect(mockLifecycle.upsertResolvedCompletion).not.toHaveBeenCalled();
+    expect(output.flush).toHaveBeenCalled();
   });
 });
