@@ -194,6 +194,7 @@ export const SubstepSchema = z.object({
 export const StepSchema = z.object({
   name: StepNameSchema, // REQUIRED: "1", "ErrorHandler"
   substepsDerivedFromRunbookList: z.literal(true).optional(),
+  deferred: z.boolean().optional(),
   forClause: ForClauseSchema.optional(),
   description: z.string(),
   command: CommandSchema.optional(),

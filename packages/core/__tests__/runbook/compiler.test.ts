@@ -75,6 +75,77 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
     });
 
+    it('deferred shorthand runbook-list step with default aggregation stops on any failure', () => {
+      const steps = [
+        ...parseRunbookDocument(`## 1. Review package
+- review-pass.runbook.md
+- review-fail.runbook.md
+
+## 2. Done
+- PASS: COMPLETE
+`).steps,
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1
+      actor.send({ type: 'FAIL' }); // 1.2 -> parent default FAIL ANY: STOP
+
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
+    });
+
+    it('explicit H3 runbook substeps remain immediate by default', () => {
+      const steps = [
+        ...parseRunbookDocument(`## 1. Review package
+### 1.1 Review pass
+- review-pass.runbook.md
+### 1.2 Review fail
+- review-fail.runbook.md
+
+## 2. Done
+- PASS: COMPLETE
+`).steps,
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1 -> 1.2
+      actor.send({ type: 'FAIL' }); // 1.2 FAIL defaults to STOP (immediate)
+
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
+    });
+
+    it('falls back to legacy deferred inference when deferred flag is missing', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Legacy shorthand-derived step',
+          substepsDerivedFromRunbookList: true,
+          substeps: [
+            { id: '1', description: 'First' },
+            { id: '2', description: 'Second' },
+          ],
+        },
+        { name: '2', description: 'Done', transitions: DEFAULT_TRANSITIONS },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1 -> 1.2
+      actor.send({ type: 'FAIL' }); // 1.2 -> parent default FAIL ANY: STOP
+
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
+    });
+
     it('last substep transitions to parent state', () => {
       const steps: Step[] = [
         {
@@ -930,6 +1001,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 4 },
           description: 'Test with failures',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -1181,6 +1257,11 @@ describe('runbook compiler', () => {
           name: '3',
           forClause: { start: 1, end: 5 },
           description: 'Process batches',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -1230,7 +1311,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
       expect(actor.getSnapshot().context.substepResults).toEqual(['fail']);
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'BREAK' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
     });
 
     it('NEXT records iteration results correctly across iterations', () => {
@@ -1239,6 +1320,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 3 },
           description: 'Loop with NEXT on fail',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -1293,6 +1379,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 5 },
           description: 'Loop with early break',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -3313,6 +3404,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 5, end: 1 },
           description: 'Descending with break',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -3345,7 +3441,7 @@ describe('runbook compiler', () => {
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'BREAK' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
     });
 
     it('NEXT skips to next descending iteration', () => {
@@ -3512,6 +3608,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 3, end: 1 },
           description: 'Descending with mixed results',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',

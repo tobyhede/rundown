@@ -14,6 +14,7 @@ describe('Step-level runbooks', () => {
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps![0].workflows).toEqual(['task-details.runbook.md']);
+    expect(steps[0].deferred).toBe(false);
   });
 
   it('rejects step with both runbooks and substeps', () => {
@@ -66,6 +67,23 @@ describe('parseRunbook with substep runbooks', () => {
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps?.[0].workflows).toEqual(['review.runbook.md', 'security.runbook.md']);
+    expect(steps[0].deferred).toBe(false);
+  });
+
+  it('sets deferred=false for explicit non-FOR substeps', () => {
+    const markdown = `## 1. Review
+
+### 1.1 Check A
+- PASS: CONTINUE
+- FAIL: STOP
+
+### 1.2 Check B
+- PASS: CONTINUE
+- FAIL: STOP
+`;
+
+    const steps = parseRunbook(markdown);
+    expect(steps[0].deferred).toBe(false);
   });
 });
 
@@ -789,6 +807,7 @@ echo batch
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
     expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].deferred).toBe(true);
   });
 
   describe('FOR clause nested transitions', () => {
@@ -1079,6 +1098,7 @@ Review the tasks carefully.
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
     expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
+    expect(steps[0].deferred).toBe(true);
     expect(steps[0].substeps).toHaveLength(2);
     expect(steps[0].substeps?.[0]).toMatchObject({
       id: '1',
@@ -1127,6 +1147,7 @@ Review this checklist.
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
     expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
+    expect(steps[0].deferred).toBe(true);
     expect(steps[0].substeps).toHaveLength(4);
     expect(steps[0].substeps?.map((s) => s.workflows)).toEqual([
       ['review-technical-accuracy.runbook.md'],

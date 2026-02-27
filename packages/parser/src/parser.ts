@@ -589,6 +589,7 @@ function finalizeStep(
     return {
       name: step.name,
       substepsDerivedFromRunbookList: true,
+      deferred: true,
       forClause: step.forClause,
       description: step.description,
       transitions: transitions ?? undefined,
@@ -599,6 +600,7 @@ function finalizeStep(
 
   return {
     name: step.name,
+    deferred: !!step.forClause,
     forClause: step.forClause,
     description: step.description,
     command: step.command,

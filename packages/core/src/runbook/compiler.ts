@@ -126,18 +126,30 @@ const DEFAULT_TRANSITIONS: Transitions = {
 };
 
 /**
- * Default transitions for runbook-list substeps.
+ * Default transitions for deferred substeps.
  *
- * Child runbook outcomes should bubble to the parent aggregation state so
- * parent PASS ALL / FAIL ANY can evaluate iteration-wide results.
- * The `all` value is inert here because both pass and fail use CONTINUE —
- * aggregation only matters when transitions diverge (e.g., CONTINUE vs STOP).
+ * Deferred steps aggregate child outcomes at the parent boundary, so child
+ * outcomes must bubble up to that boundary via CONTINUE on both pass and fail.
+ * The `all` value is inert here because pass/fail actions are identical.
  */
-const DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS: Transitions = {
+const DEFAULT_DEFERRED_SUBSTEP_TRANSITIONS: Transitions = {
   all: true, // Inert: both pass/fail CONTINUE, so ALL/ANY distinction has no effect
   pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
 };
+
+/**
+ * Determine whether a step uses deferred parent aggregation semantics.
+ *
+ * Compatibility fallback for legacy callers that construct Step objects
+ * without the new `deferred` field.
+ */
+function isDeferredStep(step: Step): boolean {
+  const deferred = (step as Step & { deferred?: boolean }).deferred;
+  if (deferred !== undefined) return deferred;
+  if (step.forClause) return true;
+  return step.substepsDerivedFromRunbookList === true;
+}
 
 /**
  * Internal helper to format state IDs for the XState machine.
@@ -737,7 +749,10 @@ function buildParentStateConfig(
   const parentStep = config.parentStep;
   const stepName = config.stepName;
   const hasFor = !!parentStep.forClause;
-  const hasTransitions = !!parentStep.transitions;
+  const isDeferred = isDeferredStep(parentStep);
+  const parentTransitions =
+    parentStep.transitions ?? (isDeferred ? DEFAULT_TRANSITIONS : undefined);
+  const hasTransitions = !!parentTransitions;
   const nextTarget = findNextStateId(stepName, undefined, steps);
   const firstSubstep = parentStep.substeps?.[0];
   const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
@@ -905,9 +920,12 @@ function buildParentStateConfig(
     ];
   };
 
-  // Aggregation guards (Cases A & B: steps with explicit transitions)
-  if (hasTransitions) {
-    const parentTransitions = parentStep.transitions;
+  // Aggregation guards (Cases A & B: steps with explicit or synthesized transitions).
+  // Note: substep-level BREAK/NEXT actions are consumed at the iteration level.
+  // The parent's configured transition action takes precedence for lastAction
+  // in the exit context (e.g., BREAK exits produce lastAction=CONTINUE when
+  // the parent transition is CONTINUE).
+  if (hasTransitions && parentTransitions) {
     const passTarget = resolveActionTarget(parentTransitions.pass.action, stepName, steps);
     const failTarget = resolveActionTarget(parentTransitions.fail.action, stepName, steps);
 
@@ -928,7 +946,7 @@ function buildParentStateConfig(
       ...buildOutcomeEntries(failBranchGuard, parentTransitions.fail, failTarget),
     );
   } else {
-    // Unconditional exit (Cases C & D: no explicit transitions)
+    // Unconditional exit (immediate/non-deferred steps without explicit transitions)
     const exitAssign: Record<string, unknown> = {
       forStack: [] as readonly ForContext[],
       retryCount: 0,
@@ -938,12 +956,12 @@ function buildParentStateConfig(
     };
 
     if (!hasFor) {
-      // Case D: non-FOR pass-through — clear iterationResults, set CONTINUE
+      // Non-FOR pass-through — clear iterationResults, set CONTINUE
       exitAssign.iterationResults = undefined as ('pass' | 'fail')[] | undefined;
       exitAssign.lastAction = { type: 'CONTINUE' as const };
       exitAssign.lastMessage = undefined as string | undefined;
     }
-    // Case C: FOR without transitions — preserve lastAction from substep
+    // FOR pass-through (legacy) — preserve lastAction from substep
 
     always.push({ target: nextTarget, actions: assign(exitAssign) });
   }
@@ -1139,15 +1157,16 @@ function buildContinueTransition(
         }),
       };
     }
-    // Non-FOR: existing behaviour unchanged
-    return buildSubstepToParentAssign(stepName, kind, 'CONTINUE', !currentStep.transitions);
+    // Non-FOR: pass-through only for immediate steps without parent transitions.
+    const isPassThrough = !currentStep.transitions && !isDeferredStep(currentStep);
+    return buildSubstepToParentAssign(stepName, kind, 'CONTINUE', isPassThrough);
   }
 
   // Non-last substep CONTINUE: advance to next sibling substep.
   const shouldAccumulateIterationResults = !!(
     currentStep?.substeps?.length &&
     !currentStep.forClause &&
-    currentStep.transitions
+    (currentStep.transitions || isDeferredStep(currentStep))
   );
   const shouldAccumulateSubstepResults = !!(currentStep?.substeps?.length && currentStep.forClause);
 
@@ -1346,11 +1365,11 @@ export function compileRunbookToMachine(
   steps.forEach((step) => {
     const stepName = step.name;
     if (step.substeps && step.substeps.length > 0) {
+      const deferredStep = isDeferredStep(step);
       step.substeps.forEach((substep) => {
-        const inferredTransitions =
-          substep.workflows && substep.workflows.length > 0
-            ? DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS
-            : DEFAULT_TRANSITIONS;
+        const inferredTransitions = deferredStep
+          ? DEFAULT_DEFERRED_SUBSTEP_TRANSITIONS
+          : DEFAULT_TRANSITIONS;
         allStates.push({
           id: formatStateId(stepName, substep.id),
           stepName,
