@@ -18,7 +18,6 @@ import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import {
   buildForLoopSteps,
   runForLoop,
-  generateEvents,
   type ForLoopConfig,
   type SubstepAction,
   type IterationAction,
@@ -65,10 +64,6 @@ const fullConfigArb: fc.Arbitrary<ForLoopConfig> = fc.record({
   parentAggMode: fc.boolean(),
   parentFailRetry: fc.integer({ min: 0, max: 2 }),
 });
-
-/** Events array arbitrary for a given max length. */
-const eventsArb = (maxLen: number): fc.Arbitrary<EventType[]> =>
-  fc.array(eventArb, { minLength: maxLen, maxLength: maxLen });
 
 // ---------------------------------------------------------------------------
 // Properties

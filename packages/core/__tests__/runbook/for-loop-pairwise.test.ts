@@ -9,7 +9,6 @@
  * 4. Asserts terminal state matches oracle prediction
  */
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
 import covertable from 'covertable';
 const make = (
   covertable as unknown as {
@@ -97,7 +96,7 @@ function rowToConfig(row: PairwiseRow): ForLoopConfig {
 // ---------------------------------------------------------------------------
 
 describe('FOR loop pairwise regression', () => {
-  it(`generates ${pairwiseRows.length} pairwise test cases (sanity check)`, () => {
+  it(`generates ${String(pairwiseRows.length)} pairwise test cases (sanity check)`, () => {
     // Pairwise at strength 2 with 13 factors should produce a reasonable number of cases
     expect(pairwiseRows.length).toBeGreaterThan(10);
     expect(pairwiseRows.length).toBeLessThan(200);

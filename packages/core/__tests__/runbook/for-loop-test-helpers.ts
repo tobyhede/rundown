@@ -95,7 +95,7 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
   for (let i = 1; i <= config.numSubsteps; i++) {
     substeps.push({
       id: String(i),
-      description: `Substep ${i}`,
+      description: `Substep ${String(i)}`,
       transitions: makeTransitions(
         true,
         config.substepPassAction,
@@ -308,13 +308,13 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
           }
 
           // Process substep action
-          if (substepAction! === 'STOP') return 'STOPPED';
-          if (substepAction! === 'COMPLETE') return 'COMPLETE';
-          if (substepAction! === 'BREAK') {
+          if (substepAction === 'STOP') return 'STOPPED';
+          if (substepAction === 'COMPLETE') return 'COMPLETE';
+          if (substepAction === 'BREAK') {
             earlyExit = 'BREAK';
             break;
           }
-          if (substepAction! === 'NEXT') {
+          if (substepAction === 'NEXT') {
             earlyExit = 'NEXT';
             break;
           }
@@ -390,7 +390,7 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
 function aggregateParent(
   config: ForLoopConfig,
   completedResults: ('pass' | 'fail')[],
-  currentIterResult: 'pass' | 'fail',
+  _currentIterResult: 'pass' | 'fail',
 ): OracleResult {
   // For BREAK, the current iteration is the last one. Include it in aggregation.
   // completedResults already includes the current iteration (added by caller).
