@@ -271,7 +271,10 @@ export function parseRunbookDocument(
     if (node.type === 'code' && currentStep) {
       const codeNode = node as Code;
 
-      // mdast splits the info string into lang and meta — reconstruct for helpers
+      // mdast splits the code fence info string on the first space:
+      //   ```bash prompt  →  lang: "bash", meta: "prompt"
+      // Reconstruct the full string so isExecutableCodeBlock/isPromptCodeBlock
+      // can check multi-word patterns like "bash prompt".
       const fullLang =
         codeNode.lang && codeNode.meta ? `${codeNode.lang} ${codeNode.meta}` : codeNode.lang;
 

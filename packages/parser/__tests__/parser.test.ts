@@ -1666,6 +1666,26 @@ Review the code carefully.
     expect(steps[0].substeps![0].id).toBe('2');
     expect(steps[0].substeps![0].description).toBe('Review code');
   });
+
+  it('parses bare numeric substep under named parent step', () => {
+    const md = `## Setup
+
+### 1 Initialize
+
+Set up the environment.
+
+### 2 Configure
+
+Apply configuration.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].name).toBe('Setup');
+    expect(steps[0].substeps).toHaveLength(2);
+    expect(steps[0].substeps![0].id).toBe('1');
+    expect(steps[0].substeps![0].description).toBe('Initialize');
+    expect(steps[0].substeps![1].id).toBe('2');
+    expect(steps[0].substeps![1].description).toBe('Configure');
+  });
 });
 
 describe('E3: bare numeric step headers', () => {

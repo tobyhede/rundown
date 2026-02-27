@@ -93,6 +93,11 @@ export interface ParsedStepHeader {
   description: string;
 }
 
+/** Generate a default description for bare numeric step headers (e.g., "## 1" → "Step 1"). */
+function defaultStepDescription(stepNumber: string): string {
+  return `Step ${stepNumber}`;
+}
+
 /**
  * Extract step number/name and description from H2 header text.
  *
@@ -119,7 +124,7 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
 
     const description = stripSeparator(trimmed.slice(numEnd));
 
-    return { name: numberStr, description: description || `Step ${numberStr}` };
+    return { name: numberStr, description: description || defaultStepDescription(numberStr) };
   }
 
   // Check for named step: Name or Name Description
@@ -174,9 +179,50 @@ function isValidSubstepId(s: string): boolean {
 }
 
 /**
+ * Parse description and optional agent type from remainder text after a substep ID.
+ *
+ * Recognizes these patterns:
+ * - "Description" → description only
+ * - "Description (agent-type)" → description + agent
+ * - "(agent-type)" → agent only, empty description
+ *
+ * Uses lastIndexOf to avoid ReDoS from (.+?)\s+ backtracking.
+ *
+ * @param remainder - The text after the substep ID (trimmed)
+ * @returns Object with description and optional agentType
+ */
+function parseDescriptionAndAgent(remainder: string): {
+  description: string;
+  agentType?: string;
+} {
+  if (!remainder) return { description: '' };
+
+  // Check for agent suffix: "description (agent-type)"
+  const lastParenOpen = remainder.lastIndexOf(' (');
+  if (lastParenOpen > 0 && remainder.endsWith(')')) {
+    const possibleAgent = remainder.slice(lastParenOpen + 2, -1).trim();
+    if (possibleAgent) {
+      return {
+        description: remainder.slice(0, lastParenOpen).trim(),
+        agentType: possibleAgent,
+      };
+    }
+    return { description: remainder };
+  }
+
+  if (remainder.startsWith('(') && remainder.endsWith(')')) {
+    // Just agent, no description: "(agent-type)"
+    return { description: '', agentType: remainder.slice(1, -1).trim() };
+  }
+
+  return { description: remainder };
+}
+
+/**
  * Extract substep header from H3 text.
  *
  * Parses substep headers in these formats:
+ * - Short form: "1", "2 Description", "3 Review (agent)" (parent inferred from context)
  * - Numeric: "1.2" or "1.2 Description"
  * - Named: "1.Cleanup", "ErrorHandler.Recover" (with optional description)
  * - With agent: "1.2 Description (agent-type)" or "1.2 (agent-type)"
@@ -196,31 +242,8 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
   if (/^\d+$/.test(firstToken)) {
     const num = parseInt(firstToken, 10);
     if (num > 0) {
-      let description = '';
-      let agentType: string | undefined;
-
-      if (spaceIdx !== -1) {
-        const remainder = trimmed.slice(spaceIdx + 1).trim();
-        if (remainder) {
-          // Check for agent suffix: "description (agent-type)"
-          const lastParenOpen = remainder.lastIndexOf(' (');
-          if (lastParenOpen > 0 && remainder.endsWith(')')) {
-            const possibleAgent = remainder.slice(lastParenOpen + 2, -1).trim();
-            if (possibleAgent) {
-              description = remainder.slice(0, lastParenOpen).trim();
-              agentType = possibleAgent;
-            } else {
-              description = remainder;
-            }
-          } else if (remainder.startsWith('(') && remainder.endsWith(')')) {
-            // Just agent, no description: "(agent-type)"
-            agentType = remainder.slice(1, -1).trim();
-          } else {
-            description = remainder;
-          }
-        }
-      }
-
+      const remainder = spaceIdx !== -1 ? trimmed.slice(spaceIdx + 1).trim() : '';
+      const { description, agentType } = parseDescriptionAndAgent(remainder);
       return { id: firstToken, description, agentType };
     }
   }
@@ -240,37 +263,13 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
   const substepId = spaceIndex === -1 ? afterDot : afterDot.slice(0, spaceIndex);
   if (!isValidSubstepId(substepId)) return null;
 
-  // Parse optional description and agent from remainder
-  let description: string | undefined;
-  let agentType: string | undefined;
-
-  if (spaceIndex !== -1) {
-    const remainder = afterDot.slice(spaceIndex + 1).trim();
-    if (remainder) {
-      // Check for agent suffix: "description (agent-type)"
-      // Uses lastIndexOf to avoid ReDoS from (.+?)\s+ backtracking
-      const lastParenOpen = remainder.lastIndexOf(' (');
-      if (lastParenOpen > 0 && remainder.endsWith(')')) {
-        const possibleAgent = remainder.slice(lastParenOpen + 2, -1).trim();
-        if (possibleAgent) {
-          description = remainder.slice(0, lastParenOpen).trim() || undefined;
-          agentType = possibleAgent;
-        } else {
-          description = remainder;
-        }
-      } else if (remainder.startsWith('(') && remainder.endsWith(')')) {
-        // Just agent, no description: "(agent-type)"
-        agentType = remainder.slice(1, -1).trim();
-      } else {
-        description = remainder;
-      }
-    }
-  }
+  const remainder = spaceIndex !== -1 ? afterDot.slice(spaceIndex + 1).trim() : '';
+  const { description, agentType } = parseDescriptionAndAgent(remainder);
 
   return {
     stepRef: stepPart,
     id: substepId,
-    description: description ?? '',
+    description,
     agentType,
   };
 }
