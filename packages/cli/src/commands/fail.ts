@@ -11,6 +11,7 @@ import {
   handleAgentBinding,
   handleAgentCompletion,
 } from '../helpers/transitions.js';
+import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'fail' command for marking steps as failed.
@@ -58,6 +59,25 @@ export function registerFailCommand(program: Command): void {
             if (options.agent) {
               const completionResult = await handleAgentCompletion(ctx, options.agent);
               if (completionResult === 'stopped') shouldExitWithError = true;
+            }
+
+            // Delegation propagation — fires when child run reaches terminal state
+            if (!options.agent) {
+              const freshState = await ctx.manager.load(ctx.state.id);
+              if (freshState?.delegation) {
+                const isTerminal =
+                  freshState.variables.completed === true || freshState.variables.stopped === true;
+                if (isTerminal) {
+                  const propResult = freshState.variables.completed ? 'pass' : 'fail';
+                  const delegationResult = await handleDelegationCompletion(
+                    freshState,
+                    propResult,
+                    cwd,
+                    output,
+                  );
+                  if (delegationResult === 'stopped') shouldExitWithError = true;
+                }
+              }
             }
           } finally {
             ctx.actor.stop();

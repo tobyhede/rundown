@@ -15,6 +15,7 @@ import {
   type RunbookActorService,
   type SessionService,
   type ExecutionLifecycleService,
+  deriveActiveFrame,
   deriveExecutionAt,
   getActiveForContext,
   parseRunbookDocument,
@@ -1023,10 +1024,14 @@ export async function claimAndLaunch(
     }
 
     // Build delegation linkage for the child run
+    const parentFrame = deriveActiveFrame(freshParent);
     const delegationLinkage: DelegationLinkage = {
       parentRunId: freshParent.id,
       parentStepId: substepId ?? stepId,
       tokenHash,
+      parentStep: freshParent.step,
+      parentFrameKey: parentFrame.frameKey,
+      parentEntry: freshParent.activeEntry ?? 1,
     };
 
     const parentPrompted = freshParent.prompted ?? false;

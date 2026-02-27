@@ -225,6 +225,12 @@ export interface DelegationLinkage {
   readonly parentRunId: string;
   readonly parentStepId: string;
   readonly tokenHash: string;
+  /** Parent's step name at claim time (e.g., "1"). */
+  readonly parentStep?: string;
+  /** Parent's frame key at claim time for completion key construction. */
+  readonly parentFrameKey?: string;
+  /** Parent's entry counter at claim time for completion key construction. */
+  readonly parentEntry?: number;
 }
 
 /**
