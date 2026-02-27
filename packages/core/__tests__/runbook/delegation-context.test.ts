@@ -118,6 +118,68 @@ describe('reconstituteContextVars', () => {
     expect(keys.filter((k) => k.startsWith('context.parent.parent'))).toHaveLength(0);
   });
 
+  it('emits parent structural fields when present in snapshot', () => {
+    const snapshot: ContextSnapshot = {
+      vars: { env: 'staging' },
+      ancestors: [],
+      step: '2',
+      substep: '1',
+      at: '2.3.1',
+      index: 3,
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.parent.step']).toBe('2');
+    expect(result['context.parent.substep']).toBe('1');
+    expect(result['context.parent.at']).toBe('2.3.1');
+    expect(result['context.parent.index']).toBe('3');
+    expect(result['context.ancestors.0.step']).toBe('2');
+    expect(result['context.ancestors.0.substep']).toBe('1');
+    expect(result['context.ancestors.0.at']).toBe('2.3.1');
+    expect(result['context.ancestors.0.index']).toBe('3');
+  });
+
+  it('omits parent structural fields when absent (backward compat)', () => {
+    const snapshot: ContextSnapshot = {
+      vars: { env: 'staging' },
+      ancestors: [],
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.parent.step']).toBeUndefined();
+    expect(result['context.parent.substep']).toBeUndefined();
+    expect(result['context.parent.at']).toBeUndefined();
+    expect(result['context.parent.index']).toBeUndefined();
+  });
+
+  it('emits at and index for ancestors', () => {
+    const ancestor: AncestorSnapshot = {
+      runId: 'anc-run',
+      runbook: 'ancestor.md',
+      step: '3',
+      substep: '1',
+      vars: {},
+      at: '3.2.1',
+      index: 2,
+    };
+    const snapshot: ContextSnapshot = {
+      vars: {},
+      ancestors: [ancestor],
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    // Array form (grandparent is ancestors.1)
+    expect(result['context.ancestors.1.at']).toBe('3.2.1');
+    expect(result['context.ancestors.1.index']).toBe('2');
+
+    // Chain form
+    expect(result['context.parent.parent.at']).toBe('3.2.1');
+    expect(result['context.parent.parent.index']).toBe('2');
+  });
+
   it('omits substep when null in ancestor', () => {
     const ancestor: AncestorSnapshot = {
       runId: 'anc-run',

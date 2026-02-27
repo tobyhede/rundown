@@ -197,6 +197,14 @@ export interface StepDelegation {
 export interface ContextSnapshot {
   readonly vars: Readonly<Record<string, string>>;
   readonly ancestors: readonly AncestorSnapshot[];
+  /** Current step identifier at delegation time (e.g., "1"). */
+  readonly step?: string;
+  /** Current substep identifier at delegation time (e.g., "2"). */
+  readonly substep?: string;
+  /** Qualified execution location at delegation time (e.g., "1.2.1"). */
+  readonly at?: string;
+  /** FOR loop iteration number at delegation time (1-based). */
+  readonly index?: number;
 }
 
 /** Single ancestor in the runbook lineage snapshot. */
@@ -206,6 +214,10 @@ export interface AncestorSnapshot {
   readonly step: string;
   readonly substep: string | null;
   readonly vars: Readonly<Record<string, string>>;
+  /** Qualified execution location at delegation time (e.g., "1.2.1"). */
+  readonly at?: string;
+  /** FOR loop iteration number at delegation time (1-based). */
+  readonly index?: number;
 }
 
 /** Linkage data a child run carries to identify its parent delegation. */

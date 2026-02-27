@@ -159,6 +159,8 @@ export const AncestorSnapshotSchema = z.object({
   step: z.string(),
   substep: z.string().nullable(),
   vars: z.record(z.string(), z.string()),
+  at: z.string().optional(),
+  index: z.number().int().positive().optional(),
 });
 
 /**
@@ -167,6 +169,10 @@ export const AncestorSnapshotSchema = z.object({
 export const ContextSnapshotSchema = z.object({
   vars: z.record(z.string(), z.string()),
   ancestors: z.array(AncestorSnapshotSchema).readonly(),
+  step: z.string().optional(),
+  substep: z.string().optional(),
+  at: z.string().optional(),
+  index: z.number().int().positive().optional(),
 });
 
 /**

@@ -21,6 +21,24 @@ import type { ContextSnapshot } from './types.js';
 export function reconstituteContextVars(snapshot: ContextSnapshot): Record<string, string> {
   const result: Record<string, string> = {};
 
+  // Parent structural fields: step, substep, at, index
+  if (snapshot.step) {
+    result['context.parent.step'] = snapshot.step;
+    result['context.ancestors.0.step'] = snapshot.step;
+  }
+  if (snapshot.substep) {
+    result['context.parent.substep'] = snapshot.substep;
+    result['context.ancestors.0.substep'] = snapshot.substep;
+  }
+  if (snapshot.at) {
+    result['context.parent.at'] = snapshot.at;
+    result['context.ancestors.0.at'] = snapshot.at;
+  }
+  if (snapshot.index !== undefined) {
+    result['context.parent.index'] = String(snapshot.index);
+    result['context.ancestors.0.index'] = String(snapshot.index);
+  }
+
   // Parent vars: context.parent.vars.* and context.ancestors.0.vars.* (parent is ancestor 0)
   for (const [key, value] of Object.entries(snapshot.vars)) {
     if (key.startsWith('context.')) continue;
@@ -40,6 +58,12 @@ export function reconstituteContextVars(snapshot: ContextSnapshot): Record<strin
     if (ancestor.substep) {
       result[`${arrayPrefix}.substep`] = ancestor.substep;
     }
+    if (ancestor.at) {
+      result[`${arrayPrefix}.at`] = ancestor.at;
+    }
+    if (ancestor.index !== undefined) {
+      result[`${arrayPrefix}.index`] = String(ancestor.index);
+    }
 
     // Vars
     for (const [key, value] of Object.entries(ancestor.vars)) {
@@ -56,6 +80,12 @@ export function reconstituteContextVars(snapshot: ContextSnapshot): Record<strin
     result[`${chainPrefix}.step`] = ancestor.step;
     if (ancestor.substep) {
       result[`${chainPrefix}.substep`] = ancestor.substep;
+    }
+    if (ancestor.at) {
+      result[`${chainPrefix}.at`] = ancestor.at;
+    }
+    if (ancestor.index !== undefined) {
+      result[`${chainPrefix}.index`] = String(ancestor.index);
     }
 
     for (const [key, value] of Object.entries(ancestor.vars)) {
