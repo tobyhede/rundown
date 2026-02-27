@@ -42,8 +42,8 @@ Named identifiers must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
 
 ### 2.2 Content Order
 Step content must appear in this strict order:
-1.  **FOR Annotation**: Loop definition (optional).
-2.  **Transitions**: Control flow rules (optional).
+1.  **FOR Annotation**: Loop definition (optional). Must appear immediately after the step header as a bullet item.
+2.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after FOR (or after step header if no FOR). Any text between the header and transitions is an error.
 3.  **Prompt**: Text instructions.
 4.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
 
@@ -70,6 +70,7 @@ Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and 
 
 Nested steps defined by H3 (`###`) headers.
 *   **Identifiers**: `### 1`, `### 1.1` (sequential), or `### Name` (named).
+*   **Agent type**: Optional parenthesized suffix specifying the agent type for delegation: `### 1.2 Description (agent-type)`. The agent type is extracted and set on the substep AST node as `agentType`.
 *   **Aggregation**: Parent step outcome is derived from substeps via transitions (`ALL`/`ANY`).
 
 ### 3.3 Runbook List Shorthand
@@ -193,8 +194,9 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Undefined**: Preserved as literal text.
 *   **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
 *   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
+*   **Depth limit**: Parent context chain addressing is capped at 32 levels. Exceeding this limit produces an error.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
-*   **Reserved keys**: Runtime keys (`step`, `index`, `context`, `Step`, `Index`) are reserved and cannot be overridden by user variables.
+*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables.
 
 ## 7. Scenarios
 
@@ -206,6 +208,7 @@ scenarios:
     description: "Description"
     commands: ["rd run doc.md", "rd pass"]
     result: COMPLETE
+    tags: ["smoke", "deploy"]
 ```
 
 ## 8. Conformance

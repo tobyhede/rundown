@@ -46,10 +46,13 @@ where substeps is:
   substep [ substep ... ]
 
 where substep is:
-  "###" substep_id title
+  "###" substep_id title [ "(" agent_type ")" ]
     [ transition ... ]
     [ prompt ]
     [{ code_block  | runbooks }]
+
+where agent_type is:
+  text    -- agent identifier for delegation (e.g., "code-review-agent")
 
 where substep_id is:
   positive_integer                              -- short form (parent prefix omitted)
@@ -94,7 +97,7 @@ where result is:
   action | RETRY [ count ] [ action ]
 
 where action is:
-  CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK | RETRY ...
+  CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK
 
 Context constraints:
 - `NEXT` is only valid inside substeps of a FOR step
@@ -172,6 +175,7 @@ where scenario is:
     "commands:"
       "- " text { "- " text }
     "result:" ( "COMPLETE" | "STOP" )
+    [ "tags:" tag_list ]
 
 ---
 
@@ -229,7 +233,7 @@ Canonical runtime targeting is `step + substep + iteration`.
 | `{{context.ancestors.N.*}}` | Ancestor runbook contexts (`0` = nearest parent; includes `vars.*`) | Nested runbooks |
 | `{{context.vars.NAME}}` | User/config/frontmatter variables under canonical namespace | Always |
 
-`{{Step}}`/`{{Index}}` and lowercase aliases are expanded per-step/per-iteration. For data source loops, the named variable holds the data element while `{{Index}}`/`{{index}}` holds the iteration number. Runtime keys (`step`, `index`, `context`, `Step`, `Index`) are reserved and cannot be overridden by user variables.
+`{{Step}}`/`{{Index}}` and lowercase aliases are expanded per-step/per-iteration. For data source loops, the named variable holds the data element while `{{Index}}`/`{{index}}` holds the iteration number. Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive) and cannot be overridden by user variables.
 
 ---
 
