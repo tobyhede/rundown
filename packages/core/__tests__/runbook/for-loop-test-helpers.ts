@@ -11,7 +11,13 @@
 import { createActor, type AnyStateMachine } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import { shouldAggregationPass } from '../../src/runbook/transition-handler.js';
-import type { Step, Substep, Transitions, TransitionObject, Action } from '../../src/runbook/types.js';
+import type {
+  Step,
+  Substep,
+  Transitions,
+  TransitionObject,
+  Action,
+} from '../../src/runbook/types.js';
 
 // ---------------------------------------------------------------------------
 // Config type — captures all 3 layers as data
@@ -208,8 +214,7 @@ export function generateEvents(config: ForLoopConfig, pattern: EventPattern): Ev
   // Upper bound: each substep may retry, each iteration may retry
   const maxSubstepEvents = config.numSubsteps * (1 + config.substepFailRetry);
   const maxIterationEvents = maxSubstepEvents * (1 + config.iterationFailRetry);
-  const maxEvents =
-    config.iterations * maxIterationEvents * (1 + config.parentFailRetry) + 10; // extra padding
+  const maxEvents = config.iterations * maxIterationEvents * (1 + config.parentFailRetry) + 10; // extra padding
 
   const events: EventType[] = [];
   let globalIndex = 0;
@@ -228,8 +233,7 @@ export function generateEvents(config: ForLoopConfig, pattern: EventPattern): Ev
         break;
       case 'last-fail':
         // Put a FAIL near the expected end
-        event =
-          globalIndex === config.iterations * config.numSubsteps - 1 ? 'FAIL' : 'PASS';
+        event = globalIndex === config.iterations * config.numSubsteps - 1 ? 'FAIL' : 'PASS';
         break;
       case 'alternate':
         event = globalIndex % 2 === 0 ? 'PASS' : 'FAIL';
@@ -327,9 +331,8 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
         // If BREAK at substep level, skip iteration-level retry and exit loop
         if (earlyExit === 'BREAK') {
           // Check iteration-level transition for the result
-          const iterAction = iterResult === 'pass'
-            ? config.iterationPassAction
-            : config.iterationFailAction;
+          const iterAction =
+            iterResult === 'pass' ? config.iterationPassAction : config.iterationFailAction;
           if (iterAction === 'STOP') return 'STOPPED';
           if (iterAction === 'COMPLETE') return 'COMPLETE';
           // Record result and exit loop
@@ -339,15 +342,18 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
         }
 
         // Process iteration-level transition
-        const iterAction = iterResult === 'pass'
-          ? config.iterationPassAction
-          : config.iterationFailAction;
+        const iterAction =
+          iterResult === 'pass' ? config.iterationPassAction : config.iterationFailAction;
 
         if (iterAction === 'STOP') return 'STOPPED';
         if (iterAction === 'COMPLETE') return 'COMPLETE';
 
         // Check iteration-level retry (only on fail)
-        if (iterResult === 'fail' && config.iterationFailRetry > 0 && iterRetry < config.iterationFailRetry) {
+        if (
+          iterResult === 'fail' &&
+          config.iterationFailRetry > 0 &&
+          iterRetry < config.iterationFailRetry
+        ) {
           // Retry iteration — continue inner loop
           continue;
         }

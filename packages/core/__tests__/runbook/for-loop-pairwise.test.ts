@@ -11,7 +11,11 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
 import covertable from 'covertable';
-const make = (covertable as unknown as { make: (f: Record<string, unknown[]>, o?: { length?: number }) => unknown[] }).make;
+const make = (
+  covertable as unknown as {
+    make: (f: Record<string, unknown[]>, o?: { length?: number }) => unknown[];
+  }
+).make;
 import {
   runForLoop,
   generateEvents,
@@ -99,44 +103,41 @@ describe('FOR loop pairwise regression', () => {
     expect(pairwiseRows.length).toBeLessThan(200);
   });
 
-  describe.each(pairwiseRows.map((row, i) => [i, row] as const))(
-    'case %i',
-    (_index, row) => {
-      it(`terminates in COMPLETE or STOPPED`, () => {
-        const config = rowToConfig(row);
-        const pattern = row.eventPattern as EventPattern;
-        const events = generateEvents(config, pattern);
-        const result = runForLoop(config, events);
-        expect(result.terminalState).toMatch(/^(COMPLETE|STOPPED)$/);
-      });
+  describe.each(pairwiseRows.map((row, i) => [i, row] as const))('case %i', (_index, row) => {
+    it(`terminates in COMPLETE or STOPPED`, () => {
+      const config = rowToConfig(row);
+      const pattern = row.eventPattern as EventPattern;
+      const events = generateEvents(config, pattern);
+      const result = runForLoop(config, events);
+      expect(result.terminalState).toMatch(/^(COMPLETE|STOPPED)$/);
+    });
 
-      it(`forStack is empty at terminal (unless substep-level STOP/COMPLETE)`, () => {
-        const config = rowToConfig(row);
-        const pattern = row.eventPattern as EventPattern;
-        const events = generateEvents(config, pattern);
-        const result = runForLoop(config, events);
-        // Substep-level STOP/COMPLETE bypass the aggregation path and don't clear forStack.
-        // This is by-design: the machine aborts immediately without cleanup.
-        const substepMayBypassAggregation =
-          config.substepPassAction === 'STOP' ||
-          config.substepPassAction === 'COMPLETE' ||
-          config.substepFailAction === 'STOP' ||
-          config.substepFailAction === 'COMPLETE';
-        if (!substepMayBypassAggregation) {
-          expect(result.forStackLength).toBe(0);
-        }
-      });
+    it(`forStack is empty at terminal (unless substep-level STOP/COMPLETE)`, () => {
+      const config = rowToConfig(row);
+      const pattern = row.eventPattern as EventPattern;
+      const events = generateEvents(config, pattern);
+      const result = runForLoop(config, events);
+      // Substep-level STOP/COMPLETE bypass the aggregation path and don't clear forStack.
+      // This is by-design: the machine aborts immediately without cleanup.
+      const substepMayBypassAggregation =
+        config.substepPassAction === 'STOP' ||
+        config.substepPassAction === 'COMPLETE' ||
+        config.substepFailAction === 'STOP' ||
+        config.substepFailAction === 'COMPLETE';
+      if (!substepMayBypassAggregation) {
+        expect(result.forStackLength).toBe(0);
+      }
+    });
 
-      it(`oracle matches machine`, () => {
-        const config = rowToConfig(row);
-        const pattern = row.eventPattern as EventPattern;
-        const events = generateEvents(config, pattern);
+    it(`oracle matches machine`, () => {
+      const config = rowToConfig(row);
+      const pattern = row.eventPattern as EventPattern;
+      const events = generateEvents(config, pattern);
 
-        const machineResult = runForLoop(config, events);
-        const oracleResult = predictOutcome(config, events);
+      const machineResult = runForLoop(config, events);
+      const oracleResult = predictOutcome(config, events);
 
-        expect(machineResult.terminalState).toBe(oracleResult);
-      });
-    },
-  );
+      expect(machineResult.terminalState).toBe(oracleResult);
+    });
+  });
 });
