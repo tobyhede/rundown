@@ -1,6 +1,11 @@
 import type { DispatchResult } from './dispatcher.js';
 import type { HookInput } from './shared/index.js';
 
+/**
+ * Permission decision for PreToolUse hooks.
+ * 'ask' and 'allow' are declared for forward-compatibility with Claude Code's
+ * permission model; currently only 'deny' is produced by the plugin.
+ */
 type PermissionDecision = 'deny' | 'ask' | 'allow';
 
 interface HookSpecificOutput {

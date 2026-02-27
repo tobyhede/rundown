@@ -109,6 +109,34 @@ describe('Dispatcher - Event Filtering', () => {
 
     expect(shouldProcessHook(input, hookConfig)).toBe(true);
   });
+
+  test('PreToolUse with enabled tool returns true', () => {
+    const input: HookInput = {
+      hook_event_name: 'PreToolUse',
+      cwd: '/test',
+      tool_name: 'Bash',
+    };
+
+    const hookConfig: HookConfig = {
+      enabled_tools: ['Bash', 'Edit'],
+    };
+
+    expect(shouldProcessHook(input, hookConfig)).toBe(true);
+  });
+
+  test('PreToolUse with disabled tool returns false', () => {
+    const input: HookInput = {
+      hook_event_name: 'PreToolUse',
+      cwd: '/test',
+      tool_name: 'Read',
+    };
+
+    const hookConfig: HookConfig = {
+      enabled_tools: ['Bash', 'Edit'],
+    };
+
+    expect(shouldProcessHook(input, hookConfig)).toBe(false);
+  });
 });
 
 describe('Dispatcher - Gate Chaining', () => {

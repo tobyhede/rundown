@@ -28,7 +28,11 @@ export function shouldProcessHook(input: HookInput, hookConfig: HookConfig): boo
   const hookEvent = input.hook_event_name;
 
   // Tool-hook filtering
-  if (hookEvent === 'PostToolUse' || hookEvent === 'PostToolUseFailure') {
+  if (
+    hookEvent === 'PreToolUse' ||
+    hookEvent === 'PostToolUse' ||
+    hookEvent === 'PostToolUseFailure'
+  ) {
     if (hookConfig.enabled_tools && hookConfig.enabled_tools.length > 0) {
       return hookConfig.enabled_tools.includes(input.tool_name ?? '');
     }
@@ -202,6 +206,8 @@ async function updateSessionState(input: HookInput): Promise<void> {
         break;
 
       case 'SubagentStart':
+        break;
+
       case 'PostToolUse':
         {
           const filePath = input.tool_input?.file_path;

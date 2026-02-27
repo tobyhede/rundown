@@ -18,18 +18,25 @@ describe('Schema Property Tests', () => {
     // Generator for valid tool names
     const toolNameArb = fc.constantFrom('Edit', 'Write', 'Read', 'Bash', 'Glob', 'Grep', 'Task');
 
-    // Generator for valid tool_input object
+    // Generator for valid tool_input object (includes arbitrary extra field to confirm passthrough)
     const toolInputArb = fc.option(
-      fc.record(
-        {
-          description: fc.option(fc.string({ maxLength: 500 }), { nil: undefined }),
-          subagent_type: fc.option(fc.string({ maxLength: 100 }), { nil: undefined }),
-          prompt: fc.option(fc.string({ maxLength: 1000 }), { nil: undefined }),
-          skill: fc.option(fc.string({ maxLength: 200 }), { nil: undefined }),
-          file_path: fc.option(fc.string({ maxLength: 300 }), { nil: undefined }),
-        },
-        { requiredKeys: [] },
-      ),
+      fc
+        .record(
+          {
+            description: fc.option(fc.string({ maxLength: 500 }), { nil: undefined }),
+            subagent_type: fc.option(fc.string({ maxLength: 100 }), { nil: undefined }),
+            prompt: fc.option(fc.string({ maxLength: 1000 }), { nil: undefined }),
+            skill: fc.option(fc.string({ maxLength: 200 }), { nil: undefined }),
+            file_path: fc.option(fc.string({ maxLength: 300 }), { nil: undefined }),
+          },
+          { requiredKeys: [] },
+        )
+        .chain((base) =>
+          fc.record({ extra_field: fc.string({ maxLength: 100 }) }).map((extra) => ({
+            ...base,
+            ...extra,
+          })),
+        ),
       { nil: undefined },
     );
 

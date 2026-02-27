@@ -1,5 +1,7 @@
 // plugin/core/src/synthetic-events/types.ts
 
+// SubagentStart/SubagentEnd are NOT synthetic: Claude Code provides native
+// SubagentStart/SubagentStop hook events, making synthetic detection unnecessary.
 export type SyntheticEventName =
   | 'SkillStart'
   | 'SkillEnd'

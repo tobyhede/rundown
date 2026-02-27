@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Zod schema for tool_input in Step tool calls
+ * Zod schema for tool_input in tool hook events
  */
 const ToolInputSchema = z
   .object({
@@ -11,7 +11,7 @@ const ToolInputSchema = z
     skill: z.string().optional(),
     file_path: z.string().optional(),
   })
-  .strict()
+  .passthrough()
   .optional();
 
 /**

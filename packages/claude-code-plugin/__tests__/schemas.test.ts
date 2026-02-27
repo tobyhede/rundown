@@ -98,18 +98,25 @@ describe('HookInputSchema', () => {
     }
   });
 
-  it('rejects unknown tool_input fields under strict mode', () => {
+  it('accepts unknown tool_input fields via passthrough', () => {
     const input = {
       hook_event_name: 'PostToolUse',
       cwd: '/Users/test/project',
       tool_name: 'Bash',
       tool_input: {
         command: 'echo hello',
+        file_path: '/test/file.ts',
       },
     };
 
     const result = HookInputSchema.safeParse(input);
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Known fields are still parsed
+      expect(result.data.tool_input?.file_path).toBe('/test/file.ts');
+      // Unknown fields pass through
+      expect((result.data.tool_input as Record<string, unknown>)?.command).toBe('echo hello');
+    }
   });
 });
 
