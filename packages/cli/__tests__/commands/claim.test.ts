@@ -358,6 +358,24 @@ rd echo --result fail
       expect(result.stdout + result.stderr).toMatch(/not found|no active/i);
     });
 
+    it('fails to claim aborted delegation token', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = runCli('run --prompted parent.runbook.md', workspace);
+      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      const token = extractToken(result.stdout);
+
+      // Abort the delegation
+      result = runCli(`abort ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Attempt to claim aborted delegation
+      result = runCli(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toMatch(/cancelled|RD-809/i);
+    });
+
     it('rejects delegation to non-existent child runbook', async () => {
       await writeParentRunbook();
 

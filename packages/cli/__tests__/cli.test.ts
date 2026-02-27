@@ -110,6 +110,11 @@ describe('CLI program', () => {
       const result = runCli('claim --help', workspace);
       expect(result.exitCode).toBe(0);
     });
+
+    it('registers abort command', () => {
+      const result = runCli('abort --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   describe('global options', () => {
