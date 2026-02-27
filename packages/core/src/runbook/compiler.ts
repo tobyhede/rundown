@@ -1165,7 +1165,7 @@ function buildContinueTransition(
   const shouldAccumulateIterationResults = !!(
     currentStep?.substeps?.length &&
     !currentStep.forClause &&
-    (currentStep.transitions ?? isDeferredStep(currentStep))
+    (currentStep.transitions != null || isDeferredStep(currentStep))
   );
   const shouldAccumulateSubstepResults = !!(currentStep?.substeps?.length && currentStep.forClause);
 
