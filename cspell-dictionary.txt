@@ -156,8 +156,13 @@ behaviour
 categorises
 
 # Test fixture words
+aindex
+ancvar
 NOTVALID
 notavar
+pindex
+pstep
+psub
 unknowncommand
 
 # Turborepo reference

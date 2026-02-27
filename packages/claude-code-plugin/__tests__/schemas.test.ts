@@ -115,7 +115,7 @@ describe('HookInputSchema', () => {
       // Known fields are still parsed
       expect(result.data.tool_input?.file_path).toBe('/test/file.ts');
       // Unknown fields pass through
-      expect((result.data.tool_input as Record<string, unknown>)?.command).toBe('echo hello');
+      expect((result.data.tool_input as Record<string, unknown>).command).toBe('echo hello');
     }
   });
 });
