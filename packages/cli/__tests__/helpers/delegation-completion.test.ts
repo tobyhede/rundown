@@ -13,7 +13,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ),
   buildResolvedCompletion: jest.fn((data: any) => data),
   deriveActiveFrame: jest.fn((state: any) => ({
-    frameKey: state.activeFrameKey ?? `${state.step}|`,
+    frameKey: state.activeFrameKey ?? `${String(state.step)}|`,
     step: state.step,
     iteration: state.activeForContext?.iteration,
   })),
@@ -129,6 +129,18 @@ function makeLifecycleService(resolvedCompletions: Map<string, any> = new Map())
   };
 }
 
+function wireMocks(manager: any, lifecycleService: any): void {
+  const MockManager = core.RunbookStateManager as jest.MockedClass<typeof core.RunbookStateManager>;
+  const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<typeof core.ExecutionLifecycleService>;
+  const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
+  const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
+
+  MockManager.mockImplementation(() => manager);
+  MockLifecycle.mockImplementation(() => lifecycleService);
+  MockActor.mockImplementation(() => ({} as any));
+  MockSession.mockImplementation(() => ({} as any));
+}
+
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations
@@ -137,7 +149,7 @@ beforeEach(() => {
   );
   (core.buildResolvedCompletion as jest.Mock).mockImplementation((data: any) => data);
   (core.deriveActiveFrame as jest.Mock).mockImplementation((state: any) => ({
-    frameKey: state.activeFrameKey ?? `${state.step}|`,
+    frameKey: state.activeFrameKey ?? `${String(state.step)}|`,
     step: state.step,
     iteration: state.activeForContext?.iteration,
   }));
@@ -188,21 +200,7 @@ describe('handleDelegationCompletion', () => {
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    const MockManager = core.RunbookStateManager as jest.MockedClass<
-      typeof core.RunbookStateManager
-    >;
-    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-      typeof core.ExecutionLifecycleService
-    >;
-    const MockActor = core.RunbookActorService as jest.MockedClass<
-      typeof core.RunbookActorService
-    >;
-    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-
-    MockManager.mockImplementation(() => manager as any);
-    MockLifecycle.mockImplementation(() => lifecycleService as any);
-    MockActor.mockImplementation(() => ({} as any));
-    MockSession.mockImplementation(() => ({} as any));
+    wireMocks(manager, lifecycleService);
 
     await handleDelegationCompletion(childState, 'pass', '/test', output);
 
@@ -220,21 +218,7 @@ describe('handleDelegationCompletion', () => {
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    const MockManager = core.RunbookStateManager as jest.MockedClass<
-      typeof core.RunbookStateManager
-    >;
-    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-      typeof core.ExecutionLifecycleService
-    >;
-    const MockActor = core.RunbookActorService as jest.MockedClass<
-      typeof core.RunbookActorService
-    >;
-    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-
-    MockManager.mockImplementation(() => manager as any);
-    MockLifecycle.mockImplementation(() => lifecycleService as any);
-    MockActor.mockImplementation(() => ({} as any));
-    MockSession.mockImplementation(() => ({} as any));
+    wireMocks(manager, lifecycleService);
 
     const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
 
@@ -264,25 +248,11 @@ describe('handleDelegationCompletion', () => {
 
     const states = new Map([[parentState.id, parentState]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    const MockManager = core.RunbookStateManager as jest.MockedClass<
-      typeof core.RunbookStateManager
-    >;
-    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-      typeof core.ExecutionLifecycleService
-    >;
-    const MockActor = core.RunbookActorService as jest.MockedClass<
-      typeof core.RunbookActorService
-    >;
-    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-
-    MockManager.mockImplementation(() => manager as any);
-    MockLifecycle.mockImplementation(() => lifecycleService as any);
-    MockActor.mockImplementation(() => ({} as any));
-    MockSession.mockImplementation(() => ({} as any));
+    wireMocks(manager, lifecycleService);
 
     const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
 
@@ -302,25 +272,11 @@ describe('handleDelegationCompletion', () => {
 
     const states = new Map([[parentState.id, parentState]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    const MockManager = core.RunbookStateManager as jest.MockedClass<
-      typeof core.RunbookStateManager
-    >;
-    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-      typeof core.ExecutionLifecycleService
-    >;
-    const MockActor = core.RunbookActorService as jest.MockedClass<
-      typeof core.RunbookActorService
-    >;
-    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-
-    MockManager.mockImplementation(() => manager as any);
-    MockLifecycle.mockImplementation(() => lifecycleService as any);
-    MockActor.mockImplementation(() => ({} as any));
-    MockSession.mockImplementation(() => ({} as any));
+    wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
       status: 'running',
@@ -350,25 +306,11 @@ describe('handleDelegationCompletion', () => {
 
     const states = new Map([[parentState.id, parentState]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    const MockManager = core.RunbookStateManager as jest.MockedClass<
-      typeof core.RunbookStateManager
-    >;
-    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-      typeof core.ExecutionLifecycleService
-    >;
-    const MockActor = core.RunbookActorService as jest.MockedClass<
-      typeof core.RunbookActorService
-    >;
-    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-
-    MockManager.mockImplementation(() => manager as any);
-    MockLifecycle.mockImplementation(() => lifecycleService as any);
-    MockActor.mockImplementation(() => ({} as any));
-    MockSession.mockImplementation(() => ({} as any));
+    wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
       status: 'running',
@@ -395,25 +337,11 @@ describe('handleDelegationCompletion', () => {
 
     const states = new Map([[parentState.id, parentState]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    const MockManager = core.RunbookStateManager as jest.MockedClass<
-      typeof core.RunbookStateManager
-    >;
-    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-      typeof core.ExecutionLifecycleService
-    >;
-    const MockActor = core.RunbookActorService as jest.MockedClass<
-      typeof core.RunbookActorService
-    >;
-    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-
-    MockManager.mockImplementation(() => manager as any);
-    MockLifecycle.mockImplementation(() => lifecycleService as any);
-    MockActor.mockImplementation(() => ({} as any));
-    MockSession.mockImplementation(() => ({} as any));
+    wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
       status: 'running',
@@ -442,25 +370,11 @@ describe('handleDelegationCompletion', () => {
 
     const states = new Map([[parentState.id, parentState]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    const MockManager = core.RunbookStateManager as jest.MockedClass<
-      typeof core.RunbookStateManager
-    >;
-    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-      typeof core.ExecutionLifecycleService
-    >;
-    const MockActor = core.RunbookActorService as jest.MockedClass<
-      typeof core.RunbookActorService
-    >;
-    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-
-    MockManager.mockImplementation(() => manager as any);
-    MockLifecycle.mockImplementation(() => lifecycleService as any);
-    MockActor.mockImplementation(() => ({} as any));
-    MockSession.mockImplementation(() => ({} as any));
+    wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
       status: 'stopped',
@@ -497,21 +411,7 @@ describe('handleDelegationCompletion', () => {
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    const MockManager = core.RunbookStateManager as jest.MockedClass<
-      typeof core.RunbookStateManager
-    >;
-    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-      typeof core.ExecutionLifecycleService
-    >;
-    const MockActor = core.RunbookActorService as jest.MockedClass<
-      typeof core.RunbookActorService
-    >;
-    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-
-    MockManager.mockImplementation(() => manager as any);
-    MockLifecycle.mockImplementation(() => lifecycleService as any);
-    MockActor.mockImplementation(() => ({} as any));
-    MockSession.mockImplementation(() => ({} as any));
+    wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
       status: 'done',
@@ -549,25 +449,11 @@ describe('handleDelegationCompletion', () => {
 
     const states = new Map([[parentState.id, parentState]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    const MockManager = core.RunbookStateManager as jest.MockedClass<
-      typeof core.RunbookStateManager
-    >;
-    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-      typeof core.ExecutionLifecycleService
-    >;
-    const MockActor = core.RunbookActorService as jest.MockedClass<
-      typeof core.RunbookActorService
-    >;
-    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-
-    MockManager.mockImplementation(() => manager as any);
-    MockLifecycle.mockImplementation(() => lifecycleService as any);
-    MockActor.mockImplementation(() => ({} as any));
-    MockSession.mockImplementation(() => ({} as any));
+    wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
       status: 'running',
@@ -590,25 +476,11 @@ describe('handleDelegationCompletion', () => {
 
     const states = new Map([[parentState.id, parentState]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    const MockManager = core.RunbookStateManager as jest.MockedClass<
-      typeof core.RunbookStateManager
-    >;
-    const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-      typeof core.ExecutionLifecycleService
-    >;
-    const MockActor = core.RunbookActorService as jest.MockedClass<
-      typeof core.RunbookActorService
-    >;
-    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-
-    MockManager.mockImplementation(() => manager as any);
-    MockLifecycle.mockImplementation(() => lifecycleService as any);
-    MockActor.mockImplementation(() => ({} as any));
-    MockSession.mockImplementation(() => ({} as any));
+    wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
       status: 'running',
