@@ -15,6 +15,15 @@ interface HookSpecificOutput {
   permissionDecisionReason?: string;
 }
 
+/**
+ * Structured output returned by hook handlers to Claude Code.
+ *
+ * @property continue - Whether to continue execution after the hook
+ * @property stopReason - Reason for stopping execution (when continue is false)
+ * @property decision - Block decision for PreToolUse permission hooks
+ * @property reason - Human-readable reason for the decision
+ * @property hookSpecificOutput - Additional context for Claude Code to display
+ */
 export interface ClaudeHookOutput {
   continue?: boolean;
   stopReason?: string;

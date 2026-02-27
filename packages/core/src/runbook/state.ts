@@ -326,7 +326,7 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID
    * @param agentId - The agent ID whose binding to update
-   * @param updates - Partial binding updates (status, result, childRunbookId)
+   * @param updates - Partial binding updates (status, result, childRunbookId, targeting fields)
    * @throws Error if the runbook with the given ID is not found
    * @throws Error if the agent has no existing binding
    */

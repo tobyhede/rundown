@@ -153,6 +153,9 @@ function emitRunbookStarted(
 
 /**
  * Build canonical current-context variable aliases for static template substitution.
+ *
+ * @param vars - User/config template variables to namespace under `context.vars.*`
+ * @returns Record mapping `context.vars.{key}` to corresponding values
  */
 function buildContextVars(vars: Readonly<Record<string, string>>): Record<string, string> {
   const contextVars: Record<string, string> = {};
@@ -298,6 +301,7 @@ async function buildInheritedContextVars(
  * @param file - Runbook file path or name
  * @param varOpts - Variable options from CLI flags
  * @param cwd - Current working directory
+ * @param options - Optional settings including inherited context variables from parent runbook
  * @returns PreparedRunbook or error result
  */
 export async function prepareRunbook(
@@ -635,6 +639,10 @@ export async function startRunbook(
 
 /**
  * Infer entry number from persisted frame state when not explicitly set.
+ *
+ * @param state - Current runbook state containing frame entry history
+ * @param frameKey - Frame key to look up (`step|iteration` format)
+ * @returns The inferred entry number, or undefined if no history exists
  */
 function inferEntryFromState(state: RunbookState, frameKey: string): number | undefined {
   const known = state.frameEntries?.[frameKey];

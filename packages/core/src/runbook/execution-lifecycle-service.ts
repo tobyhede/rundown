@@ -226,6 +226,7 @@ export class ExecutionLifecycleService {
    * @param id - The runbook state ID
    * @param frameKey - Frame key (`step|iteration`)
    * @param entry - Frame entry number
+   * @returns Array of key/completion pairs matching the frame+entry prefix
    */
   async listResolvedCompletions(
     id: string,

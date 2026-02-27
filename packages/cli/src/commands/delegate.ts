@@ -16,6 +16,8 @@ function parseVarFlags(vars: string[]): Record<string, string> {
     const eqIndex = entry.indexOf('=');
     if (eqIndex > 0) {
       result[entry.slice(0, eqIndex)] = entry.slice(eqIndex + 1);
+    } else {
+      process.stderr.write(`Warning: ignored malformed --var entry '${entry}' (expected key=value)\n`);
     }
   }
   return result;

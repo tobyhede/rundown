@@ -13,6 +13,9 @@ export function renderHeading(
   description?: string,
   separator = ' ',
 ): string {
+  if (!Number.isInteger(level) || level < 1 || level > 6) {
+    throw new RangeError(`Heading level must be an integer 1–6, got ${String(level)}`);
+  }
   const marker = '#'.repeat(level);
   const text = description?.trim();
   if (!text) return `${marker} ${id}`;
@@ -27,5 +30,11 @@ export function renderHeading(
  * @returns Markdown code fence string
  */
 export function renderCodeFence(code: string, lang?: string): string {
-  return `\`\`\`${lang ?? ''}\n${code}\n\`\`\``;
+  let fenceLen = 3;
+  const match = code.match(/`{3,}/g);
+  if (match) {
+    fenceLen = Math.max(fenceLen, ...match.map((m) => m.length)) + 1;
+  }
+  const fence = '`'.repeat(fenceLen);
+  return `${fence}${lang ?? ''}\n${code}\n${fence}`;
 }

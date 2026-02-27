@@ -37,7 +37,9 @@ import { getRunbookFromState } from './runbook-loader.js';
  * @see StatusResponse in @rundown-org/core for the public API contract
  */
 export interface StatusOutputData {
+  /** Whether a runbook is currently active */
   active: boolean;
+  /** Whether the active runbook is stashed (enforcement paused) */
   stashed: boolean;
   /** Runbook file path (flat, not nested) */
   file?: string;
