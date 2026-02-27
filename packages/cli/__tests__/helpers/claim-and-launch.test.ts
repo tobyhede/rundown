@@ -147,8 +147,14 @@ describe('claimAndLaunch', () => {
       findByToken: mockFindByToken,
     }));
 
-    // Mock lock acquisition failure
-    const mockAcquire = jest.fn<any>().mockRejectedValue(new Error('lock timeout'));
+    // Mock lock acquisition failure with the actual timeout error message format
+    const mockAcquire = jest
+      .fn<any>()
+      .mockRejectedValue(
+        new Error(
+          'Delegation lock timeout for run run-1. Another operation may be in progress.',
+        ),
+      );
     const mockRelease = jest.fn<any>().mockResolvedValue(undefined);
     (core.DelegationLock as jest.Mock).mockImplementation(() => ({
       acquire: mockAcquire,
@@ -263,5 +269,34 @@ describe('claimAndLaunch', () => {
       expect(result.childRunId).toBe('existing-child-run');
       expect(result.parentRunId).toBe('run-1');
     }
+  });
+
+  it('re-throws non-timeout lock errors instead of masking them', async () => {
+    const ctx = makeCtx();
+
+    // Mock scan returning a result
+    const mockFindByToken = jest.fn<any>().mockResolvedValue({
+      parentState: { id: 'run-1', substepStates: [] },
+      stepId: '1',
+      substepId: '1',
+      delegation: { tokenHash: 'sha256:mock', childRunbookPath: 'child.md' },
+    });
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => ({
+      findByToken: mockFindByToken,
+    }));
+
+    // Mock lock throwing a non-timeout error (e.g. permission denied)
+    const permissionError = new Error('EACCES: permission denied');
+    const mockAcquire = jest.fn<any>().mockRejectedValue(permissionError);
+    const mockRelease = jest.fn<any>().mockResolvedValue(undefined);
+    (core.DelegationLock as jest.Mock).mockImplementation(() => ({
+      acquire: mockAcquire,
+      release: mockRelease,
+    }));
+
+    // cspell:disable-next-line
+    await expect(
+      claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {}),
+    ).rejects.toThrow('EACCES: permission denied');
   });
 });

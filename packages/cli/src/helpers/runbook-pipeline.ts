@@ -118,16 +118,45 @@ export type AgentBindResult =
   | { ok: true; loopResult?: 'done' | 'stopped' | 'waiting' }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> };
 
-/** Result of claiming a delegation token and launching the child runbook. */
+/**
+ * Result of claiming a delegation token and launching the child runbook.
+ *
+ * A discriminated union keyed on `ok`. On success, contains identifiers
+ * linking parent and child runs. On failure, contains a human-readable
+ * error, a machine-readable code, and optional structured details.
+ *
+ * Possible error codes:
+ * - `RD-807` (`INVALID_TOKEN`) -- token format invalid
+ * - `RD-808` (`TOKEN_NOT_FOUND`) -- no active run with this token
+ * - `RD-809` (`TOKEN_CANCELLED`) -- delegation was cancelled
+ * - `RD-810` (`DELEGATION_LOCK_TIMEOUT`) -- could not acquire lock
+ *
+ * @see claimAndLaunch
+ * @see ErrorCodes
+ */
 export type ClaimResult =
   | {
+      /** Discriminator indicating success. */
       ok: true;
+      /** Unique identifier of the launched (or idempotently returned) child run. */
       childRunId: string;
+      /** Unique identifier of the parent run that owns the delegation. */
       parentRunId: string;
+      /** Step (or substep) ID on the parent that holds the delegation. */
       stepId: string;
+      /** Terminal state of the child execution loop. */
       loopResult: 'done' | 'stopped' | 'waiting';
     }
-  | { ok: false; error: string; code: string; details?: Record<string, unknown> };
+  | {
+      /** Discriminator indicating failure. */
+      ok: false;
+      /** Human-readable error description. */
+      error: string;
+      /** Machine-readable error code (e.g. `'RD-807'`). */
+      code: string;
+      /** Optional structured details for diagnostics. */
+      details?: Record<string, unknown>;
+    };
 
 /**
  * Validate that all sourced FOR clauses reference defined data sources.
@@ -890,13 +919,18 @@ export async function claimAndLaunch(
   // 3. Acquire delegation lock
   try {
     await lock.acquire(parentState.id);
-  } catch {
-    return {
-      ok: false,
-      error: `Could not acquire delegation lock for run ${parentState.id}. Another operation may be in progress.`,
-      code: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
-      details: { parentRunId: parentState.id },
-    };
+  } catch (err) {
+    // acquire() throws "Delegation lock timeout ..." for deadline expiry.
+    // Re-throw anything else (EACCES, EIO, etc.) as an unexpected error.
+    if (err instanceof Error && err.message.startsWith('Delegation lock timeout')) {
+      return {
+        ok: false,
+        error: `Could not acquire delegation lock for run ${parentState.id}. Another operation may be in progress.`,
+        code: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
+        details: { parentRunId: parentState.id },
+      };
+    }
+    throw err;
   }
 
   try {
@@ -973,10 +1007,10 @@ export async function claimAndLaunch(
     }
 
     // 4e. Reconstitute context vars from frozen snapshot
-    const inheritedContextVars = reconstituteContextVars(delegation.contextSnapshot);
+    const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
 
     // 4f. Prepare child runbook
-    const prepResult = await prepareRunbook(delegation.childRunbookPath, varOpts, cwd, {
+    const prepResult = await prepareRunbook(freshDelegation.childRunbookPath, varOpts, cwd, {
       inheritedContextVars,
     });
     if (!prepResult.ok) {
@@ -984,7 +1018,7 @@ export async function claimAndLaunch(
         ok: false,
         error: prepResult.error,
         code: prepResult.code,
-        details: { runbook: delegation.childRunbookPath, ...prepResult.details },
+        details: { runbook: freshDelegation.childRunbookPath, ...prepResult.details },
       };
     }
 
@@ -1001,7 +1035,7 @@ export async function claimAndLaunch(
     let capturedChildRunId: string | undefined;
 
     const launchResult = await launchRunbook(ctx, prepResult.prepared, {
-      runbookName: delegation.childRunbookPath,
+      runbookName: freshDelegation.childRunbookPath,
       prompted: parentPrompted,
       parentRunbookId: freshParent.id,
       delegationLinkage,
@@ -1032,12 +1066,12 @@ export async function claimAndLaunch(
     output.status(
       true,
       'claimed',
-      `Claimed ${rawToken.slice(0, 12)}... → ${delegation.childRunbookPath}`,
+      `Claimed ${rawToken.slice(0, 12)}... → ${freshDelegation.childRunbookPath}`,
       {
         action: 'claimed',
         token: truncatedToken,
         run_id: childRunId,
-        runbook: delegation.childRunbookPath,
+        runbook: freshDelegation.childRunbookPath,
         parent_run_id: freshParent.id,
         parent_step: substepId ? `${stepId}.${substepId}` : stepId,
       },

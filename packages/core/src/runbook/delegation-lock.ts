@@ -71,8 +71,11 @@ export class DelegationLock {
           created_at: new Date().toISOString(),
         };
         const handle = await fs.open(lockFile, 'wx');
-        await handle.writeFile(JSON.stringify(content), 'utf8');
-        await handle.close();
+        try {
+          await handle.writeFile(JSON.stringify(content), 'utf8');
+        } finally {
+          await handle.close();
+        }
         return;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {

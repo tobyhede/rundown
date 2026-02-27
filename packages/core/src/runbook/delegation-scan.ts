@@ -23,6 +23,11 @@ export interface TokenScanResult {
  * a given token hash, or to find orphaned child runs.
  */
 export class DelegationScanService {
+  /**
+   * Create a new DelegationScanService.
+   *
+   * @param manager - State manager used to list and load run state files for scanning
+   */
   constructor(private readonly manager: RunbookStateManager) {}
 
   /**
