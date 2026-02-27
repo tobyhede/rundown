@@ -14,7 +14,7 @@ describe('Step-level runbooks', () => {
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps![0].runbooks).toEqual(['task-details.runbook.md']);
-    expect(steps[0].deferred).toBe(false);
+    expect(steps[0].deferred).toBeUndefined();
   });
 
   it('rejects step with both runbooks and substeps', () => {
@@ -67,10 +67,10 @@ describe('parseRunbook with substep runbooks', () => {
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps?.[0].runbooks).toEqual(['review.runbook.md', 'security.runbook.md']);
-    expect(steps[0].deferred).toBe(false);
+    expect(steps[0].deferred).toBeUndefined();
   });
 
-  it('sets deferred=false for explicit non-FOR substeps', () => {
+  it('omits deferred for explicit non-FOR substeps', () => {
     const markdown = `## 1. Review
 
 ### 1.1 Check A
@@ -83,7 +83,7 @@ describe('parseRunbook with substep runbooks', () => {
 `;
 
     const steps = parseRunbook(markdown);
-    expect(steps[0].deferred).toBe(false);
+    expect(steps[0].deferred).toBeUndefined();
   });
 });
 

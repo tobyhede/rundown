@@ -600,7 +600,7 @@ function finalizeStep(
 
   return {
     name: step.name,
-    deferred: !!step.forClause,
+    deferred: step.forClause ? true : undefined,
     forClause: step.forClause,
     description: step.description,
     command: step.command,
