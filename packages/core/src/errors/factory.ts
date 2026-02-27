@@ -95,6 +95,15 @@ export const Errors = {
       available: available.join(', '),
     }),
 
+  invalidToken: (token: string): RundownError => new RundownError('INVALID_TOKEN', { token }),
+
+  tokenNotFound: (token: string): RundownError => new RundownError('TOKEN_NOT_FOUND', { token }),
+
+  tokenCancelled: (token: string): RundownError => new RundownError('TOKEN_CANCELLED', { token }),
+
+  delegationLockTimeout: (parentRunId: string): RundownError =>
+    new RundownError('DELEGATION_LOCK_TIMEOUT', { parentRunId }),
+
   // Generic
   unknown: (message: string, cause?: Error): RundownError =>
     new RundownError('UNKNOWN_ERROR', { message }, cause),

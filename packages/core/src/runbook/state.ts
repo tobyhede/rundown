@@ -10,6 +10,7 @@ import type {
   SubstepState,
   Runbook,
   DataSource,
+  DelegationLinkage,
 } from './types.js';
 import type { StepId } from './step-id.js';
 import { RunbookStateSchema } from '../schemas.js';
@@ -46,6 +47,8 @@ interface CreateOptions {
   readonly parentRunbookId?: string;
   readonly parentStepId?: StepId;
   readonly prompted?: boolean;
+  /** Delegation linkage when this run is created via `rd claim`. */
+  readonly delegation?: DelegationLinkage;
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, string>;
@@ -120,6 +123,7 @@ export class RunbookStateManager {
       agentId: options.agentId,
       parentRunbookId: options.parentRunbookId,
       parentStepId: options.parentStepId,
+      delegation: options.delegation,
       startedAt: now,
       updatedAt: now,
       prompted: options.prompted,

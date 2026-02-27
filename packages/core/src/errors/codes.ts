@@ -237,6 +237,34 @@ export const ErrorCodes = {
     description: 'The specified substep ID does not exist in the target step.',
     docSlug: 'delegation-substep-not-found',
   },
+  INVALID_TOKEN: {
+    code: 'RD-807',
+    category: ErrorCategory.DELEGATION,
+    title: 'Invalid delegation token',
+    description: 'Token format is invalid. Tokens must start with "rdtk_".',
+    docSlug: 'invalid-token',
+  },
+  TOKEN_NOT_FOUND: {
+    code: 'RD-808',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation token not found',
+    description: 'No active run contains a delegation with this token.',
+    docSlug: 'token-not-found',
+  },
+  TOKEN_CANCELLED: {
+    code: 'RD-809',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation token cancelled',
+    description: 'This delegation has been cancelled and cannot be claimed.',
+    docSlug: 'token-cancelled',
+  },
+  DELEGATION_LOCK_TIMEOUT: {
+    code: 'RD-810',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation lock timeout',
+    description: 'Could not acquire delegation lock. Another operation may be in progress.',
+    docSlug: 'delegation-lock-timeout',
+  },
 
   // Generic
   UNKNOWN_ERROR: {

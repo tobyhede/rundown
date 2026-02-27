@@ -314,6 +314,13 @@ export const RunbookStateSchema = z.object({
   agentId: z.string().optional(),
   parentRunbookId: z.string().optional(),
   parentStepId: StepIdSchema.optional(),
+  delegation: z
+    .object({
+      parentRunId: z.string(),
+      parentStepId: z.string(),
+      tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    })
+    .optional(),
   nested: z
     .object({
       runbook: z.string(),

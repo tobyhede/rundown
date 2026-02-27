@@ -419,6 +419,9 @@ export interface RunbookState {
   readonly parentRunbookId?: string;
   readonly parentStepId?: StepId;
 
+  /** Delegation linkage data when this run was created via `rd claim`. */
+  readonly delegation?: DelegationLinkage;
+
   readonly nested?: {
     readonly runbook: string;
     readonly instanceId: string;
