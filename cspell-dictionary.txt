@@ -21,6 +21,7 @@ stryker
 mutator
 mutants
 biomejs
+covertable
 changesets
 changeset
 codecov
