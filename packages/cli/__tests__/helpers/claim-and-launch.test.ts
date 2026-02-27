@@ -151,9 +151,7 @@ describe('claimAndLaunch', () => {
     const mockAcquire = jest
       .fn<any>()
       .mockRejectedValue(
-        new Error(
-          'Delegation lock timeout for run run-1. Another operation may be in progress.',
-        ),
+        new Error('Delegation lock timeout for run run-1. Another operation may be in progress.'),
       );
     const mockRelease = jest.fn<any>().mockResolvedValue(undefined);
     (core.DelegationLock as jest.Mock).mockImplementation(() => ({
@@ -295,8 +293,8 @@ describe('claimAndLaunch', () => {
     }));
 
     // cspell:disable-next-line
-    await expect(
-      claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {}),
-    ).rejects.toThrow('EACCES: permission denied');
+    await expect(claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {})).rejects.toThrow(
+      'EACCES: permission denied',
+    );
   });
 });

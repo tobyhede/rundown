@@ -328,10 +328,7 @@ describe('Gate Loader - Shell Command Edge Cases', () => {
   });
 
   test('handles command that fails with stderr', async () => {
-    const result = await executeShellCommand(
-      'echo "error message" >&2 && exit 42',
-      process.cwd(),
-    );
+    const result = await executeShellCommand('echo "error message" >&2 && exit 42', process.cwd());
     expect(result.exitCode).toBe(42);
     expect(result.output).toContain('error message');
   });
