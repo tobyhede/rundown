@@ -89,6 +89,24 @@ describe('Config Loading', () => {
     await expect(loadConfig(testDir)).rejects.toThrow('Unknown hook event');
   });
 
+  test('accepts modern Claude hook events', async () => {
+    const configObj = {
+      hooks: {
+        PostToolUseFailure: { gates: ['test'] },
+        ConfigChange: { gates: ['test'] },
+      },
+      gates: {
+        test: { command: 'echo test', on_pass: 'CONTINUE' },
+      },
+    };
+
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
+
+    const config = await loadConfig(testDir);
+    expect(config?.hooks.PostToolUseFailure.gates).toEqual(['test']);
+    expect(config?.hooks.ConfigChange.gates).toEqual(['test']);
+  });
+
   test('rejects undefined gate reference', async () => {
     const configObj = {
       hooks: {
@@ -179,6 +197,32 @@ describe('Plugin Path Resolution', () => {
     } finally {
       process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
     }
+  });
+});
+
+describe('Hook manifest layout', () => {
+  const pluginRoot = path.resolve(__dirname, '..');
+
+  test('plugin manifest points to hooks/hooks.json', async () => {
+    const manifestPath = path.join(pluginRoot, '.claude-plugin', 'plugin.json');
+    const manifestContent = await fs.readFile(manifestPath, 'utf-8');
+    const manifest = JSON.parse(manifestContent) as { hooks?: string };
+
+    expect(manifest.hooks).toBe('./hooks/hooks.json');
+  });
+
+  test('package files include hooks directory and exclude root hooks.json', async () => {
+    const packageJsonPath = path.join(pluginRoot, 'package.json');
+    const packageJsonContent = await fs.readFile(packageJsonPath, 'utf-8');
+    const packageJson = JSON.parse(packageJsonContent) as { files?: string[] };
+
+    expect(packageJson.files).toContain('hooks');
+    expect(packageJson.files).not.toContain('hooks.json');
+  });
+
+  test('canonical hooks file exists and root hooks.json is absent', async () => {
+    await expect(fs.access(path.join(pluginRoot, 'hooks', 'hooks.json'))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(pluginRoot, 'hooks.json'))).rejects.toThrow();
   });
 });
 

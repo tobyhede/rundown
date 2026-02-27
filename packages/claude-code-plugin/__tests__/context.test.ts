@@ -147,6 +147,22 @@ describe('extractNameAndStage coverage', () => {
     const result = await injectContext('UnknownEvent', input as any);
     expect(result).toBeNull();
   });
+
+  it('handles SubagentStop using modern agent_type field', async () => {
+    const input = {
+      hook_event_name: 'SubagentStop',
+      cwd: testDir,
+      agent_type: 'cipherpowers:test-agent',
+    };
+    await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
+    await fs.writeFile(
+      path.join(testDir, '.claude', 'context', 'test-agent-end.md'),
+      'Agent end context',
+    );
+
+    const result = await injectContext('SubagentStop', input as any);
+    expect(result).toBe('Agent end context');
+  });
 });
 
 describe('Synthetic event context injection', () => {
@@ -224,7 +240,7 @@ describe('Synthetic event context injection', () => {
     const input = {
       hook_event_name: 'SubagentStart',
       cwd: testDir,
-      subagent_type: 'cipherpowers:code-review-agent',
+      agent_type: 'cipherpowers:code-review-agent',
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
@@ -235,36 +251,28 @@ describe('Synthetic event context injection', () => {
     expect(result).toBe('Review context');
   });
 
-  it('handles SubagentEnd', async () => {
+  it('handles SubagentStart using agent_type from modern payload', async () => {
     const input = {
-      hook_event_name: 'SubagentEnd',
+      hook_event_name: 'SubagentStart',
       cwd: testDir,
-      subagent_type: 'rundown:verify-agent',
+      agent_type: 'cipherpowers:analysis-agent',
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(
-      path.join(testDir, '.claude', 'context', 'verify-agent-end.md'),
-      'Verify agent end context',
+      path.join(testDir, '.claude', 'context', 'analysis-agent-start.md'),
+      'Analysis context',
     );
-    const result = await injectContext('SubagentEnd', input as any);
-    expect(result).toBe('Verify agent end context');
+
+    const result = await injectContext('SubagentStart', input as any);
+    expect(result).toBe('Analysis context');
   });
 
-  it('SubagentStart returns null when subagent_type is missing', async () => {
+  it('SubagentStart returns null when agent_type is missing', async () => {
     const input = {
       hook_event_name: 'SubagentStart',
       cwd: testDir,
     };
     const result = await injectContext('SubagentStart', input as any);
-    expect(result).toBeNull();
-  });
-
-  it('SubagentEnd returns null when subagent_type is missing', async () => {
-    const input = {
-      hook_event_name: 'SubagentEnd',
-      cwd: testDir,
-    };
-    const result = await injectContext('SubagentEnd', input as any);
     expect(result).toBeNull();
   });
 });

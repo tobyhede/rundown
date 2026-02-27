@@ -89,7 +89,7 @@ export function createMockHookInput(
       return {
         ...base,
         tool_name: 'Edit',
-        file_path: '/test/project/src/file.ts',
+        tool_input: { file_path: '/test/project/src/file.ts' },
         ...rest,
       };
 
@@ -105,8 +105,7 @@ export function createMockHookInput(
       return {
         ...base,
         agent_id: 'test-agent-123',
-        agent_name: 'test-namespace:test-agent',
-        subagent_type: 'test-agent',
+        agent_type: 'test-namespace:test-agent',
         ...rest,
       };
 
@@ -114,15 +113,15 @@ export function createMockHookInput(
       return {
         ...base,
         agent_id: 'test-agent-123',
-        agent_name: 'test-namespace:test-agent',
-        output: 'STATUS: PASS\nAgent completed successfully.',
+        agent_type: 'test-namespace:test-agent',
+        last_assistant_message: 'STATUS: PASS\nAgent completed successfully.',
         ...rest,
       };
 
     case 'UserPromptSubmit':
       return {
         ...base,
-        user_message: 'test user message',
+        prompt: 'test user message',
         ...rest,
       };
 

@@ -34,56 +34,34 @@ describe('Synthetic Events Integration', () => {
     });
   });
 
-  describe('SubagentStart', () => {
-    it('PostToolUse Step → SubagentStart → stores correlation mapping', async () => {
-      const input = {
-        hook_event_name: 'PostToolUse',
+  describe('Slash command lifecycle', () => {
+    it('UserPromptSubmit /command → SlashCommandStart → sets active_command', async () => {
+      const input: HookInput = {
+        hook_event_name: 'UserPromptSubmit',
         cwd: testDir,
-        tool_name: 'Step',
-        tool_input: {
-          description: '1.1 - Review code',
-          subagent_type: 'code-review-agent',
-        },
-        tool_use_id: 'toolu_abc123',
-      } as HookInput;
+        prompt: '/execute the plan',
+      };
 
       await dispatch(input);
 
       const session = new Session(testDir);
-      const metadata = await session.get('metadata');
-      expect(metadata).toEqual(
-        expect.objectContaining({
-          toolUseIdToStepId: { toolu_abc123: '1.1' },
-        }),
-      );
+      expect(await session.get('active_command')).toBe('execute');
     });
 
-    it('accumulates correlation mappings for multiple subagents', async () => {
-      const input1 = {
-        hook_event_name: 'PostToolUse',
+    it('Stop → SlashCommandEnd → clears active_command', async () => {
+      await dispatch({
+        hook_event_name: 'UserPromptSubmit',
         cwd: testDir,
-        tool_name: 'Step',
-        tool_input: { description: '1.1 - First step' },
-        tool_use_id: 'toolu_1',
-      } as HookInput;
+        prompt: '/verify',
+      } as HookInput);
 
-      const input2 = {
-        hook_event_name: 'PostToolUse',
+      await dispatch({
+        hook_event_name: 'Stop',
         cwd: testDir,
-        tool_name: 'Step',
-        tool_input: { description: '1.2 - Second step' },
-        tool_use_id: 'toolu_2',
-      } as HookInput;
-
-      await dispatch(input1);
-      await dispatch(input2);
+      } as HookInput);
 
       const session = new Session(testDir);
-      const metadata = await session.get('metadata');
-      expect(metadata.toolUseIdToStepId).toEqual({
-        toolu_1: '1.1',
-        toolu_2: '1.2',
-      });
+      expect(await session.get('active_command')).toBeNull();
     });
   });
 });

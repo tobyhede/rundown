@@ -48,7 +48,7 @@ describe('Action Handler', () => {
   });
 
   test('STOP returns continue=false with stop message', () => {
-    const result: GateResult = { message: 'stop message' };
+    const result: GateResult = { stopReason: 'stop message' };
     const action = handleAction('STOP', result, mockConfig, mockInput);
 
     expect(action.continue).toBe(false);

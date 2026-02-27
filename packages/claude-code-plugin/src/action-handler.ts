@@ -48,7 +48,7 @@ export function handleAction(
     case 'STOP':
       return {
         continue: false,
-        stopMessage: gateResult.message ?? 'Gate stopped execution',
+        stopMessage: gateResult.stopReason ?? gateResult.reason ?? 'Gate stopped execution',
       };
 
     default:

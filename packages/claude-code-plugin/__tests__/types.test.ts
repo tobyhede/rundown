@@ -16,10 +16,12 @@ describe('Types', () => {
       hook_event_name: 'PostToolUse',
       cwd: '/test/path',
       tool_name: 'Edit',
-      file_path: '/test/file.ts',
+      tool_input: {
+        file_path: '/test/file.ts',
+      },
     };
     expect(input.tool_name).toBe('Edit');
-    expect(input.file_path).toBe('/test/file.ts');
+    expect(input.tool_input?.file_path).toBe('/test/file.ts');
   });
 
   test('GateResult can be empty object', () => {

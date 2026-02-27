@@ -16,12 +16,39 @@ describe('HookInputSchema', () => {
       hook_event_name: 'PostToolUse',
       cwd: '/Users/test/project',
       tool_name: 'Edit',
-      file_path: '/Users/test/project/src/index.ts',
+      tool_input: {
+        file_path: '/Users/test/project/src/index.ts',
+      },
     };
     const result = HookInputSchema.safeParse(input);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.tool_name).toBe('Edit');
+    }
+  });
+
+  it('parses modern Claude hook fields', () => {
+    const input = {
+      hook_event_name: 'SubagentStop',
+      cwd: '/Users/test/project',
+      session_id: 'session-123',
+      transcript_path: '/tmp/transcript.jsonl',
+      permission_mode: 'default',
+      agent_id: 'agent-123',
+      agent_type: 'code-review-agent',
+      last_assistant_message: 'STATUS: PASS',
+      tool_input: {
+        file_path: '/Users/test/project/src/index.ts',
+      },
+      prompt: '/verify',
+    };
+
+    const result = HookInputSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.agent_type).toBe('code-review-agent');
+      expect(result.data.prompt).toBe('/verify');
+      expect(result.data.tool_input?.file_path).toBe('/Users/test/project/src/index.ts');
     }
   });
 
@@ -33,6 +60,55 @@ describe('HookInputSchema', () => {
 
   it('rejects null', () => {
     const result = HookInputSchema.safeParse(null);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects legacy top-level fields under strict mode', () => {
+    const legacyInputs = [
+      {
+        hook_event_name: 'UserPromptSubmit',
+        cwd: '/Users/test/project',
+        user_message: '/legacy',
+      },
+      {
+        hook_event_name: 'SubagentStop',
+        cwd: '/Users/test/project',
+        agent_name: 'legacy-agent',
+      },
+      {
+        hook_event_name: 'SubagentStop',
+        cwd: '/Users/test/project',
+        subagent_name: 'legacy-subagent',
+      },
+      {
+        hook_event_name: 'SubagentStop',
+        cwd: '/Users/test/project',
+        output: 'STATUS: PASS',
+      },
+      {
+        hook_event_name: 'PostToolUse',
+        cwd: '/Users/test/project',
+        file_path: '/Users/test/project/src/legacy.ts',
+      },
+    ];
+
+    for (const input of legacyInputs) {
+      const result = HookInputSchema.safeParse(input);
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it('rejects unknown tool_input fields under strict mode', () => {
+    const input = {
+      hook_event_name: 'PostToolUse',
+      cwd: '/Users/test/project',
+      tool_name: 'Bash',
+      tool_input: {
+        command: 'echo hello',
+      },
+    };
+
+    const result = HookInputSchema.safeParse(input);
     expect(result.success).toBe(false);
   });
 });

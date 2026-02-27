@@ -223,9 +223,9 @@ async function discoverAgentCommandContext(
  * - SkillEnd → { name: skill, stage: 'end' }
  * - PreToolUse → { name: tool_name, stage: 'pre' }
  * - PostToolUse → { name: tool_name, stage: 'post' }
- * - SubagentStop → { name: agent_name, stage: 'end' } (special handling)
- * - SubagentStart → { name: subagent_type, stage: 'start' } (synthetic event)
- * - SubagentEnd → { name: subagent_type, stage: 'end' } (synthetic event)
+ * - PostToolUseFailure → { name: tool_name, stage: 'post' }
+ * - SubagentStop → { name: agent_type, stage: 'end' } (special handling)
+ * - SubagentStart → { name: agent_type, stage: 'start' }
  * - UserPromptSubmit → { name: 'prompt', stage: 'submit' }
  * - Stop → { name: 'agent', stage: 'stop' }
  * - SessionStart → { name: 'session', stage: 'start' }
@@ -259,6 +259,9 @@ function extractNameAndStage(
     case 'PostToolUse':
       return input.tool_name ? { name: input.tool_name.toLowerCase(), stage: 'post' } : null;
 
+    case 'PostToolUseFailure':
+      return input.tool_name ? { name: input.tool_name.toLowerCase(), stage: 'post' } : null;
+
     case 'SubagentStop':
       // SubagentStop has special handling - uses agent-command scoping
       return null;
@@ -279,14 +282,8 @@ function extractNameAndStage(
       return { name: 'notification', stage: 'receive' };
 
     case 'SubagentStart':
-      // Use agent type for context discovery
-      return input.subagent_type
-        ? { name: input.subagent_type.split(':').pop() ?? input.subagent_type, stage: 'start' }
-        : null;
-
-    case 'SubagentEnd':
-      return input.subagent_type
-        ? { name: input.subagent_type.split(':').pop() ?? input.subagent_type, stage: 'end' }
+      return input.agent_type
+        ? { name: input.agent_type.split(':').pop() ?? input.agent_type, stage: 'start' }
         : null;
 
     default:
@@ -307,7 +304,8 @@ export async function injectContext(hookEvent: string, input: HookInput): Promis
   await logger.debug('Context injection starting', { event: hookEvent, cwd: input.cwd });
 
   // Handle SubagentStop with agent-command scoping (special case)
-  if (hookEvent === 'SubagentStop' && input.agent_name) {
+  const agentType = input.agent_type;
+  if (hookEvent === 'SubagentStop' && agentType) {
     const session = new Session(input.cwd);
     const activeCommand = await session.get('active_command');
     const activeSkill = await session.get('active_skill');
@@ -315,7 +313,7 @@ export async function injectContext(hookEvent: string, input: HookInput): Promis
 
     const contextFile = await discoverAgentCommandContext(
       input.cwd,
-      input.agent_name,
+      agentType,
       commandOrSkill,
       'end',
     );
@@ -324,7 +322,7 @@ export async function injectContext(hookEvent: string, input: HookInput): Promis
       const content = await fs.readFile(contextFile, 'utf-8');
       await logger.info('Injecting agent context', {
         event: hookEvent,
-        agent: input.agent_name,
+        agent: agentType,
         file: contextFile,
       });
       return content;

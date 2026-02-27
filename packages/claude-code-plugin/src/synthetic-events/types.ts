@@ -4,9 +4,7 @@ export type SyntheticEventName =
   | 'SkillStart'
   | 'SkillEnd'
   | 'SlashCommandStart'
-  | 'SlashCommandEnd'
-  | 'SubagentStart'
-  | 'SubagentEnd';
+  | 'SlashCommandEnd';
 
 export interface SyntheticEvent {
   /** The Claude Code event that triggered detection */
@@ -20,27 +18,11 @@ export interface SyntheticEvent {
 
   /** For SlashCommandStart/End - full command with namespace */
   commandName?: string;
-
-  /** For SubagentStart - parsed StepId */
-  stepId?: string;
-
-  /** For SubagentStart - tool_use_id for correlation */
-  toolUseId?: string;
-
-  /** For SubagentStart - agent type from tool_input */
-  subagentType?: string;
 }
 
 /**
  * Check if an event name is synthetic (not fired by Claude Code)
  */
 export function isSyntheticEvent(eventName: string): eventName is SyntheticEventName {
-  return [
-    'SkillStart',
-    'SkillEnd',
-    'SlashCommandStart',
-    'SlashCommandEnd',
-    'SubagentStart',
-    'SubagentEnd',
-  ].includes(eventName);
+  return ['SkillStart', 'SkillEnd', 'SlashCommandStart', 'SlashCommandEnd'].includes(eventName);
 }

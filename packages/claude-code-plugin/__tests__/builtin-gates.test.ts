@@ -28,7 +28,7 @@ describe('Built-in Gates', () => {
       const input: HookInput = {
         hook_event_name: 'SubagentStop',
         cwd: '/test',
-        agent_name: 'test-agent',
+        agent_type: 'test-agent',
       };
 
       const result = await executeBuiltinGate('plugin-path', input);

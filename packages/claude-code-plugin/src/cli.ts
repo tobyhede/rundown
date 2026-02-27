@@ -7,15 +7,8 @@ import {
   logger,
 } from './shared/index.js';
 import { dispatch } from './dispatcher.js';
+import { buildHookOutput } from './hook-output.js';
 import { Session } from './session.js';
-
-interface OutputMessage {
-  additionalContext?: string;
-  decision?: string;
-  reason?: string;
-  continue?: boolean;
-  message?: string;
-}
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -211,7 +204,7 @@ async function handleHookDispatch(): Promise<void> {
       console.error(
         JSON.stringify({
           continue: false,
-          message: 'Empty input received',
+          stopReason: 'Empty input received',
         }),
       );
       process.exit(1);
@@ -227,7 +220,7 @@ async function handleHookDispatch(): Promise<void> {
       console.error(
         JSON.stringify({
           continue: false,
-          message: parseResult.error,
+          stopReason: parseResult.error,
         }),
       );
       process.exit(1);
@@ -240,7 +233,7 @@ async function handleHookDispatch(): Promise<void> {
       event: input.hook_event_name,
       cwd: input.cwd,
       tool: input.tool_name,
-      agent: input.agent_name,
+      agent: input.agent_type,
       command: input.command,
       skill: input.skill,
     });
@@ -249,21 +242,7 @@ async function handleHookDispatch(): Promise<void> {
     const result = await dispatch(input);
 
     // Build output
-    const output: OutputMessage = {};
-
-    if (result.context) {
-      output.additionalContext = result.context;
-    }
-
-    if (result.blockReason) {
-      output.decision = 'block';
-      output.reason = result.blockReason;
-    }
-
-    if (result.stopMessage) {
-      output.continue = false;
-      output.message = result.stopMessage;
-    }
+    const output = buildHookOutput(input, result);
 
     // Log result
     await logger.info('CLI hook completed', {
@@ -284,7 +263,7 @@ async function handleHookDispatch(): Promise<void> {
     console.error(
       JSON.stringify({
         continue: false,
-        message: `Unexpected error: ${String(error)}`,
+        stopReason: `Unexpected error: ${String(error)}`,
       }),
     );
     process.exit(1);

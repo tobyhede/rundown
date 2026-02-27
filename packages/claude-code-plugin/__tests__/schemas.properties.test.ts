@@ -25,6 +25,8 @@ describe('Schema Property Tests', () => {
           description: fc.option(fc.string({ maxLength: 500 }), { nil: undefined }),
           subagent_type: fc.option(fc.string({ maxLength: 100 }), { nil: undefined }),
           prompt: fc.option(fc.string({ maxLength: 1000 }), { nil: undefined }),
+          skill: fc.option(fc.string({ maxLength: 200 }), { nil: undefined }),
+          file_path: fc.option(fc.string({ maxLength: 300 }), { nil: undefined }),
         },
         { requiredKeys: [] },
       ),
@@ -38,7 +40,6 @@ describe('Schema Property Tests', () => {
       tool_name: toolNameArb,
       tool_input: toolInputArb,
       tool_output: fc.option(fc.string({ maxLength: 1000 }), { nil: undefined }),
-      file_path: fc.option(fc.string({ maxLength: 200 }), { nil: undefined }),
     });
 
     // Generator for minimal HookInput
@@ -92,6 +93,44 @@ describe('Schema Property Tests', () => {
           expect(result.success).toBe(false);
         }),
         { numRuns: 50 },
+      );
+    });
+
+    it('rejects legacy top-level compatibility fields', () => {
+      const legacyInputArb = fc.oneof(
+        fc.record({
+          hook_event_name: fc.constant('UserPromptSubmit'),
+          cwd: fc.string({ minLength: 1, maxLength: 100 }),
+          user_message: fc.string({ minLength: 1, maxLength: 100 }),
+        }),
+        fc.record({
+          hook_event_name: fc.constant('SubagentStop'),
+          cwd: fc.string({ minLength: 1, maxLength: 100 }),
+          agent_name: fc.string({ minLength: 1, maxLength: 100 }),
+        }),
+        fc.record({
+          hook_event_name: fc.constant('SubagentStop'),
+          cwd: fc.string({ minLength: 1, maxLength: 100 }),
+          subagent_name: fc.string({ minLength: 1, maxLength: 100 }),
+        }),
+        fc.record({
+          hook_event_name: fc.constant('SubagentStop'),
+          cwd: fc.string({ minLength: 1, maxLength: 100 }),
+          output: fc.string({ minLength: 1, maxLength: 100 }),
+        }),
+        fc.record({
+          hook_event_name: fc.constant('PostToolUse'),
+          cwd: fc.string({ minLength: 1, maxLength: 100 }),
+          file_path: fc.string({ minLength: 1, maxLength: 100 }),
+        }),
+      );
+
+      fc.assert(
+        fc.property(legacyInputArb, (input) => {
+          const result = HookInputSchema.safeParse(input);
+          expect(result.success).toBe(false);
+        }),
+        { numRuns: 100 },
       );
     });
   });

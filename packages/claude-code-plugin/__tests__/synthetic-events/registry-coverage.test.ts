@@ -1,26 +1,18 @@
 // __tests__/synthetic-events/registry-coverage.test.ts
-// Automated verification that synthetic event detection covers all configured gates
+// Automated verification that synthetic event detection covers all configured derived events
 
 import { detectSyntheticEvents } from '../../src/synthetic-events/detector.js';
 import { isSyntheticEvent, type SyntheticEventName } from '../../src/synthetic-events/types.js';
 import { createMockHookInput } from '../helpers/test-utils.js';
 import type { HookInput } from '../../src/shared/index.js';
 
-/**
- * All synthetic event types defined in the system
- */
 const ALL_SYNTHETIC_EVENT_TYPES: SyntheticEventName[] = [
   'SkillStart',
   'SkillEnd',
   'SlashCommandStart',
   'SlashCommandEnd',
-  'SubagentStart',
-  'SubagentEnd',
 ];
 
-/**
- * Mapping of synthetic events to the Claude Code events that trigger them
- */
 const SYNTHETIC_EVENT_TRIGGERS: Record<SyntheticEventName, () => HookInput> = {
   SkillStart: () =>
     createMockHookInput('PreToolUse', {
@@ -34,23 +26,9 @@ const SYNTHETIC_EVENT_TRIGGERS: Record<SyntheticEventName, () => HookInput> = {
     }),
   SlashCommandStart: () =>
     createMockHookInput('UserPromptSubmit', {
-      user_message: '/test-command',
+      prompt: '/test-command',
     }),
   SlashCommandEnd: () => createMockHookInput('Stop'),
-  SubagentStart: () =>
-    createMockHookInput('PostToolUse', {
-      tool_name: 'Task',
-      tool_input: {
-        description: '1.1 - Test task',
-        subagent_type: 'test-agent',
-      },
-      tool_use_id: 'tool-123',
-    }),
-  SubagentEnd: () =>
-    createMockHookInput('SubagentStop', {
-      agent_id: 'agent-123',
-      output: 'STATUS: PASS',
-    }),
 };
 
 describe('Synthetic Event Registry Coverage', () => {
@@ -62,11 +40,11 @@ describe('Synthetic Event Registry Coverage', () => {
     });
 
     it('correctly rejects non-synthetic events', () => {
-      // These are native Claude Code events, NOT synthetic events
       const nonSyntheticEvents = [
         'PreToolUse',
         'PostToolUse',
-        'SubagentStop', // Note: SubagentStart IS synthetic (from Task/Step), SubagentStop is native
+        'SubagentStart',
+        'SubagentStop',
         'UserPromptSubmit',
         'Stop',
         'SessionStart',
@@ -80,33 +58,17 @@ describe('Synthetic Event Registry Coverage', () => {
   });
 
   describe('synthetic event detection completeness', () => {
-    const detectedEvents = new Set<string>();
-
-    // Test each trigger and collect detected events
     for (const [syntheticType, createInput] of Object.entries(SYNTHETIC_EVENT_TRIGGERS)) {
       it(`can detect ${syntheticType} events`, () => {
         const input = createInput();
         const events = detectSyntheticEvents(input);
-
-        // SubagentEnd is not detected by detectSyntheticEvents (handled by handleSubagentStop)
-        if (syntheticType === 'SubagentEnd') {
-          // This event is handled separately by the workflow hook
-          expect(true).toBe(true);
-          return;
-        }
-
         const hasExpectedEvent = events.some((e) => e.syntheticEvent === syntheticType);
         expect(hasExpectedEvent).toBe(true);
-
-        for (const e of events) detectedEvents.add(e.syntheticEvent);
       });
     }
 
-    it('detector covers all expected synthetic events (except SubagentEnd)', () => {
-      // SubagentEnd is handled separately by handleSubagentStop, not detectSyntheticEvents
-      const expectedDetected = ALL_SYNTHETIC_EVENT_TYPES.filter((e) => e !== 'SubagentEnd');
-
-      for (const eventType of expectedDetected) {
+    it('detector covers all expected synthetic events', () => {
+      for (const eventType of ALL_SYNTHETIC_EVENT_TYPES) {
         const input = SYNTHETIC_EVENT_TRIGGERS[eventType]();
         const events = detectSyntheticEvents(input);
         const detected = events.some((e) => e.syntheticEvent === eventType);
@@ -157,9 +119,9 @@ describe('Synthetic Event Registry Coverage', () => {
     });
 
     describe('SlashCommandStart detection', () => {
-      it('extracts command name from user message', () => {
+      it('extracts command name from prompt', () => {
         const input = createMockHookInput('UserPromptSubmit', {
-          user_message: '/execute run all tests',
+          prompt: '/execute run all tests',
         });
 
         const events = detectSyntheticEvents(input);
@@ -171,7 +133,7 @@ describe('Synthetic Event Registry Coverage', () => {
 
       it('handles commands with namespace', () => {
         const input = createMockHookInput('UserPromptSubmit', {
-          user_message: '/cipherpowers:commit message here',
+          prompt: '/cipherpowers:commit message here',
         });
 
         const events = detectSyntheticEvents(input);
@@ -181,9 +143,9 @@ describe('Synthetic Event Registry Coverage', () => {
         expect(cmdEvent?.commandName).toBe('cipherpowers:commit');
       });
 
-      it('does not detect non-command messages', () => {
+      it('does not detect non-command prompts', () => {
         const input = createMockHookInput('UserPromptSubmit', {
-          user_message: 'This is a regular message',
+          prompt: 'This is a regular message',
         });
 
         const events = detectSyntheticEvents(input);
@@ -197,75 +159,6 @@ describe('Synthetic Event Registry Coverage', () => {
         const events = detectSyntheticEvents(input);
 
         expect(events.find((e) => e.syntheticEvent === 'SlashCommandEnd')).toBeDefined();
-      });
-    });
-
-    describe('SubagentStart detection', () => {
-      it('extracts step ID from description', () => {
-        const input = createMockHookInput('PostToolUse', {
-          tool_name: 'Task',
-          tool_input: {
-            description: '1.2 - Implement the feature',
-            subagent_type: 'code-agent',
-          },
-          tool_use_id: 'tool-abc',
-        });
-
-        const events = detectSyntheticEvents(input);
-        const subagentEvent = events.find((e) => e.syntheticEvent === 'SubagentStart');
-
-        expect(subagentEvent).toBeDefined();
-        expect(subagentEvent?.stepId).toBe('1.2');
-        expect(subagentEvent?.subagentType).toBe('code-agent');
-        expect(subagentEvent?.toolUseId).toBe('tool-abc');
-      });
-
-      it('handles Step tool as well as Task', () => {
-        const input = createMockHookInput('PostToolUse', {
-          tool_name: 'Step',
-          tool_input: {
-            description: '3 - Simple step',
-          },
-        });
-
-        const events = detectSyntheticEvents(input);
-        expect(events.find((e) => e.syntheticEvent === 'SubagentStart')).toBeDefined();
-      });
-
-      it('handles various step ID formats', () => {
-        const formats = [
-          { desc: '1 - Step one', expected: '1' },
-          { desc: '12 - Step twelve', expected: '12' },
-          { desc: '1.1 - Substep', expected: '1.1' },
-          { desc: '12.5 - Decimal substep', expected: '12.5' },
-          { desc: '1– En dash step', expected: '1' },
-          { desc: '1— Em dash step', expected: '1' },
-        ];
-
-        for (const { desc, expected } of formats) {
-          const input = createMockHookInput('PostToolUse', {
-            tool_name: 'Task',
-            tool_input: { description: desc },
-          });
-
-          const events = detectSyntheticEvents(input);
-          const event = events.find((e) => e.syntheticEvent === 'SubagentStart');
-          expect(event?.stepId).toBe(expected);
-        }
-      });
-
-      it('handles descriptions without step ID', () => {
-        const input = createMockHookInput('PostToolUse', {
-          tool_name: 'Task',
-          tool_input: {
-            description: 'Just a regular description without step ID',
-          },
-          step_id: 'fallback-step-id',
-        });
-
-        const events = detectSyntheticEvents(input);
-        const event = events.find((e) => e.syntheticEvent === 'SubagentStart');
-        expect(event?.stepId).toBe('fallback-step-id');
       });
     });
   });
@@ -283,8 +176,6 @@ describe('Synthetic Event Registry Coverage', () => {
 
       for (const input of unrelatedInputs) {
         const events = detectSyntheticEvents(input);
-        // These should not produce any synthetic events
-        // (SubagentStart from Task/Step is handled, but SubagentStop is not)
         const unexpectedEvents = events.filter(
           (e) =>
             e.syntheticEvent === 'SkillStart' ||

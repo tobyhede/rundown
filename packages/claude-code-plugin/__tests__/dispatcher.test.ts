@@ -49,7 +49,7 @@ describe('Dispatcher - Event Filtering', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: '/test',
-      agent_name: 'test-namespace:test-agent',
+      agent_type: 'test-namespace:test-agent',
     };
 
     const hookConfig: HookConfig = {
@@ -63,7 +63,7 @@ describe('Dispatcher - Event Filtering', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: '/test',
-      agent_name: 'other-agent',
+      agent_type: 'other-agent',
     };
 
     const hookConfig: HookConfig = {
@@ -73,11 +73,11 @@ describe('Dispatcher - Event Filtering', () => {
     expect(shouldProcessHook(input, hookConfig)).toBe(false);
   });
 
-  test('SubagentStop checks subagent_name if agent_name missing', () => {
+  test('SubagentStop checks agent_type for modern payloads', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: '/test',
-      subagent_name: 'test-namespace:test-agent',
+      agent_type: 'test-namespace:test-agent',
     };
 
     const hookConfig: HookConfig = {
@@ -511,7 +511,9 @@ describe('File pattern filtering integration', () => {
       hook_event_name: 'PostToolUse',
       cwd: testDir,
       tool_name: 'Edit',
-      file_path: path.join(testDir, 'packages/cts/src/index.ts'),
+      tool_input: {
+        file_path: path.join(testDir, 'packages/cts/src/index.ts'),
+      },
     };
 
     const result = await dispatch(input);
@@ -519,6 +521,41 @@ describe('File pattern filtering integration', () => {
     expect(result.context).toContain('cts test');
     expect(result.context).toContain('no pattern');
     expect(result.context).not.toContain('shared test');
+  });
+
+  it('should use tool_input.file_path for modern tool hook payloads', async () => {
+    const mockConfig = {
+      gates: {
+        'cts:test': {
+          command: 'echo "cts test"',
+          file_patterns: ['packages/cts/**'],
+          on_pass: 'CONTINUE',
+        },
+      },
+      hooks: {
+        PostToolUse: {
+          enabled_tools: ['Edit'],
+          gates: ['cts:test'],
+        },
+      },
+    };
+
+    await fs.writeFile(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify(mockConfig, null, 2),
+    );
+
+    const input: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: testDir,
+      tool_name: 'Edit',
+      tool_input: {
+        file_path: path.join(testDir, 'packages/cts/src/index.ts'),
+      },
+    };
+
+    const result = await dispatch(input);
+    expect(result.context).toContain('cts test');
   });
 
   it('should skip gate when file does not match pattern', async () => {
@@ -556,7 +593,9 @@ describe('File pattern filtering integration', () => {
       hook_event_name: 'PostToolUse',
       cwd: testDir,
       tool_name: 'Edit',
-      file_path: path.join(testDir, 'packages/other/src/index.ts'),
+      tool_input: {
+        file_path: path.join(testDir, 'packages/other/src/index.ts'),
+      },
     };
 
     const result = await dispatch(input);
@@ -601,7 +640,9 @@ describe('File pattern filtering integration', () => {
       hook_event_name: 'PostToolUse',
       cwd: testDir,
       tool_name: 'Edit',
-      file_path: path.join(testDir, 'lib/common/utils.ts'),
+      tool_input: {
+        file_path: path.join(testDir, 'lib/common/utils.ts'),
+      },
     };
 
     const result = await dispatch(input);
@@ -635,7 +676,7 @@ describe('File pattern filtering integration', () => {
     const input: HookInput = {
       hook_event_name: 'UserPromptSubmit',
       cwd: testDir,
-      user_message: 'test message',
+      prompt: 'test message',
     };
 
     const result = await dispatch(input);
@@ -643,6 +684,37 @@ describe('File pattern filtering integration', () => {
     // File patterns should be ignored for UserPromptSubmit
     // Gate should run (no keywords = always run)
     expect(result.context).toContain('test gate');
+  });
+
+  it('should use prompt field for UserPromptSubmit keyword matching', async () => {
+    const mockConfig = {
+      gates: {
+        'keyword-gate': {
+          command: 'echo "keyword gate"',
+          keywords: ['verify'],
+          on_pass: 'CONTINUE',
+        },
+      },
+      hooks: {
+        UserPromptSubmit: {
+          gates: ['keyword-gate'],
+        },
+      },
+    };
+
+    await fs.writeFile(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify(mockConfig, null, 2),
+    );
+
+    const input: HookInput = {
+      hook_event_name: 'UserPromptSubmit',
+      cwd: testDir,
+      prompt: 'please verify this',
+    };
+
+    const result = await dispatch(input);
+    expect(result.context).toContain('keyword gate');
   });
 
   it('should filter multiple gates independently based on patterns', async () => {
@@ -685,7 +757,9 @@ describe('File pattern filtering integration', () => {
       hook_event_name: 'PostToolUse',
       cwd: testDir,
       tool_name: 'Edit',
-      file_path: path.join(testDir, 'packages/b/index.ts'),
+      tool_input: {
+        file_path: path.join(testDir, 'packages/b/index.ts'),
+      },
     };
 
     const result = await dispatch(input);
