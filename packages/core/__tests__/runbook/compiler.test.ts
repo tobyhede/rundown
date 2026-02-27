@@ -3690,7 +3690,6 @@ describe('runbook compiler', () => {
   });
 
   describe('data source FOR loops', () => {
-
     it('creates ForContext with array source', () => {
       const steps = createRunbook(`
 ## 1. Process items
@@ -4303,7 +4302,6 @@ echo "processing"
   });
 
   describe('FOR shorthand canonicalization', () => {
-
     it('iterates a FOR step defined via step-level runbook-list shorthand', () => {
       const steps = createRunbook(`
 ## 1. Review the plan
