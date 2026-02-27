@@ -1260,7 +1260,9 @@ function buildGotoTransition(
         retryCount: isGotoToSelf
           ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
           : 0,
-        iterationRetryCount: 0,
+        iterationRetryCount: isGotoToSelf
+          ? ({ context }: { context: RunbookContext }) => context.iterationRetryCount
+          : 0,
         substep: resolvedSubstepId,
         ...(!isImplicit
           ? {
@@ -1520,7 +1522,9 @@ export function compileRunbookToMachine(
                 target.stepName === config.stepName && target.substepId === config.substepId
                   ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
                   : 0,
-              iterationRetryCount: 0,
+              iterationRetryCount: isGotoToSelf
+                ? ({ context }: { context: RunbookContext }) => context.iterationRetryCount
+                : 0,
               substep: ({ event }: { event: RunbookEvent }) =>
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
               ...(!forStepForTarget.implicit
