@@ -10,9 +10,10 @@ jest.unstable_mockModule('../../src/helpers/extract-raw-frontmatter', () => ({
   extractRawFrontmatter: jest.fn(),
 }));
 
-// Mock scenarios schema
+// Mock scenarios schema — include all exports used by scenario-runbook
 jest.unstable_mockModule('../../src/schemas/scenarios', () => ({
   parseScenarios: jest.fn(),
+  getEffectiveResult: jest.fn().mockImplementation((s: any) => s.result ?? s.expect?.result),
 }));
 
 // Mock node:fs/promises
@@ -55,6 +56,7 @@ const {
   buildScenarioDetail,
   extractReferencedRunbooks,
   executeScenario,
+  evaluateExpectations,
 } = await import('../../src/helpers/scenario-runbook');
 
 // Types are inferred from mocked modules; use `any` casts where needed
@@ -226,7 +228,7 @@ describe('buildScenarioDetail', () => {
 
     const detail = buildScenarioDetail('happy', scenarios);
 
-    expect(detail).toEqual({
+    expect(detail).toMatchObject({
       name: 'happy',
       description: 'Works',
       expected: 'COMPLETE',
@@ -247,6 +249,20 @@ describe('buildScenarioDetail', () => {
     const detail = buildScenarioDetail('tagged', scenarios);
 
     expect(detail?.tags).toEqual(['smoke']);
+  });
+
+  it('includes expect block when present', () => {
+    const scenarios = {
+      rich: {
+        result: 'COMPLETE',
+        commands: ['rd run x.md', 'rd pass'],
+        expect: { result: 'COMPLETE', finalStep: '2' },
+      },
+    } as any;
+
+    const detail = buildScenarioDetail('rich', scenarios);
+
+    expect(detail?.expect).toEqual({ result: 'COMPLETE', finalStep: '2' });
   });
 });
 
@@ -288,6 +304,115 @@ describe('extractReferencedRunbooks', () => {
     };
 
     expect(extractReferencedRunbooks(scenario)).toEqual([]);
+  });
+});
+
+describe('evaluateExpectations', () => {
+  it('passes when all expectations match', () => {
+    const state = {
+      step: '3',
+      retryCount: 0,
+      lastAction: { type: 'COMPLETE' },
+      lastResult: 'pass',
+      steps: [{ status: 'complete' }, { status: 'complete' }, { status: 'pending' }],
+      variables: { completed: true },
+    };
+
+    const result = evaluateExpectations(state, {
+      finalStep: '3',
+      stepsCompleted: 2,
+      lastAction: 'COMPLETE',
+      lastResult: 'pass',
+      retryCount: 0,
+      variables: { completed: true },
+    });
+
+    expect(result.passed).toBe(true);
+    expect(result.assertions).toHaveLength(6);
+    expect(result.assertions.every((a) => a.passed)).toBe(true);
+  });
+
+  it('fails when finalStep does not match', () => {
+    const state = { step: '2' };
+
+    const result = evaluateExpectations(state, { finalStep: '3' });
+
+    expect(result.passed).toBe(false);
+    expect(result.assertions).toHaveLength(1);
+    expect(result.assertions[0]).toEqual({
+      field: 'finalStep',
+      expected: '3',
+      actual: '2',
+      passed: false,
+    });
+  });
+
+  it('fails when stepsCompleted does not match', () => {
+    const state = {
+      steps: [{ status: 'complete' }, { status: 'pending' }],
+    };
+
+    const result = evaluateExpectations(state, { stepsCompleted: 2 });
+
+    expect(result.passed).toBe(false);
+    expect(result.assertions[0].actual).toBe(1);
+  });
+
+  it('checks lastAction type', () => {
+    const state = { lastAction: { type: 'STOP' } };
+
+    const result = evaluateExpectations(state, { lastAction: 'COMPLETE' });
+
+    expect(result.passed).toBe(false);
+    expect(result.assertions[0]).toMatchObject({
+      field: 'lastAction',
+      expected: 'COMPLETE',
+      actual: 'STOP',
+      passed: false,
+    });
+  });
+
+  it('checks lastResult', () => {
+    const state = { lastResult: 'fail' };
+
+    const result = evaluateExpectations(state, { lastResult: 'pass' });
+
+    expect(result.passed).toBe(false);
+  });
+
+  it('checks retryCount', () => {
+    const state = { retryCount: 2 };
+
+    const result = evaluateExpectations(state, { retryCount: 0 });
+
+    expect(result.passed).toBe(false);
+    expect(result.assertions[0]).toMatchObject({
+      field: 'retryCount',
+      expected: 0,
+      actual: 2,
+    });
+  });
+
+  it('checks individual variables', () => {
+    const state = { variables: { completed: true, count: 5 } };
+
+    const result = evaluateExpectations(state, {
+      variables: { completed: true, count: 3 },
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.assertions).toHaveLength(2);
+    expect(result.assertions[0].passed).toBe(true); // completed matches
+    expect(result.assertions[1].passed).toBe(false); // count doesn't match
+  });
+
+  it('returns empty assertions for empty expect', () => {
+    const state = { step: '1' };
+
+    const result = evaluateExpectations(state, {});
+
+    expect(result.passed).toBe(true);
+    expect(result.assertions).toHaveLength(0);
   });
 });
 
@@ -396,5 +521,70 @@ describe('executeScenario', () => {
     expect(result.passed).toBe(false);
     expect(result.expected).toBe('COMPLETE');
     expect(result.actual).toBe('STOP');
+  });
+
+  it('includes assertions when expect block is present', async () => {
+    (readdirSync as jest.MockedFunction<typeof readdirSync>).mockReturnValue([
+      'wf-test.json',
+    ] as any);
+    (readFileSync as jest.MockedFunction<typeof readFileSync>).mockReturnValue(
+      JSON.stringify({
+        variables: { completed: true },
+        step: '2',
+        lastAction: { type: 'COMPLETE' },
+      }),
+    );
+    (statSync as jest.MockedFunction<typeof statSync>).mockReturnValue({
+      mtimeMs: Date.now(),
+    } as any);
+
+    const loaded = makeLoadedRunbook({
+      expect: { result: 'COMPLETE', finalStep: '2', lastAction: 'COMPLETE' },
+    });
+
+    const result = await executeScenario(
+      loaded as any,
+      'happy',
+      true,
+      mockOutput,
+      '/cli/dist/cli.js',
+    );
+
+    expect(result.passed).toBe(true);
+    expect(result.assertions).toBeDefined();
+    expect(result.assertions!.length).toBeGreaterThan(0);
+    expect(result.assertions!.every((a) => a.passed)).toBe(true);
+  });
+
+  it('fails when expect assertions do not match', async () => {
+    (readdirSync as jest.MockedFunction<typeof readdirSync>).mockReturnValue([
+      'wf-test.json',
+    ] as any);
+    (readFileSync as jest.MockedFunction<typeof readFileSync>).mockReturnValue(
+      JSON.stringify({
+        variables: { completed: true },
+        step: '1',
+        lastAction: { type: 'CONTINUE' },
+      }),
+    );
+    (statSync as jest.MockedFunction<typeof statSync>).mockReturnValue({
+      mtimeMs: Date.now(),
+    } as any);
+
+    const loaded = makeLoadedRunbook({
+      expect: { result: 'COMPLETE', finalStep: '3', lastAction: 'COMPLETE' },
+    });
+
+    const result = await executeScenario(
+      loaded as any,
+      'happy',
+      true,
+      mockOutput,
+      '/cli/dist/cli.js',
+    );
+
+    expect(result.passed).toBe(false);
+    expect(result.assertions).toBeDefined();
+    expect(result.assertions!.some((a) => !a.passed)).toBe(true);
   });
 });
