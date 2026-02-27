@@ -59,7 +59,7 @@ export class DelegationLock {
    * @throws Error when the lock cannot be acquired within the deadline
    */
   async acquire(parentRunId: string): Promise<void> {
-    await fs.mkdir(this.lockDir, { recursive: true });
+    await fs.mkdir(this.lockDir, { recursive: true, mode: 0o700 });
 
     const lockFile = this.lockPath(parentRunId);
     const deadline = Date.now() + LOCK_DEADLINE_MS;
@@ -70,7 +70,7 @@ export class DelegationLock {
           pid: process.pid,
           created_at: new Date().toISOString(),
         };
-        const handle = await fs.open(lockFile, 'wx');
+        const handle = await fs.open(lockFile, 'wx', 0o600);
         try {
           await handle.writeFile(JSON.stringify(content), 'utf8');
         } finally {

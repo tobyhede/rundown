@@ -44,6 +44,30 @@ describe('DelegationLock', () => {
     await expect(fs.access(lockPath)).rejects.toThrow();
   });
 
+  it('creates lock file with owner-only permissions (0o600)', async () => {
+    await lock.acquire('run-perms');
+
+    const lockPath = path.join(tmpDir, '.claude/rundown/locks/run-run-perms.delegation.lock');
+    const stat = await fs.stat(lockPath);
+    // eslint-disable-next-line no-bitwise
+    const fileMode = stat.mode & 0o777;
+    expect(fileMode).toBe(0o600);
+
+    await lock.release('run-perms');
+  });
+
+  it('creates lock directory with owner-only permissions (0o700)', async () => {
+    await lock.acquire('run-dir-perms');
+
+    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    const stat = await fs.stat(lockDir);
+    // eslint-disable-next-line no-bitwise
+    const dirMode = stat.mode & 0o777;
+    expect(dirMode).toBe(0o700);
+
+    await lock.release('run-dir-perms');
+  });
+
   it('second acquire blocks then succeeds after release', async () => {
     await lock.acquire('run-2');
 
