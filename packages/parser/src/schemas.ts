@@ -23,6 +23,8 @@ export const MAX_FOR_BOUND = 10_000;
  *
  * Matches strings like `{{VarName}}` where the variable name follows
  * standard identifier rules (letter/underscore start, alphanumeric body).
+ * Tolerates optional whitespace after `{{` and before `}}`,
+ * matching forms like `{{ VarName }}` or `{{VarName}}`.
  */
 export const TEMPLATE_VAR_PATTERN = /^\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}$/;
 
@@ -138,9 +140,19 @@ export const ActionSchema = z.union([
 export type Action = Readonly<z.output<typeof ActionSchema>>;
 
 /**
- * Valid transition kinds
+ * Zod enum schema representing allowed transition kinds in runbook step definitions.
+ *
+ * The four valid kinds are:
+ * - `'pass'` / `'fail'` — outcome-based transitions
+ * - `'yes'` / `'no'` — confirmation-based transitions
  */
 export const TransitionKindSchema = z.enum(['pass', 'fail', 'yes', 'no']);
+
+/**
+ * Allowed transition kind strings inferred from {@link TransitionKindSchema}.
+ *
+ * One of `'pass'`, `'fail'`, `'yes'`, or `'no'`.
+ */
 export type TransitionKind = z.output<typeof TransitionKindSchema>;
 
 /**
