@@ -4,6 +4,18 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { DelegationLock } from '../../src/runbook/delegation-lock.js';
 
+/** Find a PID that is guaranteed not to be running. */
+function findDeadPid(): number {
+  for (let pid = 2_000_000; pid < 2_100_000; pid++) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return pid;
+    }
+  }
+  throw new Error('Could not find a dead PID');
+}
+
 describe('DelegationLock', () => {
   let tmpDir: string;
   let lock: DelegationLock;
@@ -59,7 +71,7 @@ describe('DelegationLock', () => {
 
     const lockPath = path.join(lockDir, 'run-run-stale.delegation.lock');
     const staleLock = {
-      pid: 999999, // Almost certainly not a running process
+      pid: findDeadPid(),
       created_at: new Date(Date.now() - 120_000).toISOString(), // 2 minutes ago
     };
     await fs.writeFile(lockPath, JSON.stringify(staleLock));
@@ -72,6 +84,23 @@ describe('DelegationLock', () => {
     expect(content.pid).toBe(process.pid);
 
     await lock.release('run-stale');
+  });
+
+  it('reclaims corrupted lock file (non-JSON content)', async () => {
+    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    await fs.mkdir(lockDir, { recursive: true });
+
+    const lockPath = path.join(lockDir, 'run-run-corrupt.delegation.lock');
+    await fs.writeFile(lockPath, 'NOT VALID JSON {{{');
+
+    // Should reclaim the corrupted lock and acquire
+    await lock.acquire('run-corrupt');
+
+    // Verify our process now owns the lock
+    const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+    expect(content.pid).toBe(process.pid);
+
+    await lock.release('run-corrupt');
   });
 
   it('times out when lock is held by alive process', async () => {

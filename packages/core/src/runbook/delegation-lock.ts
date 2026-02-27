@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { isNodeError } from '../errors.js';
 
 const LOCK_DIR = '.claude/rundown/locks';
 const LOCK_DEADLINE_MS = 5_000;
@@ -134,9 +135,24 @@ export class DelegationLock {
         await fs.unlink(lockFile);
         return true;
       }
-    } catch {
-      // Lock file disappeared or is unreadable — treat as reclaimable
-      return true;
+    } catch (err: unknown) {
+      // Lock file disappeared between check and read — reclaimable
+      if (isNodeError(err) && err.code === 'ENOENT') {
+        return true;
+      }
+      // Corrupted lock file (invalid JSON) — unlink and reclaim
+      if (err instanceof SyntaxError) {
+        try {
+          await fs.unlink(lockFile);
+        } catch (unlinkErr: unknown) {
+          if (!(isNodeError(unlinkErr) && unlinkErr.code === 'ENOENT')) {
+            throw unlinkErr;
+          }
+        }
+        return true;
+      }
+      // Real I/O errors (EACCES, EIO, etc.) — rethrow
+      throw err;
     }
 
     return false;

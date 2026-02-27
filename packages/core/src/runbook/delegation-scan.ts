@@ -28,8 +28,14 @@ export class DelegationScanService {
   /**
    * Find the parent step that owns a delegation matching the given raw token.
    *
-   * Hashes the token and scans all run states, checking substepStates
-   * for a matching tokenHash.
+   * Hashes the token and performs an O(N) scan over all active run state files
+   * via `manager.list()`, checking each state's substepStates for a matching
+   * tokenHash. Exits early on the first match.
+   *
+   * **Performance note:** `manager.list()` eagerly loads and parses every state
+   * file. This is acceptable because the expected number of concurrent active
+   * runs is small (< 100). If active run counts grow significantly, consider
+   * adding a `tokenHash → runId` index file to avoid the full scan.
    *
    * @param rawToken - The plain-text delegation token
    * @returns The scan result with parent state and delegation info, or null
@@ -69,7 +75,7 @@ export class DelegationScanService {
 
     for (const state of states) {
       if (state.delegation?.tokenHash === tokenHash) {
-        return state;
+        return state; // Early exit on first match — at most one orphan per token
       }
     }
 
