@@ -151,6 +151,37 @@ const PendingStepSchema = z.object({
 });
 
 /**
+ * Zod schema for a single ancestor in the runbook lineage snapshot.
+ */
+export const AncestorSnapshotSchema = z.object({
+  runId: z.string(),
+  runbook: z.string(),
+  step: z.string(),
+  substep: z.string().nullable(),
+  vars: z.record(z.string(), z.string()),
+});
+
+/**
+ * Zod schema for execution context snapshot at delegation time.
+ */
+export const ContextSnapshotSchema = z.object({
+  vars: z.record(z.string(), z.string()),
+  ancestors: z.array(AncestorSnapshotSchema).readonly(),
+});
+
+/**
+ * Zod schema for delegation metadata attached to a substep.
+ */
+export const StepDelegationSchema = z.object({
+  tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  childRunbookPath: z.string(),
+  contextSnapshot: ContextSnapshotSchema,
+  childRunId: z.string().nullable(),
+  createdAt: z.string(),
+  cancelledAt: z.string().nullable(),
+});
+
+/**
  * Zod schema for SubstepState
  * Tracks runtime state of a substep within a step
  */
@@ -159,6 +190,7 @@ const SubstepStateSchema = z.object({
   status: z.enum(['pending', 'running', 'done']),
   agentId: z.string().optional(),
   result: z.enum(['pass', 'fail']).optional(),
+  delegation: StepDelegationSchema.optional(),
 });
 
 const ResolvedCompletionSchema = z.object({

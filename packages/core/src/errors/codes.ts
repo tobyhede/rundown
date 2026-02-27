@@ -9,6 +9,7 @@ export enum ErrorCategory {
   EXECUTION = 'EXECUTION',
   COMMAND = 'COMMAND',
   AGENT = 'AGENT',
+  DELEGATION = 'DELEGATION',
 }
 
 /**
@@ -191,6 +192,43 @@ export const ErrorCodes = {
     title: 'Agent not bound',
     description: 'This agent is not bound to any step.',
     docSlug: 'agent-not-bound',
+  },
+
+  // Delegation Errors (8xx)
+  DELEGATION_STEP_NOT_FOUND: {
+    code: 'RD-801',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation step not found',
+    description: 'The specified step does not exist in the active runbook.',
+    docSlug: 'delegation-step-not-found',
+  },
+  DELEGATION_STEP_NOT_CURRENT: {
+    code: 'RD-802',
+    category: ErrorCategory.DELEGATION,
+    title: 'Step not at execution frontier',
+    description: 'Delegation can only be created for the current step.',
+    docSlug: 'delegation-step-not-current',
+  },
+  DELEGATION_SUBSTEP_REQUIRED: {
+    code: 'RD-803',
+    category: ErrorCategory.DELEGATION,
+    title: 'Substep ID required',
+    description: 'This step has substeps. Specify a substep ID (e.g., --step 2.1).',
+    docSlug: 'delegation-substep-required',
+  },
+  DELEGATION_ALREADY_EXISTS: {
+    code: 'RD-804',
+    category: ErrorCategory.DELEGATION,
+    title: 'Active delegation exists',
+    description: 'This step already has an active (non-cancelled) delegation.',
+    docSlug: 'delegation-already-exists',
+  },
+  DELEGATION_RUNBOOK_NOT_FOUND: {
+    code: 'RD-805',
+    category: ErrorCategory.DELEGATION,
+    title: 'Child runbook not found',
+    description: 'The specified child runbook cannot be resolved.',
+    docSlug: 'delegation-runbook-not-found',
   },
 
   // Generic

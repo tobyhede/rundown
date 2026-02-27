@@ -66,6 +66,13 @@ export interface StatusOutputData {
   pending?: string[];
   /** Active child agents keyed by agent name. */
   agents?: Record<string, { step: string; status: string; result?: string }>;
+  /** Active delegations on substeps. */
+  delegations?: Array<{
+    substep: string;
+    runbook: string;
+    state: 'pending' | 'claimed' | 'cancelled';
+    childRunId?: string;
+  }>;
 }
 
 /**
@@ -213,6 +220,20 @@ export function buildActiveStatus(
         )
       : undefined;
 
+  const delegations = (activeState.substepStates ?? [])
+    .filter((ss) => ss.delegation != null)
+    .map((ss) => ({
+      substep: ss.id,
+      runbook: ss.delegation!.childRunbookPath,
+      state:
+        ss.delegation!.cancelledAt != null
+          ? ('cancelled' as const)
+          : ss.delegation!.childRunId != null
+            ? ('claimed' as const)
+            : ('pending' as const),
+      ...(ss.delegation!.childRunId != null ? { childRunId: ss.delegation!.childRunId } : {}),
+    }));
+
   return {
     active: true,
     stashed: !!stashedId,
@@ -234,5 +255,6 @@ export function buildActiveStatus(
     lastAction: actionBlockData,
     pending: pendingTargets.length > 0 ? pendingTargets : undefined,
     agents: Object.keys(activeAgents).length > 0 ? activeAgents : undefined,
+    ...(delegations.length > 0 ? { delegations } : {}),
   };
 }

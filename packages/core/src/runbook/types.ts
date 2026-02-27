@@ -137,6 +137,7 @@ export interface SubstepState {
   readonly status: 'pending' | 'running' | 'done';
   readonly agentId?: string; // Agent bound to this substep
   readonly result?: AgentResult; // 'pass' | 'fail' when done
+  readonly delegation?: StepDelegation; // Delegation attached to this substep
 }
 
 /**
@@ -180,6 +181,38 @@ export interface ResolvedCompletion {
   readonly targetEntry: number;
   /** ISO 8601 timestamp when the agent completed. */
   readonly completedAt: string;
+}
+
+/** Delegation metadata attached to a parent step's substep state. */
+export interface StepDelegation {
+  readonly tokenHash: string;
+  readonly childRunbookPath: string;
+  readonly contextSnapshot: ContextSnapshot;
+  readonly childRunId: string | null;
+  readonly createdAt: string;
+  readonly cancelledAt: string | null;
+}
+
+/** Snapshot of execution context at delegation time. */
+export interface ContextSnapshot {
+  readonly vars: Readonly<Record<string, string>>;
+  readonly ancestors: readonly AncestorSnapshot[];
+}
+
+/** Single ancestor in the runbook lineage snapshot. */
+export interface AncestorSnapshot {
+  readonly runId: string;
+  readonly runbook: string;
+  readonly step: string;
+  readonly substep: string | null;
+  readonly vars: Readonly<Record<string, string>>;
+}
+
+/** Linkage data a child run carries to identify its parent delegation. */
+export interface DelegationLinkage {
+  readonly parentRunId: string;
+  readonly parentStepId: string;
+  readonly tokenHash: string;
 }
 
 /**

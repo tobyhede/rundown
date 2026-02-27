@@ -34,3 +34,13 @@ export {
 } from './snapshot-utils.js';
 export { RunbookActorService, type ActorSyncResult, type AnyActorRef } from './actor-service.js';
 export type { RunbookEvent } from './compiler.js';
+export {
+  createDelegation,
+  type DelegateOptions,
+  type DelegateResult,
+} from './delegation-service.js';
+export {
+  generateDelegationToken,
+  hashDelegationToken,
+  TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
+} from './delegation-token.js';

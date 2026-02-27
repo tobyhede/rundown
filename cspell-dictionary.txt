@@ -124,6 +124,7 @@ unsub
 
 # Project-specific identifiers
 BADACTION
+rdtk
 cipherpowers
 Hede
 myrepo

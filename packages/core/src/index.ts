@@ -14,6 +14,10 @@ export {
   StepIdSchema,
   ActionSchema,
   TransitionsSchema,
+  // Delegation schemas
+  StepDelegationSchema,
+  ContextSnapshotSchema,
+  AncestorSnapshotSchema,
 } from './schemas.js';
 
 // Runbook types
