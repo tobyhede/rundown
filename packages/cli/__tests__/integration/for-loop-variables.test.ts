@@ -585,4 +585,83 @@ rd echo step={{Step}}
     // Step 2: {{item}} should be preserved as literal, NOT expanded to '2'
     expect(stepEnteredEvents[2].description).toContain('{{item}}');
   });
+
+  it('expands {{context.current.step}} and {{context.current.at}} in command output', async () => {
+    const content = createRunbook({
+      name: 'Current Context',
+      title: 'Current Context',
+      steps: [
+        {
+          title: 'Step one',
+          pass: 'CONTINUE',
+          command: 'rd echo step={{context.current.step}} at={{context.current.at}} alias={{Step}}',
+        },
+        {
+          title: 'Step two',
+          pass: 'COMPLETE',
+          command: 'rd echo step={{context.current.step}} at={{context.current.at}} alias={{Step}}',
+        },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'context-current.runbook.md'), content);
+
+    const result = runCli('run --json context-current.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
+
+    const commandStartedEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'command_started',
+    );
+
+    expect(commandStartedEvents).toHaveLength(2);
+    expect(commandStartedEvents[0].command).toContain('step=1');
+    expect(commandStartedEvents[0].command).toContain('at=1');
+    expect(commandStartedEvents[0].command).toContain('alias=1');
+    expect(commandStartedEvents[1].command).toContain('step=2');
+    expect(commandStartedEvents[1].command).toContain('at=2');
+    expect(commandStartedEvents[1].command).toContain('alias=2');
+
+    const allEventText = JSON.stringify(commandStartedEvents);
+    expect(allEventText).not.toContain('{{context.current.step}}');
+    expect(allEventText).not.toContain('{{context.current.at}}');
+  });
+
+  it('expands {{context.vars.NAME}} from frontmatter and --var override consistently', async () => {
+    const content = createRunbook({
+      name: 'Context Vars',
+      title: 'Context Vars',
+      vars: { env: 'staging' },
+      steps: [
+        {
+          title: 'Read vars',
+          pass: 'COMPLETE',
+          command: 'rd echo direct={{env}} context={{context.vars.env}}',
+        },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'context-vars.runbook.md'), content);
+
+    const result = runCli('run --json context-vars.runbook.md --var env=prod', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
+
+    const commandStartedEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'command_started',
+    );
+
+    expect(commandStartedEvents).toHaveLength(1);
+    expect(commandStartedEvents[0].command).toContain('direct=prod');
+    expect(commandStartedEvents[0].command).toContain('context=prod');
+
+    const allEventText = JSON.stringify(commandStartedEvents);
+    expect(allEventText).not.toContain('{{context.vars.env}}');
+  });
 });

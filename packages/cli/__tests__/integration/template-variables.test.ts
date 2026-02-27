@@ -6,7 +6,7 @@ import {
   runCli,
   createRunbook,
   findActionOutput,
-  getAgentActiveState,
+  getAllStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -89,6 +89,24 @@ function findActionOutputFromJsonStream(stdout: string): Record<string, unknown>
 
   const resultOutput = parsedObjects.find((entry) => 'result' in entry);
   return resultOutput ?? null;
+}
+
+function findExecutionEvent(
+  stdout: string,
+  eventType: string,
+): Record<string, unknown> | undefined {
+  return extractJsonObjects(stdout).find((entry) => 'type' in entry && entry.type === eventType);
+}
+
+async function findRunbookStateByPathSuffix(
+  workspace: TestWorkspace,
+  suffix: string,
+): Promise<Record<string, unknown> | null> {
+  const states = await getAllStates(workspace);
+  return (
+    states.find((state) => typeof state.runbook === 'string' && state.runbook.endsWith(suffix)) ??
+    null
+  );
 }
 
 describe('Template Variables Integration', () => {
@@ -692,9 +710,10 @@ describe('Template Variables Integration', () => {
           steps: [
             {
               title: 'Use parent var',
-              pass: 'COMPLETE',
+              pass: 'CONTINUE',
               command: 'rd echo {{context.parent.vars.PlanPath}}',
             },
+            { title: 'Finalize child', pass: 'COMPLETE' },
           ],
         });
 
@@ -705,7 +724,7 @@ describe('Template Variables Integration', () => {
 
         // Start parent with --var
         let result = runCli(
-          'run runbooks/parent.runbook.md --prompted --var PlanPath=.work/plan.md',
+          'run runbooks/parent.runbook.md --var PlanPath=.work/plan.md',
           workspace,
         );
         expect(result.exitCode).toBe(0);
@@ -718,10 +737,15 @@ describe('Template Variables Integration', () => {
         result = runCli('run --agent test-agent --json', workspace);
         expect(result.exitCode).toBe(0);
 
+        // Verify rendered child command used inherited parent var
+        const commandStartedEvent = findExecutionEvent(result.stdout, 'command_started');
+        expect(commandStartedEvent).toBeDefined();
+        expect(commandStartedEvent?.command).toContain('.work/plan.md');
+
         // Verify via persisted child state that context.parent.vars.PlanPath was set
-        const childState = await getAgentActiveState(workspace, 'test-agent');
+        const childState = await findRunbookStateByPathSuffix(workspace, 'child.runbook.md');
         expect(childState).not.toBeNull();
-        const templateVars = childState!['templateVars'] as Record<string, string> | undefined;
+        const templateVars = childState!.templateVars as Record<string, string> | undefined;
         expect(templateVars?.['context.parent.vars.PlanPath']).toBe('.work/plan.md');
 
         // Complete the child
@@ -756,9 +780,10 @@ describe('Template Variables Integration', () => {
           steps: [
             {
               title: 'Use parent var',
-              pass: 'COMPLETE',
+              pass: 'CONTINUE',
               command: 'rd echo "env={{context.parent.vars.environment}}"',
             },
+            { title: 'Finalize child', pass: 'COMPLETE' },
           ],
         });
 
@@ -768,7 +793,7 @@ describe('Template Variables Integration', () => {
         await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
 
         // Start parent in prompted mode
-        let result = runCli('run runbooks/parent.runbook.md --prompted', workspace);
+        let result = runCli('run runbooks/parent.runbook.md', workspace);
         expect(result.exitCode).toBe(0);
 
         // Queue step with child runbook
@@ -779,13 +804,200 @@ describe('Template Variables Integration', () => {
         result = runCli('run --agent test-agent --json', workspace);
         expect(result.exitCode).toBe(0);
 
+        // Verify rendered child command used inherited frontmatter var
+        const commandStartedEvent = findExecutionEvent(result.stdout, 'command_started');
+        expect(commandStartedEvent).toBeDefined();
+        expect(commandStartedEvent?.command).toContain('env=staging');
+
         // Verify via persisted child state that context.parent.vars.environment was set
-        const childState = await getAgentActiveState(workspace, 'test-agent');
+        const childState = await findRunbookStateByPathSuffix(workspace, 'child.runbook.md');
         expect(childState).not.toBeNull();
-        const templateVars = childState!['templateVars'] as Record<string, string> | undefined;
+        const templateVars = childState!.templateVars as Record<string, string> | undefined;
         expect(templateVars?.['context.parent.vars.environment']).toBe('staging');
 
         // Complete the child
+        const passResult = runCli('pass --agent test-agent --json', workspace);
+        expect(passResult.exitCode).toBe(0);
+        const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+        expect(passOutput).not.toBeNull();
+        expect(passOutput?.result).toBe(true);
+      });
+
+      it('should propagate structural parent and ancestors.0 context to child', async () => {
+        const parentRunbook = createRunbook({
+          title: 'Parent Runbook',
+          steps: [
+            {
+              title: 'Dispatch work',
+              pass: 'CONTINUE',
+              fail: 'STOP',
+              substeps: [{ title: 'Task 1', pass: 'CONTINUE', fail: 'STOP' }],
+            },
+            { title: 'Done', pass: 'COMPLETE', fail: 'STOP' },
+          ],
+        });
+
+        const childRunbook = createRunbook({
+          title: 'Child Runbook',
+          steps: [
+            {
+              title: 'Use structural context',
+              pass: 'CONTINUE',
+              command:
+                'rd echo "pstep={{context.parent.step}} psub={{context.parent.substep}} pat={{context.parent.at}} anc={{context.ancestors.0.step}} ancvar={{context.ancestors.0.vars.ParentName}}"',
+            },
+            { title: 'Finalize child', pass: 'COMPLETE' },
+          ],
+        });
+
+        const runbooksDir = join(workspace.cwd, 'runbooks');
+        await mkdir(runbooksDir, { recursive: true });
+        await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+        await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+        let result = runCli('run runbooks/parent.runbook.md --var ParentName=alpha', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --agent test-agent --json', workspace);
+        expect(result.exitCode).toBe(0);
+
+        const commandStartedEvent = findExecutionEvent(result.stdout, 'command_started');
+        expect(commandStartedEvent).toBeDefined();
+        expect(commandStartedEvent?.command).toContain('pstep=1');
+        expect(commandStartedEvent?.command).toContain('psub=1');
+        expect(commandStartedEvent?.command).toContain('pat=1.1');
+        expect(commandStartedEvent?.command).toContain('anc=1');
+        expect(commandStartedEvent?.command).toContain('ancvar=alpha');
+
+        const childState = await findRunbookStateByPathSuffix(workspace, 'child.runbook.md');
+        expect(childState).not.toBeNull();
+        const templateVars = childState!.templateVars as Record<string, string> | undefined;
+        expect(templateVars?.['context.parent.step']).toBe('1');
+        expect(templateVars?.['context.parent.substep']).toBe('1');
+        expect(templateVars?.['context.parent.at']).toBe('1.1');
+        expect(templateVars?.['context.ancestors.0.step']).toBe('1');
+        expect(templateVars?.['context.ancestors.0.vars.ParentName']).toBe('alpha');
+
+        const passResult = runCli('pass --agent test-agent --json', workspace);
+        expect(passResult.exitCode).toBe(0);
+        const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+        expect(passOutput).not.toBeNull();
+        expect(passOutput?.result).toBe(true);
+      });
+
+      it('should resolve dotted parent index paths for child dispatched in iteration 2', async () => {
+        const parentRunbook = createRunbook({
+          title: 'Parent Loop',
+          steps: [
+            {
+              title: 'Loop dispatch',
+              for: { variable: 'i', start: 1, end: 2 },
+              pass: 'CONTINUE',
+              fail: 'STOP',
+              substeps: [{ title: 'Dispatch iteration {{Index}}', pass: 'CONTINUE', fail: 'STOP' }],
+            },
+            { title: 'Done', pass: 'COMPLETE', fail: 'STOP' },
+          ],
+        });
+
+        const childRunbook = createRunbook({
+          title: 'Child Runbook',
+          steps: [
+            {
+              title: 'Use parent index',
+              pass: 'CONTINUE',
+              command:
+                'rd echo "pindex={{context.parent.index}} aindex={{context.ancestors.0.index}}"',
+            },
+            { title: 'Finalize child', pass: 'COMPLETE' },
+          ],
+        });
+
+        const runbooksDir = join(workspace.cwd, 'runbooks');
+        await mkdir(runbooksDir, { recursive: true });
+        await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+        await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+        let result = runCli('run runbooks/parent.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Move parent from iteration 1 to iteration 2.
+        result = runCli('pass', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --agent test-agent --json', workspace);
+        expect(result.exitCode).toBe(0);
+
+        const commandStartedEvent = findExecutionEvent(result.stdout, 'command_started');
+        expect(commandStartedEvent).toBeDefined();
+        expect(commandStartedEvent?.command).toContain('pindex=2');
+        expect(commandStartedEvent?.command).toContain('aindex=2');
+
+        const childState = await findRunbookStateByPathSuffix(workspace, 'child.runbook.md');
+        expect(childState).not.toBeNull();
+        const templateVars = childState!.templateVars as Record<string, string> | undefined;
+        expect(templateVars?.['context.parent.index']).toBe('2');
+        expect(templateVars?.['context.ancestors.0.index']).toBe('2');
+
+        const passResult = runCli('pass --agent test-agent --json', workspace);
+        expect(passResult.exitCode).toBe(0);
+        const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+        expect(passOutput).not.toBeNull();
+        expect(passOutput?.result).toBe(true);
+      });
+
+      it('should preserve undefined nested dotted paths as literals in child commands', async () => {
+        const parentRunbook = createRunbook({
+          title: 'Parent Runbook',
+          steps: [{ title: 'Dispatch work', pass: 'COMPLETE', fail: 'STOP' }],
+        });
+
+        const childRunbook = createRunbook({
+          title: 'Child Runbook',
+          steps: [
+            {
+              title: 'Use missing context values',
+              pass: 'CONTINUE',
+              command:
+                'rd echo "a={{context.parent.missing}} b={{context.parent.vars.missing}} c={{context.ancestors.0.nope}}"',
+            },
+            { title: 'Finalize child', pass: 'COMPLETE' },
+          ],
+        });
+
+        const runbooksDir = join(workspace.cwd, 'runbooks');
+        await mkdir(runbooksDir, { recursive: true });
+        await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+        await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+        let result = runCli('run runbooks/parent.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --agent test-agent --json', workspace);
+        expect(result.exitCode).toBe(0);
+
+        const commandStartedEvent = findExecutionEvent(result.stdout, 'command_started');
+        expect(commandStartedEvent).toBeDefined();
+        expect(commandStartedEvent?.command).toContain('{{context.parent.missing}}');
+        expect(commandStartedEvent?.command).toContain('{{context.parent.vars.missing}}');
+        expect(commandStartedEvent?.command).toContain('{{context.ancestors.0.nope}}');
+
+        const childState = await findRunbookStateByPathSuffix(workspace, 'child.runbook.md');
+        expect(childState).not.toBeNull();
+        const templateVars = childState!.templateVars as Record<string, string> | undefined;
+        expect(templateVars?.['context.parent.missing']).toBeUndefined();
+        expect(templateVars?.['context.parent.vars.missing']).toBeUndefined();
+        expect(templateVars?.['context.ancestors.0.nope']).toBeUndefined();
+
         const passResult = runCli('pass --agent test-agent --json', workspace);
         expect(passResult.exitCode).toBe(0);
         const passOutput = findActionOutputFromJsonStream(passResult.stdout);
