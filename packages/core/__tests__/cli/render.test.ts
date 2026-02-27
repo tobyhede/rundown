@@ -170,6 +170,7 @@ describe('substep rendering', () => {
     const result = renderForTest(substep, '2');
 
     expect(result).toBe('### 2.1');
+    expect(result).not.toMatch(/\s$/);
   });
 
   it('does not render substep command in output (shown via printCommandExec)', () => {

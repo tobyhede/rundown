@@ -351,6 +351,7 @@ name: my runbook
 
     const result = extractFrontmatter(markdown);
     expect(result.frontmatter).toBeNull();
+    expect(result.content).toBe('# Content');
   });
 });
 

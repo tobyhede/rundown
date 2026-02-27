@@ -14,6 +14,15 @@ describe('Agent dispatch integration', () => {
     await workspace.cleanup();
   });
 
+  async function writeChildRunbook(ws: TestWorkspace, name: string): Promise<void> {
+    const content = `## 1. Execute
+- PASS: COMPLETE
+
+Do the work.
+`;
+    await writeFile(join(ws.cwd, name), content);
+  }
+
   // ===========================================================================
   // Group 1: Resolved Completions — Out-of-Order
   // ===========================================================================
@@ -174,15 +183,6 @@ Deploy to production.
   // Group 3: Substeps with Child Runbooks
   // ===========================================================================
   describe('substeps with child runbooks', () => {
-    async function writeChildRunbook(ws: TestWorkspace, name: string): Promise<void> {
-      const content = `## 1. Execute
-- PASS: COMPLETE
-
-Do the work.
-`;
-      await writeFile(join(ws.cwd, name), content);
-    }
-
     async function writeMultiChildRunbook(ws: TestWorkspace): Promise<void> {
       const parentContent = `## 1. Dispatch tasks
 - PASS ALL: CONTINUE
@@ -327,15 +327,6 @@ Final.
   // Group 4: Step-Level Child Runbooks (No Substeps)
   // ===========================================================================
   describe('step-level child runbooks (no substeps)', () => {
-    async function writeChildRunbook(ws: TestWorkspace, name: string): Promise<void> {
-      const content = `## 1. Execute
-- PASS: COMPLETE
-
-Do the work.
-`;
-      await writeFile(join(ws.cwd, name), content);
-    }
-
     it('step-level child pass — auto-advances parent to next step', async () => {
       const parentContent = `## 1. Work
 - PASS: CONTINUE
@@ -416,11 +407,11 @@ Final.
       await writeChildRunbook(workspace, 'child.runbook.md');
 
       // Start parent
-      runCli('run --prompted step-child-fail.runbook.md', workspace);
+      expect(runCli('run --prompted step-child-fail.runbook.md', workspace).exitCode).toBe(0);
 
       // Queue and bind
-      runCli('run --step 1 child.runbook.md', workspace);
-      runCli('run --agent agent-1', workspace);
+      expect(runCli('run --step 1 child.runbook.md', workspace).exitCode).toBe(0);
+      expect(runCli('run --agent agent-1', workspace).exitCode).toBe(0);
 
       // Agent fails child → auto-propagates FAIL to parent → STOP
       const result = runCli('fail --agent agent-1', workspace);

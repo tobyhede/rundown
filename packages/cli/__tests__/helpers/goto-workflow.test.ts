@@ -55,6 +55,13 @@ beforeEach(() => {
   (core.stepIdToString as jest.Mock).mockImplementation((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   );
+  (core.buildStepPosition as jest.Mock).mockImplementation(
+    (current: string, total: number, substep?: string) => ({
+      current,
+      total,
+      ...(substep ? { substep } : {}),
+    }),
+  );
   (core.countNumberedSteps as jest.Mock).mockReturnValue(3);
   (runExecutionLoop as jest.Mock).mockResolvedValue('done');
 });

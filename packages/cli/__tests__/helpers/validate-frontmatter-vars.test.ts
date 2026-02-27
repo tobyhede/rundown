@@ -58,8 +58,10 @@ describe('validateFrontmatterVars', () => {
       Index: 5,
     });
     expect(result).toHaveLength(2);
-    expect(result[0].message).toContain('"Step"');
-    expect(result[1].message).toContain('"Index"');
+    const messages = result.map((d) => d.message);
+    expect(messages).toEqual(
+      expect.arrayContaining([expect.stringContaining('"Step"'), expect.stringContaining('"Index"')]),
+    );
   });
 
   it('diagnostics have no line field', () => {

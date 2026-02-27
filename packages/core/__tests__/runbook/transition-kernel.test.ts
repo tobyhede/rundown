@@ -449,16 +449,16 @@ describe('transition-kernel', () => {
       expect(result).toBe('CONTINUE');
     });
 
-    it('returns CONTINUE for NEXT action', () => {
+    it('returns NEXT for NEXT action', () => {
       const action: LastAction = { type: 'NEXT' };
       const result = parseActionType(action);
-      expect(result).toBe('CONTINUE');
+      expect(result).toBe('NEXT');
     });
 
-    it('returns CONTINUE for BREAK action', () => {
+    it('returns BREAK for BREAK action', () => {
       const action: LastAction = { type: 'BREAK' };
       const result = parseActionType(action);
-      expect(result).toBe('CONTINUE');
+      expect(result).toBe('BREAK');
     });
   });
 
