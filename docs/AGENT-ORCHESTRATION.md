@@ -35,7 +35,7 @@ The simplest model. A runbook defines steps executed in order. Each step is eith
 
 No subagents are involved — the main agent works through steps sequentially.
 
-**When to use:** Linear workflows, checklists, CI-style pipelines, anything where one agent handles all steps in order.
+**When to use:** Linear runbook flows, checklists, CI-style pipelines, anything where one agent handles all steps in order.
 
 **Example:**
 ````markdown
@@ -151,6 +151,20 @@ rd pass --agent subagent-abc
 ```
 
 The agent type (`code-review-agent`, `test-agent`) drives context injection — see [Context File Discovery](#context-file-discovery).
+
+**Dispatch frontier and identity:**
+- `run --step` requires a parseable step identifier; when the active step has substeps, step-only dispatch (`N`) is rejected and `N.M` is required.
+- `run --step` accepts an optional runbook argument. When omitted, child runbook path is inferred only if the targeted substep has exactly one runbook reference.
+- Plugin Step/Task dispatch must include a parseable identifier prefix (for example `1.2 - Review` or `ErrorHandler: Recover`).
+- `run --step` is constrained to the active step frontier.
+- If the active step is in a FOR loop, queueing is constrained to the active iteration frontier.
+- Canonical target identity is `step + substep + iteration`.
+- Display path (`STEP.INDEX.SUBSTEP`, e.g. `2.3.1`) is output-only.
+- Completion acceptance is scoped by frame + entry identity so stale completions from prior re-entry are rejected.
+- `frame` and `entry` are internal runtime identity terms, not runbook authoring syntax.
+- `frame = step|iteration`
+- `entry = re-entry counter for that frame`
+- Completion routing uses `frame + entry + substep` to reject stale completions after re-entry.
 
 ---
 
@@ -277,7 +291,13 @@ STATUS: FAIL
 | `FAIL` | Agent encountered issues or rejected the work |
 | `BLOCKED` | Agent could not proceed (used in plan execution) |
 
-The plugin parses this from agent output and translates it to `rd pass --agent <id>` or `rd fail --agent <id>`, which advances the parent runbook's state machine.
+The plugin parses this from agent output and translates it to `rd pass --agent <id>` or `rd fail --agent <id>`. See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
+
+Routing behavior:
+- Agent completion and plain `pass/fail` share one record-and-drain transition path.
+- Completion keys are scoped to `frame + entry + substep`; stale completions from previous entries are rejected.
+- Resolved completions drain in deterministic substep order, and step-level transition does not execute until the current scope has no unresolved substeps.
+- When a completion arrives for a frontier substep that is not at the active cursor, it is **deferred** — stored and applied when the cursor reaches that substep. See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
 
 **Important:** The STATUS line should appear at the end of the agent's response. If no STATUS line is found, the plugin treats the result based on the agent's exit behaviour.
 

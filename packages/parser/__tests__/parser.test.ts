@@ -13,7 +13,8 @@ describe('Step-level runbooks', () => {
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].workflows).toEqual(['task-details.runbook.md']);
+    expect(steps[0].substeps![0].runbooks).toEqual(['task-details.runbook.md']);
+    expect(steps[0].deferred).toBeUndefined();
   });
 
   it('rejects step with both runbooks and substeps', () => {
@@ -42,7 +43,7 @@ Do work.
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].workflows).toEqual([
+    expect(steps[0].substeps?.[0].runbooks).toEqual([
       'runbook-a.runbook.md',
       'runbook-b.runbook.md',
     ]);
@@ -65,7 +66,24 @@ describe('parseRunbook with substep runbooks', () => {
 
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].workflows).toEqual(['review.runbook.md', 'security.runbook.md']);
+    expect(steps[0].substeps?.[0].runbooks).toEqual(['review.runbook.md', 'security.runbook.md']);
+    expect(steps[0].deferred).toBeUndefined();
+  });
+
+  it('omits deferred for explicit non-FOR substeps', () => {
+    const markdown = `## 1. Review
+
+### 1.1 Check A
+- PASS: CONTINUE
+- FAIL: STOP
+
+### 1.2 Check B
+- PASS: CONTINUE
+- FAIL: STOP
+`;
+
+    const steps = parseRunbook(markdown);
+    expect(steps[0].deferred).toBeUndefined();
   });
 });
 
@@ -753,7 +771,7 @@ npm test
 - task.runbook.md
 `;
       const steps = parseRunbook(md);
-      expect(steps[0].substeps?.[0].workflows).toEqual(['task.runbook.md']);
+      expect(steps[0].substeps?.[0].runbooks).toEqual(['task.runbook.md']);
     });
 
     it('rejects list items after content in step', () => {
@@ -789,6 +807,108 @@ echo batch
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
     expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].deferred).toBe(true);
+  });
+
+  describe('FOR clause nested transitions', () => {
+    it('parses FOR with nested transitions (PASS ALL / FAIL ANY)', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+  - PASS ALL: CONTINUE
+  - FAIL ANY: BREAK
+
+### 1.1 Check
+\`\`\`bash
+echo check
+\`\`\`
+`;
+      const steps = parseRunbook(markdown);
+      expect(steps[0].forClause).toBeDefined();
+      expect(steps[0].forClause?.transitions).toBeDefined();
+      expect(steps[0].forClause?.transitions?.all).toBe(true);
+      expect(steps[0].forClause?.transitions?.pass).toEqual({
+        kind: 'pass',
+        retry: 0,
+        action: { type: 'CONTINUE' },
+      });
+      expect(steps[0].forClause?.transitions?.fail).toEqual({
+        kind: 'fail',
+        retry: 0,
+        action: { type: 'BREAK' },
+      });
+    });
+
+    it('parses FOR without nested transitions', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+
+### 1.1 Check
+\`\`\`bash
+echo check
+\`\`\`
+`;
+      const steps = parseRunbook(markdown);
+      expect(steps[0].forClause).toBeDefined();
+      expect(steps[0].forClause?.transitions).toBeUndefined();
+    });
+
+    it('throws error on invalid nested bullet under FOR', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+  - some random text
+
+### 1.1 Check
+\`\`\`bash
+echo check
+\`\`\`
+`;
+      expect(() => parseRunbook(markdown)).toThrow(/Invalid nested bullet under FOR clause/i);
+    });
+
+    it('throws error on nested FOR bullet without transition paragraph', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+  - <div>invalid</div>
+`;
+      expect(() => parseRunbook(markdown)).toThrow(/Invalid nested bullet under FOR clause/i);
+    });
+
+    it('throws error on nested FOR bullet with code block content', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+  - \`\`\`bash
+    echo nope
+    \`\`\`
+`;
+      expect(() => parseRunbook(markdown)).toThrow(/Invalid nested bullet under FOR clause/i);
+    });
+
+    it('parses FOR with nested transitions (PASS ANY / FAIL ALL)', () => {
+      const markdown = `## 1. Review
+- FOR pass IN 1 TO 3
+  - PASS ANY: CONTINUE
+  - FAIL ALL: BREAK
+
+### 1.1 Check
+\`\`\`bash
+echo check
+\`\`\`
+`;
+      const steps = parseRunbook(markdown);
+      expect(steps[0].forClause).toBeDefined();
+      expect(steps[0].forClause?.transitions).toBeDefined();
+      expect(steps[0].forClause?.transitions?.all).toBe(false);
+      expect(steps[0].forClause?.transitions?.pass).toEqual({
+        kind: 'pass',
+        retry: 0,
+        action: { type: 'CONTINUE' },
+      });
+      expect(steps[0].forClause?.transitions?.fail).toEqual({
+        kind: 'fail',
+        retry: 0,
+        action: { type: 'BREAK' },
+      });
+    });
   });
 });
 
@@ -930,7 +1050,7 @@ Review the following items.
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
     expect(sub?.prompt).toBe('Review the following items.');
-    expect(sub?.workflows).toEqual(['task.runbook.md']);
+    expect(sub?.runbooks).toEqual(['task.runbook.md']);
   });
 
   it('returns empty prompt when substep has only runbook references', () => {
@@ -946,7 +1066,7 @@ Review the following items.
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
     expect(sub?.prompt).toBeUndefined();
-    expect(sub?.workflows).toEqual(['alpha.runbook.md', 'beta.runbook.md']);
+    expect(sub?.runbooks).toEqual(['alpha.runbook.md', 'beta.runbook.md']);
   });
 
   it('preserves prompt text alongside runbook refs in substep', () => {
@@ -964,10 +1084,10 @@ Review the tasks carefully.
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
     expect(sub?.prompt).toContain('Review the tasks carefully.');
-    expect(sub?.workflows).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
+    expect(sub?.runbooks).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
   });
 
-  it('filters runbook refs at step level and populates workflows', () => {
+  it('canonicalizes step-level runbook refs into runbook-list-derived substeps', () => {
     const md = `## 1 Step
 - PASS: CONTINUE
 - FAIL: STOP
@@ -976,8 +1096,69 @@ Review the tasks carefully.
 - verify.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].workflows).toEqual(['deploy.runbook.md', 'verify.runbook.md']);
     expect(steps[0].prompt).toBeUndefined();
+    expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
+    expect(steps[0].deferred).toBe(true);
+    expect(steps[0].substeps).toHaveLength(2);
+    expect(steps[0].substeps?.[0]).toMatchObject({
+      id: '1',
+      description: '',
+      runbooks: ['deploy.runbook.md'],
+    });
+    expect(steps[0].substeps?.[1]).toMatchObject({
+      id: '2',
+      description: '',
+      runbooks: ['verify.runbook.md'],
+    });
+  });
+
+  it('moves step-level prompt onto the implicit substep', () => {
+    const md = `## 1 Step
+- PASS: CONTINUE
+- FAIL: STOP
+
+Review this checklist.
+
+- deploy.runbook.md
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBeUndefined();
+    expect(steps[0].substeps?.[0]).toMatchObject({
+      id: '1',
+      description: '',
+      prompt: 'Review this checklist.',
+      runbooks: ['deploy.runbook.md'],
+    });
+  });
+
+  it('canonicalizes FOR + step-level runbook list into runbook-list-derived substeps', () => {
+    const md = `## 1. Review the plan
+- FOR pass IN 1 TO 2
+- FAIL ANY: GOTO Synthesize
+
+- review-technical-accuracy.runbook.md
+- review-structural-integrity.runbook.md
+- review-build-runtime.runbook.md
+- review-risk-safety.runbook.md
+
+## Synthesize
+- PASS: COMPLETE
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
+    expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
+    expect(steps[0].deferred).toBe(true);
+    expect(steps[0].substeps).toHaveLength(4);
+    expect(steps[0].substeps?.map((s) => s.runbooks)).toEqual([
+      ['review-technical-accuracy.runbook.md'],
+      ['review-structural-integrity.runbook.md'],
+      ['review-build-runtime.runbook.md'],
+      ['review-risk-safety.runbook.md'],
+    ]);
+    expect(steps[0].transitions?.fail.action).toEqual({
+      type: 'GOTO',
+      target: { step: 'Synthesize' },
+    });
   });
 });
 
@@ -1022,7 +1203,7 @@ describe('regex boundaries and runbook patterns', () => {
 `;
     const steps = parseRunbook(md);
     // "task.runbook.md extra text" should NOT be parsed as a runbook ref
-    expect(steps[0].workflows).toBeUndefined();
+    expect(steps[0].substeps).toBeUndefined();
   });
 
   it('does not match bare .runbook.md without a filename prefix', () => {
@@ -1035,7 +1216,7 @@ describe('regex boundaries and runbook patterns', () => {
     const steps = parseRunbook(md);
     // ".runbook.md" alone has no prefix — \S+ in the regex must capture at
     // least one char before the ".runbook.md" suffix, so this cannot match.
-    expect(steps[0].workflows).toBeUndefined();
+    expect(steps[0].substeps).toBeUndefined();
   });
 
   it('matches simple runbook ref', () => {
@@ -1046,7 +1227,7 @@ describe('regex boundaries and runbook patterns', () => {
 - simple.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].workflows).toEqual(['simple.runbook.md']);
+    expect(steps[0].substeps?.[0].runbooks).toEqual(['simple.runbook.md']);
   });
 
   it('matches path-like runbook ref', () => {
@@ -1057,7 +1238,7 @@ describe('regex boundaries and runbook patterns', () => {
 - path/to/complex-name.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].workflows).toEqual(['path/to/complex-name.runbook.md']);
+    expect(steps[0].substeps?.[0].runbooks).toEqual(['path/to/complex-name.runbook.md']);
   });
 
   it('does not treat .runbook.md.txt as a runbook ref', () => {
@@ -1068,7 +1249,7 @@ describe('regex boundaries and runbook patterns', () => {
 - task.runbook.md.txt
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].workflows).toBeUndefined();
+    expect(steps[0].substeps).toBeUndefined();
   });
 });
 
@@ -1201,14 +1382,14 @@ Do work.
     expect(steps[0].substeps![0].id).toBe('1');
   });
 
-  it('returns undefined workflows when step has no runbook refs', () => {
+  it('does not synthesize substeps when step has no runbook refs', () => {
     const md = `## 1 Step
 - PASS: COMPLETE
 
 Just text.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].workflows).toBeUndefined();
+    expect(steps[0].substeps).toBeUndefined();
   });
 });
 
@@ -1232,7 +1413,7 @@ Check the items.
     // Prompt should contain the text but NOT the runbook line
     expect(sub?.prompt).toContain('Check the items.');
     expect(sub?.prompt).not.toContain('setup.runbook.md');
-    expect(sub?.workflows).toEqual(['setup.runbook.md']);
+    expect(sub?.runbooks).toEqual(['setup.runbook.md']);
   });
 
   it('trims whitespace from filtered content', () => {
@@ -1419,7 +1600,6 @@ Do second.
     expect(steps[0].prompt).toBeUndefined();
     expect(steps[0].command).toBeUndefined();
     expect(steps[0].substeps).toBeUndefined();
-    expect(steps[0].workflows).toBeUndefined();
     expect(steps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
   });
 
@@ -1464,5 +1644,80 @@ Here is a list:
     const doc = parseRunbookDocument(md);
     expect(doc.steps).toHaveLength(1);
     expect(doc.description).toContain('Here is a list:');
+  });
+});
+
+describe('C1: bash prompt code block is display-only', () => {
+  it('parses bash prompt as prompt block, not executable', () => {
+    const md = `## 1. Display example
+
+\`\`\`bash prompt
+rd prompt 'Hello world'
+\`\`\`
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].command).toBeDefined();
+    expect(steps[0].command!.lang).toBe('prompt');
+    expect(steps[0].command!.code).toContain('rd prompt');
+  });
+});
+
+describe('C2: substep short form', () => {
+  it('parses bare numeric substep under a step', () => {
+    const md = `## 1. Parent step
+
+### 1 First substep
+
+Do something.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps![0].id).toBe('1');
+  });
+
+  it('parses bare numeric substep with description', () => {
+    const md = `## 1. Parent step
+
+### 2 Review code
+
+Review the code carefully.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps![0].id).toBe('2');
+    expect(steps[0].substeps![0].description).toBe('Review code');
+  });
+
+  it('parses bare numeric substep under named parent step', () => {
+    const md = `## Setup
+
+### 1 Initialize
+
+Set up the environment.
+
+### 2 Configure
+
+Apply configuration.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].name).toBe('Setup');
+    expect(steps[0].substeps).toHaveLength(2);
+    expect(steps[0].substeps![0].id).toBe('1');
+    expect(steps[0].substeps![0].description).toBe('Initialize');
+    expect(steps[0].substeps![1].id).toBe('2');
+    expect(steps[0].substeps![1].description).toBe('Configure');
+  });
+});
+
+describe('E3: bare numeric step headers', () => {
+  it('parses ## 1 as a valid step', () => {
+    const md = `## 1
+
+Do something.
+`;
+    const steps = parseRunbook(md);
+    expect(steps).toHaveLength(1);
+    expect(steps[0].name).toBe('1');
+    expect(steps[0].description).toBe('Step 1');
   });
 });

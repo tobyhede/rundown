@@ -205,8 +205,32 @@ describe('output formatter', () => {
         'From:     1',
         'Command:  npm test',
         'Result:   PASS',
-        'At:       2/5',
+        'At:       2',
       ]);
+    });
+
+    it('prints For: line with bounded scope', () => {
+      printActionBlock(
+        {
+          action: 'CONTINUE',
+          from: { current: '2', total: 5, for: { index: 2, end: 5 } },
+          result: true,
+        },
+        writer,
+      );
+      expect(writer.getLines()).toContainEqual('For:      2/5');
+    });
+
+    it('prints For: line with open-ended scope', () => {
+      printActionBlock(
+        {
+          action: 'CONTINUE',
+          from: { current: '2', total: 5, for: { index: 3 } },
+          result: true,
+        },
+        writer,
+      );
+      expect(writer.getLines()).toContainEqual('For:      3/?');
     });
   });
 

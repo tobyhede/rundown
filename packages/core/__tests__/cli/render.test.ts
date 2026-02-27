@@ -1,6 +1,14 @@
 import { describe, it, expect } from '@jest/globals';
-import { renderStepForCLI } from '../../src/cli/render.js';
+import { buildDisplayStepModel, renderStepForCLI } from '../../src/cli/render.js';
 import type { Step, Substep } from '../../src/runbook/types.js';
+
+function renderForTest(
+  item: Step | Substep,
+  instanceNumber?: string,
+  showCommand?: boolean,
+): string {
+  return renderStepForCLI(buildDisplayStepModel(item, instanceNumber, showCommand));
+}
 
 describe('renderStepForCLI', () => {
   it('renders step with heading and prompt (command shown via printCommandExec)', () => {
@@ -11,7 +19,7 @@ describe('renderStepForCLI', () => {
       command: { code: 'npm install' },
     };
 
-    const result = renderStepForCLI(step);
+    const result = renderForTest(step);
 
     // Check heading and prompt are present
     expect(result).toContain('## 1. Install dependencies');
@@ -27,7 +35,7 @@ describe('renderStepForCLI', () => {
       prompt: 'Review the diff and approve.',
     };
 
-    const result = renderStepForCLI(step);
+    const result = renderForTest(step);
 
     expect(result).toContain('## 2. Review changes');
     expect(result).toContain('Review the diff and approve.');
@@ -41,7 +49,7 @@ describe('renderStepForCLI', () => {
       command: { code: 'npm run build' },
     };
 
-    const result = renderStepForCLI(step);
+    const result = renderForTest(step);
 
     expect(result).toContain('## 3. Run build');
     // Command is now shown via printCommandExec, not in rendered step
@@ -61,7 +69,7 @@ describe('renderStepForCLI', () => {
       substeps: [{ id: '1', description: 'Substep' }],
     };
 
-    const result = renderStepForCLI(step);
+    const result = renderForTest(step);
 
     expect(result).not.toContain('CONTINUE');
     expect(result).not.toContain('STOP');
@@ -77,7 +85,7 @@ describe('step rendering with instance number', () => {
       prompt: 'Process item.',
     };
 
-    const result = renderStepForCLI(step, '1');
+    const result = renderForTest(step, '1');
 
     expect(result).toContain('## 1. Process Item');
     expect(result).toContain('Process item.');
@@ -90,7 +98,7 @@ describe('step rendering with instance number', () => {
       prompt: 'Do something.',
     };
 
-    const result = renderStepForCLI(step);
+    const result = renderForTest(step);
 
     expect(result).toContain('## 1. First step');
   });
@@ -103,7 +111,7 @@ describe('step rendering with instance number', () => {
       command: { code: 'process-batch' },
     };
 
-    const result = renderStepForCLI(step, '2', '5');
+    const result = renderForTest(step, '2');
 
     // Heading and prompt are present
     expect(result).toContain('## 1. Process');
@@ -122,7 +130,7 @@ describe('substep rendering', () => {
       prompt: 'Process next item.',
     };
 
-    const result = renderStepForCLI(substep, '1', '2');
+    const result = renderForTest(substep, '1');
 
     expect(result).toContain('### 1.1. Process Item');
     expect(result).toContain('Process next item.');
@@ -135,7 +143,7 @@ describe('substep rendering', () => {
       prompt: 'Processing item.',
     };
 
-    const result = renderStepForCLI(substep, '3', '5');
+    const result = renderForTest(substep, '3');
 
     expect(result).toContain('### 3.2. Process Item');
     expect(result).toContain('Processing item.');
@@ -148,9 +156,21 @@ describe('substep rendering', () => {
       prompt: 'Do the first thing.',
     };
 
-    const result = renderStepForCLI(substep, '2', '1');
+    const result = renderForTest(substep, '2');
 
     expect(result).toContain('### 2.1. First Substep');
+  });
+
+  it('renders substep with empty description as heading-only ID', () => {
+    const substep: Substep = {
+      id: '1',
+      description: '',
+    };
+
+    const result = renderForTest(substep, '2');
+
+    expect(result).toBe('### 2.1');
+    expect(result).not.toMatch(/\s$/);
   });
 
   it('does not render substep command in output (shown via printCommandExec)', () => {
@@ -160,7 +180,7 @@ describe('substep rendering', () => {
       command: { code: 'process-batch' },
     };
 
-    const result = renderStepForCLI(substep, '2', '3');
+    const result = renderForTest(substep, '2');
 
     // Heading is present
     expect(result).toContain('### 2.1. Process Item');
@@ -176,7 +196,7 @@ describe('substep rendering', () => {
       command: { code: 'npm test', lang: 'bash' } as any,
     };
 
-    const result = renderStepForCLI(step, undefined, undefined, true);
+    const result = renderForTest(step, undefined, true);
 
     expect(result).toContain('```bash\nnpm test\n```');
   });
@@ -188,7 +208,7 @@ describe('substep rendering', () => {
       command: { code: 'print("hello")', lang: 'python' } as any,
     };
 
-    const result = renderStepForCLI(step, undefined, undefined, true);
+    const result = renderForTest(step, undefined, true);
 
     expect(result).toContain('```python\nprint("hello")\n```');
   });

@@ -1,16 +1,15 @@
 // packages/cli/src/commands/pass.ts
 
 import type { Command } from 'commander';
-import { evaluatePassCondition, type Step, type RunbookState } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
+  createPassTransitionConfig,
   executeTransition,
   handleAgentBinding,
-  type ActionType,
-  type TransitionConfig,
+  handleAgentCompletion,
 } from '../helpers/transitions.js';
 
 /**
@@ -37,30 +36,34 @@ export function registerPassCommand(program: Command): void {
             return;
           }
 
+          let shouldExitWithError = false;
           try {
-            const passConfig: TransitionConfig = {
-              eventType: 'PASS',
-              commandName: 'pass',
-              lastResult: 'pass',
-              computeActionResult: (actionType: ActionType) =>
-                actionType !== 'RETRY' && actionType !== 'STOP',
-              evaluateCondition: (step: Step, prevState: RunbookState) =>
-                evaluatePassCondition(step, prevState.retryCount),
-              terminalOrder: 'complete-first',
-              onStopped: { popRunbook: false, updateParentBinding: false },
-              onComplete: { popRunbook: true, updateParentBinding: true },
-            };
+            const passConfig = createPassTransitionConfig();
 
             // Handle agent binding completion (substep case)
             // Only applies when parent runbook has an agent binding - not for standalone agent runbooks
             if (options.agent) {
-              const handled = await handleAgentBinding(ctx, options.agent, passConfig);
-              if (handled) return;
+              const agentResult = await handleAgentBinding(ctx, options.agent, passConfig);
+              if (agentResult === 'stopped') {
+                process.exitCode = 1;
+                return;
+              }
+              if (agentResult === 'handled') return;
             }
 
-            await executeTransition(ctx, passConfig);
+            const result = await executeTransition(ctx, passConfig);
+            if (result === 'stopped') shouldExitWithError = true;
+
+            // After child completes, propagate result to parent substep
+            if (options.agent) {
+              const completionResult = await handleAgentCompletion(ctx, options.agent);
+              if (completionResult === 'stopped') shouldExitWithError = true;
+            }
           } finally {
             ctx.actor.stop();
+          }
+          if (shouldExitWithError) {
+            process.exitCode = 1;
           }
         },
         { json: options.json },

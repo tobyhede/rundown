@@ -19,7 +19,7 @@
     "test:integration": "run-p test:integration:*",
     "test:integration:cli": "npm run test:integration -w packages/cli",
     "test:integration:plugin": "npm run test:integration -w packages/claude-code-plugin",
-    "test:property": "npm run test:property -w packages/claude-code-plugin",
+    "test:property": "npm run test:property -w packages/claude-code-plugin -w packages/core",
     "test:perf": "npm run test:perf -w packages/claude-code-plugin",
     "test:all": "run-s test:unit test:integration test:property test:perf",
     "test:mutate": "run-s test:mutate:parser test:mutate:core test:mutate:cli test:mutate:plugin",

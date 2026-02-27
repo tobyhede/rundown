@@ -6,10 +6,10 @@ export default {
   collectCoverageFrom: ['src/**/*.ts'],
   coverageThreshold: {
     global: {
-      branches: 70,
-      functions: 85,
-      lines: 85,
-      statements: 85,
+      branches: 80,
+      functions: 90,
+      lines: 89,
+      statements: 89,
     },
   },
   coverageReporters: ['text', 'lcov', 'html'],
@@ -23,6 +23,7 @@ export default {
       'ts-jest',
       {
         useESM: true,
+        tsconfig: 'tsconfig.test.json',
       },
     ],
   },

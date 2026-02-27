@@ -5,18 +5,108 @@ import {
   createTestWorkspace,
   runCli,
   createRunbook,
+  findActionOutput,
+  getAllStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
 /**
- * Parse NDJSON output from `run --json`, filtering out non-JSON lines (command output).
+ * Parse JSONL output from `run --json`, filtering out non-JSON lines (command output).
  */
-function parseNdjsonEvents(stdout: string): Record<string, unknown>[] {
+function parseJsonlEvents(stdout: string): Record<string, unknown>[] {
   return stdout
     .trim()
     .split('\n')
     .filter((line) => line.startsWith('{'))
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function extractJsonObjects(stdout: string): Record<string, unknown>[] {
+  const parsed: Record<string, unknown>[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < stdout.length; index += 1) {
+    const char = stdout[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      if (depth === 0) {
+        start = index;
+      }
+      depth += 1;
+      continue;
+    }
+    if (char === '}') {
+      if (depth === 0) continue;
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        const candidate = stdout.slice(start, index + 1);
+        try {
+          parsed.push(JSON.parse(candidate) as Record<string, unknown>);
+        } catch {
+          // Ignore malformed segments.
+        }
+        start = -1;
+      }
+    }
+  }
+
+  return parsed;
+}
+
+function findActionOutputFromJsonStream(stdout: string): Record<string, unknown> | null {
+  const parsed = findActionOutput(stdout);
+  if (parsed) {
+    return parsed;
+  }
+
+  const parsedObjects = extractJsonObjects(stdout);
+  if (parsedObjects.length === 0) {
+    return null;
+  }
+
+  const actionOutput = parsedObjects.find((entry) => 'action' in entry && 'result' in entry);
+  if (actionOutput) {
+    return actionOutput;
+  }
+
+  const resultOutput = parsedObjects.find((entry) => 'result' in entry);
+  return resultOutput ?? null;
+}
+
+function findExecutionEvent(
+  stdout: string,
+  eventType: string,
+): Record<string, unknown> | undefined {
+  return extractJsonObjects(stdout).find((entry) => 'type' in entry && entry.type === eventType);
+}
+
+async function findRunbookStateByPathSuffix(
+  workspace: TestWorkspace,
+  suffix: string,
+): Promise<Record<string, unknown> | null> {
+  const states = await getAllStates(workspace);
+  return (
+    states.find((state) => typeof state.runbook === 'string' && state.runbook.endsWith(suffix)) ??
+    null
+  );
 }
 
 describe('Template Variables Integration', () => {
@@ -50,7 +140,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify the command used the correct variable value
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -67,7 +157,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify empty value was used
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -89,7 +179,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify explicit var file value was used
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -106,7 +196,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify auto-discovered value was used
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -127,7 +217,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -146,7 +236,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -166,7 +256,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -189,7 +279,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -210,7 +300,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -235,7 +325,7 @@ describe('Template Variables Integration', () => {
 
       expect(result.exitCode).toBe(0);
 
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -255,12 +345,12 @@ describe('Template Variables Integration', () => {
 
       await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
 
-      // Run child runbook directly with --json to capture NDJSON events
+      // Run child runbook directly with --json to capture JSONL events
       const result = runCli('run child.runbook.md --json', workspace);
       expect(result.exitCode).toBe(0);
 
       // Verify the command was expanded with the frontmatter default variable
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
       expect(commandStartedEvent!.command).toBe('rd echo DefaultTask');
@@ -279,7 +369,7 @@ describe('Template Variables Integration', () => {
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify undefined variable was preserved
-      const events = parseNdjsonEvents(result.stdout);
+      const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
@@ -309,7 +399,7 @@ describe('Template Variables Integration', () => {
       const result = runCli('pass --json', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parse NDJSON output - the last line contains the final state
+      // Parse JSONL output - the last line contains the final state
       const lines = result.stdout
         .trim()
         .split('\n')
@@ -343,7 +433,7 @@ describe('Template Variables Integration', () => {
       const result = runCli('fail --json', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parse NDJSON output - the last line contains the final state
+      // Parse JSONL output - the last line contains the final state
       const lines = result.stdout
         .trim()
         .split('\n')
@@ -372,7 +462,7 @@ describe('Template Variables Integration', () => {
       const result = runCli('goto 2 --json', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parse NDJSON output - the last line contains the final state
+      // Parse JSONL output - the last line contains the final state
       const lines = result.stdout
         .trim()
         .split('\n')
@@ -515,8 +605,9 @@ describe('Template Variables Integration', () => {
       // The child should have executed with the expanded variable
       // Since we can't directly inspect runbookSrc without accessing state files,
       // we verify indirectly by confirming the execution succeeded with the variable
-      const passOutput = JSON.parse(result.stdout);
-      expect(passOutput.result).toBe(true);
+      const passOutput = findActionOutputFromJsonStream(result.stdout);
+      expect(passOutput).not.toBeNull();
+      expect(passOutput?.result).toBe(true);
     });
 
     it('should handle child runbook with missing variables', async () => {
@@ -553,6 +644,9 @@ describe('Template Variables Integration', () => {
       // Pass the step to complete
       const passResult = runCli('pass --agent test-agent --json', workspace);
       expect(passResult.exitCode).toBe(0);
+      const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+      expect(passOutput).not.toBeNull();
+      expect(passOutput?.result).toBe(true);
     });
 
     it('should inherit parent variables in child runbook', async () => {
@@ -597,8 +691,319 @@ describe('Template Variables Integration', () => {
       const passResult = runCli('pass --agent test-agent --json', workspace);
       expect(passResult.exitCode).toBe(0);
 
-      const passOutput = JSON.parse(passResult.stdout);
-      expect(passOutput.result).toBe(true);
+      const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+      expect(passOutput).not.toBeNull();
+      expect(passOutput?.result).toBe(true);
+    });
+
+    describe('context.parent.vars.* propagation', () => {
+      it('should propagate parent --var values into child via context.parent.vars.*', async () => {
+        // Parent runbook receives PlanPath via --var at run time
+        const parentRunbook = createRunbook({
+          title: 'Parent Runbook',
+          steps: [{ title: 'Dispatch work', pass: 'COMPLETE', content: 'Delegate work to agent.' }],
+        });
+
+        // Child runbook references the parent var
+        const childRunbook = createRunbook({
+          title: 'Child Runbook',
+          steps: [
+            {
+              title: 'Use parent var',
+              pass: 'CONTINUE',
+              command: 'rd echo {{context.parent.vars.PlanPath}}',
+            },
+            { title: 'Finalize child', pass: 'COMPLETE' },
+          ],
+        });
+
+        const runbooksDir = join(workspace.cwd, 'runbooks');
+        await mkdir(runbooksDir, { recursive: true });
+        await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+        await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+        // Start parent with --var
+        let result = runCli(
+          'run runbooks/parent.runbook.md --var PlanPath=.work/plan.md',
+          workspace,
+        );
+        expect(result.exitCode).toBe(0);
+
+        // Queue step with child runbook
+        result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Bind agent — child auto-executes
+        result = runCli('run --agent test-agent --json', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Verify rendered child command used inherited parent var
+        const commandStartedEvent = findExecutionEvent(result.stdout, 'command_started');
+        expect(commandStartedEvent).toBeDefined();
+        expect(commandStartedEvent?.command).toContain('.work/plan.md');
+
+        // Verify via persisted child state that context.parent.vars.PlanPath was set
+        const childState = await findRunbookStateByPathSuffix(workspace, 'child.runbook.md');
+        expect(childState).not.toBeNull();
+        const templateVars = childState!.templateVars as Record<string, string> | undefined;
+        expect(templateVars?.['context.parent.vars.PlanPath']).toBe('.work/plan.md');
+
+        // Complete the child
+        const passResult = runCli('pass --agent test-agent --json', workspace);
+        expect(passResult.exitCode).toBe(0);
+        const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+        expect(passOutput).not.toBeNull();
+        expect(passOutput?.result).toBe(true);
+      });
+
+      it('should propagate parent frontmatter vars into child via context.parent.vars.*', async () => {
+        // Parent runbook with frontmatter vars
+        const parentContent = [
+          '---',
+          'name: parent-runbook',
+          'vars:',
+          '  environment: staging',
+          '---',
+          '',
+          '# Parent Runbook',
+          '',
+          '## 1. Dispatch work',
+          '- PASS: COMPLETE',
+          '- FAIL: STOP',
+          '',
+          'Delegate work to agent.',
+        ].join('\n');
+
+        // Child runbook references the parent frontmatter var
+        const childRunbook = createRunbook({
+          title: 'Child Runbook',
+          steps: [
+            {
+              title: 'Use parent var',
+              pass: 'CONTINUE',
+              command: 'rd echo "env={{context.parent.vars.environment}}"',
+            },
+            { title: 'Finalize child', pass: 'COMPLETE' },
+          ],
+        });
+
+        const runbooksDir = join(workspace.cwd, 'runbooks');
+        await mkdir(runbooksDir, { recursive: true });
+        await writeFile(join(runbooksDir, 'parent.runbook.md'), parentContent);
+        await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+        // Start parent in prompted mode
+        let result = runCli('run runbooks/parent.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Queue step with child runbook
+        result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Bind agent — child auto-executes
+        result = runCli('run --agent test-agent --json', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Verify rendered child command used inherited frontmatter var
+        const commandStartedEvent = findExecutionEvent(result.stdout, 'command_started');
+        expect(commandStartedEvent).toBeDefined();
+        expect(commandStartedEvent?.command).toContain('env=staging');
+
+        // Verify via persisted child state that context.parent.vars.environment was set
+        const childState = await findRunbookStateByPathSuffix(workspace, 'child.runbook.md');
+        expect(childState).not.toBeNull();
+        const templateVars = childState!.templateVars as Record<string, string> | undefined;
+        expect(templateVars?.['context.parent.vars.environment']).toBe('staging');
+
+        // Complete the child
+        const passResult = runCli('pass --agent test-agent --json', workspace);
+        expect(passResult.exitCode).toBe(0);
+        const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+        expect(passOutput).not.toBeNull();
+        expect(passOutput?.result).toBe(true);
+      });
+
+      it('should propagate structural parent and ancestors.0 context to child', async () => {
+        const parentRunbook = createRunbook({
+          title: 'Parent Runbook',
+          steps: [
+            {
+              title: 'Dispatch work',
+              pass: 'CONTINUE',
+              fail: 'STOP',
+              substeps: [{ title: 'Task 1', pass: 'CONTINUE', fail: 'STOP' }],
+            },
+            { title: 'Done', pass: 'COMPLETE', fail: 'STOP' },
+          ],
+        });
+
+        const childRunbook = createRunbook({
+          title: 'Child Runbook',
+          steps: [
+            {
+              title: 'Use structural context',
+              pass: 'CONTINUE',
+              command:
+                'rd echo "pstep={{context.parent.step}} psub={{context.parent.substep}} pat={{context.parent.at}} anc={{context.ancestors.0.step}} ancvar={{context.ancestors.0.vars.ParentName}}"',
+            },
+            { title: 'Finalize child', pass: 'COMPLETE' },
+          ],
+        });
+
+        const runbooksDir = join(workspace.cwd, 'runbooks');
+        await mkdir(runbooksDir, { recursive: true });
+        await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+        await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+        let result = runCli('run runbooks/parent.runbook.md --var ParentName=alpha', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --agent test-agent --json', workspace);
+        expect(result.exitCode).toBe(0);
+
+        const commandStartedEvent = findExecutionEvent(result.stdout, 'command_started');
+        expect(commandStartedEvent).toBeDefined();
+        expect(commandStartedEvent?.command).toContain('pstep=1');
+        expect(commandStartedEvent?.command).toContain('psub=1');
+        expect(commandStartedEvent?.command).toContain('pat=1.1');
+        expect(commandStartedEvent?.command).toContain('anc=1');
+        expect(commandStartedEvent?.command).toContain('ancvar=alpha');
+
+        const childState = await findRunbookStateByPathSuffix(workspace, 'child.runbook.md');
+        expect(childState).not.toBeNull();
+        const templateVars = childState!.templateVars as Record<string, string> | undefined;
+        expect(templateVars?.['context.parent.step']).toBe('1');
+        expect(templateVars?.['context.parent.substep']).toBe('1');
+        expect(templateVars?.['context.parent.at']).toBe('1.1');
+        expect(templateVars?.['context.ancestors.0.step']).toBe('1');
+        expect(templateVars?.['context.ancestors.0.vars.ParentName']).toBe('alpha');
+
+        const passResult = runCli('pass --agent test-agent --json', workspace);
+        expect(passResult.exitCode).toBe(0);
+        const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+        expect(passOutput).not.toBeNull();
+        expect(passOutput?.result).toBe(true);
+      });
+
+      it('should resolve dotted parent index paths for child dispatched in iteration 2', async () => {
+        const parentRunbook = createRunbook({
+          title: 'Parent Loop',
+          steps: [
+            {
+              title: 'Loop dispatch',
+              for: { variable: 'i', start: 1, end: 2 },
+              pass: 'CONTINUE',
+              fail: 'STOP',
+              substeps: [{ title: 'Dispatch iteration {{Index}}', pass: 'CONTINUE', fail: 'STOP' }],
+            },
+            { title: 'Done', pass: 'COMPLETE', fail: 'STOP' },
+          ],
+        });
+
+        const childRunbook = createRunbook({
+          title: 'Child Runbook',
+          steps: [
+            {
+              title: 'Use parent index',
+              pass: 'CONTINUE',
+              command:
+                'rd echo "pindex={{context.parent.index}} aindex={{context.ancestors.0.index}}"',
+            },
+            { title: 'Finalize child', pass: 'COMPLETE' },
+          ],
+        });
+
+        const runbooksDir = join(workspace.cwd, 'runbooks');
+        await mkdir(runbooksDir, { recursive: true });
+        await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+        await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+        let result = runCli('run runbooks/parent.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        // Move parent from iteration 1 to iteration 2.
+        result = runCli('pass', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --agent test-agent --json', workspace);
+        expect(result.exitCode).toBe(0);
+
+        const commandStartedEvent = findExecutionEvent(result.stdout, 'command_started');
+        expect(commandStartedEvent).toBeDefined();
+        expect(commandStartedEvent?.command).toContain('pindex=2');
+        expect(commandStartedEvent?.command).toContain('aindex=2');
+
+        const childState = await findRunbookStateByPathSuffix(workspace, 'child.runbook.md');
+        expect(childState).not.toBeNull();
+        const templateVars = childState!.templateVars as Record<string, string> | undefined;
+        expect(templateVars?.['context.parent.index']).toBe('2');
+        expect(templateVars?.['context.ancestors.0.index']).toBe('2');
+
+        const passResult = runCli('pass --agent test-agent --json', workspace);
+        expect(passResult.exitCode).toBe(0);
+        const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+        expect(passOutput).not.toBeNull();
+        expect(passOutput?.result).toBe(true);
+      });
+
+      it('should preserve undefined nested dotted paths as literals in child commands', async () => {
+        const parentRunbook = createRunbook({
+          title: 'Parent Runbook',
+          steps: [{ title: 'Dispatch work', pass: 'COMPLETE', fail: 'STOP' }],
+        });
+
+        const childRunbook = createRunbook({
+          title: 'Child Runbook',
+          steps: [
+            {
+              title: 'Use missing context values',
+              pass: 'CONTINUE',
+              command:
+                'rd echo "a={{context.parent.missing}} b={{context.parent.vars.missing}} c={{context.ancestors.0.nope}}"',
+            },
+            { title: 'Finalize child', pass: 'COMPLETE' },
+          ],
+        });
+
+        const runbooksDir = join(workspace.cwd, 'runbooks');
+        await mkdir(runbooksDir, { recursive: true });
+        await writeFile(join(runbooksDir, 'parent.runbook.md'), parentRunbook);
+        await writeFile(join(runbooksDir, 'child.runbook.md'), childRunbook);
+
+        let result = runCli('run runbooks/parent.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --step 1 runbooks/child.runbook.md', workspace);
+        expect(result.exitCode).toBe(0);
+
+        result = runCli('run --agent test-agent --json', workspace);
+        expect(result.exitCode).toBe(0);
+
+        const commandStartedEvent = findExecutionEvent(result.stdout, 'command_started');
+        expect(commandStartedEvent).toBeDefined();
+        expect(commandStartedEvent?.command).toContain('{{context.parent.missing}}');
+        expect(commandStartedEvent?.command).toContain('{{context.parent.vars.missing}}');
+        expect(commandStartedEvent?.command).toContain('{{context.ancestors.0.nope}}');
+
+        const childState = await findRunbookStateByPathSuffix(workspace, 'child.runbook.md');
+        expect(childState).not.toBeNull();
+        const templateVars = childState!.templateVars as Record<string, string> | undefined;
+        expect(templateVars?.['context.parent.missing']).toBeUndefined();
+        expect(templateVars?.['context.parent.vars.missing']).toBeUndefined();
+        expect(templateVars?.['context.ancestors.0.nope']).toBeUndefined();
+
+        const passResult = runCli('pass --agent test-agent --json', workspace);
+        expect(passResult.exitCode).toBe(0);
+        const passOutput = findActionOutputFromJsonStream(passResult.stdout);
+        expect(passOutput).not.toBeNull();
+        expect(passOutput?.result).toBe(true);
+      });
     });
   });
 });

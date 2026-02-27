@@ -1,0 +1,57 @@
+import { describe, it, expect } from '@jest/globals';
+import {
+  generateDelegationToken,
+  hashDelegationToken,
+  TOKEN_PREFIX,
+} from '../../src/runbook/delegation-token.js';
+
+describe('generateDelegationToken', () => {
+  it('starts with rdtk_ prefix', () => {
+    const token = generateDelegationToken();
+    expect(token.startsWith(TOKEN_PREFIX)).toBe(true);
+  });
+
+  it('has total length of 37 (5 prefix + 32 body)', () => {
+    const token = generateDelegationToken();
+    expect(token.length).toBe(37);
+  });
+
+  it('body contains only valid base32 characters (A-Z, 2-7)', () => {
+    const token = generateDelegationToken();
+    const body = token.slice(TOKEN_PREFIX.length);
+    expect(body).toMatch(/^[A-Z2-7]{32}$/);
+  });
+
+  it('generates 100 distinct tokens', () => {
+    const tokens = new Set(Array.from({ length: 100 }, () => generateDelegationToken()));
+    expect(tokens.size).toBe(100);
+  });
+});
+
+describe('hashDelegationToken', () => {
+  it('starts with sha256: prefix', () => {
+    const token = generateDelegationToken();
+    const hash = hashDelegationToken(token);
+    expect(hash.startsWith('sha256:')).toBe(true);
+  });
+
+  it('hex portion is 64 characters', () => {
+    const token = generateDelegationToken();
+    const hash = hashDelegationToken(token);
+    const hex = hash.slice('sha256:'.length);
+    expect(hex).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('produces identical hash for the same token', () => {
+    const token = generateDelegationToken();
+    const hash1 = hashDelegationToken(token);
+    const hash2 = hashDelegationToken(token);
+    expect(hash1).toBe(hash2);
+  });
+
+  it('produces different hashes for different tokens', () => {
+    const token1 = generateDelegationToken();
+    const token2 = generateDelegationToken();
+    expect(hashDelegationToken(token1)).not.toBe(hashDelegationToken(token2));
+  });
+});

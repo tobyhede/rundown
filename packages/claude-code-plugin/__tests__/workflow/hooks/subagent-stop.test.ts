@@ -29,13 +29,31 @@ describe('handleSubagentStop', () => {
   });
 
   describe('STATUS parsing', () => {
+    it('parses status from last_assistant_message', () => {
+      const mockExec = createMockExecSync('Step failed');
+      setExecSync(mockExec);
+
+      const input = createMockHookInput('SubagentStop', {
+        agent_id: 'agent-modern',
+        last_assistant_message: 'STATUS: FAIL',
+      });
+
+      const result = handleSubagentStop(input);
+      expect(result.context).toContain('Agent agent-modern FAILED');
+      expect(mockExec).toHaveBeenCalledWith(
+        'node',
+        [expect.any(String), 'fail', '--agent', 'agent-modern'],
+        expect.any(Object),
+      );
+    });
+
     it('parses STATUS: OK as pass', () => {
       const mockExec = createMockExecSync('Step completed');
       setExecSync(mockExec);
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-123',
-        output: 'Some output\nSTATUS: OK\nMore output',
+        last_assistant_message: 'Some output\nSTATUS: OK\nMore output',
       });
 
       const result = handleSubagentStop(input);
@@ -53,7 +71,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-456',
-        output: 'STATUS: PASS',
+        last_assistant_message: 'STATUS: PASS',
       });
 
       const result = handleSubagentStop(input);
@@ -66,7 +84,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-789',
-        output: 'STATUS: BLOCKED\nReason: missing dependency',
+        last_assistant_message: 'STATUS: BLOCKED\nReason: missing dependency',
       });
 
       const result = handleSubagentStop(input);
@@ -84,7 +102,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-fail',
-        output: 'STATUS: FAIL',
+        last_assistant_message: 'STATUS: FAIL',
       });
 
       const result = handleSubagentStop(input);
@@ -97,7 +115,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-no-status',
-        output: 'Agent completed without explicit status',
+        last_assistant_message: 'Agent completed without explicit status',
       });
 
       const result = handleSubagentStop(input);
@@ -109,13 +127,13 @@ describe('handleSubagentStop', () => {
       );
     });
 
-    it('treats undefined output as pass', () => {
+    it('treats undefined last_assistant_message as pass', () => {
       const mockExec = createMockExecSync('Step completed');
       setExecSync(mockExec);
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-undefined',
-        output: undefined,
+        last_assistant_message: undefined,
       });
 
       const result = handleSubagentStop(input);
@@ -128,7 +146,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-case',
-        output: 'status: blocked',
+        last_assistant_message: 'status: blocked',
       });
 
       const result = handleSubagentStop(input);
@@ -144,7 +162,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-cli',
-        output: 'STATUS: OK',
+        last_assistant_message: 'STATUS: OK',
       });
 
       const result = handleSubagentStop(input);
@@ -157,7 +175,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-empty',
-        output: 'STATUS: OK',
+        last_assistant_message: 'STATUS: OK',
       });
 
       const result = handleSubagentStop(input);
@@ -175,7 +193,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-unknown',
-        output: 'STATUS: OK',
+        last_assistant_message: 'STATUS: OK',
       });
 
       const result = handleSubagentStop(input);
@@ -192,7 +210,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-timeout',
-        output: 'STATUS: OK',
+        last_assistant_message: 'STATUS: OK',
       });
 
       const result = handleSubagentStop(input);
@@ -207,7 +225,7 @@ describe('handleSubagentStop', () => {
 
       const input = createMockHookInput('SubagentStop', {
         agent_id: 'agent-generic',
-        output: 'STATUS: OK',
+        last_assistant_message: 'STATUS: OK',
       });
 
       const result = handleSubagentStop(input);

@@ -59,18 +59,12 @@ describe('Dispatcher Coverage Extensions', () => {
       await dispatch({ hook_event_name: 'SkillEnd', cwd: testDir } as any);
       expect(await session.get('active_skill')).toBeNull();
 
-      // SubagentStart
-      await dispatch({
-        hook_event_name: 'SubagentStart',
-        cwd: testDir,
-        tool_use_id: 't1',
-        step_id: 's1',
-      } as any);
-      const metadata = await session.get('metadata');
-      expect(metadata.toolUseIdToStepId).toMatchObject({ t1: 's1' });
-
       // PostToolUse with extension
-      await dispatch({ hook_event_name: 'PostToolUse', cwd: testDir, file_path: 'test.ts' } as any);
+      await dispatch({
+        hook_event_name: 'PostToolUse',
+        cwd: testDir,
+        tool_input: { file_path: 'test.ts' },
+      } as any);
       expect(await session.contains('edited_files', 'test.ts')).toBe(true);
       expect(await session.contains('file_extensions', 'ts')).toBe(true);
     });
@@ -139,7 +133,7 @@ describe('Dispatcher Coverage Extensions', () => {
       await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configKeyword));
       const resKeyword = await dispatch({
         hook_event_name: 'UserPromptSubmit',
-        user_message: 'not related',
+        prompt: 'not related',
         cwd: testDir,
       } as any);
       expect(resKeyword.context).not.toContain('gate result');
@@ -152,7 +146,7 @@ describe('Dispatcher Coverage Extensions', () => {
       await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configPattern));
       const resPattern = await dispatch({
         hook_event_name: 'PostToolUse',
-        file_path: 'README.md',
+        tool_input: { file_path: 'README.md' },
         cwd: testDir,
       } as any);
       expect(resPattern.context).not.toContain('gate result');
@@ -183,7 +177,7 @@ describe('Dispatcher Coverage Extensions', () => {
       // UserPromptSubmit -> SlashCommandStart
       const res1 = await dispatch({
         hook_event_name: 'UserPromptSubmit',
-        user_message: '/test',
+        prompt: '/test',
         cwd: testDir,
       } as any);
       expect(res1).toBeDefined();
@@ -205,22 +199,13 @@ describe('Dispatcher Coverage Extensions', () => {
         cwd: testDir,
       } as any);
       expect(res3).toBeDefined();
-
-      // PostToolUse Step -> SubagentStart
-      const res4 = await dispatch({
-        hook_event_name: 'PostToolUse',
-        tool_name: 'Step',
-        tool_input: { description: '1 - d' },
-        cwd: testDir,
-      } as any);
-      expect(res4).toBeDefined();
     });
   });
 
   describe('detector coverage', () => {
     it('covers all detector branches', () => {
       expect(
-        detectSyntheticEvents({ hook_event_name: 'UserPromptSubmit', user_message: '/cmd' } as any),
+        detectSyntheticEvents({ hook_event_name: 'UserPromptSubmit', prompt: '/cmd' } as any),
       ).toHaveLength(1);
       expect(
         detectSyntheticEvents({
@@ -234,20 +219,6 @@ describe('Dispatcher Coverage Extensions', () => {
           hook_event_name: 'PostToolUse',
           tool_name: 'Skill',
           tool_input: { skill: 's' },
-        } as any),
-      ).toHaveLength(1);
-      expect(
-        detectSyntheticEvents({
-          hook_event_name: 'PostToolUse',
-          tool_name: 'Step',
-          tool_input: { description: '1.1 - d' },
-        } as any),
-      ).toHaveLength(1);
-      expect(
-        detectSyntheticEvents({
-          hook_event_name: 'PostToolUse',
-          tool_name: 'Task',
-          tool_input: { description: '2 - d' },
         } as any),
       ).toHaveLength(1);
     });

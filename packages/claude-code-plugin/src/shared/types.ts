@@ -20,7 +20,7 @@ export interface GateResult {
 
   // Stop Claude entirely
   continue?: false;
-  message?: string;
+  stopReason?: string;
 }
 
 /**
@@ -112,8 +112,9 @@ export interface SessionState {
   metadata: Record<string, unknown>;
 }
 
-// Note: active_agent NOT included - Claude Code does not provide unique
-// agent identifiers. Use metadata field if you need custom agent tracking.
+// Note: active_agent NOT included - Claude Code provides agent_id on
+// subagent lifecycle events, but session state keeps generic metadata for
+// workflow-specific mappings instead of a single active agent field.
 
 /**
  * All keys of SessionState as a const array

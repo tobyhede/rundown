@@ -2,6 +2,8 @@
 
 This document describes the test architecture, how to run tests, and testing best practices for the claude-code-plugin package.
 
+Legacy payload aliases are unsupported. Inputs containing `user_message`, `agent_name`, `subagent_name`, `output`, or top-level `file_path` are rejected at schema validation.
+
 ## Test Architecture
 
 ### Directory Structure
@@ -109,7 +111,7 @@ Use these commands to manually test hook dispatch behavior:
 ### PostToolUse - Edit
 
 ```bash
-echo '{"hook_event_name":"PostToolUse","cwd":"'$(pwd)'","tool_name":"Edit","file_path":"src/test.ts"}' | node dist/cli.js
+echo '{"hook_event_name":"PostToolUse","cwd":"'$(pwd)'","tool_name":"Edit","tool_input":{"file_path":"src/test.ts"}}' | node dist/cli.js
 ```
 
 ### PreToolUse - Skill
@@ -121,13 +123,13 @@ echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Skill","tool
 ### SubagentStop
 
 ```bash
-echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"test-agent","output":"STATUS: PASS"}' | node dist/cli.js
+echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"test-agent","agent_type":"code-review-agent","last_assistant_message":"STATUS: PASS"}' | node dist/cli.js
 ```
 
 ### UserPromptSubmit
 
 ```bash
-echo '{"hook_event_name":"UserPromptSubmit","cwd":"'$(pwd)'","user_message":"/commit"}' | node dist/cli.js
+echo '{"hook_event_name":"UserPromptSubmit","cwd":"'$(pwd)'","prompt":"/commit"}' | node dist/cli.js
 ```
 
 ### Session Commands
@@ -171,7 +173,7 @@ import {
 // Create mock hook input
 const input = createMockHookInput('PostToolUse', {
   tool_name: 'Edit',
-  file_path: '/test/file.ts'
+  tool_input: { file_path: '/test/file.ts' }
 });
 
 // Create temp directory with cleanup

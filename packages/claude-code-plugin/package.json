@@ -18,7 +18,7 @@
     "dist",
     ".claude-plugin",
     "commands",
-    "hooks.json",
+    "hooks",
     "runbooks",
     "rundown-plugin.json",
     "scripts",

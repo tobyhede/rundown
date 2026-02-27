@@ -309,6 +309,50 @@ name: whitespace-test
     expect(result.frontmatter).toBeNull();
     expect(result.content).toBe(markdown);
   });
+
+  it('accepts name with underscores', () => {
+    const markdown = `---
+name: my_runbook
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('my_runbook');
+  });
+
+  it('accepts name with mixed case', () => {
+    const markdown = `---
+name: My-Runbook
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('My-Runbook');
+  });
+
+  it('accepts name with underscores and hyphens and mixed case', () => {
+    const markdown = `---
+name: My_Runbook-v2
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('My_Runbook-v2');
+  });
+
+  it('rejects name with spaces', () => {
+    const markdown = `---
+name: my runbook
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+    expect(result.frontmatter).toBeNull();
+    expect(result.content.trim()).toBe('# Content');
+  });
 });
 
 describe('nameFromFilename()', () => {

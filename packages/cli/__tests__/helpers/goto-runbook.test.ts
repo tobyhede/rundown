@@ -9,6 +9,11 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
+  buildStepPosition: jest.fn((current: string, total: number, substep?: string) => ({
+    current,
+    total,
+    ...(substep ? { substep } : {}),
+  })),
   countNumberedSteps: jest.fn().mockReturnValue(3),
 }));
 
@@ -30,7 +35,7 @@ jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const { runExecutionLoop } = await import('../../src/services/execution');
-const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-workflow');
+const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-runbook');
 
 function makeStep(overrides: Partial<any> = {}): any {
   return {
@@ -49,6 +54,13 @@ beforeEach(() => {
   // Re-establish default mock implementations after reset
   (core.stepIdToString as jest.Mock).mockImplementation((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
+  );
+  (core.buildStepPosition as jest.Mock).mockImplementation(
+    (current: string, total: number, substep?: string) => ({
+      current,
+      total,
+      ...(substep ? { substep } : {}),
+    }),
   );
   (core.countNumberedSteps as jest.Mock).mockReturnValue(3);
   (runExecutionLoop as jest.Mock).mockResolvedValue('done');

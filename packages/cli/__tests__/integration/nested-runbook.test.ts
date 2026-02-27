@@ -47,12 +47,13 @@ Complete the work.
     result = runCli(['run', '--agent', 'test-agent'], workspace);
     expect(result.stdout).toContain('bound');
 
-    // 5. Complete agent's work (updates binding on parent)
+    // 5. Complete agent's work (drives parent transition on active cursor)
     result = runCli(['pass', '--agent', 'test-agent'], workspace);
-    expect(result.stdout).toContain('marked as pass');
+    expect(result.stdout).toContain('COMPLETE');
 
-    // 6. Verify parent sees completion
+    // 6. Parent runbook records completion and agent result in status
     result = runCli('status', workspace);
+    expect(result.stdout).toContain('Action:   COMPLETE');
     expect(result.stdout).toContain('test-agent: 1 [done] (pass)');
   });
 });

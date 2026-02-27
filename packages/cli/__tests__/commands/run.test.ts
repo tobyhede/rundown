@@ -110,7 +110,7 @@ describe('start command', () => {
     });
 
     it('pushes step to pendingSteps queue', async () => {
-      const result = runCli('run --step 2', workspace);
+      const result = runCli('run --step 1', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('queued');
@@ -123,7 +123,17 @@ describe('start command', () => {
       expect(result.stdout).toContain('Step 1 queued');
     });
 
+    it('rejects queueing future step outside active frontier', async () => {
+      const result = runCli('run --step 2', workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('Only active steps may be dispatched');
+    });
+
     it('accepts substep format', async () => {
+      expect(runCli('stop', workspace).exitCode).toBe(0);
+      expect(runCli('run --prompted runbooks/substeps.runbook.md', workspace).exitCode).toBe(0);
+
       const result = runCli('run --step 1.1', workspace);
 
       expect(result.exitCode).toBe(0);
@@ -131,7 +141,7 @@ describe('start command', () => {
     });
 
     it('adds step to state pendingSteps array', async () => {
-      runCli('run --step 2', workspace);
+      runCli('run --step 1', workspace);
 
       const state = await getActiveState(workspace);
       expect(state?.pendingSteps).toHaveLength(1);
@@ -156,6 +166,9 @@ describe('start command', () => {
     });
 
     it('should queue step with runbook file', async () => {
+      expect(runCli('stop', workspace).exitCode).toBe(0);
+      expect(runCli('run --prompted runbooks/substeps.runbook.md', workspace).exitCode).toBe(0);
+
       const result = runCli('run --step 1.1 runbooks/simple.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);

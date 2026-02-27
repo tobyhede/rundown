@@ -19,6 +19,7 @@
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
     "test:unit": "NODE_OPTIONS='--experimental-vm-modules' jest --maxWorkers=2",
     "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
+    "test:property": "NODE_OPTIONS='--experimental-vm-modules' jest --maxWorkers=2 --testPathPattern='\\.properties\\.test\\.ts$'",
     "test:mutate": "stryker run",
     "clean": "rm -rf dist"
   },
@@ -54,6 +55,8 @@
     "@types/node": "^25.3.0",
     "@types/picomatch": "^4.0.2",
     "@types/shell-quote": "^1.7.5",
+    "covertable": "^2.5.2",
+    "fast-check": "^4.5.3",
     "jest": "^29.7.0",
     "ts-jest": "^29.4.6",
     "typescript": "^5.0.0"

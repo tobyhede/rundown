@@ -43,14 +43,14 @@ describe('CLI JSON Output Schema Validation', () => {
   /**
    * Helper to parse and validate JSON output.
    *
-   * Some commands output NDJSON (multiple JSON objects separated by newlines).
+   * Some commands output JSONL (multiple JSON objects separated by newlines).
    * This function returns the last valid JSON object.
    */
   function parseJsonOutput(stdout: string): unknown {
     try {
       return JSON.parse(stdout);
     } catch {
-      // Try NDJSON format - split by newlines and parse last valid JSON
+      // Try JSONL format - split by newlines and parse last valid JSON
       const lines = stdout.trim().split('\n');
       for (let i = lines.length - 1; i >= 0; i--) {
         // Try to find a complete JSON object by accumulating lines
@@ -77,10 +77,10 @@ describe('CLI JSON Output Schema Validation', () => {
   }
 
   /**
-   * Parse NDJSON output as an array of events.
+   * Parse JSONL output as an array of events.
    * Used for execution commands that stream events.
    */
-  function parseNdjsonOutput(stdout: string): unknown[] {
+  function parseJsonlOutput(stdout: string): unknown[] {
     const lines = stdout
       .trim()
       .split('\n')
@@ -97,7 +97,7 @@ describe('CLI JSON Output Schema Validation', () => {
   }
 
   /**
-   * Find an event of a specific type in NDJSON output.
+   * Find an event of a specific type in JSONL output.
    */
   function findEventByType(events: unknown[], type: string): Record<string, unknown> | undefined {
     return events.find(
@@ -367,7 +367,7 @@ echo done
   });
 
   describe('goto --json', () => {
-    it('validates goto command NDJSON output', () => {
+    it('validates goto command JSONL output', () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       // Use numeric step names (## 1, ## 2, ## 3) for goto to work
       fs.writeFileSync(
@@ -388,9 +388,9 @@ echo done
       runCli('run --prompted test.runbook.md', workspace);
 
       const result = runCli('goto 2 --json', workspace);
-      const events = parseNdjsonOutput(result.stdout);
+      const events = parseJsonlOutput(result.stdout);
 
-      // Goto command now streams NDJSON events plus a final JSON object
+      // Goto command now streams JSONL events plus a final JSON object
       // Execution events stream first, then accumulated output on flush
       expect(events.length).toBeGreaterThan(0);
 
@@ -718,7 +718,7 @@ prompt: Wait
   // ==========================================================================
 
   describe('run --json', () => {
-    it('validates run command NDJSON completion output', () => {
+    it('validates run command JSONL completion output', () => {
       const runbookPath = path.join(workspace.cwd, 'simple.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -731,9 +731,9 @@ echo hello
       );
 
       const result = runCli('run --json simple.runbook.md', workspace);
-      const events = parseNdjsonOutput(result.stdout);
+      const events = parseJsonlOutput(result.stdout);
 
-      // Run command now streams NDJSON events
+      // Run command now streams JSONL events
       expect(events.length).toBeGreaterThan(0);
 
       // Should have runbook_started event
@@ -754,7 +754,7 @@ echo hello
       }
     });
 
-    it('validates run command with prompted runbook NDJSON output', () => {
+    it('validates run command with prompted runbook JSONL output', () => {
       const runbookPath = path.join(workspace.cwd, 'prompted.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -767,9 +767,9 @@ prompt: Wait for user
       );
 
       const result = runCli('run --json --prompted prompted.runbook.md', workspace);
-      const events = parseNdjsonOutput(result.stdout);
+      const events = parseJsonlOutput(result.stdout);
 
-      // Run command with prompted flag streams NDJSON events
+      // Run command with prompted flag streams JSONL events
       expect(events.length).toBeGreaterThan(0);
 
       // Should have runbook_started event with prompted=true
@@ -798,7 +798,7 @@ prompt: Wait for user
         `---
 name: step-test
 ---
-## Step 1
+## 1. Step 1
 prompt: Wait for agent
 `,
       );
@@ -843,7 +843,7 @@ prompt: Wait for agent
         `---
 name: agent-test
 ---
-## Step 1
+## 1. Step 1
 prompt: Wait for agent
 `,
       );

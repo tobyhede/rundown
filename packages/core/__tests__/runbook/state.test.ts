@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
@@ -165,12 +165,13 @@ describe('RunbookStateManager', () => {
     it('bindAgent creates new binding', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
-      await manager.bindAgent(state.id, 'agent-abc', { step: '1' });
+      await manager.bindAgent(state.id, 'agent-abc', { stepId: { step: '1' }, targetStep: '1' });
 
       const binding = await manager.getAgentBinding(state.id, 'agent-abc');
       expect(binding).toEqual({
         stepId: { step: '1' },
         status: 'running',
+        targetStep: '1',
       });
     });
 
@@ -184,7 +185,7 @@ describe('RunbookStateManager', () => {
 
     it('updateAgentBinding modifies existing binding', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      await manager.bindAgent(state.id, 'agent-def', { step: '2' });
+      await manager.bindAgent(state.id, 'agent-def', { stepId: { step: '2' }, targetStep: '2' });
 
       await manager.updateAgentBinding(state.id, 'agent-def', {
         status: 'done',
@@ -205,9 +206,9 @@ describe('RunbookStateManager', () => {
     });
 
     it('bindAgent throws for missing runbook', async () => {
-      await expect(manager.bindAgent('nonexistent-id', 'agent', { step: '1' })).rejects.toThrow(
-        'not found',
-      );
+      await expect(
+        manager.bindAgent('nonexistent-id', 'agent', { stepId: { step: '1' }, targetStep: '1' }),
+      ).rejects.toThrow('not found');
     });
   });
 
@@ -296,6 +297,68 @@ describe('RunbookStateManager', () => {
 
     it('update throws for missing runbook', async () => {
       await expect(manager.update('nonexistent', { step: '2' })).rejects.toThrow('not found');
+    });
+
+    it('loads legacy targetPath fields and strips them on save', async () => {
+      const state = await manager.create('legacy.md', mockRunbook, { runbookPath: 'legacy.md' });
+      const deferredKey = '1||';
+      const resolvedKey = '1||1|';
+
+      await manager.update(state.id, {
+        pendingSteps: [{ stepId: { step: '1' }, targetStep: '1' }],
+        agentBindings: {
+          'agent-1': { stepId: { step: '1' }, status: 'running', targetStep: '1' },
+        },
+        resolvedCompletions: {
+          [resolvedKey]: {
+            agentId: 'agent-1',
+            result: 'pass',
+            targetStep: '1',
+            targetFrameKey: '1|',
+            targetEntry: 1,
+            completedAt: new Date().toISOString(),
+          },
+        },
+      });
+
+      const stateFilePath = join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(stateFilePath, 'utf8')) as Record<string, unknown>;
+
+      const pending = (raw.pendingSteps as Record<string, unknown>[])[0];
+      pending.targetPath = '1';
+      const binding = (raw.agentBindings as Record<string, Record<string, unknown>>)['agent-1'];
+      binding.targetPath = '1';
+      const resolved = (raw.resolvedCompletions as Record<string, Record<string, unknown>>)[
+        resolvedKey
+      ];
+      resolved.targetPath = '1';
+      raw.deferredCompletions = {
+        [deferredKey]: {
+          agentId: 'agent-1',
+          result: 'pass',
+          targetStep: '1',
+          completedAt: new Date().toISOString(),
+          targetPath: '1',
+        },
+      };
+      await writeFile(stateFilePath, JSON.stringify(raw), { mode: 0o600 });
+
+      const loaded = await manager.load(state.id);
+      expect(loaded).not.toBeNull();
+      const loadedPending = loaded?.pendingSteps[0] as unknown as
+        | { targetPath?: string }
+        | undefined;
+      const loadedBinding = loaded?.agentBindings['agent-1'] as { targetPath?: string } | undefined;
+      const loadedResolved = loaded?.resolvedCompletions?.[resolvedKey] as
+        | { targetPath?: string }
+        | undefined;
+      expect(loadedPending?.targetPath).toBeUndefined();
+      expect(loadedBinding?.targetPath).toBeUndefined();
+      expect(loadedResolved?.targetPath).toBeUndefined();
+
+      await manager.update(state.id, { stepName: 'updated' });
+      const saved = await readFile(stateFilePath, 'utf8');
+      expect(saved).not.toContain('targetPath');
     });
   });
 

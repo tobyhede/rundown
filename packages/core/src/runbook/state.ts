@@ -5,6 +5,7 @@ import type {
   RunbookState,
   ForContext,
   AgentBinding,
+  PendingStep,
   Substep,
   SubstepState,
   Runbook,
@@ -114,6 +115,8 @@ export class RunbookStateManager {
       steps: [],
       pendingSteps: [],
       agentBindings: {},
+      resolvedCompletions: {},
+      frameEntries: {},
       agentId: options.agentId,
       parentRunbookId: options.parentRunbookId,
       parentStepId: options.parentStepId,
@@ -274,16 +277,27 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID
    * @param agentId - The agent ID to bind
-   * @param stepId - The step ID the agent is working on
+   * @param pending - The pending step target the agent is working on
    * @throws Error if the runbook with the given ID is not found
+   * @throws Error if the pending step is missing a canonical targetStep
    */
-  async bindAgent(id: string, agentId: string, stepId: StepId): Promise<void> {
+  async bindAgent(id: string, agentId: string, pending: PendingStep): Promise<void> {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);
+    if (!pending.targetStep) {
+      throw new Error(
+        `Pending step ${pending.stepId.step} is missing canonical targetStep. Re-queue the active step before binding.`,
+      );
+    }
 
     const binding: AgentBinding = {
-      stepId,
+      stepId: pending.stepId,
       status: 'running',
+      targetStep: pending.targetStep,
+      targetSubstep: pending.targetSubstep,
+      targetIteration: pending.targetIteration,
+      targetFrameKey: pending.targetFrameKey,
+      targetEntry: pending.targetEntry,
     };
 
     await this.update(id, {
@@ -313,14 +327,26 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID
    * @param agentId - The agent ID whose binding to update
-   * @param updates - Partial binding updates (status, result, childRunbookId)
+   * @param updates - Partial binding updates (status, result, childRunbookId, targeting fields)
    * @throws Error if the runbook with the given ID is not found
    * @throws Error if the agent has no existing binding
    */
   async updateAgentBinding(
     id: string,
     agentId: string,
-    updates: Partial<Pick<AgentBinding, 'status' | 'result' | 'childRunbookId'>>,
+    updates: Partial<
+      Pick<
+        AgentBinding,
+        | 'status'
+        | 'result'
+        | 'childRunbookId'
+        | 'targetStep'
+        | 'targetSubstep'
+        | 'targetIteration'
+        | 'targetFrameKey'
+        | 'targetEntry'
+      >
+    >,
   ): Promise<void> {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);

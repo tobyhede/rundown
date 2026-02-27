@@ -23,6 +23,24 @@ import type { DataSource, FileFormat } from '@rundown-org/core';
 const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 /**
+ * Runtime-reserved keys (normalized to lowercase) that cannot be overridden
+ * by user-provided variables.
+ *
+ * These keys are owned by runtime frame/context resolution and should remain
+ * deterministic across runbook execution.
+ */
+export const RUNTIME_RESERVED_VARIABLES = new Set(['step', 'index', 'context']);
+
+/**
+ * Check whether a variable name is reserved for runtime context semantics.
+ *
+ * Matching is case-insensitive (`Step`, `STEP`, and `step` are treated equally).
+ */
+export function isRuntimeReservedVariable(name: string): boolean {
+  return RUNTIME_RESERVED_VARIABLES.has(name.toLowerCase());
+}
+
+/**
  * Resolved variables: string vars for template substitution + data sources for FOR loops.
  *
  * `vars` feeds the template rendering pipeline (unchanged).
@@ -472,10 +490,16 @@ export async function resolveVariables(
   const layers = await collectRawLayers(options, cwd);
 
   // Process each layer in precedence order (lowest to highest)
-  for (const layer of layers) {
+  for (const [layerIndex, layer] of layers.entries()) {
     for (const [key, value] of Object.entries(layer)) {
       if (!VALID_IDENTIFIER.test(key)) {
         console.warn(`Warning: Ignoring variable with invalid key: ${key}`);
+        continue;
+      }
+      // Keep runtime-owned identifiers deterministic by rejecting overrides
+      // from all non-built-in layers (frontmatter/config/var-file/--var).
+      if (layerIndex > 0 && isRuntimeReservedVariable(key)) {
+        console.warn(`Warning: Ignoring reserved runtime variable: ${key}`);
         continue;
       }
       await routeVariable(key, value, vars, sources, cwd, projectRoot);

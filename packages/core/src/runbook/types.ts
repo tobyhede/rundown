@@ -107,6 +107,16 @@ export type LastAction =
 export interface PendingStep {
   readonly stepId: StepId;
   readonly runbook?: string; // Child runbook file path (relative)
+  /** Canonical target step for runtime routing. */
+  readonly targetStep?: string;
+  /** Canonical target substep for runtime routing. */
+  readonly targetSubstep?: string;
+  /** Canonical target loop iteration for runtime routing. */
+  readonly targetIteration?: number;
+  /** Canonical target frame key (`step|iteration`) for completion identity. */
+  readonly targetFrameKey?: string;
+  /** Canonical target frame entry (monotonic per frame). */
+  readonly targetEntry?: number;
 }
 
 /**
@@ -127,6 +137,7 @@ export interface SubstepState {
   readonly status: 'pending' | 'running' | 'done';
   readonly agentId?: string; // Agent bound to this substep
   readonly result?: AgentResult; // 'pass' | 'fail' when done
+  readonly delegation?: StepDelegation; // Delegation attached to this substep
 }
 
 /**
@@ -137,6 +148,71 @@ export interface AgentBinding {
   readonly childRunbookId?: string;
   readonly status: AgentStatus;
   readonly result?: AgentResult;
+  /** Canonical target step for runtime routing. */
+  readonly targetStep?: string;
+  /** Canonical target substep for runtime routing. */
+  readonly targetSubstep?: string;
+  /** Canonical target loop iteration for runtime routing. */
+  readonly targetIteration?: number;
+  /** Canonical target frame key (`step|iteration`) for completion identity. */
+  readonly targetFrameKey?: string;
+  /** Canonical target frame entry (monotonic per frame). */
+  readonly targetEntry?: number;
+}
+
+/**
+ * Deferred agent completion captured for a valid frontier target
+ * that is not currently at the active cursor.
+ */
+export interface ResolvedCompletion {
+  /** Identifier of the agent that produced this completion. */
+  readonly agentId: string;
+  /** Whether the agent passed or failed. */
+  readonly result: AgentResult;
+  /** Step name this completion targets (e.g. "1", "ErrorHandler"). */
+  readonly targetStep: string;
+  /** Substep ID within the target step, if applicable. */
+  readonly targetSubstep?: string;
+  /** FOR loop iteration number this completion applies to. */
+  readonly targetIteration?: number;
+  /** Frame key identifying the step+iteration context (e.g. "1|", "1|2"). */
+  readonly targetFrameKey: string;
+  /** Monotonic entry counter within the frame, distinguishing repeated visits. */
+  readonly targetEntry: number;
+  /** ISO 8601 timestamp when the agent completed. */
+  readonly completedAt: string;
+}
+
+/** Delegation metadata attached to a parent step's substep state. */
+export interface StepDelegation {
+  readonly tokenHash: string;
+  readonly childRunbookPath: string;
+  readonly contextSnapshot: ContextSnapshot;
+  readonly childRunId: string | null;
+  readonly createdAt: string;
+  readonly cancelledAt: string | null;
+}
+
+/** Snapshot of execution context at delegation time. */
+export interface ContextSnapshot {
+  readonly vars: Readonly<Record<string, string>>;
+  readonly ancestors: readonly AncestorSnapshot[];
+}
+
+/** Single ancestor in the runbook lineage snapshot. */
+export interface AncestorSnapshot {
+  readonly runId: string;
+  readonly runbook: string;
+  readonly step: string;
+  readonly substep: string | null;
+  readonly vars: Readonly<Record<string, string>>;
+}
+
+/** Linkage data a child run carries to identify its parent delegation. */
+export interface DelegationLinkage {
+  readonly parentRunId: string;
+  readonly parentStepId: string;
+  readonly tokenHash: string;
 }
 
 /**
@@ -327,6 +403,13 @@ export interface RunbookState {
   // Orchestration fields
   readonly pendingSteps: readonly PendingStep[];
   readonly agentBindings: Readonly<Record<string, AgentBinding>>;
+  readonly resolvedCompletions?: Readonly<Record<string, ResolvedCompletion>>;
+  /** Monotonic entry counter by frame key (`step|iteration`). */
+  readonly frameEntries?: Readonly<Record<string, number>>;
+  /** Active frame key (`step|iteration`). */
+  readonly activeFrameKey?: string;
+  /** Active frame entry (monotonic per frame). */
+  readonly activeEntry?: number;
 
   // Substep tracking
   readonly substepStates?: readonly SubstepState[];

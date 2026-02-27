@@ -8,9 +8,9 @@ import { logger } from './logger.js';
 const KNOWN_HOOK_EVENTS = [
   'PreToolUse',
   'PostToolUse',
+  'PostToolUseFailure',
   'SubagentStart',
   'SubagentStop',
-  'SubagentEnd',
   'UserPromptSubmit',
   'SlashCommandStart',
   'SlashCommandEnd',
@@ -22,6 +22,11 @@ const KNOWN_HOOK_EVENTS = [
   'Notification',
   'PreCompact',
   'PermissionRequest',
+  'ConfigChange',
+  'WorktreeCreate',
+  'WorktreeRemove',
+  'TaskCompleted',
+  'TeammateIdle',
 ];
 
 const KNOWN_ACTIONS = ['CONTINUE', 'BLOCK', 'STOP'];

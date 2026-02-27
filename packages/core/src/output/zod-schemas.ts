@@ -86,6 +86,29 @@ export const PositionSchema = z
     total: z.number().describe('Total number of steps'),
     /** Current substep identifier if applicable */
     substep: z.string().optional().describe('Optional substep identifier'),
+    /** Expanded execution location (for example "1.2.1") */
+    at: z.string().optional().describe('Expanded execution location'),
+    /** Active FOR loop scope for loop-scoped positions */
+    for: z
+      .object({
+        /** Current 1-based loop iteration */
+        index: z.number().int().positive().describe('Current loop iteration index'),
+        /** Optional inclusive loop bound (undefined for open-ended loops) */
+        end: z.number().int().positive().optional().describe('Optional loop bound'),
+      })
+      .optional()
+      .describe('Loop scope for this position'),
+    /** Active execution frame key (`step|iteration`) */
+    frameKey: z.string().optional().describe('Active execution frame key'),
+    /** Active execution entry for the frame */
+    entry: z.number().int().positive().optional().describe('Active frame entry'),
+    /** Count of unresolved substeps in the active frame */
+    unresolved: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe('Number of unresolved substeps in the active frame'),
   })
   .describe('Current position within the runbook execution');
 
@@ -561,6 +584,7 @@ export const StepQueuedResponseSchema = z
     action: z.literal('step_queued').describe('Action type for step queue'),
     stepId: z.string().describe('Step identifier that was queued'),
     runbook: z.string().optional().describe('Runbook filename'),
+    targetAt: z.string().optional().describe('Derived execution location for the queued target'),
   })
   .describe('Response when a step is queued for execution');
 
@@ -572,6 +596,7 @@ export const AgentBoundResponseSchema = z
     action: z.literal('agent_bound').describe('Action type for agent binding'),
     agent: z.string().describe('Agent identifier that was bound'),
     stepId: z.string().describe('Step identifier the agent is bound to'),
+    targetAt: z.string().optional().describe('Derived execution location for the bound target'),
   })
   .describe('Response when an agent is bound to a step');
 

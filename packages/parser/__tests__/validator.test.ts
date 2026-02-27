@@ -134,7 +134,7 @@ describe('validator strict rules', () => {
               id: '1',
               description: 'S',
               command: { code: 'echo', language: 'bash' },
-              workflows: ['w.runbook.md'],
+              runbooks: ['w.runbook.md'],
             },
           ],
         }),
@@ -595,6 +595,140 @@ describe('validator strict rules', () => {
       ];
       const diagnostics = validateRunbook(steps);
       expect(diagnostics.some((d) => d.message.includes('GOTO AT is only valid'))).toBe(false);
+    });
+
+    describe('FOR clause nested transitions', () => {
+      it('accepts FOR with CONTINUE/BREAK nested transitions', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Review',
+            forClause: {
+              variable: 'pass',
+              start: 1,
+              end: 3,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
+              },
+            },
+            substeps: [{ id: '1', description: 'Check' }],
+          },
+        ];
+        const diagnostics = validateRunbook(steps);
+        const errors = filterErrors(diagnostics);
+        expect(errors.some((e) => e.message.includes('FOR-level'))).toBe(false);
+      });
+
+      it('accepts FOR with GOTO nested transition', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Review',
+            forClause: {
+              variable: 'pass',
+              start: 1,
+              end: 3,
+              transitions: {
+                all: true,
+                pass: {
+                  kind: 'pass',
+                  retry: 0,
+                  action: { type: 'GOTO', target: { step: '2' } },
+                },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+              },
+            },
+            substeps: [{ id: '1', description: 'Check' }],
+          },
+          {
+            name: '2',
+            description: 'Follow-up',
+            substeps: [{ id: '1', description: 'Finalize' }],
+          },
+        ];
+        const diagnostics = validateRunbook(steps);
+        const errors = filterErrors(diagnostics);
+        expect(errors).toHaveLength(0);
+      });
+
+      it('accepts FOR with STOP nested transition', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Review',
+            forClause: {
+              variable: 'pass',
+              start: 1,
+              end: 3,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+            substeps: [{ id: '1', description: 'Check' }],
+          },
+        ];
+        const diagnostics = validateRunbook(steps);
+        const errors = filterErrors(diagnostics);
+        expect(errors).toHaveLength(0);
+      });
+
+      it('accepts FOR with COMPLETE nested transition', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Review',
+            forClause: {
+              variable: 'pass',
+              start: 1,
+              end: 3,
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+              },
+            },
+            substeps: [{ id: '1', description: 'Check' }],
+          },
+        ];
+        const diagnostics = validateRunbook(steps);
+        const errors = filterErrors(diagnostics);
+        expect(errors).toHaveLength(0);
+      });
+
+      it('accepts FOR with RETRY on iteration-level transitions', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Review',
+            forClause: {
+              variable: 'pass',
+              start: 1,
+              end: 3,
+              transitions: {
+                all: true,
+                pass: {
+                  kind: 'pass' as const,
+                  retry: 2,
+                  action: { type: 'BREAK' as const },
+                },
+                fail: {
+                  kind: 'fail' as const,
+                  retry: 0,
+                  action: { type: 'CONTINUE' as const },
+                },
+              },
+            },
+            substeps: [{ id: '1', description: 'Check' }],
+          },
+        ];
+        const diagnostics = validateRunbook(steps);
+        const errors = filterErrors(diagnostics);
+        expect(errors).toHaveLength(0);
+      });
     });
   });
 });

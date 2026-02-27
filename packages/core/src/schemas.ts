@@ -127,11 +127,58 @@ export { StepIdSchema, ActionSchema, TransitionsSchema };
 const RunbookStepSchema = z.string().min(1);
 
 /**
+ * Schema for target identity fields shared across agent bindings and pending steps.
+ */
+const TargetIdentitySchema = z.object({
+  targetStep: z.string().optional(),
+  targetSubstep: z.string().optional(),
+  targetIteration: z.number().int().positive().optional(),
+  targetFrameKey: z.string().optional(),
+  targetEntry: z.number().int().positive().optional(),
+});
+
+/**
  * Schema for pending step.
  */
 const PendingStepSchema = z.object({
   stepId: StepIdSchema,
   runbook: z.string().optional(),
+  targetStep: TargetIdentitySchema.shape.targetStep,
+  targetSubstep: TargetIdentitySchema.shape.targetSubstep,
+  targetIteration: TargetIdentitySchema.shape.targetIteration,
+  targetFrameKey: TargetIdentitySchema.shape.targetFrameKey,
+  targetEntry: TargetIdentitySchema.shape.targetEntry,
+});
+
+/**
+ * Zod schema for a single ancestor in the runbook lineage snapshot.
+ */
+export const AncestorSnapshotSchema = z.object({
+  runId: z.string(),
+  runbook: z.string(),
+  step: z.string(),
+  substep: z.string().nullable(),
+  vars: z.record(z.string(), z.string()),
+});
+
+/**
+ * Zod schema for execution context snapshot at delegation time.
+ */
+export const ContextSnapshotSchema = z.object({
+  vars: z.record(z.string(), z.string()),
+  ancestors: z.array(AncestorSnapshotSchema).readonly(),
+});
+
+/**
+ * Zod schema for delegation metadata attached to a substep.
+ */
+export const StepDelegationSchema = z.object({
+  tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  childRunbookPath: z.string(),
+  contextSnapshot: ContextSnapshotSchema,
+  childRunId: z.string().nullable(),
+  createdAt: z.string(),
+  cancelledAt: z.string().nullable(),
 });
 
 /**
@@ -143,6 +190,18 @@ const SubstepStateSchema = z.object({
   status: z.enum(['pending', 'running', 'done']),
   agentId: z.string().optional(),
   result: z.enum(['pass', 'fail']).optional(),
+  delegation: StepDelegationSchema.optional(),
+});
+
+const ResolvedCompletionSchema = z.object({
+  agentId: z.string(),
+  result: z.enum(['pass', 'fail']),
+  targetStep: z.string(),
+  targetSubstep: z.string().optional(),
+  targetIteration: z.number().int().positive().optional(),
+  targetFrameKey: z.string(),
+  targetEntry: z.number().int().positive(),
+  completedAt: z.string(),
 });
 
 /**
@@ -212,121 +271,98 @@ const ForStackEntrySchema = z
 /**
  * Runbook State Schema - Runtime Validation for Persisted RunbookState
  */
-export const RunbookStateSchema = z
-  .object({
-    id: z.string(),
-    runbook: z.string(),
-    runbookPath: z.string(),
-    title: z.string().optional(),
-    description: z.string().optional(),
-    step: RunbookStepSchema, // "1" or "ErrorHandler"
-    substep: z.string().optional(),
-    stepName: z.string(),
-    retryCount: z.number().nonnegative().int(),
-    variables: z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])),
-    steps: z.array(
+export const RunbookStateSchema = z.object({
+  id: z.string(),
+  runbook: z.string(),
+  runbookPath: z.string(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  step: RunbookStepSchema, // "1" or "ErrorHandler"
+  substep: z.string().optional(),
+  stepName: z.string(),
+  retryCount: z.number().nonnegative().int(),
+  variables: z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])),
+  steps: z.array(
+    z.object({
+      id: z.string(),
+      status: z.enum(['pending', 'running', 'complete', 'stopped']),
+      subagentType: z.string().optional(),
+      startedAt: z.string().optional(),
+      completedAt: z.string().optional(),
+    }),
+  ),
+  pendingSteps: z.array(PendingStepSchema).readonly(),
+  agentBindings: z.record(
+    z.string(),
+    z.object({
+      stepId: StepIdSchema,
+      childRunbookId: z.string().optional(),
+      status: z.enum(['running', 'done', 'stopped']),
+      result: z.enum(['pass', 'fail']).optional(),
+      targetStep: TargetIdentitySchema.shape.targetStep,
+      targetSubstep: TargetIdentitySchema.shape.targetSubstep,
+      targetIteration: TargetIdentitySchema.shape.targetIteration,
+      targetFrameKey: TargetIdentitySchema.shape.targetFrameKey,
+      targetEntry: TargetIdentitySchema.shape.targetEntry,
+    }),
+  ),
+  resolvedCompletions: z.record(z.string(), ResolvedCompletionSchema).optional(),
+  frameEntries: z.record(z.string(), z.number().int().positive()).optional(),
+  activeFrameKey: z.string().optional(),
+  activeEntry: z.number().int().positive().optional(),
+  substepStates: z.array(SubstepStateSchema).optional(),
+  agentId: z.string().optional(),
+  parentRunbookId: z.string().optional(),
+  parentStepId: StepIdSchema.optional(),
+  nested: z
+    .object({
+      runbook: z.string(),
+      instanceId: z.string(),
+    })
+    .optional(),
+  // FOR loop tracking: stack of loop contexts for nested loops
+  forStack: z.array(ForStackEntrySchema).optional(),
+  iterationResults: z.array(z.enum(['pass', 'fail'])).optional(),
+  startedAt: z.string(),
+  updatedAt: z.string(),
+  snapshot: z.unknown().optional(), // XState snapshot
+  prompted: z.boolean().optional(),
+  lastResult: z.enum(['pass', 'fail']).optional(),
+  lastAction: z
+    .discriminatedUnion('type', [
+      z.object({ type: z.literal('START') }),
+      z.object({ type: z.literal('CONTINUE') }),
       z.object({
-        id: z.string(),
-        status: z.enum(['pending', 'running', 'complete', 'stopped']),
-        subagentType: z.string().optional(),
-        startedAt: z.string().optional(),
-        completedAt: z.string().optional(),
+        type: z.literal('GOTO'),
+        target: z.string(),
+        substep: z.string().optional(),
+        at: z
+          .union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)])
+          .optional(),
       }),
-    ),
-    pendingSteps: z.array(PendingStepSchema).readonly(),
-    agentBindings: z.record(
+      z.object({ type: z.literal('COMPLETE') }),
+      z.object({ type: z.literal('STOP') }),
+      z.object({ type: z.literal('RETRY') }),
+      z.object({ type: z.literal('NEXT') }),
+      z.object({ type: z.literal('BREAK') }),
+    ])
+    .optional(),
+  runbookSrc: z.string().optional(),
+  templateVars: z.record(z.string(), z.string()).optional(),
+  /** Data source bindings for sourced FOR loops (array or file-backed). */
+  sources: z
+    .record(
       z.string(),
-      z.object({
-        stepId: StepIdSchema,
-        childRunbookId: z.string().optional(),
-        status: z.enum(['running', 'done', 'stopped']),
-        result: z.enum(['pass', 'fail']).optional(),
-      }),
-    ),
-    substepStates: z.array(SubstepStateSchema).optional(),
-    agentId: z.string().optional(),
-    parentRunbookId: z.string().optional(),
-    parentStepId: StepIdSchema.optional(),
-    nested: z
-      .object({
-        runbook: z.string(),
-        instanceId: z.string(),
-      })
-      .optional(),
-    // FOR loop tracking: stack of loop contexts for nested loops
-    forStack: z.array(ForStackEntrySchema).optional(),
-    // Backward compat: accept old flat fields for migration
-    forIteration: z.number().int().positive().optional(),
-    forStart: z.number().int().optional(),
-    forEnd: z.number().int().optional(),
-    forVariable: z.string().optional(),
-    iterationResults: z.array(z.enum(['pass', 'fail'])).optional(),
-    startedAt: z.string(),
-    updatedAt: z.string(),
-    snapshot: z.unknown().optional(), // XState snapshot
-    prompted: z.boolean().optional(),
-    lastResult: z.enum(['pass', 'fail']).optional(),
-    lastAction: z
-      .discriminatedUnion('type', [
-        z.object({ type: z.literal('START') }),
-        z.object({ type: z.literal('CONTINUE') }),
+      z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('array'), items: z.array(z.string()).readonly() }),
         z.object({
-          type: z.literal('GOTO'),
-          target: z.string(),
-          substep: z.string().optional(),
-          at: z
-            .union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)])
-            .optional(),
+          kind: z.literal('file'),
+          path: z.string(),
+          format: z.enum(['text', 'jsonl']),
         }),
-        z.object({ type: z.literal('COMPLETE') }),
-        z.object({ type: z.literal('STOP') }),
-        z.object({ type: z.literal('RETRY') }),
-        z.object({ type: z.literal('NEXT') }),
-        z.object({ type: z.literal('BREAK') }),
-      ])
-      .optional(),
-    runbookSrc: z.string().optional(),
-    templateVars: z.record(z.string(), z.string()).optional(),
-    /** Data source bindings for sourced FOR loops (array or file-backed). */
-    sources: z
-      .record(
-        z.string(),
-        z.discriminatedUnion('kind', [
-          z.object({ kind: z.literal('array'), items: z.array(z.string()).readonly() }),
-          z.object({
-            kind: z.literal('file'),
-            path: z.string(),
-            format: z.enum(['text', 'jsonl']),
-          }),
-        ]),
-      )
-      .optional(),
-  })
-  .transform((data) => {
-    const { forIteration, forStart, forEnd, forVariable, ...rest } = data;
-    // Migrate old flat FOR fields → forStack
-    if (!rest.forStack && forIteration !== undefined && rest.step) {
-      return {
-        ...rest,
-        forStack: [
-          ForStackEntrySchema.parse({
-            stepId: rest.step,
-            iteration: forIteration,
-            start: forStart ?? 1,
-            end: forEnd ?? forIteration,
-            variable: forVariable,
-            implicit: false,
-            source: { kind: 'range' as const },
-          }),
-        ],
-      };
-    }
-    // Strip implicit entries if they leaked into persisted state
-    const forStack = rest.forStack?.filter((fc) => !fc.implicit);
-    return {
-      ...rest,
-      forStack: forStack?.length ? forStack : undefined,
-    };
-  });
+      ]),
+    )
+    .optional(),
+});
 
 export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;

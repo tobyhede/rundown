@@ -115,4 +115,71 @@ Do something.
     expect(result.stderr || result.stdout).toContain('FAIL');
     expect(result.stderr || result.stdout).toMatch(/not found|does not exist/i);
   });
+
+  it('outputs FAIL for frontmatter var using reserved name Step', () => {
+    const runbookPath = path.join(workspace.cwd, 'reserved.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `---
+vars:
+  Step: custom
+---
+## 1. Do something
+- PASS: COMPLETE
+
+Hello.
+`,
+    );
+
+    const result = runCli(`check ${runbookPath}`, workspace);
+
+    expect(result.exitCode).toBe(1);
+    const output = result.stdout + result.stderr;
+    expect(output).toContain('FAIL');
+    expect(output).toMatch(/reserved/i);
+  });
+
+  it('outputs FAIL for frontmatter var using reserved name Index (case-insensitive)', () => {
+    const runbookPath = path.join(workspace.cwd, 'reserved-index.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `---
+vars:
+  Index: 5
+---
+## 1. Do something
+- PASS: COMPLETE
+
+Hello.
+`,
+    );
+
+    const result = runCli(`check ${runbookPath}`, workspace);
+
+    expect(result.exitCode).toBe(1);
+    const output = result.stdout + result.stderr;
+    expect(output).toContain('FAIL');
+    expect(output).toMatch(/reserved/i);
+  });
+
+  it('outputs PASS for frontmatter var using overridable built-in Date', () => {
+    const runbookPath = path.join(workspace.cwd, 'builtin.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `---
+vars:
+  Date: "2025-01-01"
+---
+## 1. Do something
+- PASS: COMPLETE
+
+Hello.
+`,
+    );
+
+    const result = runCli(`check ${runbookPath}`, workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('PASS:');
+  });
 });

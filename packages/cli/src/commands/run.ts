@@ -81,7 +81,11 @@ export function registerRunCommand(program: Command): void {
               true,
               'step_queued',
               `Step ${result.stepId} queued for agent binding${runbookInfo}`,
-              { stepId: result.stepId, runbook: result.runbook },
+              {
+                stepId: result.stepId,
+                runbook: result.runbook,
+                ...(result.targetAt ? { targetAt: result.targetAt } : {}),
+              },
             );
             output.flush();
             return;

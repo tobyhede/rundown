@@ -1,18 +1,22 @@
 // packages/cli/src/services/execution.ts
 
 import {
+  buildStepPosition,
+  deriveExecutionAt,
+  buildCompletionKey,
+  deriveActiveFrame,
+  parseActionType,
+  type ActionType,
+  extractLastAction,
+  extractLastMessage,
+  extractRetryDisplayCount,
+  extractRetryMax,
+  formatActionForDisplay,
   type RunbookStateManager,
   RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
   ForIterationService,
-  printActionBlock,
-  printStepBlock,
-  printStepSeparator,
-  printCommandExec,
-  printRunbookComplete,
-  printRunbookStoppedAtStep,
-  printPolicyDenied,
   type Step,
   type Substep,
   type RunbookMetadata,
@@ -20,17 +24,11 @@ import {
   type ExecutionResult,
   executeCommand,
   executeCommandWithPolicy,
-  evaluatePassCondition,
-  evaluateFailCondition,
   countNumberedSteps,
   extractDisplayCommand,
   type ExecutionEventEmitter,
-  type LastAction,
   type ForContext,
   type DataSource,
-  isRunbookComplete,
-  isRunbookStopped,
-  asTerminalSnapshotOrDefault,
 } from '@rundown-org/core';
 import { isSourced } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -41,6 +39,11 @@ import {
   getSandboxOptions,
 } from './policy-context.js';
 import { expandLoopVariables, expandLoopVariablesForCommand } from './template-renderer.js';
+import {
+  orchestrateTransition,
+  transitionSinkFromEmitter,
+  type TransitionOrchestrationPolicy,
+} from '../helpers/transition-orchestrator.js';
 
 /**
  * Per-step dynamic variables (e.g., `Step`, `Index`, named loop variable).
@@ -82,15 +85,27 @@ export function buildStepVariables(
   forStack?: readonly ForContext[],
   forClause?: Step['forClause'],
   sources?: Readonly<Record<string, DataSource>>,
+  templateVars?: Readonly<Record<string, string>>,
 ): StepVariables {
   const step = substepId ? `${stepId}.${substepId}` : stepId;
-  const vars: StepVariables = { Step: step };
+  const vars: StepVariables = {
+    ...(templateVars ?? {}),
+    Step: step,
+    step,
+    'context.current.step': step,
+  };
+  if (substepId) {
+    vars['context.current.substep'] = substepId;
+  }
 
   // Primary: use forStack (available after first transition)
   if (forStack?.length) {
     const top = forStack[forStack.length - 1];
     if (!top.implicit) {
       vars.Index = String(top.iteration);
+      vars.index = String(top.iteration);
+      vars['context.current.index'] = String(top.iteration);
+      vars['context.current.at'] = deriveExecutionAt(stepId, substepId, top.iteration);
 
       if (top.variable) {
         switch (top.source.kind) {
@@ -127,22 +142,271 @@ export function buildStepVariables(
         // Clamp start to match compiler behavior (compiler.ts buildForContext)
         const clampedStart = Math.max(1, Math.min(forClause.start, ds.items.length));
         vars.Index = String(clampedStart);
+        vars.index = String(clampedStart);
+        vars['context.current.index'] = String(clampedStart);
+        vars['context.current.at'] = deriveExecutionAt(stepId, substepId, clampedStart);
         vars[forClause.variable] = ds.items[clampedStart - 1] ?? '';
       } else {
         // ds.kind === 'file': iteration starts at forClause.start, value resolved lazily by actor
         vars.Index = String(forClause.start);
+        vars.index = String(forClause.start);
+        vars['context.current.index'] = String(forClause.start);
+        vars['context.current.at'] = deriveExecutionAt(stepId, substepId, forClause.start);
         vars[forClause.variable] = '';
       }
     } else {
       // Numeric range (original behavior)
       vars.Index = String(forClause.start);
+      vars.index = String(forClause.start);
+      vars['context.current.index'] = String(forClause.start);
+      vars['context.current.at'] = deriveExecutionAt(stepId, substepId, forClause.start);
       if (forClause.variable) {
         vars[forClause.variable] = String(forClause.start);
       }
     }
   }
 
+  if (!Object.hasOwn(vars, 'context.current.at')) {
+    vars['context.current.at'] = deriveExecutionAt(stepId, substepId);
+  }
+
   return vars;
+}
+
+/**
+ * Find a step by name, throwing if not found.
+ *
+ * Replaces silent `steps[0]` fallbacks that mask state corruption.
+ *
+ * @param steps - Parsed runbook steps
+ * @param stepName - Step name to find
+ * @returns The matching step
+ * @throws Error if step is not found (indicates state corruption)
+ */
+export function findStepOrThrow(steps: Step[], stepName: string): Step {
+  const step = steps.find((s) => s.name === stepName);
+  if (!step) throw new Error(`Step '${stepName}' not found — possible state corruption`);
+  return step;
+}
+
+interface ApplyResultTransitionArgs {
+  manager: RunbookStateManager;
+  actorService: RunbookActorService;
+  sessionService: SessionService;
+  lifecycleService: ExecutionLifecycleService;
+  emitter: ExecutionEventEmitter;
+  runbookId: string;
+  steps: Step[];
+  currentState: RunbookState;
+  currentStep: Step;
+  result: 'pass' | 'fail';
+  transitionPolicy: TransitionOrchestrationPolicy;
+  computeActionResult?: (actionType: ActionType) => boolean;
+  agentId?: string;
+  command?: string;
+}
+
+const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
+  onComplete: {
+    popRunbook: true,
+    updateParentBinding: true,
+    parentResult: 'pass',
+  },
+  onStopped: {
+    popRunbook: true,
+    updateParentBinding: true,
+    parentResult: 'fail',
+  },
+};
+
+async function applyResultTransition({
+  manager,
+  actorService,
+  sessionService,
+  lifecycleService,
+  emitter,
+  runbookId,
+  steps,
+  currentState,
+  currentStep,
+  result,
+  transitionPolicy,
+  computeActionResult,
+  agentId,
+  command,
+}: ApplyResultTransitionArgs): Promise<
+  { status: 'continue'; state: RunbookState } | { status: 'done' } | { status: 'stopped' }
+> {
+  const syncResult = await actorService.sendAndSync(runbookId, steps, {
+    type: result === 'pass' ? 'PASS' : 'FAIL',
+  });
+  if (!syncResult) return { status: 'stopped' };
+
+  const ensured = await lifecycleService.ensureActiveEntry(
+    runbookId,
+    currentState,
+    syncResult.state,
+  );
+  const actionType = parseActionType(extractLastAction(syncResult.snapshot));
+  const actionResult = computeActionResult ? computeActionResult(actionType) : result === 'pass';
+
+  const orchestration = await orchestrateTransition({
+    manager,
+    sessionService,
+    sink: transitionSinkFromEmitter(emitter),
+    runbookId,
+    steps,
+    currentStep,
+    previousState: currentState,
+    updatedState: ensured.state,
+    snapshot: syncResult.snapshot,
+    result,
+    actionResult,
+    policy: transitionPolicy,
+    agentId,
+    command,
+  });
+
+  if (orchestration.status === 'continue') {
+    return { status: 'continue', state: orchestration.state };
+  }
+  if (orchestration.status === 'done') {
+    return { status: 'done' };
+  }
+  return { status: 'stopped' };
+}
+
+/** Arguments for draining resolved substep completions. */
+export interface DrainResolvedCompletionsArgs {
+  /** State manager for raw state persistence. */
+  manager: RunbookStateManager;
+  /** Actor service for sending events to the runbook machine. */
+  actorService: RunbookActorService;
+  /** Session service for active runbook tracking. */
+  sessionService: SessionService;
+  /** Lifecycle service for completion read/write operations. */
+  lifecycleService: ExecutionLifecycleService;
+  /** Event emitter for execution progress notifications. */
+  emitter: ExecutionEventEmitter;
+  /** ID of the runbook being drained. */
+  runbookId: string;
+  /** Parsed step definitions for the runbook. */
+  steps: Step[];
+  /** Current persisted runbook state. */
+  currentState: RunbookState;
+  /** Policy governing transition orchestration. */
+  transitionPolicy: TransitionOrchestrationPolicy;
+  /** Optional function to compute action result for transition evaluation. */
+  computeActionResult?: (actionType: ActionType) => boolean;
+  /** Optional agent ID for agent-scoped draining. */
+  agentId?: string;
+  /** Optional command string for event context. */
+  command?: string;
+}
+
+/** Result of draining resolved substep completions. */
+export type DrainResolvedCompletionsResult =
+  | {
+      /** Drain succeeded with remaining substeps to process. */
+      status: 'continue';
+      state: RunbookState;
+      unresolved: number;
+      applied: number;
+    }
+  | {
+      /** All substeps resolved and runbook completed. */ status: 'done';
+      unresolved: number;
+      applied: number;
+    }
+  | {
+      /** Runbook stopped due to a STOP transition. */ status: 'stopped';
+      unresolved: number;
+      applied: number;
+    };
+
+/**
+ * Deterministically drain resolved substep completions for the active frame+entry.
+ *
+ * Applies completions in substep order and stops at the first unresolved substep.
+ *
+ * @param args - Drain arguments including state manager, services, and current state
+ * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
+ */
+export async function drainResolvedCompletions({
+  manager,
+  actorService,
+  sessionService,
+  lifecycleService,
+  emitter,
+  runbookId,
+  steps,
+  currentState,
+  transitionPolicy,
+  computeActionResult,
+  agentId,
+  command,
+}: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
+  let state = currentState;
+  let applied = 0;
+
+  // Loop invariant: `state` always reflects the latest persisted runbook state.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  while (true) {
+    const currentStep = findStepOrThrow(steps, state.step);
+    if (!currentStep.substeps?.length || !state.substep) {
+      return { status: 'continue', state, unresolved: 0, applied };
+    }
+
+    const ensured = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
+    state = ensured.state;
+
+    const frame = deriveActiveFrame(state);
+    const entry = state.activeEntry ?? ensured.entry;
+    const orderedSubsteps = currentStep.substeps.map((s) => s.id);
+    const resolved = await lifecycleService.listResolvedCompletions(
+      runbookId,
+      frame.frameKey,
+      entry,
+    );
+    const resolvedBySubstep = new Map(
+      resolved
+        .filter(
+          (r): r is typeof r & { completion: { targetSubstep: string } } =>
+            r.completion.targetSubstep !== undefined,
+        )
+        .map(({ completion }) => [completion.targetSubstep, completion]),
+    );
+
+    const unresolved = orderedSubsteps.filter((id) => !resolvedBySubstep.has(id)).length;
+
+    const cursorKey = buildCompletionKey(frame.frameKey, entry, state.substep);
+    const completion = await lifecycleService.consumeResolvedCompletion(runbookId, cursorKey);
+    if (!completion) {
+      return { status: 'continue', state, unresolved, applied };
+    }
+
+    const transitionResult = await applyResultTransition({
+      manager,
+      actorService,
+      sessionService,
+      lifecycleService,
+      emitter,
+      runbookId,
+      steps,
+      currentState: state,
+      currentStep,
+      result: completion.result,
+      transitionPolicy,
+      computeActionResult,
+      agentId,
+      command,
+    });
+    applied += 1;
+
+    if (transitionResult.status === 'done') return { status: 'done', unresolved: 0, applied };
+    if (transitionResult.status === 'stopped') return { status: 'stopped', unresolved: 0, applied };
+    state = transitionResult.state;
+  }
 }
 
 /**
@@ -156,8 +420,8 @@ export function buildStepVariables(
  * @param steps - Array of runbook steps
  * @param cwd - Current working directory for command execution
  * @param prompted - Whether to run in prompted mode (no auto-execution)
+ * @param emitter - Event emitter for execution events
  * @param agentId - Optional agent ID for agent-specific runbook stacks
- * @param emitter - Optional event emitter for execution events
  * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only step reached
  */
 export async function runExecutionLoop(
@@ -166,8 +430,8 @@ export async function runExecutionLoop(
   steps: Step[],
   cwd: string,
   prompted: boolean,
+  emitter: ExecutionEventEmitter,
   agentId?: string,
-  emitter?: ExecutionEventEmitter,
 ): Promise<'done' | 'stopped' | 'waiting'> {
   // Note: state is loaded here and reloaded at end of each loop iteration.
   // Some immutable properties (parentRunbookId, agentId) are accessed from
@@ -176,20 +440,18 @@ export async function runExecutionLoop(
   const state = await manager.load(runbookId);
   if (!state) return 'stopped';
 
-  let currentState: RunbookState = state;
-
   // Service for resolving FOR loop iteration values (array, file, range)
   const actorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   const iterationService = new ForIterationService(manager, actorService);
+  const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
+  let currentState: RunbookState = ensuredInitial.state;
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
-    const currentStepIndex = steps.findIndex((s) => s.name === currentState.step);
-    const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : steps[0];
+    const currentStep = findStepOrThrow(steps, currentState.step);
 
-    const displayStep = currentState.step;
     const totalSteps = countNumberedSteps(steps);
 
     // Determine what to render: substep if we're at one, otherwise the step
@@ -200,8 +462,6 @@ export async function runExecutionLoop(
         itemToRender = substep;
       }
     }
-
-    const displaySubstep = currentState.substep;
 
     // Resolve dynamic values for all data sources (array, file, range).
     // The ForIterationService resolves currentValue before each iteration,
@@ -224,18 +484,15 @@ export async function runExecutionLoop(
           });
         }
 
-        if (emitter) {
-          emitter.emit('RUNBOOK_COMPLETED', {
-            message: completionMessage,
-            finalPosition: {
-              current: iterResult.state.step,
-              total: totalSteps,
-              substep: iterResult.state.substep,
-            },
-          });
-        } else {
-          printRunbookComplete(completionMessage);
-        }
+        emitter.emit('RUNBOOK_COMPLETED', {
+          message: completionMessage,
+          finalPosition: buildStepPosition(
+            iterResult.state.step,
+            totalSteps,
+            iterResult.state.substep,
+            iterResult.state.forStack,
+          ),
+        });
         await sessionService.popRunbook(agentId);
         return 'done';
       }
@@ -254,37 +511,61 @@ export async function runExecutionLoop(
           });
         }
 
-        const stopPos = {
-          current: iterResult.state.step,
-          total: totalSteps,
-          substep: iterResult.state.substep,
-        };
-        if (emitter) {
-          emitter.emit('RUNBOOK_STOPPED', {
-            message: stopMessage,
-            position: stopPos,
-            reason: 'fail_transition',
-          });
-        } else {
-          printRunbookStoppedAtStep(stopPos, stopMessage);
-        }
+        const stopPos = buildStepPosition(
+          iterResult.state.step,
+          totalSteps,
+          iterResult.state.substep,
+          iterResult.state.forStack,
+        );
+        emitter.emit('RUNBOOK_STOPPED', {
+          message: stopMessage,
+          position: stopPos,
+          reason: 'fail_transition',
+        });
 
         await sessionService.popRunbook(agentId);
         return 'stopped';
       }
       // No terminal state — machine transitioned to next step after loop exit
-      currentState = iterResult.state;
+      const ensured = await lifecycleService.ensureActiveEntry(
+        runbookId,
+        currentState,
+        iterResult.state,
+      );
+      currentState = ensured.state;
       continue;
     }
 
     if (iterResult.status === 'ready') {
       // Value resolved — re-enter loop with populated currentValue
-      currentState = iterResult.state;
+      const ensured = await lifecycleService.ensureActiveEntry(
+        runbookId,
+        currentState,
+        iterResult.state,
+      );
+      currentState = ensured.state;
       continue;
     }
 
-    // status === 'no-resolution-needed' — proceed to step execution
-    // State is unchanged; no need to overwrite currentState.
+    // status === 'no-resolution-needed' — drain any pre-resolved completions
+    const drainResult = await drainResolvedCompletions({
+      manager,
+      actorService,
+      sessionService,
+      lifecycleService,
+      emitter,
+      runbookId,
+      steps,
+      currentState,
+      transitionPolicy: EXECUTION_TERMINAL_POLICY,
+      agentId,
+    });
+    if (drainResult.status === 'done') return 'done';
+    if (drainResult.status === 'stopped') return 'stopped';
+    if (drainResult.applied > 0) {
+      currentState = drainResult.state;
+      continue;
+    }
 
     // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration
     const stepVars = buildStepVariables(
@@ -293,44 +574,34 @@ export async function runExecutionLoop(
       currentState.forStack,
       currentStep.forClause,
       currentState.sources,
+      currentState.templateVars,
     );
     const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
     const expandedPrompt = itemToRender.prompt
       ? expandLoopVariables(itemToRender.prompt, stepVars)
       : itemToRender.prompt;
 
-    // Emit STEP_ENTERED event or print step/substep block
-    const stepPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
-    if (emitter) {
-      const isSubstep = 'id' in itemToRender;
-      emitter.emit('STEP_ENTERED', {
-        position: stepPosition,
-        stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as Step).name,
-        description: expandedDescription,
-        prompt: expandedPrompt,
-        hasCommand: !!itemToRender.command,
-        commandCode: itemToRender.command?.code
-          ? expandLoopVariablesForCommand(itemToRender.command.code, stepVars)
-          : itemToRender.command?.code,
-        commandLang: itemToRender.command?.lang,
-        isSubstep,
-        prompted, // CRITICAL: Pass prompted flag for correct command display
-      });
-    } else {
-      const renderItem = {
-        ...itemToRender,
-        description: expandedDescription,
-        prompt: expandedPrompt,
-        command: itemToRender.command
-          ? {
-              ...itemToRender.command,
-              code: expandLoopVariablesForCommand(itemToRender.command.code, stepVars),
-            }
-          : itemToRender.command,
-      };
-      // Temporary fallback only when emitter is not provided.
-      printStepBlock(stepPosition, renderItem, prompted);
-    }
+    // Emit STEP_ENTERED event
+    const stepPosition = buildStepPosition(
+      currentState.step,
+      totalSteps,
+      currentState.substep,
+      currentState.forStack,
+    );
+    const isSubstep = 'id' in itemToRender;
+    emitter.emit('STEP_ENTERED', {
+      position: stepPosition,
+      stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as Step).name,
+      description: expandedDescription,
+      prompt: expandedPrompt,
+      hasCommand: !!itemToRender.command,
+      commandCode: itemToRender.command?.code
+        ? expandLoopVariablesForCommand(itemToRender.command.code, stepVars)
+        : itemToRender.command?.code,
+      commandLang: itemToRender.command?.lang,
+      isSubstep,
+      prompted, // CRITICAL: Pass prompted flag for correct command display
+    });
 
     // If CLI prompted mode, OR no command
     // Use itemToRender which may be a substep with its own command
@@ -347,16 +618,11 @@ export async function runExecutionLoop(
     // Fall back to original command if extractDisplayCommand returns empty (e.g., "rd echo --result pass")
     const extracted = extractDisplayCommand(expandedCommandCode);
     const displayCommand = extracted || expandedCommandCode;
-    if (emitter) {
-      emitter.emit('COMMAND_STARTED', {
-        command: expandedCommandCode,
-        displayCommand,
-        position: { current: displayStep, total: totalSteps, substep: displaySubstep },
-      });
-    } else {
-      // Temporary fallback only when emitter is not provided.
-      printCommandExec(displayCommand);
-    }
+    emitter.emit('COMMAND_STARTED', {
+      command: expandedCommandCode,
+      displayCommand,
+      position: stepPosition,
+    });
     let execResult: ExecutionResult;
 
     if (isInternalRdCommand(expandedCommandCode)) {
@@ -380,328 +646,64 @@ export async function runExecutionLoop(
     }
 
     // Emit COMMAND_COMPLETED event
-    if (emitter) {
-      const cmdPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
-      emitter.emit('COMMAND_COMPLETED', {
-        command: expandedCommandCode,
-        success: execResult.success,
-        exitCode: execResult.exitCode,
-        position: cmdPosition,
-        policyDenied: execResult.policyDenied,
-        denialReason: execResult.denialReason,
-        sandboxed: execResult.sandboxed,
-      });
-    }
+    emitter.emit('COMMAND_COMPLETED', {
+      command: expandedCommandCode,
+      success: execResult.success,
+      exitCode: execResult.exitCode,
+      position: stepPosition,
+      policyDenied: execResult.policyDenied,
+      denialReason: execResult.denialReason,
+      sandboxed: execResult.sandboxed,
+    });
 
     // Handle policy denial
     if (execResult.policyDenied) {
-      const policyPosition = { current: displayStep, total: totalSteps, substep: displaySubstep };
-      if (emitter) {
-        emitter.emit('POLICY_DENIED', {
-          command: expandedCommandCode,
-          reason: execResult.denialReason ?? 'Permission denied',
-          position: policyPosition,
-        });
-        // Emit RUNBOOK_STOPPED so JSON output shows correct terminal state
-        emitter.emit('RUNBOOK_STOPPED', {
-          position: policyPosition,
-          reason: 'policy_denied',
-          message: `Command blocked by policy: ${execResult.denialReason ?? 'Permission denied'}`,
-        });
-      } else {
-        // Temporary fallback only when emitter is not provided.
-        printPolicyDenied(expandedCommandCode, execResult.denialReason ?? 'Permission denied');
-      }
+      const policyPosition = stepPosition;
+      emitter.emit('POLICY_DENIED', {
+        command: expandedCommandCode,
+        reason: execResult.denialReason ?? 'Permission denied',
+        position: policyPosition,
+      });
+      // Emit RUNBOOK_STOPPED so JSON output shows correct terminal state
+      emitter.emit('RUNBOOK_STOPPED', {
+        position: policyPosition,
+        reason: 'policy_denied',
+        message: `Command blocked by policy: ${execResult.denialReason ?? 'Permission denied'}`,
+      });
       return 'stopped';
     }
 
     // Store result
     const lastResult = execResult.success ? 'pass' : 'fail';
     await lifecycleService.setLastResult(runbookId, lastResult);
-
-    // Capture prev state BEFORE mutation
-    const prevStep = currentState.step;
-    const prevSubstep = currentState.substep;
-    const prevRetryCount = currentState.retryCount;
-
-    // Send event to actor
-    const syncResult = await actorService.sendAndSync(runbookId, steps, {
-      type: execResult.success ? 'PASS' : 'FAIL',
+    const transitionResult = await applyResultTransition({
+      manager,
+      actorService,
+      sessionService,
+      lifecycleService,
+      emitter,
+      runbookId,
+      steps,
+      currentState,
+      currentStep,
+      result: lastResult,
+      transitionPolicy: EXECUTION_TERMINAL_POLICY,
+      agentId,
+      command: displayCommand,
     });
-    if (!syncResult) return 'stopped';
-
-    const { state: updatedState, snapshot } = syncResult;
-
-    const terminalSnapshot = asTerminalSnapshotOrDefault(snapshot);
-    const isComplete = isRunbookComplete(terminalSnapshot);
-    const isStopped = isRunbookStopped(terminalSnapshot);
-
-    // Read action from XState context (source of truth for retryMax and lastAction)
-    const retryMax = extractRetryMax(snapshot);
-    const lastActionFromContext = extractLastAction(snapshot);
-    const action = formatActionForDisplay(lastActionFromContext, updatedState.retryCount, retryMax);
-
-    // Update lastAction in state (pass structured object directly — no lossy conversion)
-    await manager.update(runbookId, { lastAction: lastActionFromContext });
-
-    const prevDisplayStep = prevStep;
-    const prevDisplaySubstep = prevSubstep;
-    const newDisplayStep = updatedState.step;
-    const newDisplaySubstep = updatedState.substep;
-
-    // Compute positions for output
-    const prevPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
-    const newPos = { current: newDisplayStep, total: totalSteps, substep: newDisplaySubstep };
-
-    // Emit STEP_TRANSITIONED event or fallback to printing
-    if (emitter) {
-      emitter.emit('STEP_TRANSITIONED', {
-        action,
-        from: prevPos,
-        to: newPos,
-        result: execResult.success,
-        command: displayCommand,
-      });
-    } else {
-      // Temporary fallback only when emitter is not provided.
-      printStepSeparator(newPos);
-      printActionBlock({
-        action,
-        from: prevPos,
-        command: displayCommand,
-        result: execResult.success,
-        at: newPos,
-      });
-    }
-
-    // Handle runbook end states
-    if (isComplete) {
-      // Extract message: prefer machine snapshot (source of truth), fall back to re-evaluation
-      const completionMessage =
-        extractLastMessage(snapshot) ??
-        (lastResult === 'pass'
-          ? evaluatePassCondition(currentStep).message
-          : evaluateFailCondition(currentStep, prevRetryCount).message);
-
-      const currentVars = updatedState.variables;
-      await manager.update(runbookId, {
-        variables: { ...currentVars, completed: true },
-      });
-      if (emitter) {
-        emitter.emit('RUNBOOK_COMPLETED', {
-          message: completionMessage,
-          finalPosition: newPos,
-        });
-      } else {
-        // Temporary fallback only when emitter is not provided.
-        printRunbookComplete(completionMessage);
-      }
-
-      // If this was a child runbook with agent, update parent's agent binding
-
-      if (agentId && currentState.parentRunbookId) {
-        await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
-          status: 'done',
-          result: 'pass',
-        });
-      }
-
-      // Pop current runbook from stack (makes parent active if exists, or clears stack)
-      await sessionService.popRunbook(agentId);
-      return 'done';
-    }
-
-    if (isStopped) {
-      // Extract message: prefer machine snapshot (source of truth), fall back to re-evaluation
-      const stopMessage =
-        extractLastMessage(snapshot) ??
-        (lastResult === 'pass'
-          ? evaluatePassCondition(currentStep).message
-          : evaluateFailCondition(currentStep, prevRetryCount).message);
-
-      const currentVars = updatedState.variables;
-      await manager.update(runbookId, {
-        variables: { ...currentVars, stopped: true },
-      });
-      const stopPos = { current: prevDisplayStep, total: totalSteps, substep: prevDisplaySubstep };
-      if (emitter) {
-        emitter.emit('RUNBOOK_STOPPED', {
-          message: stopMessage,
-          position: stopPos,
-          reason: 'fail_transition',
-        });
-      } else {
-        // Temporary fallback only when emitter is not provided.
-        printRunbookStoppedAtStep(stopPos, stopMessage);
-      }
-
-      // If this was a child runbook with agent, update parent's agent binding
-
-      if (agentId && currentState.parentRunbookId) {
-        await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
-          status: 'done',
-          result: 'fail',
-        });
-      }
-
-      // Pop current runbook from stack
-      await sessionService.popRunbook(agentId);
-      return 'stopped';
-    }
-
-    // Reload state for next iteration
-    const reloaded = await manager.load(runbookId);
-    if (!reloaded) return 'stopped';
-    currentState = reloaded;
+    if (transitionResult.status === 'done') return 'done';
+    if (transitionResult.status === 'stopped') return 'stopped';
+    currentState = transitionResult.state;
   }
 }
 
-/**
- * XState snapshot context with lastAction and retryMax fields.
- * Used for type-safe extraction of action and retry info from persisted snapshots.
- */
-interface SnapshotContext {
-  lastAction?: LastAction;
-  retryMax?: number;
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function isLastAction(value: unknown): value is LastAction {
-  if (!isObjectRecord(value) || typeof value.type !== 'string') return false;
-
-  switch (value.type) {
-    case 'START':
-    case 'CONTINUE':
-    case 'COMPLETE':
-    case 'STOP':
-    case 'RETRY':
-    case 'NEXT':
-    case 'BREAK':
-      return true;
-    case 'GOTO':
-      if (typeof value.target !== 'string') return false;
-      if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
-        return false;
-      }
-      if (
-        'at' in value &&
-        value.at !== undefined &&
-        typeof value.at !== 'number' &&
-        typeof value.at !== 'string'
-      ) {
-        return false;
-      }
-      return true;
-    default:
-      return false;
-  }
-}
-
-/**
- * Extract the lastAction from an XState snapshot in a type-safe way.
- *
- * @param snapshot - The persisted XState snapshot
- * @returns The structured LastAction or undefined
- */
-export function extractLastAction(snapshot: unknown): LastAction | undefined {
-  if (
-    snapshot &&
-    typeof snapshot === 'object' &&
-    'context' in snapshot &&
-    snapshot.context &&
-    typeof snapshot.context === 'object' &&
-    'lastAction' in snapshot.context
-  ) {
-    const action = (snapshot.context as SnapshotContext).lastAction;
-    return isLastAction(action) ? action : undefined;
-  }
-  return undefined;
-}
-
-/**
- * Extract the retryMax from an XState snapshot in a type-safe way.
- *
- * The XState context is the source of truth for retryMax, storing the value
- * when a RETRY action is triggered. This avoids needing to re-derive it from
- * step definitions.
- *
- * @param snapshot - The persisted XState snapshot
- * @returns The retryMax number or 0 if not set
- */
-export function extractRetryMax(snapshot: unknown): number {
-  if (
-    snapshot &&
-    typeof snapshot === 'object' &&
-    'context' in snapshot &&
-    snapshot.context &&
-    typeof snapshot.context === 'object' &&
-    'retryMax' in snapshot.context
-  ) {
-    return (snapshot.context as SnapshotContext).retryMax ?? 0;
-  }
-  return 0;
-}
-
-/**
- * Extract the lastMessage from an XState snapshot.
- *
- * The machine sets `lastMessage` on STOP/COMPLETE transitions.
- * Returns undefined if no message was set.
- *
- * @param snapshot - The persisted XState snapshot (or RunbookState.snapshot)
- * @returns The message string or undefined
- */
-export function extractLastMessage(snapshot: unknown): string | undefined {
-  if (
-    snapshot &&
-    typeof snapshot === 'object' &&
-    'context' in snapshot &&
-    snapshot.context &&
-    typeof snapshot.context === 'object' &&
-    'lastMessage' in snapshot.context
-  ) {
-    const msg = (snapshot.context as Record<string, unknown>).lastMessage;
-    return typeof msg === 'string' ? msg : undefined;
-  }
-  return undefined;
-}
-
-/**
- * Format action for display, adding retry details.
- *
- * Reads the structured LastAction from XState context (source of truth) and formats
- * it for user-friendly display. Appends retry count info for RETRY actions.
- *
- * @param lastAction - The structured LastAction from XState context
- * @param retryCount - Current retry count
- * @param retryMax - Maximum retries allowed
- * @returns Formatted action string for display
- */
-export function formatActionForDisplay(
-  lastAction: LastAction | undefined,
-  retryCount: number,
-  retryMax: number,
-): string {
-  if (!lastAction) return 'CONTINUE';
-
-  switch (lastAction.type) {
-    case 'RETRY':
-      return `RETRY (${String(retryCount)}/${String(retryMax)})`;
-    case 'GOTO': {
-      const gotoTarget = lastAction.substep
-        ? `GOTO ${lastAction.target}.${lastAction.substep}`
-        : `GOTO ${lastAction.target}`;
-      const result =
-        lastAction.at !== undefined ? `${gotoTarget} AT ${String(lastAction.at)}` : gotoTarget;
-      return result;
-    }
-    default:
-      return lastAction.type;
-  }
-}
+export {
+  extractLastAction,
+  extractLastMessage,
+  extractRetryDisplayCount,
+  extractRetryMax,
+  formatActionForDisplay,
+};
 
 /**
  * Check if value is a valid result ('pass' | 'fail').

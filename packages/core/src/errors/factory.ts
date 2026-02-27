@@ -72,6 +72,29 @@ export const Errors = {
   agentNotBound: (agentId?: string): RundownError =>
     new RundownError('AGENT_NOT_BOUND', { agentId }),
 
+  // Delegation
+  delegationStepNotFound: (step: string): RundownError =>
+    new RundownError('DELEGATION_STEP_NOT_FOUND', { step }),
+
+  delegationStepNotCurrent: (step: string, current: string): RundownError =>
+    new RundownError('DELEGATION_STEP_NOT_CURRENT', { step, current }),
+
+  delegationSubstepRequired: (step: string, substeps: string[]): RundownError =>
+    new RundownError('DELEGATION_SUBSTEP_REQUIRED', { step, substeps: substeps.join(', ') }),
+
+  delegationAlreadyExists: (step: string): RundownError =>
+    new RundownError('DELEGATION_ALREADY_EXISTS', { step }),
+
+  delegationRunbookNotFound: (runbook: string): RundownError =>
+    new RundownError('DELEGATION_RUNBOOK_NOT_FOUND', { runbook }),
+
+  delegationSubstepNotFound: (substep: string, step: string, available: string[]): RundownError =>
+    new RundownError('DELEGATION_SUBSTEP_NOT_FOUND', {
+      substep,
+      step,
+      available: available.join(', '),
+    }),
+
   // Generic
   unknown: (message: string, cause?: Error): RundownError =>
     new RundownError('UNKNOWN_ERROR', { message }, cause),

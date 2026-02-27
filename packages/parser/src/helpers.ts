@@ -1,7 +1,12 @@
 import { RunbookSyntaxError, type ParsedConditional, type AggregationModifier } from './types.js';
 import type { Action, Transitions } from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
-import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
+import {
+  parseStepIdFromString,
+  stepIdToString,
+  isReservedWord,
+  NAMED_IDENTIFIER_PATTERN,
+} from './step-id.js';
 import type { ForClause } from './ast.js';
 
 /**
@@ -53,8 +58,8 @@ export function parseQuotedOrIdentifier(text: string): string {
  * - "ErrorHandler.Recover Description (agent)" (named with agent type)
  */
 export interface ParsedSubstepHeader {
-  /** Reference to parent step: "1" or named identifier like "ErrorHandler" */
-  stepRef: string;
+  /** Reference to parent step: "1" or named identifier like "ErrorHandler". Undefined for short form (parent inferred from context). */
+  stepRef?: string;
   /** Substep identifier: numeric string or named identifier */
   id: string;
   /** Human-readable description from the header */
@@ -93,6 +98,11 @@ export interface ParsedStepHeader {
   description: string;
 }
 
+/** Generate a default description for bare numeric step headers (e.g., "## 1" → "Step 1"). */
+function defaultStepDescription(stepNumber: string): string {
+  return `Step ${stepNumber}`;
+}
+
 /**
  * Extract step number/name and description from H2 header text.
  *
@@ -118,9 +128,8 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
     if (number <= 0 || number > MAX_STEP_NUMBER) return null;
 
     const description = stripSeparator(trimmed.slice(numEnd));
-    if (!description) return null;
 
-    return { name: numberStr, description };
+    return { name: numberStr, description: description || defaultStepDescription(numberStr) };
   }
 
   // Check for named step: Name or Name Description
@@ -175,9 +184,54 @@ function isValidSubstepId(s: string): boolean {
 }
 
 /**
+ * Parse description and optional agent type from remainder text after a substep ID.
+ *
+ * Recognizes these patterns:
+ * - "Description" → description only
+ * - "Description (agent-type)" → description + agent
+ * - "(agent-type)" → agent only, empty description
+ *
+ * Uses lastIndexOf to avoid ReDoS from (.+?)\s+ backtracking.
+ *
+ * @param remainder - The text after the substep ID (trimmed)
+ * @returns Object with description and optional agentType
+ */
+function parseDescriptionAndAgent(remainder: string): {
+  description: string;
+  agentType?: string;
+} {
+  if (!remainder) return { description: '' };
+
+  // Check for agent suffix: "description (agent-type)"
+  const lastParenOpen = remainder.lastIndexOf(' (');
+  if (lastParenOpen > 0 && remainder.endsWith(')')) {
+    const possibleAgent = remainder.slice(lastParenOpen + 2, -1).trim();
+    if (possibleAgent) {
+      return {
+        description: remainder.slice(0, lastParenOpen).trim(),
+        agentType: possibleAgent,
+      };
+    }
+    return { description: remainder };
+  }
+
+  if (remainder.startsWith('(') && remainder.endsWith(')')) {
+    // Just agent, no description: "(agent-type)"
+    const agent = remainder.slice(1, -1).trim();
+    if (agent) {
+      return { description: '', agentType: agent };
+    }
+    return { description: remainder };
+  }
+
+  return { description: remainder };
+}
+
+/**
  * Extract substep header from H3 text.
  *
  * Parses substep headers in these formats:
+ * - Short form: "1", "2 Description", "3 Review (agent)" (parent inferred from context)
  * - Numeric: "1.2" or "1.2 Description"
  * - Named: "1.Cleanup", "ErrorHandler.Recover" (with optional description)
  * - With agent: "1.2 Description (agent-type)" or "1.2 (agent-type)"
@@ -190,6 +244,18 @@ function isValidSubstepId(s: string): boolean {
 export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
+
+  // Handle short form: bare positive integer (e.g., "1", "2 Description", "3 Review (agent)")
+  const spaceIdx = trimmed.indexOf(' ');
+  const firstToken = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
+  if (/^\d+$/.test(firstToken)) {
+    const num = parseInt(firstToken, 10);
+    if (num > 0) {
+      const remainder = spaceIdx !== -1 ? trimmed.slice(spaceIdx + 1).trim() : '';
+      const { description, agentType } = parseDescriptionAndAgent(remainder);
+      return { id: firstToken, description, agentType };
+    }
+  }
 
   // Find the dot separating step reference from substep ID
   const dotIndex = trimmed.indexOf('.');
@@ -206,37 +272,13 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
   const substepId = spaceIndex === -1 ? afterDot : afterDot.slice(0, spaceIndex);
   if (!isValidSubstepId(substepId)) return null;
 
-  // Parse optional description and agent from remainder
-  let description: string | undefined;
-  let agentType: string | undefined;
-
-  if (spaceIndex !== -1) {
-    const remainder = afterDot.slice(spaceIndex + 1).trim();
-    if (remainder) {
-      // Check for agent suffix: "description (agent-type)"
-      // Uses lastIndexOf to avoid ReDoS from (.+?)\s+ backtracking
-      const lastParenOpen = remainder.lastIndexOf(' (');
-      if (lastParenOpen > 0 && remainder.endsWith(')')) {
-        const possibleAgent = remainder.slice(lastParenOpen + 2, -1).trim();
-        if (possibleAgent) {
-          description = remainder.slice(0, lastParenOpen).trim() || undefined;
-          agentType = possibleAgent;
-        } else {
-          description = remainder;
-        }
-      } else if (remainder.startsWith('(') && remainder.endsWith(')')) {
-        // Just agent, no description: "(agent-type)"
-        agentType = remainder.slice(1, -1).trim();
-      } else {
-        description = remainder;
-      }
-    }
-  }
+  const remainder = spaceIndex !== -1 ? afterDot.slice(spaceIndex + 1).trim() : '';
+  const { description, agentType } = parseDescriptionAndAgent(remainder);
 
   return {
     stepRef: stepPart,
     id: substepId,
-    description: description ?? '',
+    description,
     agentType,
   };
 }
@@ -664,10 +706,13 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   }
 
   const all = resolveAggregationMode(passModifier, failModifier);
+  const modifierImplicit =
+    passModifier === null && failModifier === null ? (true as const) : undefined;
 
   if (passAction && failAction) {
     return {
       all,
+      ...(modifierImplicit && { modifierImplicit }),
       pass: { kind: passKind, retry: passRetry, action: passAction },
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };
@@ -676,6 +721,7 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   if (passAction && !failAction) {
     return {
       all,
+      ...(modifierImplicit && { modifierImplicit }),
       pass: { kind: passKind, retry: passRetry, action: passAction },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     };
@@ -684,6 +730,7 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   if (!passAction && failAction) {
     return {
       all,
+      ...(modifierImplicit && { modifierImplicit }),
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };
@@ -730,7 +777,9 @@ export function isExecutableCodeBlock(lang: string | null | undefined): boolean 
   const parts = lang.split(/\s+/);
   const tag = parts[0]?.toLowerCase();
   if (!tag) return false;
-  return EXECUTABLE_TAGS.includes(tag);
+  if (!EXECUTABLE_TAGS.includes(tag)) return false;
+  if (parts.length > 1 && parts[1]?.toLowerCase() === 'prompt') return false;
+  return true;
 }
 
 /**
@@ -745,9 +794,13 @@ export function isPromptCodeBlock(lang: string | null | undefined): boolean | nu
   if (!lang) return null;
   const trimmed = lang.trim();
   if (!trimmed) return null;
-  const tag = trimmed.split(/\s+/)[0]?.toLowerCase();
+  const parts = trimmed.split(/\s+/);
+  const tag = parts[0]?.toLowerCase();
   if (tag === 'prompt') return true;
-  if (EXECUTABLE_TAGS.includes(tag)) return false;
+  if (EXECUTABLE_TAGS.includes(tag)) {
+    if (parts.length > 1 && parts[1]?.toLowerCase() === 'prompt') return true;
+    return false;
+  }
   return null;
 }
 
@@ -783,7 +836,7 @@ export function formatAction(action: Action): string {
     case 'STOP':
       return action.message ? `STOP "${action.message}"` : 'STOP';
     case 'GOTO':
-      return `GOTO ${action.target.step}`;
+      return `GOTO ${stepIdToString(action.target)}`;
     case 'NEXT':
       return 'NEXT';
     case 'BREAK':

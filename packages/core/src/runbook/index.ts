@@ -1,6 +1,8 @@
 export type * from './types.js';
 export * from './step-id.js';
 export * from './step-utils.js';
+export * from './targeting.js';
+export * from './transition-kernel.js';
 export { RunbookStateManager, STATE_DIR, type SessionData } from './state.js';
 export { SessionService } from './session-service.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
@@ -32,3 +34,13 @@ export {
 } from './snapshot-utils.js';
 export { RunbookActorService, type ActorSyncResult, type AnyActorRef } from './actor-service.js';
 export type { RunbookEvent } from './compiler.js';
+export {
+  createDelegation,
+  type DelegateOptions,
+  type DelegateResult,
+} from './delegation-service.js';
+export {
+  generateDelegationToken,
+  hashDelegationToken,
+  TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
+} from './delegation-token.js';

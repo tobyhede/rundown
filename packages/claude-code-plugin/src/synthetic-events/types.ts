@@ -1,13 +1,18 @@
 // plugin/core/src/synthetic-events/types.ts
 
+// SubagentStart/SubagentEnd are NOT synthetic: Claude Code provides native
+// SubagentStart/SubagentStop hook events, making synthetic detection unnecessary.
+/** Synthetic event names inferred from tool-use patterns when Claude Code doesn't provide native events. */
 export type SyntheticEventName =
   | 'SkillStart'
   | 'SkillEnd'
   | 'SlashCommandStart'
-  | 'SlashCommandEnd'
-  | 'SubagentStart'
-  | 'SubagentEnd';
+  | 'SlashCommandEnd';
 
+/**
+ * A synthetic event inferred from tool-use patterns when Claude Code
+ * doesn't fire a native lifecycle event.
+ */
 export interface SyntheticEvent {
   /** The Claude Code event that triggered detection */
   originalEvent: string;
@@ -20,27 +25,14 @@ export interface SyntheticEvent {
 
   /** For SlashCommandStart/End - full command with namespace */
   commandName?: string;
-
-  /** For SubagentStart - parsed StepId */
-  stepId?: string;
-
-  /** For SubagentStart - tool_use_id for correlation */
-  toolUseId?: string;
-
-  /** For SubagentStart - agent type from tool_input */
-  subagentType?: string;
 }
 
 /**
- * Check if an event name is synthetic (not fired by Claude Code)
+ * Check if an event name is synthetic (not fired by Claude Code).
+ *
+ * @param eventName - The event name to check
+ * @returns True if the event name is a synthetic event name
  */
 export function isSyntheticEvent(eventName: string): eventName is SyntheticEventName {
-  return [
-    'SkillStart',
-    'SkillEnd',
-    'SlashCommandStart',
-    'SlashCommandEnd',
-    'SubagentStart',
-    'SubagentEnd',
-  ].includes(eventName);
+  return ['SkillStart', 'SkillEnd', 'SlashCommandStart', 'SlashCommandEnd'].includes(eventName);
 }

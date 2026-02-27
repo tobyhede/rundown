@@ -66,8 +66,7 @@ describe('output format integration tests', () => {
       const result = runCli('pass', workspace);
 
       // Should show we're on step 2 via At: field in action block
-      expect(result.stdout).toContain('At:');
-      expect(result.stdout).toContain('2/2');
+      expect(result.stdout).toContain('At:       2');
     });
   });
 
@@ -80,8 +79,7 @@ describe('output format integration tests', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('RETRY');
       // Should show the step being retried via At: field
-      expect(result.stdout).toContain('At:');
-      expect(result.stdout).toContain('1/');
+      expect(result.stdout).toContain('At:       1');
     });
 
     it('prints stopped message for FAIL: STOP', async () => {
@@ -168,7 +166,7 @@ describe('output format integration tests', () => {
     });
 
     it('shows pending steps when present', async () => {
-      runCli('run --step 2', workspace);
+      runCli('run --step 1', workspace);
 
       const result = runCli('status', workspace);
 

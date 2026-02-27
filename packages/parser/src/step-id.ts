@@ -95,7 +95,7 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
     const num = parseInt(atStr, 10);
     if (!Number.isNaN(num) && String(num) === atStr && num > 0) {
       atValue = num;
-    } else if (/^\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}$/.test(atStr)) {
+    } else if (/^\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}$/.test(atStr)) {
       atValue = atStr;
     } else {
       return null; // Invalid AT value

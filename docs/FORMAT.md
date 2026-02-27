@@ -46,10 +46,13 @@ where substeps is:
   substep [ substep ... ]
 
 where substep is:
-  "###" substep_id title
+  "###" substep_id title [ "(" agent_type ")" ]
     [ transition ... ]
     [ prompt ]
     [{ code_block  | runbooks }]
+
+where agent_type is:
+  text    -- agent identifier for delegation (e.g., "code-review-agent")
 
 where substep_id is:
   positive_integer                              -- short form (parent prefix omitted)
@@ -82,6 +85,10 @@ Note: `prompt` alone (without a language) is valid for text-only prompts, e.g., 
 where runbooks is:
   - runbook_path [ ... ]
 
+Step-level `runbooks` syntax is shorthand for implicit sequential substeps (`### N.1`, `### N.2`, ...), one runbook path per generated substep.
+If prompt text appears before a step-level `runbooks` shorthand body, it is attached to the first generated implicit substep only.
+Runtime inference marks these shorthand steps as deferred. Explicit H3 substeps are immediate by default unless a `FOR` clause is present.
+
 where transition is:
   - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result
 
@@ -91,7 +98,12 @@ where result is:
   action | RETRY [ count ] [ action ]
 
 where action is:
-  CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK | RETRY ...
+  CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK
+
+Context constraints:
+- `NEXT` is only valid inside substeps of a FOR step
+- `BREAK` is valid inside substeps of a FOR step and FOR-level nested transitions
+- FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions: `CONTINUE` (advance to next iteration), `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
 
 where message is:
   name | "\"" text "\""
@@ -140,8 +152,8 @@ where frontmatter is:
 Additional fields beyond those listed are preserved in the parsed frontmatter (open schema). This allows forward-compatible extensions and user-defined metadata.
 
 where slug is:
-  [a-z0-9-]+
-  (lowercase alphanumeric with hyphens)
+  [a-zA-Z0-9_-]+
+  (alphanumeric with underscores and hyphens)
 
 where tag_list is:
   "- " tag { "- " tag }
@@ -164,6 +176,7 @@ where scenario is:
     "commands:"
       "- " text { "- " text }
     "result:" ( "COMPLETE" | "STOP" )
+    [ "tags:" tag_list ]
 
 ---
 
@@ -191,9 +204,20 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 
 **Rules:**
 - FOR must appear before transitions in the step's bullet list
-- `NEXT` and `BREAK` actions are only valid within substeps of a FOR step
+- `NEXT` is only valid within substeps of a FOR step
+- `BREAK` is valid within substeps and FOR-level nested transitions
 - `AT` is only valid when the GOTO target is a FOR step (cross-step allowed, but the target must be FOR and have substeps)
+- Step-level runbook lists satisfy the FOR-substep requirement via implicit sequential substeps
 - Parent FOR step transitions aggregate across iterations using ALL/ANY modifiers
+- FOR-level nested transitions execute at iteration scope; RETRY evaluates before the exhausted action
+- Iteration-level `BREAK` includes the current iteration result in parent aggregation; iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation
+- Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid
+
+### Execution Path Notation
+
+Runtime execution paths are often displayed as `STEP.INDEX.SUBSTEP` (for example `1.2.1`). This is display-only notation and not authoring syntax.
+
+Canonical runtime targeting is `step + substep + iteration`.
 
 ---
 
@@ -201,10 +225,16 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 
 | Variable | Value | Available |
 |----------|-------|-----------|
-| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`) | Always |
+| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`; shorthand runbook-list steps execute as `N.1`, `N.2`, ...) | Always |
 | `{{Index}}` | Current loop iteration number (1-based) | Inside FOR steps |
+| `{{step}}` | Lowercase alias for current step identifier | Always |
+| `{{index}}` | Lowercase alias for current loop iteration number | Inside FOR steps |
+| `{{context.current.*}}` | Canonical current runbook context (`step`, `substep`, `index`, `at`) | Always |
+| `{{context.parent.*}}` | Parent runbook context (`step`, `substep`, `index`, `at`, `vars.*`) | Nested runbooks |
+| `{{context.ancestors.N.*}}` | Ancestor runbook contexts (`0` = nearest parent; includes `vars.*`) | Nested runbooks |
+| `{{context.vars.NAME}}` | User/config/frontmatter variables under canonical namespace | Always |
 
-These use PascalCase, consistent with other built-in variables (Date, WorkPath). `{{Step}}` is expanded per-step. The loop variable (if named) and `{{Index}}` are expanded per-iteration. For data source loops, the named variable holds the data element while `{{Index}}` holds the iteration number.
+`{{Step}}`/`{{Index}}` and lowercase aliases are expanded per-step/per-iteration. For data source loops, the named variable holds the data element while `{{Index}}`/`{{index}}` holds the iteration number. Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive) and cannot be overridden by user variables.
 
 ---
 
@@ -214,6 +244,7 @@ These use PascalCase, consistent with other built-in variables (Date, WorkPath).
 |---------------------|-----------|-----------------------------------------|
 | `{{VariableName}}`  | defined   | literal variable value                  |
 | `{{VariableName}}`  | undefined | preserved as literal `{{VariableName}}` |
+| `{{path.to.value}}` | missing path | preserved as literal `{{path.to.value}}` |
 
 
  VariableName: `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
@@ -253,11 +284,12 @@ These use PascalCase, consistent with other built-in variables (Date, WorkPath).
 
 ### Implicit Transitions
 
-| Condition         | Expands To |
-|-------------------|------------|
-| None defined      | `PASS ALL: CONTINUE` + `FAIL ANY: STOP` |
-| Only PASS defined | Adds `FAIL ANY: STOP` |
-| Only FAIL defined | Adds `PASS ALL: CONTINUE` |
+| Condition | Runtime behavior |
+|-----------|------------------|
+| Substep (no transitions) | `PASS: CONTINUE` + `FAIL: STOP` for immediate parents; `PASS: CONTINUE` + `FAIL: CONTINUE` for deferred parents |
+| Parent with substeps, no transitions, deferred (`FOR` or step-level runbook shorthand) | `PASS ALL: CONTINUE` + `FAIL ANY: STOP` |
+| Parent with substeps, no transitions, immediate (explicit H3 substeps without `FOR`) | Non-deferred pass-through (no implicit parent aggregation) |
+| Parent with explicit transitions | Uses declared transitions (plus normal PASS/FAIL completion defaults if one side is omitted) |
 
 **Convention:** Always write both transitions explicitly. The parser supports implicit defaults, but runbooks should be readable without memorizing the default table.
 

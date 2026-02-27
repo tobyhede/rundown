@@ -155,6 +155,25 @@ echo hello
       expect(output.errors[0]).toHaveProperty('message');
     });
 
+    it('counts step-level runbook-list shorthand as one substep', () => {
+      const runbookPath = path.join(workspace.cwd, 'runbook-shorthand.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        `## 1. Review the plan
+- FOR pass IN 1 TO 2
+- FAIL ANY: STOP
+
+- review-technical-accuracy.runbook.md
+`,
+      );
+
+      const result = runCli(`check ${runbookPath} --json`, workspace);
+      const output = JSON.parse(result.stdout);
+
+      expect(output.valid).toBe(true);
+      expect(output.stats).toEqual({ steps: 1, substeps: 1 });
+    });
+
     it('outputs error for non-existent file', () => {
       const result = runCli('check non-existent.md --json', workspace);
       expect(result.exitCode).toBe(1);

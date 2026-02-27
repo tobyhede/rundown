@@ -41,7 +41,7 @@ function getErrorContext(step: Step, substepId?: string): string {
  * Checks for conformance with:
  * - Step pattern rules (numeric vs named steps)
  * - Sequential numbering for numeric steps
- * - Exclusivity rule (step must have exactly one of: body, substeps, or runbook list)
+ * - Exclusivity rule (step may have at most one of: body or substeps)
  * - GOTO target validity and self-loop detection
  * - Schema validation for each step structure
  *
@@ -97,17 +97,16 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
   for (const step of steps) {
     // Conformance Rule 4: Exclusivity (Step level)
-    // A step can optionally have a prompt, plus EXACTLY ONE OF: command, substeps, or runbooks.
+    // A step can optionally have a prompt, plus at most one executable body kind.
     const hasCommand = step.command !== undefined;
     const hasSubsteps = step.substeps !== undefined && step.substeps.length > 0;
-    const hasRunbooks = step.workflows !== undefined && step.workflows.length > 0;
 
-    const contentCount = [hasCommand, hasSubsteps, hasRunbooks].filter(Boolean).length;
+    const contentCount = [hasCommand, hasSubsteps].filter(Boolean).length;
     if (contentCount > 1) {
       diagnostics.push(
         error(
           step.line,
-          `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps, Runbook List}.`,
+          `Step ${step.name}: Violates Exclusivity Rule. A step must have at most one of {Body, Substeps}.`,
         ),
       );
     }
@@ -119,6 +118,47 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         diagnostics.push(
           error(step.line, `FOR step "${step.name}" must have at least one substep`),
         );
+      }
+
+      // FOR iteration-level transitions allow full loop control and terminal routing.
+      if (step.forClause.transitions) {
+        const allowedActions = ['CONTINUE', 'BREAK', 'GOTO', 'STOP', 'COMPLETE'];
+        if (!allowedActions.includes(step.forClause.transitions.pass.action.type)) {
+          diagnostics.push(
+            error(
+              step.line,
+              `FOR-level PASS transition in step "${step.name}" uses ${step.forClause.transitions.pass.action.type}; allowed actions are CONTINUE, BREAK, GOTO, STOP, COMPLETE`,
+            ),
+          );
+        }
+        if (!allowedActions.includes(step.forClause.transitions.fail.action.type)) {
+          diagnostics.push(
+            error(
+              step.line,
+              `FOR-level FAIL transition in step "${step.name}" uses ${step.forClause.transitions.fail.action.type}; allowed actions are CONTINUE, BREAK, GOTO, STOP, COMPLETE`,
+            ),
+          );
+        }
+
+        // Reuse GOTO validation logic for FOR-level transitions.
+        if (step.forClause.transitions.pass.action.type === 'GOTO') {
+          validateAction(
+            step.forClause.transitions.pass.action,
+            undefined,
+            steps,
+            step,
+            diagnostics,
+          );
+        }
+        if (step.forClause.transitions.fail.action.type === 'GOTO') {
+          validateAction(
+            step.forClause.transitions.fail.action,
+            undefined,
+            steps,
+            step,
+            diagnostics,
+          );
+        }
       }
 
       // Parent FOR step must not use NEXT/BREAK in its own transitions
@@ -156,7 +196,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
     if (step.substeps) {
       for (const substep of step.substeps) {
         const sHasCommand = substep.command !== undefined;
-        const sHasRunbooks = substep.workflows !== undefined && substep.workflows.length > 0;
+        const sHasRunbooks = substep.runbooks !== undefined && substep.runbooks.length > 0;
 
         if (sHasCommand && sHasRunbooks) {
           diagnostics.push(

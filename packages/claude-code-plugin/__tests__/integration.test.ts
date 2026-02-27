@@ -90,7 +90,7 @@ describe('Integration Tests', () => {
       const hookInput = {
         hook_event_name: 'PostToolUse',
         tool_name: 'Edit',
-        file_path: 'main.ts',
+        tool_input: { file_path: 'main.ts' },
         cwd: testDir,
       };
 
@@ -109,7 +109,7 @@ describe('Integration Tests', () => {
     test('UserPromptSubmit with /command sets active_command', async () => {
       const input = {
         hook_event_name: 'UserPromptSubmit',
-        user_message: '/execute do something',
+        prompt: '/execute do something',
         cwd: testDir,
       };
       const { code } = await runHookDispatch(cliPath, input);

@@ -402,9 +402,17 @@ describe('expandLoopVariablesForCommand', () => {
     expect(result).toContain(']');
   });
 
-  it('does not resolve numeric index paths on arrays (regex rejects leading digits)', () => {
+  it('resolves numeric index paths on arrays', () => {
     const result = expandLoopVariables('val={{item.0}}', { item: ['a', 'b', 'c'] });
-    expect(result).toBe('val={{item.0}}');
+    expect(result).toBe('val=a');
+  });
+
+  it('prefers exact flattened key over dotted traversal for same placeholder', () => {
+    const variables: Record<string, unknown> = {
+      context: { parent: { index: '2' } },
+      'context.parent.index': '7',
+    };
+    expect(expandLoopVariables('Index={{context.parent.index}}', variables)).toBe('Index=7');
   });
 });
 

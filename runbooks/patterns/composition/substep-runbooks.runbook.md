@@ -17,7 +17,7 @@ tags:
 
 # Substep Runbooks
 
-Demonstrates referencing runbooks within substeps instead of at the step level.
+Demonstrates explicit substep form for runbook references (equivalent to step-level runbook-list shorthand).
 
 ## 1. Verification Suite
 

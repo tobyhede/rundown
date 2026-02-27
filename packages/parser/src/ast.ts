@@ -24,6 +24,8 @@ export interface NumericWindow {
   readonly end: number;
   /** Explicitly absent — discriminant for TypeScript narrowing */
   readonly source?: never;
+  /** Iteration-level transition handlers for FOR loops */
+  readonly transitions?: Transitions;
 }
 
 /**
@@ -40,6 +42,8 @@ export interface SourceWindow {
   readonly end?: number;
   /** Key in the sources map */
   readonly source: string;
+  /** Iteration-level transition handlers for FOR loops */
+  readonly transitions?: Transitions;
 }
 
 /**
@@ -67,7 +71,7 @@ export interface Substep {
   /** Pass/fail transition handlers */
   readonly transitions?: Transitions;
   /** Referenced runbook files (.runbook.md) */
-  readonly workflows?: readonly string[];
+  readonly runbooks?: readonly string[];
   /** Source line number for error reporting */
   readonly line?: number;
 }
@@ -82,6 +86,18 @@ export interface Substep {
 export interface Step {
   /** Step identifier: "1" or "ErrorHandler" (REQUIRED) */
   readonly name: string;
+  /** Parser canonicalization marker for step-level runbook-list shorthand. */
+  readonly substepsDerivedFromRunbookList?: true;
+  /**
+   * Whether substep outcomes are deferred to parent aggregation.
+   *
+   * When `true`, substeps default to CONTINUE on both pass and fail, allowing
+   * outcomes to bubble to the parent state for aggregation (PASS ALL / FAIL ANY).
+   * When `false` or absent, substeps default to STOP on fail (immediate semantics).
+   *
+   * Set by the parser for FOR steps and runbook-list shorthand steps.
+   */
+  readonly deferred?: boolean;
   /** FOR loop clause defining iteration range */
   readonly forClause?: ForClause;
   /** Human-readable description from the step header */
@@ -94,8 +110,6 @@ export interface Step {
   readonly transitions?: Transitions;
   /** Child substeps (H3 headers) */
   readonly substeps?: readonly Substep[];
-  /** Referenced runbook files (.runbook.md) */
-  readonly workflows?: readonly string[];
   /** Source line number for error reporting */
   readonly line?: number;
 }

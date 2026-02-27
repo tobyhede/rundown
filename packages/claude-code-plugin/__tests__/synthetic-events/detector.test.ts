@@ -5,11 +5,11 @@ import type { HookInput } from '../../src/shared/index.js';
 
 describe('detectSyntheticEvents', () => {
   describe('SlashCommandStart (from UserPromptSubmit)', () => {
-    it('detects command with namespace', () => {
+    it('detects command from prompt with namespace', () => {
       const input: HookInput = {
         hook_event_name: 'UserPromptSubmit',
         cwd: '/test',
-        user_message: '/cipherpowers:verify check this',
+        prompt: '/cipherpowers:verify check this',
       };
 
       const events = detectSyntheticEvents(input);
@@ -26,7 +26,7 @@ describe('detectSyntheticEvents', () => {
       const input: HookInput = {
         hook_event_name: 'UserPromptSubmit',
         cwd: '/test',
-        user_message: '/commit fix the bug',
+        prompt: '/commit fix the bug',
       };
 
       const events = detectSyntheticEvents(input);
@@ -91,52 +91,6 @@ describe('detectSyntheticEvents', () => {
     });
   });
 
-  describe('SubagentStart (from PostToolUse Step)', () => {
-    it('detects SubagentStart with StepId', () => {
-      const input = {
-        hook_event_name: 'PostToolUse',
-        cwd: '/test',
-        tool_name: 'Step',
-        tool_input: {
-          description: '1.1 - Review authentication code',
-          subagent_type: 'cipherpowers:code-review-agent',
-        },
-        tool_use_id: 'toolu_abc123',
-      } as HookInput;
-
-      const events = detectSyntheticEvents(input);
-
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          syntheticEvent: 'SubagentStart',
-          stepId: '1.1',
-          toolUseId: 'toolu_abc123',
-          subagentType: 'cipherpowers:code-review-agent',
-        }),
-      );
-    });
-
-    it('detects SubagentStart without StepId', () => {
-      const input: HookInput = {
-        hook_event_name: 'PostToolUse',
-        cwd: '/test',
-        tool_name: 'Step',
-        tool_input: {
-          description: 'General exploration step',
-        },
-      };
-
-      const events = detectSyntheticEvents(input);
-
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          syntheticEvent: 'SubagentStart',
-          stepId: undefined,
-        }),
-      );
-    });
-  });
-
   it('returns empty for non-triggering events', () => {
     const input: HookInput = {
       hook_event_name: 'PostToolUse',
@@ -154,8 +108,6 @@ describe('isSyntheticEvent', () => {
     expect(isSyntheticEvent('SkillEnd')).toBe(true);
     expect(isSyntheticEvent('SlashCommandStart')).toBe(true);
     expect(isSyntheticEvent('SlashCommandEnd')).toBe(true);
-    expect(isSyntheticEvent('SubagentStart')).toBe(true);
-    expect(isSyntheticEvent('SubagentEnd')).toBe(true);
   });
 
   it('returns false for real Claude Code events', () => {
@@ -163,5 +115,6 @@ describe('isSyntheticEvent', () => {
     expect(isSyntheticEvent('PostToolUse')).toBe(false);
     expect(isSyntheticEvent('UserPromptSubmit')).toBe(false);
     expect(isSyntheticEvent('Stop')).toBe(false);
+    expect(isSyntheticEvent('SubagentStart')).toBe(false);
   });
 });

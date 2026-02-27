@@ -3,6 +3,92 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+function extractJsonObjects(stdout: string): unknown[] {
+  const parsed: unknown[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < stdout.length; index += 1) {
+    const char = stdout[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      if (depth === 0) {
+        start = index;
+      }
+      depth += 1;
+      continue;
+    }
+    if (char === '}') {
+      if (depth === 0) continue;
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        const candidate = stdout.slice(start, index + 1);
+        try {
+          parsed.push(JSON.parse(candidate) as unknown);
+        } catch {
+          // Ignore malformed object segments.
+        }
+        start = -1;
+      }
+    }
+  }
+
+  return parsed;
+}
+
+function parseJsonOrJsonl(stdout: string): unknown {
+  const trimmed = stdout.trim();
+  if (!trimmed) return undefined;
+
+  // Fast path: single JSON object/array payload.
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    // Fall through to JSONL parsing.
+  }
+
+  const parsedLines: unknown[] = [];
+  for (const line of trimmed.split('\n')) {
+    const candidate = line.trim();
+    if (!candidate.startsWith('{')) continue; // Skip non-object lines (only objects carry CLI event data)
+    try {
+      parsedLines.push(JSON.parse(candidate) as unknown);
+    } catch {
+      // Ignore malformed/non-JSON lines in mixed output.
+    }
+  }
+
+  const parsedObjects = parsedLines.length > 0 ? parsedLines : extractJsonObjects(trimmed);
+  if (parsedObjects.length === 0) return stdout;
+  if (parsedObjects.length === 1) return parsedObjects[0];
+
+  // Prefer command-style payload when present (pass/fail/goto/complete/etc.).
+  const actionOutput = parsedObjects.find((value) => {
+    if (!value || typeof value !== 'object') return false;
+    const record = value as Record<string, unknown>;
+    return 'action' in record && 'result' in record;
+  });
+
+  return actionOutput ?? parsedObjects;
+}
+
 /**
  * Result from executing a CLI command.
  *
@@ -32,14 +118,9 @@ export async function runCli(args: string[]): Promise<CliResult> {
       timeout: 30000,
     });
 
-    // Check if stdout has content and try to parse it
+    // Check if stdout has content and parse JSON/JSONL output.
     if (stdout.trim()) {
-      try {
-        return { success: true, data: JSON.parse(stdout) };
-      } catch {
-        // If parsing fails, return the raw stdout as data
-        return { success: true, data: stdout };
-      }
+      return { success: true, data: parseJsonOrJsonl(stdout) };
     }
 
     // Empty stdout is still success
@@ -51,21 +132,19 @@ export async function runCli(args: string[]): Promise<CliResult> {
 
       // Try stdout first (some commands write JSON errors to stdout)
       if (execError.stdout) {
-        try {
-          const data = JSON.parse(execError.stdout) as { error?: string };
-          return { success: false, error: data.error ?? 'Command failed', data };
-        } catch {
-          /* not JSON */
+        const data = parseJsonOrJsonl(execError.stdout);
+        if (data && typeof data === 'object') {
+          const parsedError = (data as { error?: string }).error;
+          return { success: false, error: parsedError ?? 'Command failed', data };
         }
       }
 
       // Try stderr (withErrorHandling writes JSON errors here)
       if (execError.stderr) {
-        try {
-          const data = JSON.parse(execError.stderr) as { error?: string };
-          return { success: false, error: data.error ?? 'Command failed', data };
-        } catch {
-          /* not JSON */
+        const data = parseJsonOrJsonl(execError.stderr);
+        if (data && typeof data === 'object') {
+          const parsedError = (data as { error?: string }).error;
+          return { success: false, error: parsedError ?? 'Command failed', data };
         }
       }
 

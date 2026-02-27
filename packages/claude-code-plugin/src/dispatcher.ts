@@ -27,18 +27,22 @@ import { isSyntheticEvent } from './synthetic-events/types.js';
 export function shouldProcessHook(input: HookInput, hookConfig: HookConfig): boolean {
   const hookEvent = input.hook_event_name;
 
-  // PostToolUse filtering
-  if (hookEvent === 'PostToolUse') {
+  // Tool-hook filtering
+  if (
+    hookEvent === 'PreToolUse' ||
+    hookEvent === 'PostToolUse' ||
+    hookEvent === 'PostToolUseFailure'
+  ) {
     if (hookConfig.enabled_tools && hookConfig.enabled_tools.length > 0) {
       return hookConfig.enabled_tools.includes(input.tool_name ?? '');
     }
   }
 
-  // SubagentStop filtering
-  if (hookEvent === 'SubagentStop') {
+  // SubagentStart/SubagentStop filtering
+  if (hookEvent === 'SubagentStart' || hookEvent === 'SubagentStop') {
     if (hookConfig.enabled_agents && hookConfig.enabled_agents.length > 0) {
-      const agentName = input.agent_name ?? input.subagent_name ?? '';
-      return hookConfig.enabled_agents.includes(agentName);
+      const agentType = input.agent_type ?? '';
+      return hookConfig.enabled_agents.includes(agentType);
     }
   }
 
@@ -96,14 +100,14 @@ export function gateMatchesKeywords(
 }
 
 /**
- * Check if gate should run based on file pattern matching (PostToolUse only).
+ * Check if gate should run based on file pattern matching (tool hooks).
  * Gates without patterns always run (backwards compatible).
  *
  * Uses glob patterns matched against relative paths from project root.
  * Multiple patterns use OR logic - gate runs if file matches ANY pattern.
  *
  * @param gateConfig - Gate configuration
- * @param filePath - Absolute path to file being modified (from HookInput.file_path)
+ * @param filePath - Absolute path to file being modified
  * @param cwd - Current working directory (project root)
  * @returns true if gate should run, false otherwise
  */
@@ -202,26 +206,18 @@ async function updateSessionState(input: HookInput): Promise<void> {
         break;
 
       case 'SubagentStart':
-        // Store tool_use_id → stepId mapping for correlation
-        if (input.tool_use_id && input.step_id) {
-          const metadata = await session.get('metadata');
-          const mapping = (metadata.toolUseIdToStepId ?? {}) as Record<string, string>;
-          await session.set('metadata', {
-            ...metadata,
-            toolUseIdToStepId: {
-              ...mapping,
-              [input.tool_use_id]: input.step_id,
-            },
-          });
-        }
         break;
 
       case 'PostToolUse':
-        if (input.file_path) {
-          await session.append('edited_files', input.file_path);
+        {
+          const filePath = input.tool_input?.file_path;
+          if (!filePath) {
+            break;
+          }
+          await session.append('edited_files', filePath);
 
           // Extract file extension using basename to handle paths with dots
-          const baseName = path.basename(input.file_path);
+          const baseName = path.basename(filePath);
           const ext = baseName.split('.').pop();
           if (ext && ext !== baseName) {
             await session.append('file_extensions', ext);
@@ -260,8 +256,8 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
 
   await logger.event('debug', hookEvent, {
     tool: input.tool_name,
-    agent: input.agent_name ?? input.subagent_name,
-    file: input.file_path,
+    agent: input.agent_type,
+    file: input.tool_input?.file_path,
     cwd,
   });
 
@@ -319,9 +315,6 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
           ? { command: slashCommandEndCommand }
           : synthetic.commandName && { command: synthetic.commandName }),
         ...(synthetic.skillName && { skill: synthetic.skillName }),
-        ...(synthetic.stepId && { step_id: synthetic.stepId }),
-        ...(synthetic.toolUseId && { tool_use_id: synthetic.toolUseId }),
-        ...(synthetic.subagentType && { subagent_type: synthetic.subagentType }),
       };
 
       // Recursive dispatch for synthetic event (full pipeline)
@@ -366,7 +359,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
     await logger.debug('Hook filtered out by enabled list', {
       event: hookEvent,
       tool: input.tool_name,
-      agent: input.agent_name,
+      agent: input.agent_type,
     });
     // Still return context injection result
     return accumulatedContext ? { context: accumulatedContext } : {};
@@ -393,15 +386,17 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
     }
 
     // Keyword filtering for UserPromptSubmit
-    if (hookEvent === 'UserPromptSubmit' && !gateMatchesKeywords(gateConfig, input.user_message)) {
+    if (hookEvent === 'UserPromptSubmit' && !gateMatchesKeywords(gateConfig, input.prompt)) {
       await logger.debug('Gate skipped - no keyword match', { gate: gateName });
       continue;
     }
 
-    // File pattern filtering for PostToolUse
+    // File pattern filtering for tool hooks
     if (
-      hookEvent === 'PostToolUse' &&
-      !(await gateMatchesFilePattern(gateConfig, input.file_path, input.cwd))
+      (hookEvent === 'PreToolUse' ||
+        hookEvent === 'PostToolUse' ||
+        hookEvent === 'PostToolUseFailure') &&
+      !(await gateMatchesFilePattern(gateConfig, input.tool_input?.file_path, input.cwd))
     ) {
       await logger.debug('Gate skipped - no file pattern match', { gate: gateName });
       continue;

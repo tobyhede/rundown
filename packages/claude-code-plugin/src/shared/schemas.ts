@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Zod schema for tool_input in Step tool calls
+ * Zod schema for tool_input in tool hook events
  */
 const ToolInputSchema = z
   .object({
@@ -9,42 +9,46 @@ const ToolInputSchema = z
     subagent_type: z.string().optional(),
     prompt: z.string().optional(),
     skill: z.string().optional(),
+    file_path: z.string().optional(),
   })
+  .passthrough()
   .optional();
 
 /**
  * Zod schema for HookInput - validates external input at system boundary
  */
-export const HookInputSchema = z.object({
-  hook_event_name: z.string(),
-  cwd: z.string(),
+export const HookInputSchema = z
+  .object({
+    // Common fields (Claude Code hook contract)
+    hook_event_name: z.string(),
+    cwd: z.string(),
+    session_id: z.string().optional(),
+    transcript_path: z.string().optional(),
+    permission_mode: z.string().optional(),
 
-  // PostToolUse
-  tool_name: z.string().optional(),
-  file_path: z.string().optional(),
-  tool_input: ToolInputSchema,
+    // Tool hooks
+    tool_name: z.string().optional(),
+    tool_input: ToolInputSchema,
+    tool_output: z.unknown().optional(),
+    tool_response: z.unknown().optional(),
+    tool_use_id: z.string().optional(),
+    error: z.string().optional(),
 
-  // SubagentStart/SubagentStop
-  agent_id: z.string().optional(),
-  agent_name: z.string().optional(),
-  subagent_name: z.string().optional(),
-  output: z.string().optional(),
-  agent_transcript_path: z.string().optional(),
+    // SubagentStart/SubagentStop
+    agent_id: z.string().optional(),
+    agent_type: z.string().optional(),
+    last_assistant_message: z.string().optional(),
+    agent_transcript_path: z.string().optional(),
+    stop_hook_active: z.boolean().optional(),
 
-  // UserPromptSubmit
-  user_message: z.string().optional(),
+    // UserPromptSubmit
+    prompt: z.string().optional(),
 
-  // SlashCommand/Skill
-  command: z.string().optional(),
-  skill: z.string().optional(),
-
-  // Synthetic event fields
-  tool_use_id: z.string().optional(),
-  tool_response: z.unknown().optional(),
-  step_id: z.string().optional(),
-  task_id: z.string().optional(),
-  subagent_type: z.string().optional(),
-});
+    // SlashCommand/Skill
+    command: z.string().optional(),
+    skill: z.string().optional(),
+  })
+  .strict();
 
 export type HookInput = z.infer<typeof HookInputSchema>;
 

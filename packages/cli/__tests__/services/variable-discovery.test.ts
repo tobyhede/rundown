@@ -649,6 +649,20 @@ describe('resolveVariables', () => {
     });
   });
 
+  describe('reserved runtime keys', () => {
+    it('rejects reserved keys case-insensitively', async () => {
+      const result = await resolveVariables(
+        { var: ['Step=shadow', 'INDEX=9', 'ConText=shadow', 'env=staging'] },
+        tmpDir,
+      );
+
+      expect(result.vars.Step).toBeUndefined();
+      expect(result.vars.INDEX).toBeUndefined();
+      expect(result.vars.ConText).toBeUndefined();
+      expect(result.vars.env).toBe('staging');
+    });
+  });
+
   describe('file: prefix routing', () => {
     it('routes --var file: to sources as file DataSource', async () => {
       const file = path.join(tmpDir, 'servers.txt');

@@ -1,0 +1,204 @@
+import { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
+import type { LastAction, Step } from './types.js';
+
+/**
+ * Action type derived from structured LastAction.
+ */
+export type ActionType = 'GOTO' | 'RETRY' | 'CONTINUE' | 'COMPLETE' | 'STOP' | 'NEXT' | 'BREAK';
+
+interface SnapshotContext {
+  lastAction?: LastAction;
+  retryMax?: number;
+  iterationRetryCount?: number;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+/**
+ * Narrow an XState snapshot to its context object.
+ *
+ * @param snapshot - Raw XState snapshot object to inspect
+ * @returns The snapshot context if valid, otherwise undefined
+ */
+function narrowSnapshotContext(snapshot: unknown): SnapshotContext | undefined {
+  if (
+    snapshot &&
+    typeof snapshot === 'object' &&
+    'context' in snapshot &&
+    snapshot.context &&
+    typeof snapshot.context === 'object'
+  ) {
+    return snapshot.context as SnapshotContext;
+  }
+  return undefined;
+}
+
+function isLastAction(value: unknown): value is LastAction {
+  if (!isObjectRecord(value) || typeof value.type !== 'string') return false;
+
+  switch (value.type) {
+    case 'START':
+    case 'CONTINUE':
+    case 'COMPLETE':
+    case 'STOP':
+    case 'RETRY':
+    case 'NEXT':
+    case 'BREAK':
+      return true;
+    case 'GOTO':
+      if (typeof value.target !== 'string') return false;
+      if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
+        return false;
+      }
+      if ('at' in value && value.at !== undefined) {
+        if (typeof value.at === 'number') {
+          // numeric iteration index - ok
+        } else if (typeof value.at === 'string') {
+          if (!/^\{\{[^}]+\}\}$/.test(value.at)) return false;
+        } else {
+          return false;
+        }
+      }
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Extract the lastAction from an XState snapshot in a type-safe way.
+ *
+ * @param snapshot - Raw XState snapshot object to inspect
+ * @returns The validated LastAction if present in the snapshot context, otherwise undefined
+ */
+export function extractLastAction(snapshot: unknown): LastAction | undefined {
+  const ctx = narrowSnapshotContext(snapshot);
+  if (ctx && 'lastAction' in ctx) {
+    return isLastAction(ctx.lastAction) ? ctx.lastAction : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Extract the retryMax from an XState snapshot in a type-safe way.
+ *
+ * @param snapshot - Raw XState snapshot object to inspect
+ * @returns The retry limit from the snapshot context, or 0 if not present
+ */
+export function extractRetryMax(snapshot: unknown): number {
+  const ctx = narrowSnapshotContext(snapshot);
+  if (ctx && 'retryMax' in ctx) {
+    const raw = Number(ctx.retryMax);
+    return Number.isFinite(raw) ? raw : 0;
+  }
+  return 0;
+}
+
+/**
+ * Extract retry counter for RETRY action display.
+ *
+ * Iteration-level retry counts take precedence when present.
+ *
+ * @param snapshot - Raw XState snapshot object to inspect
+ * @param retryCount - Fallback retry count from persisted state
+ * @returns The iteration-level retry count if positive, otherwise the fallback retryCount
+ */
+export function extractRetryDisplayCount(snapshot: unknown, retryCount: number): number {
+  const ctx = narrowSnapshotContext(snapshot);
+  if (ctx && 'iterationRetryCount' in ctx) {
+    const raw = Number(ctx.iterationRetryCount);
+    const iterationRetryCount = Number.isFinite(raw) ? raw : 0;
+    if (iterationRetryCount > 0) return iterationRetryCount;
+  }
+  return retryCount;
+}
+
+/**
+ * Extract the lastMessage from an XState snapshot.
+ *
+ * @param snapshot - Raw XState snapshot object to inspect
+ * @returns The last message string if present, otherwise undefined
+ */
+export function extractLastMessage(snapshot: unknown): string | undefined {
+  const ctx = narrowSnapshotContext(snapshot);
+  if (ctx && 'lastMessage' in ctx) {
+    const msg = (ctx as Record<string, unknown>).lastMessage;
+    return typeof msg === 'string' ? msg : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Format action for display, adding retry details.
+ *
+ * @param lastAction - The structured action to format, or undefined for default CONTINUE
+ * @param retryCount - Current retry attempt number
+ * @param retryMax - Maximum retry attempts allowed
+ * @returns Human-readable action string (e.g. "RETRY (2/3)", "GOTO 5.1")
+ */
+export function formatActionForDisplay(
+  lastAction: LastAction | undefined,
+  retryCount: number,
+  retryMax: number,
+): string {
+  if (!lastAction) return 'CONTINUE';
+
+  switch (lastAction.type) {
+    case 'RETRY':
+      return `RETRY (${String(retryCount)}/${String(retryMax)})`;
+    case 'GOTO': {
+      const gotoTarget = lastAction.substep
+        ? `GOTO ${lastAction.target}.${lastAction.substep}`
+        : `GOTO ${lastAction.target}`;
+      return lastAction.at !== undefined ? `${gotoTarget} AT ${String(lastAction.at)}` : gotoTarget;
+    }
+    default:
+      return lastAction.type;
+  }
+}
+
+/**
+ * Derive action type from structured LastAction.
+ *
+ * @param lastAction - The structured action to classify, or undefined for default CONTINUE
+ * @returns The canonical ActionType category for the given action
+ */
+export function parseActionType(lastAction: LastAction | undefined): ActionType {
+  if (!lastAction) return 'CONTINUE';
+  switch (lastAction.type) {
+    case 'GOTO':
+      return 'GOTO';
+    case 'RETRY':
+      return 'RETRY';
+    case 'COMPLETE':
+      return 'COMPLETE';
+    case 'STOP':
+      return 'STOP';
+    case 'NEXT':
+      return 'NEXT';
+    case 'BREAK':
+      return 'BREAK';
+    default:
+      return 'CONTINUE';
+  }
+}
+
+/**
+ * Resolve fallback transition message from step transitions when snapshot has no message.
+ *
+ * @param result - Whether the step passed or failed
+ * @param step - The step whose transitions to evaluate for a message
+ * @param retryCount - Current retry count, used to evaluate retry-gated transitions
+ * @returns The transition message if the matching condition provides one, otherwise undefined
+ */
+export function deriveTransitionMessage(
+  result: 'pass' | 'fail',
+  step: Step,
+  retryCount: number,
+): string | undefined {
+  return result === 'pass'
+    ? evaluatePassCondition(step, retryCount).message
+    : evaluateFailCondition(step, retryCount).message;
+}

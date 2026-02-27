@@ -4,6 +4,8 @@ import type { Command } from 'commander';
 import { parseRunbookDocument, validateRunbook, type Step } from '@rundown-org/parser';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
+import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
+import { validateFrontmatterVars } from '../helpers/validate-frontmatter-vars.js';
 
 function countSubsteps(steps: readonly Step[]): number {
   return steps.reduce((count, step) => {
@@ -45,7 +47,12 @@ export function registerCheckCommand(program: Command): void {
         const runbook = parseRunbookDocument(content, path.basename(resolvedPath), {
           skipValidation: true,
         });
-        const diagnostics = validateRunbook(runbook.steps);
+        const structuralDiagnostics = validateRunbook(runbook.steps);
+        const { frontmatter } = extractRawFrontmatter(content);
+        const varDiagnostics = validateFrontmatterVars(
+          frontmatter?.vars as Record<string, unknown> | undefined,
+        );
+        const diagnostics = [...structuralDiagnostics, ...varDiagnostics];
         const errors = diagnostics.filter((d) => d.severity === 'error');
         const warnings = diagnostics.filter((d) => d.severity === 'warning');
 

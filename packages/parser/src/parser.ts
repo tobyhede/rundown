@@ -1,7 +1,7 @@
 import { fromMarkdown } from 'mdast-util-from-markdown';
-import { visit } from 'unist-util-visit';
+import { visit, SKIP } from 'unist-util-visit';
 import type { Node } from 'unist';
-import type { Code, Heading, ListItem, Paragraph, PhrasingContent } from 'mdast';
+import type { Code, Heading, List, ListItem, Paragraph, PhrasingContent } from 'mdast';
 import type { Step, Substep, Runbook, Command, ForClause } from './ast.js';
 import { type ParsedConditional, RunbookSyntaxError } from './types.js';
 import {
@@ -78,6 +78,7 @@ interface StepBuilder {
   line?: number;
   forClause?: ForClause;
   hasSeenForClause: boolean;
+  forConditionals?: ParsedConditional[];
 }
 
 /**
@@ -170,7 +171,7 @@ export function parseRunbookDocument(
         command: ps.command,
         prompt: promptText.trim() || undefined,
         transitions: transitions ?? undefined,
-        workflows: runbooks.length > 0 ? runbooks : undefined,
+        runbooks: runbooks.length > 0 ? runbooks : undefined,
         line: ps.line,
       };
       currentStep.substeps.push(substep);
@@ -239,7 +240,7 @@ export function parseRunbookDocument(
       const parsed = extractSubstepHeader(headingText);
 
       if (parsed) {
-        if (parsed.stepRef !== currentStep.name) {
+        if (parsed.stepRef !== undefined && parsed.stepRef !== currentStep.name) {
           throw new RunbookSyntaxError(
             `Substep ${headingText} does not belong to step ${currentStep.name}`,
           );
@@ -270,16 +271,23 @@ export function parseRunbookDocument(
     if (node.type === 'code' && currentStep) {
       const codeNode = node as Code;
 
+      // mdast splits the code fence info string on the first space:
+      //   ```bash prompt  →  lang: "bash", meta: "prompt"
+      // Reconstruct the full string so isExecutableCodeBlock/isPromptCodeBlock
+      // can check multi-word patterns like "bash prompt".
+      const fullLang =
+        codeNode.lang && codeNode.meta ? `${codeNode.lang} ${codeNode.meta}` : codeNode.lang;
+
       // Determine command based on code block type
       let cmd: Command | undefined;
 
-      if (isExecutableCodeBlock(codeNode.lang)) {
+      if (isExecutableCodeBlock(fullLang)) {
         // bash/sh/shell → direct command
         cmd = {
           code: codeNode.value.trim(),
           lang: codeNode.lang?.split(/\s+/)[0],
         };
-      } else if (isPromptCodeBlock(codeNode.lang)) {
+      } else if (isPromptCodeBlock(fullLang)) {
         // prompt → rd prompt command (outputs with fences)
         const escaped = escapeForShellSingleQuote(codeNode.value.trim());
         cmd = {
@@ -391,7 +399,34 @@ export function parseRunbookDocument(
           }
           currentStep.forClause = forClause;
           currentStep.hasSeenForClause = true;
-          return; // Don't process this list item further
+
+          // Check for nested list (FOR-level transitions)
+          const nestedList = listItemNode.children.find((c): c is List => c.type === 'list');
+          if (nestedList) {
+            const forConditionals: ParsedConditional[] = [];
+            for (const nestedItem of nestedList.children) {
+              const nestedParagraph = nestedItem.children.find((c) => c.type === 'paragraph');
+              if (!nestedParagraph) {
+                throw new RunbookSyntaxError(
+                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL) are allowed`,
+                );
+              }
+              const nestedText = extractText(
+                nestedParagraph as PhrasingContent | Heading | Paragraph | ListItem,
+              );
+              const cond = parseConditional(nestedText);
+              if (!cond) {
+                throw new RunbookSyntaxError(
+                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL) are allowed`,
+                );
+              }
+              forConditionals.push(cond);
+            }
+            if (forConditionals.length > 0) {
+              currentStep.forConditionals = forConditionals;
+            }
+          }
+          return SKIP; // Don't process this list item further
         }
 
         // If FOR text appears in a substep context, that's an error
@@ -522,17 +557,56 @@ function finalizeStep(
   validateNEXTUsage(pendingConditionals, step.forClause !== undefined);
 
   const transitions = convertToTransitions(pendingConditionals);
+
+  if (step.forClause && step.forConditionals?.length) {
+    const forTrans = convertToTransitions(step.forConditionals);
+    if (forTrans) {
+      step.forClause = { ...step.forClause, transitions: forTrans };
+    }
+  }
+
   const runbooks = extractRunbookList(step.content);
+  const prompt = promptText.trim() || undefined;
+
+  // Step-level runbook lists are syntax sugar for implicit substeps.
+  if (runbooks.length > 0) {
+    if (step.command || step.substeps.length > 0) {
+      throw new RunbookSyntaxError(
+        `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
+      );
+    }
+    // Canonicalize each step-level runbook bullet into its own synthetic substep.
+    // To avoid repeating step-level prompt text for every synthetic substep, attach it
+    // only to the first generated substep.
+    const syntheticSubsteps: Substep[] = runbooks.map((runbookPath, index) => ({
+      id: String(index + 1),
+      description: '',
+      prompt: index === 0 ? prompt : undefined,
+      runbooks: [runbookPath],
+      line: step.line,
+    }));
+
+    return {
+      name: step.name,
+      substepsDerivedFromRunbookList: true,
+      deferred: true,
+      forClause: step.forClause,
+      description: step.description,
+      transitions: transitions ?? undefined,
+      substeps: syntheticSubsteps,
+      line: step.line,
+    };
+  }
 
   return {
     name: step.name,
+    deferred: step.forClause ? true : undefined,
     forClause: step.forClause,
     description: step.description,
     command: step.command,
-    prompt: promptText.trim() || undefined,
+    prompt,
     transitions: transitions ?? undefined,
     substeps: step.substeps.length > 0 ? step.substeps : undefined,
-    workflows: runbooks.length > 0 ? runbooks : undefined,
     line: step.line,
   };
 }

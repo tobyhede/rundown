@@ -229,7 +229,60 @@ Steps can iterate their substeps over a numeric range using a FOR annotation. FO
 - FAIL: BREAK
 ````
 
-See [SPEC.md FOR Steps](./SPEC.md#for-steps) for the full grammar and all clause variants.
+Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `.2`, ...), so FOR execution is equivalent across these forms:
+
+````markdown
+## 2. Review the plan
+- FOR pass IN 1 TO 2
+- FAIL ANY: GOTO Synthesize
+
+- review-technical-accuracy.runbook.md
+- review-structural-integrity.runbook.md
+````
+
+````markdown
+## 2. Review the plan
+- FOR pass IN 1 TO 2
+- FAIL ANY: GOTO Synthesize
+
+### 2.1
+- review-technical-accuracy.runbook.md
+### 2.2
+- review-structural-integrity.runbook.md
+````
+
+**Deferred defaults (no new keyword):**
+
+Rundown infers `deferred` internally for:
+- `FOR` steps
+- Step-level runbook-list shorthand
+
+Immediate by default:
+- Explicit H3 substeps without `FOR`
+
+When parent transitions are omitted:
+- Deferred parent: default aggregation is `PASS ALL: CONTINUE` and `FAIL ANY: STOP`
+- Immediate parent: keeps non-deferred pass-through semantics
+
+Example shorthand (deferred):
+
+````markdown
+## 1. Review
+- review-pass.runbook.md
+- review-fail.runbook.md
+````
+
+Example explicit substeps (immediate):
+
+````markdown
+## 1. Review
+### 1.1
+- review-pass.runbook.md
+### 1.2
+- review-fail.runbook.md
+````
+
+See [SPEC.md Iteration (FOR)](./SPEC.md#5-iteration-for) for the full grammar and all clause variants.
 
 **FOR clause variants:**
 
@@ -244,8 +297,9 @@ See [SPEC.md FOR Steps](./SPEC.md#for-steps) for the full grammar and all clause
 
 **Loop variable expansion:**
 
-The named loop variable and `{{Index}}` are expanded per-iteration:
-- `{{Index}}` - Current iteration number (1-based), available inside all FOR substeps
+The named loop variable plus runtime step/index aliases are expanded per-iteration:
+- `{{Index}}` / `{{index}}` - Current iteration number (1-based), available inside all FOR substeps
+- `{{Step}}` / `{{step}}` - Qualified current runbook-context execution location (for shorthand runbook-list steps this is `N.1`, `N.2`, ...)
 - `{{var}}` - Named loop variable. For numeric ranges, equals the iteration index. For data sources (array/file), holds the current data element.
 
 These are expanded per-iteration, unlike template variables which are expanded once at `rd run` time.
@@ -261,7 +315,18 @@ Substep transitions control within-iteration flow:
 | `BREAK` | Exit the FOR loop; parent step transitions evaluate |
 | `STOP` | Halt runbook execution immediately |
 
-Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results across all iterations after the loop completes.
+FOR-level nested transitions (nested bullets directly under `- FOR ...`) run at **iteration scope**:
+
+| Action | Effect |
+|--------|--------|
+| `CONTINUE` | Keep iterating |
+| `BREAK` | Exit loop; include current iteration result in parent aggregation |
+| `GOTO` | Jump immediately; bypass parent FOR aggregation |
+| `STOP` | Stop immediately; bypass parent FOR aggregation |
+| `COMPLETE` | Complete immediately; bypass parent FOR aggregation |
+| `RETRY N X` | Retry current iteration first, then execute exhausted action `X` |
+
+Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results across all iterations after normal loop completion or iteration-level `BREAK`.
 
 **GOTO AT interaction:**
 
@@ -275,7 +340,11 @@ In runbook transitions, `GOTO N AT I` enters step N at iteration I. See [GOTO fo
 
 **Status display during loops:**
 
-When a FOR loop is active, `rundown status` reflects the current iteration via the `forStack` field in the state file. The step display shows the active step and substep within the loop.
+When a FOR loop is active, output includes explicit loop scope and expanded location:
+- `For: index/end` (or `index/?` for open-ended data sources)
+- `At: STEP.INDEX.SUBSTEP` (display path)
+
+The display path is not an authoring identifier. Canonical runtime identity is `step + substep + iteration`.
 
 #### Data Sources
 
@@ -382,8 +451,28 @@ Each runbook state file contains:
     "log_file": { "kind": "file", "path": "data/results.jsonl", "format": "jsonl" }
   },
   "steps": [],
-  "pendingSteps": [],
-  "agentBindings": {},
+  "pendingSteps": [
+    {
+      "stepId": { "step": "2", "substep": "1" },
+      "runbook": "child.runbook.md",
+      "targetStep": "2",
+      "targetSubstep": "1",
+      "targetIteration": 2
+    }
+  ],
+  "agentBindings": {
+    "agent-123": {
+      "stepId": { "step": "2", "substep": "1" },
+      "status": "running",
+      "targetStep": "2",
+      "targetSubstep": "1",
+      "targetIteration": 2
+    }
+  },
+  "resolvedCompletions": {},
+  "frameEntries": { "2|2": 1 },
+  "activeFrameKey": "2|2",
+  "activeEntry": 1,
   "substepStates": [],
   "forStack": [
     {
@@ -414,12 +503,17 @@ Key fields:
 - `lastAction`: Most recent transition as a structured object (e.g., `{"type": "CONTINUE"}`, `{"type": "GOTO", "target": "3", "at": 2}`)
 - `lastResult`: Last PASS/FAIL signal (`pass` or `fail`)
 - `runbookPath`: Repo-relative resolved file path to the runbook source
-- `runbookSrc`: Runbook source content with template variables expanded (frozen at run time)
+- `runbookSrc`: Raw runbook source content (template placeholders preserved)
+- `templateVars`: Frozen template variable map used for deterministic resume rendering
 - `sources`: Data source definitions for FOR loops (arrays and file references)
 - `forStack`: Active FOR loop stack (present during loop execution; see [FOR Loops](#for-loops))
 - `forStack[].source`: Resolved source for the active loop (range, array, or file with snapshot)
 - `forStack[].currentValue`: Data element at the current iteration (array/file sources)
 - `iterationResults`: Array of per-iteration outcomes (`"pass"` or `"fail"`) for the current loop
+- `pendingSteps[].target*`: Canonical dispatch target identity (`step + substep + iteration`)
+- `agentBindings[].target*`: Bound agent target identity (same model as pending steps, plus frame + entry where stamped)
+- `resolvedCompletions`: Completion records keyed by `frame + entry + substep`
+- `frameEntries` / `activeFrameKey` / `activeEntry`: Re-entry-safe frame identity used to reject stale completions
 - `snapshot`: XState persisted snapshot for state restoration
 
 ---
@@ -488,19 +582,33 @@ rundown run deploy.runbook.md --var-file base.yaml --var environment=prod
 Variable names must match the pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`:
 - Must start with a letter or underscore
 - Can contain letters, digits, and underscores
+- Runtime-reserved names cannot be overridden by user variables: `step`, `index`, `context`, `Step`, `Index`
+
+### Runtime Context Model
+
+Runtime templating now uses a canonical namespaced context model for nested runbooks:
+- `{{context.current.step}}`, `{{context.current.substep}}`, `{{context.current.index}}`, `{{context.current.at}}`
+- `{{context.parent.*}}` for nearest parent runbook context
+- `{{context.ancestors.0.*}}`, `{{context.ancestors.1.*}}`, ... for deeper ancestry (0 = nearest parent)
+- `{{context.vars.NAME}}` for user/config/frontmatter variables
+
+Top-level aliases are retained for ergonomics:
+- `{{Step}}` / `{{step}}` always refer to the current runbook context
+- `{{Index}}` / `{{index}}` always refer to the current runbook context loop index
 
 ### Undefined Variables
 
-Undefined variables are preserved as literal `{{variable}}` text rather than causing an error. This allows partial variable substitution.
+Undefined variables and missing dotted paths are preserved as literal placeholders (`{{variable}}`, `{{context.parent.missing}}`) rather than causing an error.
 
 ### State Persistence
 
-Template variables are expanded **once** at `rd run` time. The expanded content is stored in `state.runbookSrc` to ensure resume commands (`pass`, `fail`, `goto`, `complete`, `status`, `pop`) work consistently without re-rendering.
+`state.runbookSrc` stores raw runbook source, while `state.templateVars` stores the resolved variable map. On resume, FOR bounds and template placeholders are re-applied deterministically from this frozen variable state.
 
 ### Distinction from Template Usage
 
 Template variables are expanded before parsing and should not be confused with step identifiers:
 - `{{variable}}` - Template variable, expanded before parsing (e.g., `{{environment}}` becomes `production`)
+- Dotted paths are resolved consistently across startup substitution, runtime loop expansion, and runbook path substitution (for example `runbooks/focus-{{context.parent.index}}.runbook.md`)
 
 ---
 
@@ -606,7 +714,7 @@ rundown complete --agent myAgent            # Complete runbook in agent-specific
 
 **When to use:**
 - Early exit when remaining steps are unnecessary
-- Agent-driven workflows requiring explicit completion
+- Agent-driven runbook flows requiring explicit completion
 - Graceful exit from steps without explicit completion transitions
 
 **Comparison with `stop`:**
@@ -699,7 +807,8 @@ State:    .claude/rundown/runs/wf-2024-01-07-abc123.json
 Action:   CONTINUE
 Result:   PASS
 
-Step:     2/5
+For:      2/5
+At:       3.2.1
 
 Execute batch...
 
@@ -794,6 +903,24 @@ rundown prune --active      # Only active (careful!)
 | `rundown pass --agent <id>` | Mark agent's work as passed |
 | `rundown fail --agent <id>` | Mark agent's work as failed |
 
+Dispatch/completion rules:
+- `run --step` requires a parseable step identifier; step-only targets are rejected when the active step has substeps (use `N.M`).
+- Runbook argument is optional: `run --step <id> [runbook]`.
+- If runbook is omitted and target substep has exactly one runbook reference, the child runbook path is inferred and queued automatically.
+- If runbook is omitted and target substep has multiple runbook references, queueing fails with an explicit ambiguity error.
+- Dispatch frontier is the current step only; when FOR is active, frontier is current iteration only.
+- Canonical target identity is `step + substep + iteration`.
+- Expanded path (`STEP.INDEX.SUBSTEP`, e.g. `1.2.1`) is display-only.
+- Completion routing is frame + entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
+- `pass/fail --agent` and plain `pass/fail` both record completion and use the same deterministic drain path.
+
+### Runtime Identity Glossary
+
+- **Frame (internal):** Execution scope key `step|iteration` (for example `2|` or `2|3`).
+- **Entry (internal):** Monotonic re-entry counter for a frame (`1`, `2`, `3`, ...).
+- **Completion key (internal):** `frame + entry + substep`.
+- **Why both frame and entry:** Re-entering the same frame (for example via `GOTO` or `RETRY`) increments `entry`, so completions from older entries are rejected as stale.
+
 ---
 
 ## Common Tasks
@@ -818,7 +945,7 @@ rundown status
 Output shows:
 - Current runbook file
 - State file location
-- Current step and substep
+- Current action location (`At`) and optional loop scope (`For`)
 - Last action taken
 
 ### Task: Jump to a Specific Step
@@ -899,7 +1026,9 @@ Main agent runs runbook, dispatches subagents for substeps.
 # 1. Main agent starts parent runbook
 rd run runbook.runbook.md
 
-# 2. At substep, main agent queues step with child runbook
+# 2. At substep, main agent queues step (child runbook may be inferred)
+rd run --step 2.1
+# or explicitly:
 rd run --step 2.1 task.runbook.md
 
 # 3. Subagent binds to queued step (picks up runbook automatically)
@@ -912,9 +1041,12 @@ rd pass --agent subagent-1    # or: rd fail --agent subagent-1
 ```
 
 **Key points:**
-- Child runbook is specified with `--step`, not with `--agent`
+- `--step` must include a parseable step identifier; when substeps exist, use explicit `N.M`
+- Child runbook can be explicit (`rd run --step 2.1 task.runbook.md`) or inferred when the substep has exactly one runbook reference
+- If a substep has multiple runbook references, an explicit runbook argument is required
 - Subagent uses `--agent` flag on all commands (`run`, `pass`, `fail`)
-- Parent waits for agent result before evaluating transition
+- Completions are validated against frame + entry identity; stale completions from prior re-entry are rejected explicitly
+- Valid completions are recorded and drained in deterministic substep order before step-level transition
 
 ### Pattern 2: Agent-Controlled Branching
 
@@ -945,8 +1077,7 @@ Output formatting is implemented in `packages/cli/src/services/output-emitter.ts
 File:     runbook.runbook.md
 State:    .claude/rundown/runs/wf-xxx.json
 Action:   START
-
-Step:     1/5
+At:       1/5
 
 Step description here...
 
@@ -954,10 +1085,10 @@ $ npm test
 
 -----
 Action:   CONTINUE
-From:     1/5
+From:     1.1.1
 Result:   PASS
-
-Step:     2/5
+For:      2/5
+At:       1.2.1
 
 Next step description...
 
@@ -1034,10 +1165,16 @@ Scenario: COMPLETE
 | `Action:` | Last action (START, CONTINUE, GOTO, RETRY, COMPLETE, STOP) |
 | `From:` | Previous step position |
 | `Result:` | PASS or FAIL |
-| `Step:` | Current position (n/total or n.m/total) |
+| `For:` | Loop scope (`index/end` or `index/?`) when in FOR execution |
+| `At:` | Current execution path (display path, e.g. `1.2.1`) |
 | `$` | Command being executed |
 | `---` | Separator between scenario commands |
 | `Runbook:` | Runbook terminal state (COMPLETE, STOPPED, STASHED) |
+
+JSON output compatibility:
+- Existing position fields (`current`, `substep`, `total`) are preserved.
+- Loop/location-aware fields are additive and optional: `position.at`, `position.for.index`, `position.for.end`.
+- `targetAt` is derived at output boundaries from canonical target identity fields.
 
 ---
 
@@ -1110,7 +1247,7 @@ rundown check <file>         # Validate runbook
 rundown prune                # Clean up state
 
 # Subagent Dispatch
-rd run --step <id> <runbook>   # Queue step with child runbook
+rd run --step <id> [runbook]   # Queue step; runbook inferred when unambiguous
 rd run --agent <agentId>       # Subagent binds to queued step
 rd pass --agent <agentId>      # Subagent marks work passed
 rd fail --agent <agentId>      # Subagent marks work failed

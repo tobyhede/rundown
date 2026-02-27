@@ -197,7 +197,14 @@ export class TextRenderer implements OutputRenderer {
         file?: string;
         state?: string;
         prompted?: boolean;
-        position?: { current: string; total: number; substep?: string };
+        position?: {
+          current: string;
+          total: number;
+          substep?: string;
+          frameKey?: string;
+          entry?: number;
+          unresolved?: number;
+        };
         step?: { name: string; description?: string };
         lastAction?: { action: string; result?: boolean };
         pending?: string[];
@@ -236,6 +243,15 @@ export class TextRenderer implements OutputRenderer {
     if (position && step) {
       const stepObj = { name: step.name, description: step.description } as Step;
       printStepBlock(position, stepObj, !!prompted, this.writer);
+    }
+    if (position?.entry !== undefined || position?.unresolved !== undefined) {
+      this.writer.writeLine('');
+      if (position.entry !== undefined) {
+        this.writer.writeLine(`Entry: ${String(position.entry)}`);
+      }
+      if (position.unresolved !== undefined) {
+        this.writer.writeLine(`Unresolved: ${String(position.unresolved)}`);
+      }
     }
 
     // Show pending steps

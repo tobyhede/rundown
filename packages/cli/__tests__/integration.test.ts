@@ -99,16 +99,19 @@ describe('integration: full runbook scenarios', () => {
   it('handles agent binding runbook', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
-    // Queue steps for agents
+    // Queue and bind first agent on active step 1
     runCli('run --step 1', workspace);
-    runCli('run --step 2', workspace);
 
-    // Bind first agent
     let result = runCli('run --agent agent-1', workspace);
     expect(result.stdout).toContain('agent-1');
     expect(result.stdout).toContain('bound');
 
-    // Bind second agent
+    // Agent completion advances active frontier from step 1 -> step 2
+    result = runCli('pass --agent agent-1', workspace);
+    expect(result.stdout).toContain('CONTINUE');
+
+    // Queue and bind second agent on active step 2
+    runCli('run --step 2', workspace);
     result = runCli('run --agent agent-2', workspace);
     expect(result.stdout).toContain('agent-2');
     expect(result.stdout).toContain('bound');
@@ -118,11 +121,8 @@ describe('integration: full runbook scenarios', () => {
     expect(result.stdout).toContain('agent-1');
     expect(result.stdout).toContain('agent-2');
 
-    // Complete agents
-    result = runCli('pass --agent agent-1', workspace);
-    expect(result.stdout).toContain('pass');
-
+    // Completing second agent finishes the runbook
     result = runCli('pass --agent agent-2', workspace);
-    expect(result.stdout).toContain('All agents complete');
+    expect(result.stdout).toContain('COMPLETE');
   });
 });

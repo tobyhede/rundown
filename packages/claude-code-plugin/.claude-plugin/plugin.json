@@ -2,6 +2,7 @@
   "name": "rundown",
   "version": "1.0.0",
   "description": "Claude Code plugin for runbook orchestration and workflow execution",
+  "hooks": "./hooks/hooks.json",
   "author": {
     "name": "Toby Hede",
     "email": "toby@rundown.org"

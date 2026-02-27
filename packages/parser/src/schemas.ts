@@ -23,8 +23,10 @@ export const MAX_FOR_BOUND = 10_000;
  *
  * Matches strings like `{{VarName}}` where the variable name follows
  * standard identifier rules (letter/underscore start, alphanumeric body).
+ * Tolerates optional whitespace after `{{` and before `}}`,
+ * matching forms like `{{ VarName }}` or `{{VarName}}`.
  */
-export const TEMPLATE_VAR_PATTERN = /^\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}$/;
+export const TEMPLATE_VAR_PATTERN = /^\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}$/;
 
 /**
  * Zod schema for Command
@@ -44,6 +46,7 @@ export const NumericWindowSchema = z.object({
   start: z.number().int().positive().max(MAX_FOR_BOUND),
   end: z.number().int().positive().max(MAX_FOR_BOUND),
   source: z.never().optional(),
+  transitions: z.lazy(() => TransitionsSchema.optional()),
 });
 
 /**
@@ -56,6 +59,7 @@ export const SourceWindowSchema = z.object({
   start: z.number().int().positive().max(MAX_FOR_BOUND),
   end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
   source: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+  transitions: z.lazy(() => TransitionsSchema.optional()),
 });
 
 /**
@@ -136,9 +140,19 @@ export const ActionSchema = z.union([
 export type Action = Readonly<z.output<typeof ActionSchema>>;
 
 /**
- * Valid transition kinds
+ * Zod enum schema representing allowed transition kinds in runbook step definitions.
+ *
+ * The four valid kinds are:
+ * - `'pass'` / `'fail'` — outcome-based transitions
+ * - `'yes'` / `'no'` — confirmation-based transitions
  */
 export const TransitionKindSchema = z.enum(['pass', 'fail', 'yes', 'no']);
+
+/**
+ * Allowed transition kind strings inferred from {@link TransitionKindSchema}.
+ *
+ * One of `'pass'`, `'fail'`, `'yes'`, or `'no'`.
+ */
 export type TransitionKind = z.output<typeof TransitionKindSchema>;
 
 /**
@@ -158,11 +172,13 @@ export type TransitionObject = Readonly<z.output<typeof TransitionObjectSchema>>
 export const TransitionsSchema = z.union([
   z.object({
     all: z.literal(true),
+    modifierImplicit: z.literal(true).optional(),
     pass: TransitionObjectSchema,
     fail: TransitionObjectSchema,
   }),
   z.object({
     all: z.literal(false),
+    modifierImplicit: z.literal(true).optional(),
     pass: TransitionObjectSchema,
     fail: TransitionObjectSchema,
   }),
@@ -177,7 +193,7 @@ export const SubstepSchema = z.object({
   id: z.string(),
   description: z.string(),
   agentType: z.string().optional(),
-  workflows: z.array(z.string()).readonly().optional(),
+  runbooks: z.array(z.string()).readonly().optional(),
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
   transitions: TransitionsSchema.optional(),
@@ -189,13 +205,14 @@ export const SubstepSchema = z.object({
  */
 export const StepSchema = z.object({
   name: StepNameSchema, // REQUIRED: "1", "ErrorHandler"
+  substepsDerivedFromRunbookList: z.literal(true).optional(),
+  deferred: z.boolean().optional(),
   forClause: ForClauseSchema.optional(),
   description: z.string(),
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
   transitions: TransitionsSchema.optional(),
   substeps: z.array(SubstepSchema).readonly().optional(),
-  workflows: z.array(z.string()).readonly().optional(),
   line: z.number().optional(),
 });
 
@@ -205,5 +222,9 @@ export const StepSchema = z.object({
 export const RunbookSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
+  name: z.string().optional(),
+  version: z.string().optional(),
+  author: z.string().optional(),
+  tags: z.array(z.string()).readonly().optional(),
   steps: z.array(StepSchema),
 });

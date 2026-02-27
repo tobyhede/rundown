@@ -69,7 +69,7 @@ describe('Hook Performance Budget', () => {
       const input = createMockHookInput('PostToolUse', {
         cwd: testDir.path,
         tool_name: 'Edit',
-        file_path: path.join(testDir.path, 'src/file.ts'),
+        tool_input: { file_path: path.join(testDir.path, 'src/file.ts') },
       });
 
       // Warm up
@@ -94,8 +94,8 @@ describe('Hook Performance Budget', () => {
 
       const input = createMockHookInput('SubagentStop', {
         cwd: testDir.path,
-        agent_name: 'test-agent',
-        output: 'STATUS: PASS',
+        agent_type: 'test-agent',
+        last_assistant_message: 'STATUS: PASS',
       });
 
       // Warm up
@@ -253,7 +253,7 @@ describe('Synthetic Event Detection Performance', () => {
         tool_use_id: 'tool-123',
       }),
       createMockHookInput('UserPromptSubmit', {
-        user_message: '/execute the plan',
+        prompt: '/execute the plan',
       }),
       createMockHookInput('Stop'),
     ];

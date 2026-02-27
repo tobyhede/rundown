@@ -1,5 +1,6 @@
 import type { Step, Action, Transitions, TransitionObject, Substep, Runbook } from '../types.js';
 import { stepIdToString } from '../step-id.js';
+import { renderCodeFence, renderHeading } from './primitives.js';
 
 /**
  * Render an Action to DSL string.
@@ -43,8 +44,10 @@ function renderTransitionAction(transition: TransitionObject): string {
  */
 export function renderTransitions(transitions: Transitions): string {
   const lines: string[] = [];
-  lines.push(`- PASS: ${renderTransitionAction(transitions.pass)}`);
-  lines.push(`- FAIL: ${renderTransitionAction(transitions.fail)}`);
+  const passAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ALL' : ' ANY';
+  const failAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ANY' : ' ALL';
+  lines.push(`- PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
+  lines.push(`- FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
   return lines.join('\n');
 }
 
@@ -60,8 +63,70 @@ export function renderTransitions(transitions: Transitions): string {
  */
 export function renderSubstep(substep: Substep, parentStepName: string): string {
   const agentSuffix = substep.agentType ? ` (${substep.agentType})` : '';
-  const runbooksSuffix = substep.workflows?.length ? ` [@${substep.workflows.join(', ')}]` : '';
-  return `### ${parentStepName}.${substep.id} ${substep.description}${agentSuffix}${runbooksSuffix}`;
+  const lines: string[] = [];
+  lines.push(
+    renderHeading(3, `${parentStepName}.${substep.id}`, `${substep.description}${agentSuffix}`),
+  );
+  if (substep.runbooks?.length) {
+    lines.push('');
+    for (const runbookPath of substep.runbooks) {
+      lines.push(`- ${runbookPath}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Render a FOR clause to its DSL bullet-point string.
+ *
+ * Handles all FOR variants: named/unnamed ranges, implicit start,
+ * and data-source references (full and windowed). If transitions are
+ * present, they are appended as indented nested bullets.
+ *
+ * @param forClause - The FOR clause to render
+ * @returns Array of DSL strings (e.g., ["- FOR pass IN 1 TO 2", "  - PASS ANY: CONTINUE"])
+ */
+function renderForClause(forClause: NonNullable<Step['forClause']>): string[] {
+  const lines: string[] = [];
+
+  if (forClause.source !== undefined) {
+    if (forClause.start === 1 && forClause.end === undefined) {
+      lines.push(`- FOR ${forClause.variable} IN {{ ${forClause.source} }}`);
+    } else {
+      lines.push(
+        `- FOR ${forClause.variable} IN ${String(forClause.start)} TO ${String(forClause.end)} OF {{ ${forClause.source} }}`,
+      );
+    }
+  } else if (forClause.variable) {
+    if (forClause.start === 1) {
+      lines.push(`- FOR ${forClause.variable} IN ${String(forClause.end)}`);
+    } else {
+      lines.push(
+        `- FOR ${forClause.variable} IN ${String(forClause.start)} TO ${String(forClause.end)}`,
+      );
+    }
+  } else {
+    if (forClause.start === 1) {
+      lines.push(`- FOR ${String(forClause.end)}`);
+    } else {
+      lines.push(`- FOR ${String(forClause.start)} TO ${String(forClause.end)}`);
+    }
+  }
+
+  const transitions = (forClause as { transitions?: Transitions }).transitions;
+  if (transitions) {
+    const passAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ALL' : ' ANY';
+    const failAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ANY' : ' ALL';
+    lines.push(`  - PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
+    lines.push(`  - FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
+  }
+
+  return lines;
+}
+
+function getShorthandRunbookSubsteps(step: Step): readonly Substep[] | undefined {
+  if (step.substepsDerivedFromRunbookList !== true) return undefined;
+  return step.substeps;
 }
 
 /**
@@ -78,23 +143,36 @@ export function renderStep(step: Step): string {
 
   // Header - use step.name directly
   const stepId = step.name;
-  lines.push(`## ${stepId}. ${step.description}`);
+  lines.push(renderHeading(2, stepId, step.description, '. '));
   lines.push('');
 
-  // Child runbooks (step-level)
-  if (step.workflows?.length) {
-    for (const wf of step.workflows) {
-      lines.push(` - ${wf}`);
-    }
+  if (step.forClause) {
+    lines.push(...renderForClause(step.forClause));
+  }
+
+  // Transitions
+  if (step.transitions) {
+    lines.push(renderTransitions(step.transitions));
+  }
+
+  if (step.forClause || step.transitions) {
     lines.push('');
   }
 
-  // Command
-  if (step.command) {
-    lines.push('```bash');
-    lines.push(step.command.code);
-    lines.push('```');
+  const shorthandSubsteps = getShorthandRunbookSubsteps(step);
+  if (shorthandSubsteps?.length) {
+    const firstPrompt = shorthandSubsteps[0]?.prompt;
+    if (firstPrompt) {
+      lines.push(firstPrompt);
+      lines.push('');
+    }
+    for (const shorthandSubstep of shorthandSubsteps) {
+      const runbookPath = shorthandSubstep.runbooks?.[0];
+      if (!runbookPath) continue;
+      lines.push(`- ${runbookPath}`);
+    }
     lines.push('');
+    return lines.join('\n').trim();
   }
 
   // Prompt
@@ -103,9 +181,9 @@ export function renderStep(step: Step): string {
     lines.push('');
   }
 
-  // Transitions
-  if (step.transitions) {
-    lines.push(renderTransitions(step.transitions));
+  // Command
+  if (step.command) {
+    lines.push(renderCodeFence(step.command.code, step.command.lang ?? 'bash'));
     lines.push('');
   }
 

@@ -8,12 +8,19 @@
  */
 
 import {
-  stepIdToString,
+  buildStepPosition,
+  deriveExecutionAt,
   countNumberedSteps,
   type ActionBlockData,
+  type ResolvedCompletion,
   type RunbookState,
 } from '@rundown-org/core';
-import { getStepRetryMax, buildMetadata, formatActionForDisplay } from '../services/execution.js';
+import {
+  getStepRetryMax,
+  buildMetadata,
+  extractRetryDisplayCount,
+  formatActionForDisplay,
+} from '../services/execution.js';
 import { getRunbookFromState } from './runbook-loader.js';
 
 /**
@@ -30,7 +37,9 @@ import { getRunbookFromState } from './runbook-loader.js';
  * @see StatusResponse in @rundown-org/core for the public API contract
  */
 export interface StatusOutputData {
+  /** Whether a runbook is currently active */
   active: boolean;
+  /** Whether the active runbook is stashed (enforcement paused) */
   stashed: boolean;
   /** Runbook file path (flat, not nested) */
   file?: string;
@@ -43,6 +52,10 @@ export interface StatusOutputData {
     current: string;
     total: number;
     substep?: string;
+    for?: { index: number; end?: number };
+    frameKey?: string;
+    entry?: number;
+    unresolved?: number;
   };
   /** Current step details */
   step?: {
@@ -55,6 +68,35 @@ export interface StatusOutputData {
   pending?: string[];
   /** Active child agents keyed by agent name. */
   agents?: Record<string, { step: string; status: string; result?: string }>;
+  /** Active delegations on substeps. */
+  delegations?: Array<{
+    substep: string;
+    runbook: string;
+    state: 'pending' | 'claimed' | 'cancelled';
+    childRunId?: string;
+  }>;
+}
+
+/**
+ * Count substeps that have no resolved completion for the active frame+entry.
+ */
+function countUnresolvedSubsteps(
+  substeps: ReadonlyArray<{ id: string }>,
+  resolvedCompletions: Record<string, ResolvedCompletion> | undefined,
+  activeFrameKey: string,
+  activeEntry: number,
+): number {
+  const resolvedSubsteps = new Set(
+    Object.values(resolvedCompletions ?? {})
+      .filter(
+        (completion): completion is typeof completion & { targetSubstep: string } =>
+          completion.targetFrameKey === activeFrameKey &&
+          completion.targetEntry === activeEntry &&
+          completion.targetSubstep !== undefined,
+      )
+      .map((completion) => completion.targetSubstep),
+  );
+  return substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
 }
 
 /**
@@ -84,11 +126,12 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
     file: metadata.file,
     state: metadata.state,
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
-    position: {
-      current: stashedState.step,
-      total: totalSteps,
-      ...(stashedState.substep && { substep: stashedState.substep }),
-    },
+    position: buildStepPosition(
+      stashedState.step,
+      totalSteps,
+      stashedState.substep,
+      stashedState.forStack,
+    ),
   };
 }
 
@@ -108,6 +151,15 @@ export function buildActiveStatus(
   cwd: string,
   stashedId?: string,
 ): StatusOutputData {
+  const toTargetAt = (target: {
+    targetStep?: string;
+    targetSubstep?: string;
+    targetIteration?: number;
+  }): string | undefined => {
+    if (!target.targetStep) return undefined;
+    return deriveExecutionAt(target.targetStep, target.targetSubstep, target.targetIteration);
+  };
+
   const steps = getRunbookFromState(activeState, cwd);
   const currentStepIndex = steps.findIndex((s) => s.name === activeState.step);
   const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
@@ -120,9 +172,13 @@ export function buildActiveStatus(
   let actionBlockData: ActionBlockData | undefined;
   if (activeState.lastAction) {
     const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
+    const retryDisplayCount = extractRetryDisplayCount(
+      activeState.snapshot,
+      activeState.retryCount,
+    );
     const actionStr = formatActionForDisplay(
       activeState.lastAction,
-      activeState.retryCount,
+      retryDisplayCount,
       retryMaxForAction,
     );
     actionBlockData = { action: actionStr };
@@ -131,6 +187,55 @@ export function buildActiveStatus(
     }
   }
 
+  const pendingTargets = activeState.pendingSteps
+    .map((p) => toTargetAt(p))
+    .filter((targetAt): targetAt is string => targetAt !== undefined);
+
+  const activeAgents = Object.entries(activeState.agentBindings).reduce<
+    Record<string, { step: string; status: string; result?: string }>
+  >((acc, [agentId, binding]) => {
+    const targetAt = toTargetAt(binding);
+    if (!targetAt) return acc;
+    acc[agentId] = {
+      step: targetAt,
+      status: binding.status,
+      result: binding.result,
+    };
+    return acc;
+  }, {});
+
+  const basePosition = buildStepPosition(
+    displayStep,
+    totalSteps,
+    activeState.substep,
+    activeState.forStack,
+  );
+  const activeFrameKey = activeState.activeFrameKey;
+  const activeEntry = activeState.activeEntry;
+  const unresolved =
+    currentStep?.substeps?.length && activeFrameKey && activeEntry !== undefined
+      ? countUnresolvedSubsteps(
+          currentStep.substeps,
+          activeState.resolvedCompletions,
+          activeFrameKey,
+          activeEntry,
+        )
+      : undefined;
+
+  const delegations = (activeState.substepStates ?? [])
+    .filter((ss) => ss.delegation != null)
+    .map((ss) => ({
+      substep: ss.id,
+      runbook: ss.delegation!.childRunbookPath,
+      state:
+        ss.delegation!.cancelledAt != null
+          ? ('cancelled' as const)
+          : ss.delegation!.childRunId != null
+            ? ('claimed' as const)
+            : ('pending' as const),
+      ...(ss.delegation!.childRunId != null ? { childRunId: ss.delegation!.childRunId } : {}),
+    }));
+
   return {
     active: true,
     stashed: !!stashedId,
@@ -138,9 +243,10 @@ export function buildActiveStatus(
     state: metadata.state,
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
     position: {
-      current: displayStep,
-      total: totalSteps,
-      ...(activeState.substep && { substep: activeState.substep }),
+      ...basePosition,
+      ...(activeFrameKey ? { frameKey: activeFrameKey } : {}),
+      ...(activeEntry !== undefined ? { entry: activeEntry } : {}),
+      ...(unresolved !== undefined ? { unresolved } : {}),
     },
     ...(currentStep && {
       step: {
@@ -149,22 +255,8 @@ export function buildActiveStatus(
       },
     }),
     lastAction: actionBlockData,
-    pending:
-      activeState.pendingSteps.length > 0
-        ? activeState.pendingSteps.map((p) => stepIdToString(p.stepId))
-        : undefined,
-    agents:
-      Object.keys(activeState.agentBindings).length > 0
-        ? Object.entries(activeState.agentBindings).reduce<
-            Record<string, { step: string; status: string; result?: string }>
-          >((acc, [agentId, binding]) => {
-            acc[agentId] = {
-              step: stepIdToString(binding.stepId),
-              status: binding.status,
-              result: binding.result,
-            };
-            return acc;
-          }, {})
-        : undefined,
+    pending: pendingTargets.length > 0 ? pendingTargets : undefined,
+    agents: Object.keys(activeAgents).length > 0 ? activeAgents : undefined,
+    ...(delegations.length > 0 ? { delegations } : {}),
   };
 }

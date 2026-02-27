@@ -42,10 +42,10 @@ Named identifiers must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
 
 ### 2.2 Content Order
 Step content must appear in this strict order:
-1.  **FOR Annotation**: Loop definition (optional).
-2.  **Transitions**: Control flow rules (optional).
+1.  **FOR Annotation**: Loop definition (optional). Must appear immediately after the step header as a bullet item.
+2.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after FOR (or after step header if no FOR). Any text between the header and transitions is an error.
 3.  **Prompt**: Text instructions.
-4.  **Body**: One of: Code Block, Substeps, or Runbooks.
+4.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
 
 ## 3. Step Bodies
 
@@ -67,16 +67,57 @@ Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and 
 *   **Stdio**: Inherited.
 
 ### 3.2 Substeps
+
 Nested steps defined by H3 (`###`) headers.
 *   **Identifiers**: `### 1`, `### 1.1` (sequential), or `### Name` (named).
+*   **Agent type**: Optional parenthesized suffix specifying the agent type for delegation: `### 1.2 Description (agent-type)`. The agent type is extracted and set on the substep AST node as `agentType`.
 *   **Aggregation**: Parent step outcome is derived from substeps via transitions (`ALL`/`ANY`).
 
-### 3.3 Runbooks
+### 3.3 Runbook List Shorthand
+
 List of external runbooks to execute.
+
 ```markdown
 - ./deploy-db.runbook.md
 - ./deploy-api.runbook.md
 ```
+
+At step level, this syntax is canonicalized to implicit sequential substeps (`1`, `2`, ...), one runbook reference per substep.
+When step-level prompt text appears above this shorthand body, it is attached to the first generated implicit substep only.
+These two forms are structurally equivalent:
+
+```markdown
+## 2. Review the plan
+- review-technical-accuracy.runbook.md
+- review-structural-integrity.runbook.md
+```
+
+```markdown
+## 2. Review the plan
+### 2.1
+- review-technical-accuracy.runbook.md
+### 2.2
+- review-structural-integrity.runbook.md
+```
+
+Runtime default behavior differs when parent transitions are omitted:
+- Step-level runbook-list shorthand is inferred as deferred and uses parent aggregation defaults (`PASS ALL: CONTINUE`, `FAIL ANY: STOP`).
+- Explicit H3 substeps are immediate by default and keep non-deferred pass-through behavior unless you define parent transitions explicitly.
+
+### 3.4 Runtime Target Identity
+Runtime dispatch/completion identity is canonicalized as:
+
+`step + substep + iteration`
+
+Execution path notation such as `1.2.1` (`STEP.INDEX.SUBSTEP`) is display-only. It is neither authoring syntax nor a canonical identifier.
+
+### 3.5 Deferred Inference
+`deferred` is inferred runtime metadata (not user-authored syntax in this release).
+
+- Inferred `true`: steps with a `FOR` clause, and step-level runbook-list shorthand.
+- Inferred `false`: explicit H3 substeps without `FOR`.
+
+Deferred steps bubble substep outcomes to parent aggregation by default. Immediate steps do not.
 
 ## 4. Control Flow
 
@@ -88,14 +129,18 @@ Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
 | Component | Values | Description |
 | :--- | :--- | :--- |
 | **Result** | `PASS` (`YES`), `FAIL` (`NO`) | Outcome of the step's body. |
-| **Aggregation** | `ALL`, `ANY` | For substeps/runbooks. Default: `PASS ALL`, `FAIL ANY`. |
+| **Aggregation** | `ALL`, `ANY` | For substeps. Step-level runbook-list shorthand is canonicalized to substeps. Deferred parent default: `PASS ALL`, `FAIL ANY`. |
 
 Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` (pessimistic — any failure stops), or `PASS ANY` with `FAIL ALL` (optimistic — only total failure stops). Non-complementary combinations are invalid because they create evaluation gaps (ALL/ALL) or overlaps (ANY/ANY).
 
 **Defaults**:
 *   If only `PASS` defined: `FAIL` -> `STOP`.
 *   If only `FAIL` defined: `PASS` -> `CONTINUE`.
-*   If neither: `PASS: CONTINUE`, `FAIL: STOP`.
+*   If neither is defined: `PASS: CONTINUE`, `FAIL: STOP`.
+
+When a parent step with substeps omits parent transitions:
+*   Deferred parent (`FOR` or step-level runbook-list shorthand): aggregate with `PASS ALL: CONTINUE` and `FAIL ANY: STOP`.
+*   Immediate parent (explicit substeps, no `FOR`): keep non-deferred pass-through semantics.
 
 ### 4.2 Actions
 
@@ -107,7 +152,7 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 | `GOTO {Target}` | Any | Jump to step/substep (e.g., `1`, `Error`). |
 | `RETRY [N] [Act]` | Any | Retry N times (default 1), then perform Action. |
 | `NEXT` | FOR Substep | Skip to next iteration. |
-| `BREAK` | FOR Substep | Exit loop immediately. |
+| `BREAK` | FOR Substep, FOR Iteration-Level | Exit loop immediately. |
 
 GOTO targeting the containing step (self-reference) without an AT qualifier may create an infinite loop. Use RETRY for bounded re-execution.
 
@@ -139,9 +184,13 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
 *   **No descending data sources**: Descending windows (`start > end`) are not supported for data sources.
 *   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
-*   **Constraint**: FOR steps MUST have substeps.
+*   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
 *   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.
+*   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause execute per iteration. Allowed terminal actions are `CONTINUE`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
+*   **Nested bullet rule**: Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid and fail parse.
+*   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action.
+*   **Exit semantics**: Iteration-level `BREAK` includes the current iteration result in parent aggregation. Iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation and exit directly.
 
 ## 6. Templating
 
@@ -150,12 +199,20 @@ Variables use Handlebars syntax: `{{variable}}`.
 | Source | Scope | Description |
 | :--- | :--- | :--- |
 | CLI (`--var`) | Global | Expanded at startup. |
-| `{{Step}}` | Step | Current step ID (e.g., `1.2`). |
-| `{{Index}}` | Loop | Current iteration number. |
+| `{{Step}}` | Step | Current execution identifier for this runbook context (e.g., `1`, `1.2`). |
+| `{{Index}}` | Loop | Current iteration number for this runbook context. |
+| `{{context.current.*}}` | Step/Loop | Canonical current runbook context (`step`, `substep`, `index`, `at`). |
+| `{{context.parent.*}}` | Nested | Parent runbook structural context and template variables (`vars.*`). |
+| `{{context.ancestors.N.*}}` | Nested | Ancestor runbook contexts (`0` is nearest parent). |
+| `{{context.vars.NAME}}` | Global | User/config/frontmatter variable namespace. |
 | Loop Var | Loop | Current item/index (e.g., `{{batch}}`). |
 
 *   **Undefined**: Preserved as literal text.
 *   **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
+*   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
+*   **Depth limit**: Parent context chain addressing is capped at 32 levels. Exceeding this limit produces an error.
+*   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
+*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables.
 
 ## 7. Scenarios
 
@@ -167,6 +224,7 @@ scenarios:
     description: "Description"
     commands: ["rd run doc.md", "rd pass"]
     result: COMPLETE
+    tags: ["smoke", "deploy"]
 ```
 
 ## 8. Conformance
@@ -174,9 +232,14 @@ scenarios:
 1.  **Strict Hierarchy**: H2 -> H3. No H4.
 2.  **Sequential IDs**: 1, 2, 3... (gaps invalid).
 3.  **Strict Ordering**: FOR -> Transitions -> Prompt -> Body.
-4.  **Exclusivity**: Only one body type (Code OR Substeps OR Runbooks).
+4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
 5.  **Single Command**: Max one executable block per step.
-6.  **Loop Safety**: `NEXT`/`BREAK` only valid inside FOR substeps.
+6.  **Loop Safety**: `NEXT` is only valid inside FOR substeps. `BREAK` is valid in FOR substeps and FOR iteration-level transitions.
 7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
 9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.
+10. **FOR Iteration Action Set**: FOR-level nested transitions only allow `CONTINUE`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
+
+## 9. Compatibility
+
+Step-level runbook lists are represented internally as sequential substeps (`N.1`, `N.2`, ...). In-progress sessions created before this model are not auto-migrated and must be restarted after upgrade.

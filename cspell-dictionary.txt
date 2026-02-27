@@ -21,6 +21,7 @@ stryker
 mutator
 mutants
 biomejs
+covertable
 changesets
 changeset
 codecov
@@ -50,7 +51,6 @@ lcov
 lockfile
 materialised
 monorepo
-ndjson
 nocase
 nodenv
 parseable
@@ -125,6 +125,7 @@ unsub
 
 # Project-specific identifiers
 BADACTION
+rdtk
 cipherpowers
 Hede
 myrepo
@@ -157,8 +158,13 @@ behaviour
 categorises
 
 # Test fixture words
+aindex
+ancvar
 NOTVALID
 notavar
+pindex
+pstep
+psub
 unknowncommand
 
 # Turborepo reference

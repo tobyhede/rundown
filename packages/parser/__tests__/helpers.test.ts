@@ -953,6 +953,49 @@ describe('convertToTransitions aggregation conflicts', () => {
     expect(result).not.toBeNull();
     expect(result?.pass.action).toEqual({ type: 'CONTINUE' });
   });
+
+  it('sets modifierImplicit when both modifiers are null', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result?.modifierImplicit).toBe(true);
+  });
+
+  it('sets modifierImplicit when only pass provided with null modifier', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', retry: 0, action: { type: 'COMPLETE' }, modifier: null, raw: 'COMPLETE' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result?.modifierImplicit).toBe(true);
+  });
+
+  it('sets modifierImplicit when only fail provided with null modifier', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result?.modifierImplicit).toBe(true);
+  });
+
+  it('does not set modifierImplicit when explicit ALL modifier present', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result?.modifierImplicit).toBeUndefined();
+  });
+
+  it('does not set modifierImplicit when one modifier is explicit', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result?.modifierImplicit).toBeUndefined();
+  });
 });
 
 describe('validateNEXTUsage with RETRY containing NEXT', () => {
@@ -1182,6 +1225,14 @@ describe('parseStepIdFromString with AT syntax', () => {
     expect(parseStepIdFromString('3')).toEqual({ step: '3' });
     expect(parseStepIdFromString('3.1')).toEqual({ step: '3', substep: '1' });
   });
+
+  it('parses AT with whitespace in template variable', () => {
+    expect(parseStepIdFromString('3 AT {{ Index }}')).toEqual({ step: '3', at: '{{ Index }}' });
+  });
+
+  it('parses AT with leading whitespace only in template', () => {
+    expect(parseStepIdFromString('3 AT {{ Index}}')).toEqual({ step: '3', at: '{{ Index}}' });
+  });
 });
 
 describe('parseForClause', () => {
@@ -1397,6 +1448,142 @@ describe('parseForClause', () => {
 
     it('rejects empty windowed source name', () => {
       expect(parseForClause('FOR item IN 1 TO 10 OF {{ }}')).toBeNull();
+    });
+  });
+});
+
+describe('C1: bash prompt is not executable', () => {
+  it('returns false for "bash prompt"', () => {
+    expect(isExecutableCodeBlock('bash prompt')).toBe(false);
+  });
+
+  it('returns false for "sh prompt"', () => {
+    expect(isExecutableCodeBlock('sh prompt')).toBe(false);
+  });
+
+  it('returns false for "shell prompt"', () => {
+    expect(isExecutableCodeBlock('shell prompt')).toBe(false);
+  });
+
+  it('returns false for "BASH PROMPT" (case-insensitive)', () => {
+    expect(isExecutableCodeBlock('BASH PROMPT')).toBe(false);
+  });
+
+  it('returns true for "bash runme" (non-prompt attribute)', () => {
+    expect(isExecutableCodeBlock('bash runme')).toBe(true);
+  });
+
+  it('returns true for plain "bash"', () => {
+    expect(isExecutableCodeBlock('bash')).toBe(true);
+  });
+});
+
+describe('C1: bash prompt is recognized as prompt block', () => {
+  it('returns true for "bash prompt"', () => {
+    expect(isPromptCodeBlock('bash prompt')).toBe(true);
+  });
+
+  it('returns true for "sh prompt"', () => {
+    expect(isPromptCodeBlock('sh prompt')).toBe(true);
+  });
+
+  it('returns true for "shell prompt"', () => {
+    expect(isPromptCodeBlock('shell prompt')).toBe(true);
+  });
+
+  it('returns true for "BASH PROMPT" (case-insensitive)', () => {
+    expect(isPromptCodeBlock('BASH PROMPT')).toBe(true);
+  });
+
+  it('returns false for "bash runme" (executable, not prompt)', () => {
+    expect(isPromptCodeBlock('bash runme')).toBe(false);
+  });
+
+  it('returns false for plain "bash" (executable, not prompt)', () => {
+    expect(isPromptCodeBlock('bash')).toBe(false);
+  });
+});
+
+describe('C2: substep short form (bare numeric)', () => {
+  it('parses "1" as short form substep', () => {
+    expect(extractSubstepHeader('1')).toEqual({
+      id: '1',
+      description: '',
+      agentType: undefined,
+    });
+  });
+
+  it('parses "2 Review code" with description', () => {
+    expect(extractSubstepHeader('2 Review code')).toEqual({
+      id: '2',
+      description: 'Review code',
+      agentType: undefined,
+    });
+  });
+
+  it('parses "3 Review (agent)" with agent type', () => {
+    expect(extractSubstepHeader('3 Review (agent)')).toEqual({
+      id: '3',
+      description: 'Review',
+      agentType: 'agent',
+    });
+  });
+
+  it('parses "1 (code-agent)" with agent only', () => {
+    expect(extractSubstepHeader('1 (code-agent)')).toEqual({
+      id: '1',
+      description: '',
+      agentType: 'code-agent',
+    });
+  });
+
+  it('returns null for 0 (non-positive)', () => {
+    expect(extractSubstepHeader('0')).toBeNull();
+  });
+
+  it('still parses dot form "1.1 Description"', () => {
+    expect(extractSubstepHeader('1.1 Description')).toEqual({
+      stepRef: '1',
+      id: '1',
+      description: 'Description',
+      agentType: undefined,
+    });
+  });
+});
+
+describe('E3: bare numeric step headers', () => {
+  it('parses "1" as step with default description', () => {
+    expect(extractStepHeader('1')).toEqual({
+      name: '1',
+      description: 'Step 1',
+    });
+  });
+
+  it('parses "1." as step with default description', () => {
+    expect(extractStepHeader('1.')).toEqual({
+      name: '1',
+      description: 'Step 1',
+    });
+  });
+
+  it('parses "1)" as step with default description', () => {
+    expect(extractStepHeader('1)')).toEqual({
+      name: '1',
+      description: 'Step 1',
+    });
+  });
+
+  it('parses "1 -" as step with default description', () => {
+    expect(extractStepHeader('1 -')).toEqual({
+      name: '1',
+      description: 'Step 1',
+    });
+  });
+
+  it('preserves existing behavior for "1. Do something"', () => {
+    expect(extractStepHeader('1. Do something')).toEqual({
+      name: '1',
+      description: 'Do something',
     });
   });
 });

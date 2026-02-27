@@ -159,60 +159,29 @@ describe('hasSubsteps', () => {
 });
 
 describe('hasRunbooks', () => {
-  describe('with Step', () => {
-    it('returns true when step has workflows defined', () => {
-      const step = createStep({ workflows: ['setup.runbook.md'] });
-      expect(hasRunbooks(step)).toBe(true);
-    });
-
-    it('returns false when step has undefined workflows', () => {
-      const step = createStep({ workflows: undefined });
-      expect(hasRunbooks(step)).toBe(false);
-    });
-
-    it('returns false when step has no workflows property', () => {
-      const step = createStep();
-      expect(hasRunbooks(step)).toBe(false);
-    });
-
-    it('returns false when step has empty workflows array (key edge case)', () => {
-      const step = createStep({ workflows: [] });
-      expect(hasRunbooks(step)).toBe(false);
-    });
-
-    it('returns true when step has multiple workflows', () => {
-      const step = createStep({
-        workflows: ['setup.runbook.md', 'cleanup.runbook.md', 'verify.runbook.md'],
-      });
-      expect(hasRunbooks(step)).toBe(true);
-    });
+  it('returns true when substep has runbooks defined', () => {
+    const substep = createSubstep({ runbooks: ['task.runbook.md'] });
+    expect(hasRunbooks(substep)).toBe(true);
   });
 
-  describe('with Substep', () => {
-    it('returns true when substep has workflows defined', () => {
-      const substep = createSubstep({ workflows: ['task.runbook.md'] });
-      expect(hasRunbooks(substep)).toBe(true);
-    });
+  it('returns false when substep has undefined runbooks', () => {
+    const substep = createSubstep({ runbooks: undefined });
+    expect(hasRunbooks(substep)).toBe(false);
+  });
 
-    it('returns false when substep has undefined workflows', () => {
-      const substep = createSubstep({ workflows: undefined });
-      expect(hasRunbooks(substep)).toBe(false);
-    });
-
-    it('returns false when substep has empty workflows array', () => {
-      const substep = createSubstep({ workflows: [] });
-      expect(hasRunbooks(substep)).toBe(false);
-    });
+  it('returns false when substep has empty runbooks array', () => {
+    const substep = createSubstep({ runbooks: [] });
+    expect(hasRunbooks(substep)).toBe(false);
   });
 
   describe('type narrowing', () => {
-    it('narrows type to include non-empty workflows array', () => {
-      const step = createStep({
-        workflows: ['narrowed.runbook.md'],
+    it('narrows type to include non-empty runbooks array', () => {
+      const substep = createSubstep({
+        runbooks: ['narrowed.runbook.md'],
       });
-      if (hasRunbooks(step)) {
-        // TypeScript should know step.workflows is readonly string[]
-        const firstWorkflow: string = step.workflows[0];
+      if (hasRunbooks(substep)) {
+        // TypeScript should know substep.runbooks is readonly string[]
+        const firstWorkflow: string = substep.runbooks[0];
         expect(firstWorkflow).toBe('narrowed.runbook.md');
       }
     });

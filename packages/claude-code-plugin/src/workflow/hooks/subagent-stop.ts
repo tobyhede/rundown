@@ -40,7 +40,7 @@ export function handleSubagentStop(input: HookInput): SubagentStopResult {
   const agentId = input.agent_id;
   if (!agentId) return {};
 
-  const status = parseAgentStatus(input.output);
+  const status = parseAgentStatus(input.last_assistant_message);
   const command = status === 'pass' ? 'pass' : 'fail';
 
   try {

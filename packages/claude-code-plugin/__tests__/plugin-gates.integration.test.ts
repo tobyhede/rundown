@@ -79,7 +79,7 @@ describe('Plugin Gate Composition Integration', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: projectDir,
-      agent_name: 'test-agent',
+      agent_type: 'test-agent',
     };
 
     const result = await dispatch(input);
@@ -112,7 +112,7 @@ describe('Plugin Gate Composition Integration', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: projectDir,
-      agent_name: 'test-agent',
+      agent_type: 'test-agent',
     };
 
     const result = await dispatch(input);
@@ -178,7 +178,7 @@ describe('Plugin Gate Composition Integration', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: projectDir,
-      agent_name: 'test-agent',
+      agent_type: 'test-agent',
     };
 
     // Should error or handle gracefully (not infinite loop)
@@ -228,7 +228,7 @@ describe('Plugin Gate Composition Integration', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       cwd: projectDir,
-      agent_name: 'test-agent',
+      agent_type: 'test-agent',
     };
 
     // Should work - self-reference to a different gate is valid
