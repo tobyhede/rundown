@@ -752,7 +752,6 @@ function buildParentStateConfig(
   const isDeferred = isDeferredStep(parentStep);
   const parentTransitions =
     parentStep.transitions ?? (isDeferred ? DEFAULT_TRANSITIONS : undefined);
-  const hasTransitions = !!parentTransitions;
   const nextTarget = findNextStateId(stepName, undefined, steps);
   const firstSubstep = parentStep.substeps?.[0];
   const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
@@ -925,7 +924,7 @@ function buildParentStateConfig(
   // The parent's configured transition action takes precedence for lastAction
   // in the exit context (e.g., BREAK exits produce lastAction=CONTINUE when
   // the parent transition is CONTINUE).
-  if (hasTransitions && parentTransitions) {
+  if (parentTransitions) {
     const passTarget = resolveActionTarget(parentTransitions.pass.action, stepName, steps);
     const failTarget = resolveActionTarget(parentTransitions.fail.action, stepName, steps);
 
@@ -1166,7 +1165,7 @@ function buildContinueTransition(
   const shouldAccumulateIterationResults = !!(
     currentStep?.substeps?.length &&
     !currentStep.forClause &&
-    (currentStep.transitions || isDeferredStep(currentStep))
+    (currentStep.transitions ?? isDeferredStep(currentStep))
   );
   const shouldAccumulateSubstepResults = !!(currentStep?.substeps?.length && currentStep.forClause);
 
