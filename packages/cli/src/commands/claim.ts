@@ -66,16 +66,17 @@ export function registerClaimCommand(program: Command): void {
           }
 
           // Delegation propagation — if child auto-completed during launch
+          let propagationResult: 'handled' | 'stopped' | 'not-applicable' = 'not-applicable';
           if (result.loopResult === 'done' || result.loopResult === 'stopped') {
             const childState = await manager.load(result.childRunId);
             if (childState?.delegation) {
               const propResult = childState.variables.completed ? 'pass' : 'fail';
-              await handleDelegationCompletion(childState, propResult, cwd, output);
+              propagationResult = await handleDelegationCompletion(childState, propResult, cwd, output);
             }
           }
 
           output.flush();
-          if (result.loopResult === 'stopped') {
+          if (result.loopResult === 'stopped' || propagationResult === 'stopped') {
             process.exit(1);
           }
         } catch (error) {

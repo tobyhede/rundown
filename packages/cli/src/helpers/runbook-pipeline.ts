@@ -1031,7 +1031,7 @@ export async function claimAndLaunch(
       tokenHash,
       parentStep: freshParent.step,
       parentFrameKey: parentFrame.frameKey,
-      parentEntry: freshParent.activeEntry ?? 1,
+      parentEntry: inferEntryFromState(freshParent, parentFrame.frameKey),
     };
 
     const parentPrompted = freshParent.prompted ?? false;

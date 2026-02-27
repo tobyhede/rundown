@@ -6,6 +6,7 @@ import {
   readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import type { TestWorkspace } from '../helpers/test-utils.js';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -155,6 +156,7 @@ Run the child task.
 
       // Fail the child step — should trigger fail propagation
       result = runCli('fail', workspace);
+      expect(result.exitCode).toBe(1);
 
       // After child fails, parent should be stopped (FAIL ANY: STOP)
       const updatedParent = await readRunbookState(workspace, parentRunId);
