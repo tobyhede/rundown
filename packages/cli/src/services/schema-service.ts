@@ -38,6 +38,9 @@ export const JSON_OUTPUT_COMMANDS = [
   'scenario show',
   'scenario run',
   'abort',
+  'scenario-suite ls',
+  'scenario-suite show',
+  'scenario-suite run',
 ] as const;
 
 /**

@@ -37,6 +37,7 @@ export {
   CheckValidationErrorSchema,
   RunbookStatsSchema,
   // Scenario schemas
+  ScenarioAssertionResultSchema,
   ScenarioEntrySchema,
   ScenarioDetailSchema,
   ScenarioListSchema,
@@ -46,6 +47,11 @@ export {
   DelegationStatusEntrySchema,
   // Abort schema
   AbortResponseSchema,
+  // Suite schemas
+  ScenarioSuiteCaseEntrySchema,
+  ScenarioSuiteListSchema,
+  ScenarioSuiteCaseDetailSchema,
+  ScenarioSuiteRunResponseSchema,
   // Prune schema (same format as ls output)
   PruneResponseSchema,
   // Execution schemas
@@ -119,6 +125,9 @@ import {
   ScenarioListSchema,
   ScenarioDetailSchema,
   ScenarioRunResponseSchema,
+  ScenarioSuiteListSchema,
+  ScenarioSuiteCaseDetailSchema,
+  ScenarioSuiteRunResponseSchema,
   ExecutionSummarySchema,
   RunCommandResponseSchema,
   AvailableRunbooksListSchema,
@@ -150,4 +159,7 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
   'scenario show': ScenarioDetailSchema,
   'scenario run': ScenarioRunResponseSchema,
   abort: AbortResponseSchema,
+  'scenario-suite ls': ScenarioSuiteListSchema,
+  'scenario-suite show': ScenarioSuiteCaseDetailSchema,
+  'scenario-suite run': ScenarioSuiteRunResponseSchema,
 };
