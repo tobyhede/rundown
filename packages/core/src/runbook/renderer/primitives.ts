@@ -6,6 +6,7 @@
  * @param description - Optional heading description text
  * @param separator - Separator inserted between id and description when present
  * @returns Markdown heading string
+ * @throws {RangeError} If level is not an integer between 1 and 6
  */
 export function renderHeading(
   level: number,

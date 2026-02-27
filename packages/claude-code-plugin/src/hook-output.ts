@@ -48,6 +48,10 @@ function makeContextOutput(
 
 /**
  * Build Claude Code hook JSON output using the modern hookSpecificOutput contract.
+ *
+ * @param input - The hook input from Claude Code containing the event name and payload
+ * @param result - The dispatch result from the event handler
+ * @returns Structured output for Claude Code hook response
  */
 export function buildHookOutput(input: HookInput, result: DispatchResult): ClaudeHookOutput {
   const hookEventName = input.hook_event_name;

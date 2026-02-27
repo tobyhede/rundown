@@ -279,6 +279,7 @@ export class RunbookStateManager {
    * @param agentId - The agent ID to bind
    * @param pending - The pending step target the agent is working on
    * @throws Error if the runbook with the given ID is not found
+   * @throws Error if the pending step is missing a canonical targetStep
    */
   async bindAgent(id: string, agentId: string, pending: PendingStep): Promise<void> {
     const state = await this.load(id);

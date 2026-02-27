@@ -94,6 +94,7 @@ export class ExecutionLifecycleService {
    * @param previousState - State before a transition (optional)
    * @param nextState - State after a transition (optional)
    * @returns Persisted state with active frame/entry fields populated
+   * @throws {Error} If the runbook with the given ID is not found
    */
   async ensureActiveEntry(
     id: string,
@@ -168,6 +169,7 @@ export class ExecutionLifecycleService {
    * @param id - The runbook state ID
    * @param key - Canonical completion key (`frame|entry|substep`)
    * @param completion - Resolved completion payload
+   * @throws {Error} If the runbook with the given ID is not found
    */
   async upsertResolvedCompletion(
     id: string,

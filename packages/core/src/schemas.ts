@@ -198,9 +198,9 @@ const ResolvedCompletionSchema = z.object({
   result: z.enum(['pass', 'fail']),
   targetStep: z.string(),
   targetSubstep: z.string().optional(),
-  targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+  targetIteration: z.number().int().positive().optional(),
   targetFrameKey: z.string(),
-  targetEntry: z.number().int().positive().max(MAX_FOR_BOUND),
+  targetEntry: z.number().int().positive(),
   completedAt: z.string(),
 });
 
@@ -307,9 +307,9 @@ export const RunbookStateSchema = z.object({
     }),
   ),
   resolvedCompletions: z.record(z.string(), ResolvedCompletionSchema).optional(),
-  frameEntries: z.record(z.string(), z.number().int().positive().max(MAX_FOR_BOUND)).optional(),
+  frameEntries: z.record(z.string(), z.number().int().positive()).optional(),
   activeFrameKey: z.string().optional(),
-  activeEntry: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+  activeEntry: z.number().int().positive().optional(),
   substepStates: z.array(SubstepStateSchema).optional(),
   agentId: z.string().optional(),
   parentRunbookId: z.string().optional(),

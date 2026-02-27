@@ -499,6 +499,8 @@ export async function handleAgentBinding(
  * @param ctx - Transition context (scoped to the child's agent)
  * @param agentId - Agent ID whose child runbook just completed
  * @returns 'handled' if parent was advanced, 'stopped' if parent stopped, 'not-applicable' if no propagation needed
+ * @throws Error if stale completion propagation is detected (binding has no result)
+ * @throws Error if the parent actor cannot be initialized for direct transition
  */
 export async function handleAgentCompletion(
   ctx: TransitionContext,
@@ -650,7 +652,7 @@ export async function handleAgentCompletion(
  *
  * @param ctx - Transition context
  * @param config - Transition configuration
- * @returns `'continue'` if the runbook should keep running, `'stopped'` if it reached a terminal state
+ * @returns `'continue'` for normal flow including completed/done paths, `'stopped'` if it reached a terminal state
  * @throws Error from `findStepOrThrow` if the active step is missing (state corruption),
  *   from `ensureActiveEntry` on lifecycle violations, or from orchestration failures
  */

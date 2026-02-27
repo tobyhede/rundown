@@ -9,6 +9,10 @@ export type SyntheticEventName =
   | 'SlashCommandStart'
   | 'SlashCommandEnd';
 
+/**
+ * A synthetic event inferred from tool-use patterns when Claude Code
+ * doesn't fire a native lifecycle event.
+ */
 export interface SyntheticEvent {
   /** The Claude Code event that triggered detection */
   originalEvent: string;
@@ -24,7 +28,10 @@ export interface SyntheticEvent {
 }
 
 /**
- * Check if an event name is synthetic (not fired by Claude Code)
+ * Check if an event name is synthetic (not fired by Claude Code).
+ *
+ * @param eventName - The event name to check
+ * @returns True if the event name is a synthetic event name
  */
 export function isSyntheticEvent(eventName: string): eventName is SyntheticEventName {
   return ['SkillStart', 'SkillEnd', 'SlashCommandStart', 'SlashCommandEnd'].includes(eventName);

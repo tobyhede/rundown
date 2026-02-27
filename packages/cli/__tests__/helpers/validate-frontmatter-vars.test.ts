@@ -60,7 +60,10 @@ describe('validateFrontmatterVars', () => {
     expect(result).toHaveLength(2);
     const messages = result.map((d) => d.message);
     expect(messages).toEqual(
-      expect.arrayContaining([expect.stringContaining('"Step"'), expect.stringContaining('"Index"')]),
+      expect.arrayContaining([
+        expect.stringContaining('"Step"'),
+        expect.stringContaining('"Index"'),
+      ]),
     );
   });
 

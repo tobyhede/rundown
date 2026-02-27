@@ -53,6 +53,7 @@ export interface DelegateResult {
  * @throws {RundownError} RD-802 if step not at execution frontier
  * @throws {RundownError} RD-803 if step has substeps but no substep specified
  * @throws {RundownError} RD-804 if an active delegation already exists on the substep
+ * @throws {RundownError} RD-805 if substep specified but step has no substeps
  */
 export function createDelegation(options: DelegateOptions, steps: readonly Step[]): DelegateResult {
   const { state, stepId, childRunbookPath, extraVars, ancestors } = options;
@@ -78,7 +79,10 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
   }
 
   // 3b. If substep specified, validate it exists in the step
-  if (parsed.substep && step.substeps) {
+  if (parsed.substep) {
+    if (!step.substeps || step.substeps.length === 0) {
+      throw Errors.delegationSubstepNotFound(parsed.substep, parsed.step, []);
+    }
     const validIds = step.substeps.map((ss) => ss.id);
     if (!validIds.includes(parsed.substep)) {
       throw Errors.delegationSubstepNotFound(parsed.substep, parsed.step, validIds);
