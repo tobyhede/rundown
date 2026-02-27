@@ -18,6 +18,12 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   DelegationLock: jest.fn(),
   reconstituteContextVars: jest.fn().mockReturnValue({}),
   hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
+  ErrorCodes: {
+    INVALID_TOKEN: { code: 'RD-807' },
+    TOKEN_NOT_FOUND: { code: 'RD-808' },
+    TOKEN_CANCELLED: { code: 'RD-809' },
+    DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
+  },
 }));
 
 // Mock @rundown-org/parser

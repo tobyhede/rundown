@@ -33,6 +33,7 @@ import {
   reconstituteContextVars,
   hashDelegationToken,
   DELEGATION_TOKEN_PREFIX,
+  ErrorCodes,
 } from '@rundown-org/core';
 import { isSourced, type ForClause } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
@@ -803,6 +804,15 @@ export async function bindAgent(
 
 /**
  * Update a parent step/substep delegation's childRunId after the child run is created.
+ *
+ * Loads the parent state, locates the delegation on the specified substep, and
+ * patches the `childRunId` field to link parent and child runs.
+ *
+ * @param manager - State manager for loading and persisting runbook state
+ * @param runId - Parent run ID whose delegation to update
+ * @param substepId - Substep ID (or bare step ID) that owns the delegation
+ * @param childRunId - The newly created child run ID to set
+ * @throws Error if the parent run is not found
  */
 async function updateStepDelegationChildRunId(
   manager: RunbookStateManager,
@@ -849,14 +859,15 @@ export async function claimAndLaunch(
   varOpts: VarOptions,
 ): Promise<ClaimResult> {
   const { output, manager, cwd } = ctx;
+  const truncatedToken = rawToken.slice(0, 12) + '...';
 
   // 1. Validate token format
   if (!rawToken.startsWith(DELEGATION_TOKEN_PREFIX)) {
     return {
       ok: false,
       error: `Invalid token format. Tokens must start with "${DELEGATION_TOKEN_PREFIX}".`,
-      code: 'INVALID_TOKEN',
-      details: { token: rawToken },
+      code: ErrorCodes.INVALID_TOKEN.code,
+      details: { token: truncatedToken },
     };
   }
 
@@ -868,8 +879,8 @@ export async function claimAndLaunch(
     return {
       ok: false,
       error: 'No active run contains a delegation with this token.',
-      code: 'TOKEN_NOT_FOUND',
-      details: { token: rawToken },
+      code: ErrorCodes.TOKEN_NOT_FOUND.code,
+      details: { token: truncatedToken },
     };
   }
 
@@ -883,7 +894,7 @@ export async function claimAndLaunch(
     return {
       ok: false,
       error: `Could not acquire delegation lock for run ${parentState.id}. Another operation may be in progress.`,
-      code: 'DELEGATION_LOCK_TIMEOUT',
+      code: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
       details: { parentRunId: parentState.id },
     };
   }
@@ -895,7 +906,7 @@ export async function claimAndLaunch(
       return {
         ok: false,
         error: `Parent run ${parentState.id} no longer exists.`,
-        code: 'TOKEN_NOT_FOUND',
+        code: ErrorCodes.TOKEN_NOT_FOUND.code,
         details: { parentRunId: parentState.id },
       };
     }
@@ -910,7 +921,7 @@ export async function claimAndLaunch(
       return {
         ok: false,
         error: 'Delegation no longer exists on parent step.',
-        code: 'TOKEN_NOT_FOUND',
+        code: ErrorCodes.TOKEN_NOT_FOUND.code,
         details: { parentRunId: parentState.id, stepId },
       };
     }
@@ -921,7 +932,7 @@ export async function claimAndLaunch(
       return {
         ok: false,
         error: 'Token hash mismatch after re-load.',
-        code: 'TOKEN_NOT_FOUND',
+        code: ErrorCodes.TOKEN_NOT_FOUND.code,
         details: { parentRunId: parentState.id },
       };
     }
@@ -942,7 +953,7 @@ export async function claimAndLaunch(
       return {
         ok: false,
         error: 'This delegation has been cancelled and cannot be claimed.',
-        code: 'TOKEN_CANCELLED',
+        code: ErrorCodes.TOKEN_CANCELLED.code,
         details: { parentRunId: freshParent.id, stepId, cancelledAt: freshDelegation.cancelledAt },
       };
     }
@@ -987,20 +998,22 @@ export async function claimAndLaunch(
     const parentPrompted = freshParent.prompted ?? false;
 
     // 4g. Launch child runbook
+    let capturedChildRunId: string | undefined;
+
     const launchResult = await launchRunbook(ctx, prepResult.prepared, {
       runbookName: delegation.childRunbookPath,
       prompted: parentPrompted,
       parentRunbookId: freshParent.id,
       delegationLinkage,
       afterInit: async (childStateId) => {
-        // Set childRunId on parent delegation and RUNDOWN_RUN_ID in process.env
+        // Set childRunId on parent delegation
         await updateStepDelegationChildRunId(
           manager,
           freshParent.id,
           substepId ?? stepId,
           childStateId,
         );
-        process.env.RUNDOWN_RUN_ID = childStateId;
+        capturedChildRunId = childStateId;
       },
     });
 
@@ -1013,8 +1026,7 @@ export async function claimAndLaunch(
       };
     }
 
-    // Resolve the child run ID from state (afterInit has set it)
-    const childRunId = process.env.RUNDOWN_RUN_ID ?? 'unknown';
+    const childRunId = capturedChildRunId ?? 'unknown';
 
     // Emit claimed output
     output.status(
@@ -1023,7 +1035,7 @@ export async function claimAndLaunch(
       `Claimed ${rawToken.slice(0, 12)}... → ${delegation.childRunbookPath}`,
       {
         action: 'claimed',
-        token: rawToken,
+        token: truncatedToken,
         run_id: childRunId,
         runbook: delegation.childRunbookPath,
         parent_run_id: freshParent.id,
