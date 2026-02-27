@@ -11,11 +11,6 @@ describe('runbook compiler', () => {
     fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
   };
 
-  function createRunbook(markdown: string): Step[] {
-    const runbook = parseRunbookDocument(markdown);
-    return [...runbook.steps];
-  }
-
   describe('static step compilation', () => {
     it('generates discrete states for substeps', () => {
       const steps: Step[] = [
@@ -1006,6 +1001,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 4 },
           description: 'Test with failures',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -1054,9 +1054,9 @@ describe('runbook compiler', () => {
       expect(topRes3.iteration).toBe(4);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail', 'pass']);
 
-      // Iteration 4: PASS (forIteration=4, 4 < 4? NO, exit loop — FAIL ANY: STOP)
+      // Iteration 4: PASS (forIteration=4, 4 < 4? NO, exit loop — final result computed inline)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail', 'pass']);
       expect(actor.getSnapshot().context.substepResults).toEqual(['pass']);
     });
@@ -1257,6 +1257,11 @@ describe('runbook compiler', () => {
           name: '3',
           forClause: { start: 1, end: 5 },
           description: 'Process batches',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -1300,12 +1305,13 @@ describe('runbook compiler', () => {
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topBreak1.iteration).toBe(1);
 
-      // Iteration 1: FAIL on substep 1 → BREAK → exit loop → FAIL ANY: STOP
+      // Iteration 1: FAIL on substep 1 → BREAK → exit loop to step 4 (no loop-back)
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::4');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
       expect(actor.getSnapshot().context.substepResults).toEqual(['fail']);
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
     });
 
     it('NEXT records iteration results correctly across iterations', () => {
@@ -1314,6 +1320,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 3 },
           description: 'Loop with NEXT on fail',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -1355,9 +1366,9 @@ describe('runbook compiler', () => {
       expect(topNextRes2.iteration).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['fail', 'pass']);
 
-      // Iteration 3 (last): PASS → NEXT → exit → FAIL ANY: STOP
+      // Iteration 3 (last): PASS → NEXT → exit (final iteration computed inline)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.iterationResults).toEqual(['fail', 'pass']);
       expect(actor.getSnapshot().context.substepResults).toEqual(['pass']);
     });
@@ -1368,6 +1379,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 5 },
           description: 'Loop with early break',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -1424,11 +1440,11 @@ describe('runbook compiler', () => {
       expect(topBreakRes2.iteration).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
-      // Iteration 3: PASS → FAIL (BREAK) → exit loop → FAIL ANY: STOP
+      // Iteration 3: PASS → FAIL (BREAK) — BREAK does NOT append to iterationResults
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step::1::2');
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
       expect(actor.getSnapshot().context.substepResults).toEqual(['pass', 'fail']);
@@ -3388,6 +3404,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 5, end: 1 },
           description: 'Descending with break',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -3416,10 +3437,11 @@ describe('runbook compiler', () => {
 
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(5);
 
-      // FAIL → BREAK → exit loop → FAIL ANY: STOP
+      // FAIL → BREAK immediately
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
     });
 
     it('NEXT skips to next descending iteration', () => {
@@ -3586,6 +3608,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 3, end: 1 },
           description: 'Descending with mixed results',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+          },
           substeps: [
             {
               id: '1',
@@ -3622,9 +3649,9 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(1);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
 
-      // Iteration 1 (last): PASS → exit → FAIL ANY: STOP
+      // Iteration 1 (last): PASS → exit (final iteration computed inline)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
       expect(actor.getSnapshot().context.substepResults).toEqual(['pass']);
     });
@@ -3690,6 +3717,12 @@ describe('runbook compiler', () => {
   });
 
   describe('data source FOR loops', () => {
+    // Helper to parse markdown into steps
+    function createRunbook(markdown: string): Step[] {
+      const runbook = parseRunbookDocument(markdown);
+      return [...runbook.steps];
+    }
+
     it('creates ForContext with array source', () => {
       const steps = createRunbook(`
 ## 1. Process items
@@ -4302,6 +4335,11 @@ echo "processing"
   });
 
   describe('FOR shorthand canonicalization', () => {
+    function createRunbook(markdown: string): Step[] {
+      const runbook = parseRunbookDocument(markdown);
+      return [...runbook.steps];
+    }
+
     it('iterates a FOR step defined via step-level runbook-list shorthand', () => {
       const steps = createRunbook(`
 ## 1. Review the plan
@@ -4317,7 +4355,7 @@ echo "processing"
 
       expect(steps[0].substeps?.[0]).toMatchObject({
         id: '1',
-        runbooks: ['review-technical-accuracy.runbook.md'],
+        workflows: ['review-technical-accuracy.runbook.md'],
       });
 
       const machine = compileRunbookToMachine(steps);
@@ -4410,7 +4448,7 @@ echo "processing"
 
       // All four runbooks canonicalized into four implicit substeps (one runbook each)
       expect(steps[0].substeps).toHaveLength(4);
-      expect(steps[0].substeps?.map((substep) => substep.runbooks)).toEqual([
+      expect(steps[0].substeps?.map((substep) => substep.workflows)).toEqual([
         ['review-technical-accuracy.runbook.md'],
         ['review-structural-integrity.runbook.md'],
         ['review-build-runtime.runbook.md'],
@@ -5454,7 +5492,7 @@ echo "processing"
       actor.send({ type: 'FAIL' });
 
       // After BREAK: loop exits, aggregates only 2 iterations with iteration 2 failing
-      // Iteration-level FAIL ANY (fail action is BREAK): iteration 2 failed → BREAK
+      // Iteration-level PASS ANY (fail action is BREAK): iteration 2 failed → BREAK
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.iterationResults).toEqual(['pass']);
