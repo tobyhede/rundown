@@ -17,6 +17,8 @@ scenarios:
     commands:
       - rd run --prompted runbook-composition.runbook.md
       - rd fail
+      - rd pass
+      - rd pass
     result: STOP
 tags:
   - composition

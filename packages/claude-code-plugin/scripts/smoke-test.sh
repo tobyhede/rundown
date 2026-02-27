@@ -65,7 +65,7 @@ TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
 # Test 3: PostToolUse hook dispatch
-HOOK_INPUT='{"hook_event_name":"PostToolUse","cwd":"'"$TEMP_DIR"'","tool_name":"Edit","file_path":"/test/file.ts"}'
+HOOK_INPUT='{"hook_event_name":"PostToolUse","cwd":"'"$TEMP_DIR"'","tool_name":"Edit","tool_input":{"file_path":"/test/file.ts"}}'
 if echo "$HOOK_INPUT" | node "$PLUGIN_DIR/dist/cli.js" 2>/dev/null; then
     pass "PostToolUse hook dispatch"
 else
@@ -73,7 +73,7 @@ else
 fi
 
 # Test 4: SubagentStop hook dispatch
-HOOK_INPUT='{"hook_event_name":"SubagentStop","cwd":"'"$TEMP_DIR"'","agent_id":"test-agent","output":"STATUS: PASS"}'
+HOOK_INPUT='{"hook_event_name":"SubagentStop","cwd":"'"$TEMP_DIR"'","agent_id":"test-agent","agent_type":"general-purpose","last_assistant_message":"STATUS: PASS"}'
 if echo "$HOOK_INPUT" | node "$PLUGIN_DIR/dist/cli.js" 2>/dev/null; then
     pass "SubagentStop hook dispatch"
 else
@@ -81,7 +81,7 @@ else
 fi
 
 # Test 5: UserPromptSubmit hook dispatch
-HOOK_INPUT='{"hook_event_name":"UserPromptSubmit","cwd":"'"$TEMP_DIR"'","user_message":"test message"}'
+HOOK_INPUT='{"hook_event_name":"UserPromptSubmit","cwd":"'"$TEMP_DIR"'","prompt":"test message"}'
 if echo "$HOOK_INPUT" | node "$PLUGIN_DIR/dist/cli.js" 2>/dev/null; then
     pass "UserPromptSubmit hook dispatch"
 else
