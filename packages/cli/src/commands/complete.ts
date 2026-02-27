@@ -16,7 +16,7 @@ import { getRunbookFromState } from '../helpers/runbook-loader.js';
  * remaining steps. Use cases include:
  * - Early exit when remaining steps are unnecessary
  * - Agent-driven completion where manual override is needed
- * - Testing/debugging workflows
+ * - Testing/debugging runbook execution
  *
  * @param program - Commander program instance to register the command on
  */

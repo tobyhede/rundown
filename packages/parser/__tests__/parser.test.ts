@@ -13,7 +13,7 @@ describe('Step-level runbooks', () => {
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].workflows).toEqual(['task-details.runbook.md']);
+    expect(steps[0].substeps![0].runbooks).toEqual(['task-details.runbook.md']);
     expect(steps[0].deferred).toBe(false);
   });
 
@@ -43,7 +43,7 @@ Do work.
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].workflows).toEqual([
+    expect(steps[0].substeps?.[0].runbooks).toEqual([
       'runbook-a.runbook.md',
       'runbook-b.runbook.md',
     ]);
@@ -66,7 +66,7 @@ describe('parseRunbook with substep runbooks', () => {
 
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].workflows).toEqual(['review.runbook.md', 'security.runbook.md']);
+    expect(steps[0].substeps?.[0].runbooks).toEqual(['review.runbook.md', 'security.runbook.md']);
     expect(steps[0].deferred).toBe(false);
   });
 
@@ -771,7 +771,7 @@ npm test
 - task.runbook.md
 `;
       const steps = parseRunbook(md);
-      expect(steps[0].substeps?.[0].workflows).toEqual(['task.runbook.md']);
+      expect(steps[0].substeps?.[0].runbooks).toEqual(['task.runbook.md']);
     });
 
     it('rejects list items after content in step', () => {
@@ -1050,7 +1050,7 @@ Review the following items.
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
     expect(sub?.prompt).toBe('Review the following items.');
-    expect(sub?.workflows).toEqual(['task.runbook.md']);
+    expect(sub?.runbooks).toEqual(['task.runbook.md']);
   });
 
   it('returns empty prompt when substep has only runbook references', () => {
@@ -1066,7 +1066,7 @@ Review the following items.
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
     expect(sub?.prompt).toBeUndefined();
-    expect(sub?.workflows).toEqual(['alpha.runbook.md', 'beta.runbook.md']);
+    expect(sub?.runbooks).toEqual(['alpha.runbook.md', 'beta.runbook.md']);
   });
 
   it('preserves prompt text alongside runbook refs in substep', () => {
@@ -1084,7 +1084,7 @@ Review the tasks carefully.
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
     expect(sub?.prompt).toContain('Review the tasks carefully.');
-    expect(sub?.workflows).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
+    expect(sub?.runbooks).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
   });
 
   it('canonicalizes step-level runbook refs into runbook-list-derived substeps', () => {
@@ -1103,12 +1103,12 @@ Review the tasks carefully.
     expect(steps[0].substeps?.[0]).toMatchObject({
       id: '1',
       description: '',
-      workflows: ['deploy.runbook.md'],
+      runbooks: ['deploy.runbook.md'],
     });
     expect(steps[0].substeps?.[1]).toMatchObject({
       id: '2',
       description: '',
-      workflows: ['verify.runbook.md'],
+      runbooks: ['verify.runbook.md'],
     });
   });
 
@@ -1127,7 +1127,7 @@ Review this checklist.
       id: '1',
       description: '',
       prompt: 'Review this checklist.',
-      workflows: ['deploy.runbook.md'],
+      runbooks: ['deploy.runbook.md'],
     });
   });
 
@@ -1149,7 +1149,7 @@ Review this checklist.
     expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
     expect(steps[0].deferred).toBe(true);
     expect(steps[0].substeps).toHaveLength(4);
-    expect(steps[0].substeps?.map((s) => s.workflows)).toEqual([
+    expect(steps[0].substeps?.map((s) => s.runbooks)).toEqual([
       ['review-technical-accuracy.runbook.md'],
       ['review-structural-integrity.runbook.md'],
       ['review-build-runtime.runbook.md'],
@@ -1227,7 +1227,7 @@ describe('regex boundaries and runbook patterns', () => {
 - simple.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps?.[0].workflows).toEqual(['simple.runbook.md']);
+    expect(steps[0].substeps?.[0].runbooks).toEqual(['simple.runbook.md']);
   });
 
   it('matches path-like runbook ref', () => {
@@ -1238,7 +1238,7 @@ describe('regex boundaries and runbook patterns', () => {
 - path/to/complex-name.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps?.[0].workflows).toEqual(['path/to/complex-name.runbook.md']);
+    expect(steps[0].substeps?.[0].runbooks).toEqual(['path/to/complex-name.runbook.md']);
   });
 
   it('does not treat .runbook.md.txt as a runbook ref', () => {
@@ -1413,7 +1413,7 @@ Check the items.
     // Prompt should contain the text but NOT the runbook line
     expect(sub?.prompt).toContain('Check the items.');
     expect(sub?.prompt).not.toContain('setup.runbook.md');
-    expect(sub?.workflows).toEqual(['setup.runbook.md']);
+    expect(sub?.runbooks).toEqual(['setup.runbook.md']);
   });
 
   it('trims whitespace from filtered content', () => {

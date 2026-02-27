@@ -485,8 +485,8 @@ export async function queueStep(
   let inferredRunbook = file;
   if (!inferredRunbook && targetSubstep && hasSubsteps) {
     const substep = currentStep?.substeps?.find((s) => s.id === targetSubstep);
-    const workflows = substep?.workflows ?? [];
-    if (workflows.length === 1) {
+    const runbooks = substep?.runbooks ?? [];
+    if (runbooks.length === 1) {
       const stepVars = buildStepVariables(
         state.step,
         targetSubstep,
@@ -495,14 +495,14 @@ export async function queueStep(
         state.sources,
         state.templateVars,
       );
-      let expanded = expandLoopVariables(workflows[0], stepVars);
-      // Resolve workflow reference relative to the parent runbook's directory
+      let expanded = expandLoopVariables(runbooks[0], stepVars);
+      // Resolve runbook reference relative to the parent runbook's directory
       const parentDir = state.runbookPath ? path.dirname(state.runbookPath) : '';
       if (parentDir && parentDir !== '.') {
         expanded = path.join(parentDir, expanded);
       }
       inferredRunbook = expanded;
-    } else if (workflows.length > 1) {
+    } else if (runbooks.length > 1) {
       return {
         ok: false,
         error:
@@ -511,7 +511,7 @@ export async function queueStep(
         code: 'VALIDATION_ERROR',
         details: {
           requested: `${state.step}.${targetSubstep}`,
-          workflows,
+          runbooks,
         },
       };
     }

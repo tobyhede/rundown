@@ -98,7 +98,7 @@ describe('renderSubstep', () => {
     const substep: Substep = {
       id: '1',
       description: 'With child runbook',
-      workflows: ['task.runbook.md'],
+      runbooks: ['task.runbook.md'],
     };
     expect(renderSubstep(substep, '1')).toBe('### 1.1 With child runbook\n\n- task.runbook.md');
   });
@@ -179,7 +179,7 @@ describe('renderStep', () => {
         {
           id: '1',
           description: '',
-          workflows: ['review-technical-accuracy.runbook.md'],
+          runbooks: ['review-technical-accuracy.runbook.md'],
         },
       ],
     } as Step;
@@ -198,7 +198,7 @@ describe('renderStep', () => {
           id: '1',
           description: '',
           prompt: 'Review the following items carefully.',
-          workflows: ['review.runbook.md'],
+          runbooks: ['review.runbook.md'],
         },
       ],
     } as Step;
@@ -422,7 +422,7 @@ echo hello
 ## 2. Continue`;
 
     const parsed = parseRunbook(markdown);
-    expect(parsed[0].substeps?.[0].workflows).toEqual(['setup.runbook.md']);
+    expect(parsed[0].substeps?.[0].runbooks).toEqual(['setup.runbook.md']);
   });
 
   it('round-trips step-level runbook-list shorthand via implicit substep', () => {
@@ -441,7 +441,7 @@ echo hello
 
     expect(parsed2[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
     expect(parsed2[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(parsed2[0].substeps?.map((substep) => substep.workflows)).toEqual([
+    expect(parsed2[0].substeps?.map((substep) => substep.runbooks)).toEqual([
       ['review-technical-accuracy.runbook.md'],
       ['review-structural-integrity.runbook.md'],
     ]);

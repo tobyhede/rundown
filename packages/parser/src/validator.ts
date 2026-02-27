@@ -196,7 +196,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
     if (step.substeps) {
       for (const substep of step.substeps) {
         const sHasCommand = substep.command !== undefined;
-        const sHasRunbooks = substep.workflows !== undefined && substep.workflows.length > 0;
+        const sHasRunbooks = substep.runbooks !== undefined && substep.runbooks.length > 0;
 
         if (sHasCommand && sHasRunbooks) {
           diagnostics.push(

@@ -156,7 +156,7 @@ echo hello
     });
 
     it('counts step-level runbook-list shorthand as one substep', () => {
-      const runbookPath = path.join(workspace.cwd, 'workflow-shorthand.runbook.md');
+      const runbookPath = path.join(workspace.cwd, 'runbook-shorthand.runbook.md');
       fs.writeFileSync(
         runbookPath,
         `## 1. Review the plan

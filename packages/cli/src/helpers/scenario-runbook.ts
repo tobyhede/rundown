@@ -4,7 +4,7 @@
  * Extracts loading, formatting, and execution logic from commands/scenarios.ts
  * into testable functions. The command file becomes a thin shell.
  *
- * @module helpers/scenario-workflow
+ * @module helpers/scenario-runbook
  */
 
 import { readFile, rm } from 'node:fs/promises';

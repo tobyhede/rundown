@@ -85,8 +85,9 @@ Note: `prompt` alone (without a language) is valid for text-only prompts, e.g., 
 where runbooks is:
   - runbook_path [ ... ]
 
-Step-level `runbooks` syntax is shorthand for implicit sequential substeps (`### N.1`, `### N.2`, ...), one workflow path per generated substep.
+Step-level `runbooks` syntax is shorthand for implicit sequential substeps (`### N.1`, `### N.2`, ...), one runbook path per generated substep.
 If prompt text appears before a step-level `runbooks` shorthand body, it is attached to the first generated implicit substep only.
+Runtime inference marks these shorthand steps as deferred. Explicit H3 substeps are immediate by default unless a `FOR` clause is present.
 
 where transition is:
   - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result
@@ -283,11 +284,12 @@ Canonical runtime targeting is `step + substep + iteration`.
 
 ### Implicit Transitions
 
-| Condition         | Expands To |
-|-------------------|------------|
-| None defined      | `PASS ALL: CONTINUE` + `FAIL ANY: STOP` |
-| Only PASS defined | Adds `FAIL ANY: STOP` |
-| Only FAIL defined | Adds `PASS ALL: CONTINUE` |
+| Condition | Runtime behavior |
+|-----------|------------------|
+| Substep (no transitions) | `PASS: CONTINUE` + `FAIL: STOP` for immediate parents; `PASS: CONTINUE` + `FAIL: CONTINUE` for deferred parents |
+| Parent with substeps, no transitions, deferred (`FOR` or step-level runbook shorthand) | `PASS ALL: CONTINUE` + `FAIL ANY: STOP` |
+| Parent with substeps, no transitions, immediate (explicit H3 substeps without `FOR`) | Non-deferred pass-through (no implicit parent aggregation) |
+| Parent with explicit transitions | Uses declared transitions (plus normal PASS/FAIL completion defaults if one side is omitted) |
 
 **Convention:** Always write both transitions explicitly. The parser supports implicit defaults, but runbooks should be readable without memorizing the default table.
 

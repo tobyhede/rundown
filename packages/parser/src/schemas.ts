@@ -181,7 +181,7 @@ export const SubstepSchema = z.object({
   id: z.string(),
   description: z.string(),
   agentType: z.string().optional(),
-  workflows: z.array(z.string()).readonly().optional(),
+  runbooks: z.array(z.string()).readonly().optional(),
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
   transitions: TransitionsSchema.optional(),

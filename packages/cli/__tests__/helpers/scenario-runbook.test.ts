@@ -55,7 +55,7 @@ const {
   buildScenarioDetail,
   extractReferencedRunbooks,
   executeScenario,
-} = await import('../../src/helpers/scenario-workflow');
+} = await import('../../src/helpers/scenario-runbook');
 
 // Types are inferred from mocked modules; use `any` casts where needed
 

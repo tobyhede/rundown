@@ -71,7 +71,7 @@ export interface Substep {
   /** Pass/fail transition handlers */
   readonly transitions?: Transitions;
   /** Referenced runbook files (.runbook.md) */
-  readonly workflows?: readonly string[];
+  readonly runbooks?: readonly string[];
   /** Source line number for error reporting */
   readonly line?: number;
 }

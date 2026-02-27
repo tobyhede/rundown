@@ -171,7 +171,7 @@ export function parseRunbookDocument(
         command: ps.command,
         prompt: promptText.trim() || undefined,
         transitions: transitions ?? undefined,
-        workflows: runbooks.length > 0 ? runbooks : undefined,
+        runbooks: runbooks.length > 0 ? runbooks : undefined,
         line: ps.line,
       };
       currentStep.substeps.push(substep);
@@ -582,7 +582,7 @@ function finalizeStep(
       id: String(index + 1),
       description: '',
       prompt: index === 0 ? prompt : undefined,
-      workflows: [runbookPath],
+      runbooks: [runbookPath],
       line: step.line,
     }));
 

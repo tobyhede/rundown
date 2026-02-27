@@ -338,7 +338,7 @@ describe('queueStep', () => {
     );
   });
 
-  it('infers child runbook when substep has exactly one workflow and file is omitted', async () => {
+  it('infers child runbook when substep has exactly one runbook reference and file is omitted', async () => {
     (
       core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
     ).mockReturnValue({ step: '2', substep: '1' });
@@ -349,7 +349,7 @@ describe('queueStep', () => {
       steps: [
         {
           name: '2',
-          substeps: [{ id: '1', description: 'A', workflows: ['child-{{Index}}.runbook.md'] }],
+          substeps: [{ id: '1', description: 'A', runbooks: ['child-{{Index}}.runbook.md'] }],
         },
       ],
     } as any);
@@ -390,7 +390,7 @@ describe('queueStep', () => {
     );
   });
 
-  it('returns ambiguity error when substep has multiple workflows and file is omitted', async () => {
+  it('returns ambiguity error when substep has multiple runbooks and file is omitted', async () => {
     (
       core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
     ).mockReturnValue({ step: '2', substep: '1' });
@@ -400,7 +400,7 @@ describe('queueStep', () => {
       steps: [
         {
           name: '2',
-          substeps: [{ id: '1', description: 'A', workflows: ['a.runbook.md', 'b.runbook.md'] }],
+          substeps: [{ id: '1', description: 'A', runbooks: ['a.runbook.md', 'b.runbook.md'] }],
         },
       ],
     } as any);

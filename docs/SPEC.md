@@ -82,9 +82,9 @@ List of external runbooks to execute.
 - ./deploy-api.runbook.md
 ```
 
-At step level, this syntax is canonicalized to implicit sequential substeps (`1`, `2`, ...), one workflow per substep.
+At step level, this syntax is canonicalized to implicit sequential substeps (`1`, `2`, ...), one runbook reference per substep.
 When step-level prompt text appears above this shorthand body, it is attached to the first generated implicit substep only.
-These two forms are execution-equivalent:
+These two forms are structurally equivalent:
 
 ```markdown
 ## 2. Review the plan
@@ -100,12 +100,24 @@ These two forms are execution-equivalent:
 - review-structural-integrity.runbook.md
 ```
 
+Runtime default behavior differs when parent transitions are omitted:
+- Step-level runbook-list shorthand is inferred as deferred and uses parent aggregation defaults (`PASS ALL: CONTINUE`, `FAIL ANY: STOP`).
+- Explicit H3 substeps are immediate by default and keep non-deferred pass-through behavior unless you define parent transitions explicitly.
+
 ### 3.4 Runtime Target Identity
 Runtime dispatch/completion identity is canonicalized as:
 
 `step + substep + iteration`
 
 Execution path notation such as `1.2.1` (`STEP.INDEX.SUBSTEP`) is display-only. It is neither authoring syntax nor a canonical identifier.
+
+### 3.5 Deferred Inference
+`deferred` is inferred runtime metadata (not user-authored syntax in this release).
+
+- Inferred `true`: steps with a `FOR` clause, and step-level runbook-list shorthand.
+- Inferred `false`: explicit H3 substeps without `FOR`.
+
+Deferred steps bubble substep outcomes to parent aggregation by default. Immediate steps do not.
 
 ## 4. Control Flow
 
@@ -117,7 +129,7 @@ Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
 | Component | Values | Description |
 | :--- | :--- | :--- |
 | **Result** | `PASS` (`YES`), `FAIL` (`NO`) | Outcome of the step's body. |
-| **Aggregation** | `ALL`, `ANY` | For substeps. Step-level runbook-list shorthand is canonicalized to substeps. Default: `PASS ALL`, `FAIL ANY`. |
+| **Aggregation** | `ALL`, `ANY` | For substeps. Step-level runbook-list shorthand is canonicalized to substeps. Deferred parent default: `PASS ALL`, `FAIL ANY`. |
 
 Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` (pessimistic — any failure stops), or `PASS ANY` with `FAIL ALL` (optimistic — only total failure stops). Non-complementary combinations are invalid because they create evaluation gaps (ALL/ALL) or overlaps (ANY/ANY).
 
@@ -125,6 +137,10 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 *   If only `PASS` defined: `FAIL` -> `STOP`.
 *   If only `FAIL` defined: `PASS` -> `CONTINUE`.
 *   If neither is defined: `PASS: CONTINUE`, `FAIL: STOP`.
+
+When a parent step with substeps omits parent transitions:
+*   Deferred parent (`FOR` or step-level runbook-list shorthand): aggregate with `PASS ALL: CONTINUE` and `FAIL ANY: STOP`.
+*   Immediate parent (explicit substeps, no `FOR`): keep non-deferred pass-through semantics.
 
 ### 4.2 Actions
 

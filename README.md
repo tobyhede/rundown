@@ -21,7 +21,7 @@
 
 ## Why Rundown?
 
-Rundown transforms static documentation into interactive, stateful CLI workflows, bridging the gap between "how-to" and "done."
+Rundown transforms static documentation into interactive, stateful CLI runbook flows, bridging the gap between "how-to" and "done."
 
 *   **Human-Readable:** Write standard Markdown.
 *   **Agent-Readable:** Write standard Markdown.

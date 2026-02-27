@@ -35,7 +35,7 @@ jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const { runExecutionLoop } = await import('../../src/services/execution');
-const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-workflow');
+const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-runbook');
 
 function makeStep(overrides: Partial<any> = {}): any {
   return {
