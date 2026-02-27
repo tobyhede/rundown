@@ -463,6 +463,22 @@ export const ScenarioListSchema = z
   .describe('List of scenarios in a runbook');
 
 /**
+ * Scenario assertion result for rich expectation evaluation.
+ */
+export const ScenarioAssertionResultSchema = z
+  .object({
+    /** Assertion field name */
+    field: z.string().describe('Assertion field name'),
+    /** Expected value */
+    expected: z.unknown().describe('Expected value'),
+    /** Actual value observed */
+    actual: z.unknown().describe('Actual value observed'),
+    /** Whether the assertion passed */
+    passed: z.boolean().describe('Whether the assertion passed'),
+  })
+  .describe('Individual assertion result from scenario execution');
+
+/**
  * Scenario run result.
  */
 export const ScenarioRunResponseSchema = z
@@ -477,6 +493,11 @@ export const ScenarioRunResponseSchema = z
     actual: z.string().describe('Actual outcome'),
     /** Detailed message */
     message: z.string().optional().describe('Additional status message'),
+    /** Per-field assertion results (present when expect block is used) */
+    assertions: z
+      .array(ScenarioAssertionResultSchema)
+      .optional()
+      .describe('Per-field assertion results'),
   })
   .describe('Response from scenario run command');
 
@@ -642,6 +663,63 @@ export const AbortResponseSchema = z
   .describe('Response from the abort command');
 
 // ============================================================================
+// Scenario Suite Schemas
+// ============================================================================
+
+/**
+ * Scenario suite case entry for ls output.
+ */
+export const ScenarioSuiteCaseEntrySchema = z
+  .object({
+    /** Case name */
+    name: z.string().describe('Case name'),
+    /** Target runbook file */
+    file: z.string().describe('Target runbook file path'),
+    /** Expected result */
+    expected: z.string().describe('Expected scenario outcome'),
+    /** Case description */
+    description: z.string().optional().describe('Case description'),
+    /** Tags as comma-separated string */
+    tags: z.string().optional().describe('Comma-separated case tags'),
+  })
+  .describe('Scenario suite case entry');
+
+/**
+ * Scenario suite list output.
+ */
+export const ScenarioSuiteListSchema = z
+  .array(ScenarioSuiteCaseEntrySchema)
+  .describe('List of cases in a scenario suite');
+
+/**
+ * Scenario suite case detail (includes commands).
+ */
+export const ScenarioSuiteCaseDetailSchema = ScenarioSuiteCaseEntrySchema.extend({
+  /** Commands to execute */
+  commands: z.array(z.string()).optional().describe('List of commands in the case'),
+}).describe('Detailed case information from a scenario suite');
+
+/**
+ * Scenario suite run aggregate response.
+ */
+export const ScenarioSuiteRunResponseSchema = z
+  .object({
+    /** Whether all cases passed */
+    result: z.boolean().describe('Whether all cases passed'),
+    /** Suite name */
+    suite: z.string().describe('Suite name'),
+    /** Total number of cases run */
+    total: z.number().int().nonnegative().describe('Total cases run'),
+    /** Number of cases that passed */
+    passed: z.number().int().nonnegative().describe('Cases passed'),
+    /** Number of cases that failed */
+    failed: z.number().int().nonnegative().describe('Cases failed'),
+    /** Per-case results */
+    cases: z.array(ScenarioRunResponseSchema).describe('Individual case results'),
+  })
+  .describe('Aggregate response from running a scenario suite');
+
+// ============================================================================
 // Derived TypeScript Types
 // ============================================================================
 
@@ -699,8 +777,20 @@ export type ScenarioEntry = z.infer<typeof ScenarioEntrySchema>;
 /** Scenario detail */
 export type ScenarioDetail = z.infer<typeof ScenarioDetailSchema>;
 
+/** Scenario assertion result */
+export type ScenarioAssertionResult = z.infer<typeof ScenarioAssertionResultSchema>;
+
 /** Scenario run response */
 export type ScenarioRunResponse = z.infer<typeof ScenarioRunResponseSchema>;
+
+/** Scenario suite case entry */
+export type ScenarioSuiteCaseEntry = z.infer<typeof ScenarioSuiteCaseEntrySchema>;
+
+/** Scenario suite case detail */
+export type ScenarioSuiteCaseDetail = z.infer<typeof ScenarioSuiteCaseDetailSchema>;
+
+/** Scenario suite run response */
+export type ScenarioSuiteRunResponse = z.infer<typeof ScenarioSuiteRunResponseSchema>;
 
 /** Echo response */
 export type EchoResponse = z.infer<typeof EchoResponseSchema>;

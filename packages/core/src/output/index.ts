@@ -113,14 +113,27 @@ export {
 
 // Scenario schemas
 export {
+  ScenarioAssertionResultSchema,
   ScenarioEntrySchema,
   ScenarioDetailSchema,
   ScenarioListSchema,
   ScenarioRunResponseSchema,
   ScenarioErrorResponseSchema,
+  type ScenarioAssertionResult,
   type ScenarioEntry,
   type ScenarioDetail,
   type ScenarioRunResponse,
+} from './schema.js';
+
+// Suite schemas
+export {
+  ScenarioSuiteCaseEntrySchema,
+  ScenarioSuiteListSchema,
+  ScenarioSuiteCaseDetailSchema,
+  ScenarioSuiteRunResponseSchema,
+  type ScenarioSuiteCaseEntry,
+  type ScenarioSuiteCaseDetail,
+  type ScenarioSuiteRunResponse,
 } from './schema.js';
 
 // Echo schema
