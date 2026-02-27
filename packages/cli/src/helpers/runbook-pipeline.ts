@@ -26,7 +26,13 @@ import {
   type Runbook,
   type DataSource,
   type StepId,
+  type DelegationLinkage,
   STATE_DIR,
+  DelegationScanService,
+  DelegationLock,
+  reconstituteContextVars,
+  hashDelegationToken,
+  DELEGATION_TOKEN_PREFIX,
 } from '@rundown-org/core';
 import { isSourced, type ForClause } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
@@ -109,6 +115,17 @@ export type RunbookStartResult =
 /** Result of binding an agent to a child runbook via {@link bindAgent}. */
 export type AgentBindResult =
   | { ok: true; loopResult?: 'done' | 'stopped' | 'waiting' }
+  | { ok: false; error: string; code: string; details?: Record<string, unknown> };
+
+/** Result of claiming a delegation token and launching the child runbook. */
+export type ClaimResult =
+  | {
+      ok: true;
+      childRunId: string;
+      parentRunId: string;
+      stepId: string;
+      loopResult: 'done' | 'stopped' | 'waiting';
+    }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> };
 
 /**
@@ -560,6 +577,7 @@ async function launchRunbook(
     agentId?: string;
     parentRunbookId?: string;
     parentStepId?: StepId;
+    delegationLinkage?: DelegationLinkage;
     afterInit?: (stateId: string) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
@@ -573,6 +591,7 @@ async function launchRunbook(
     agentId: options.agentId,
     parentRunbookId: options.parentRunbookId,
     parentStepId: options.parentStepId,
+    delegation: options.delegationLinkage,
     runbookSrc: rawContent,
     templateVars: mergedVariables,
     sources,
@@ -780,4 +799,247 @@ export async function bindAgent(
   }
 
   return { ok: true };
+}
+
+/**
+ * Update a parent step/substep delegation's childRunId after the child run is created.
+ */
+async function updateStepDelegationChildRunId(
+  manager: RunbookStateManager,
+  runId: string,
+  substepId: string,
+  childRunId: string,
+): Promise<void> {
+  const state = await manager.load(runId);
+  if (!state) throw new Error(`Parent run ${runId} not found`);
+
+  const substepStates = state.substepStates ?? [];
+  const updated = substepStates.map((ss) => {
+    if (ss.id === substepId && ss.delegation) {
+      return {
+        ...ss,
+        delegation: { ...ss.delegation, childRunId },
+      };
+    }
+    return ss;
+  });
+
+  await manager.update(runId, { substepStates: updated });
+}
+
+/**
+ * Claim a delegation token, reconstitute inherited context, and launch the child runbook.
+ *
+ * Algorithm (per design doc section 6.2):
+ * 1. Validate token format (must start with rdtk_)
+ * 2. Scan all run states for matching token hash
+ * 3. Acquire delegation lock for parent run ID
+ * 4. Under lock: re-load parent, check idempotency/cancellation, reconstitute context
+ * 5. Prepare and launch child runbook
+ * 6. Update parent delegation with child run ID
+ *
+ * @param ctx - Pipeline context
+ * @param rawToken - The plain-text delegation token to claim
+ * @param varOpts - Variable options from CLI flags
+ * @returns ClaimResult with child run details or error
+ */
+export async function claimAndLaunch(
+  ctx: RunPipelineContext,
+  rawToken: string,
+  varOpts: VarOptions,
+): Promise<ClaimResult> {
+  const { output, manager, cwd } = ctx;
+
+  // 1. Validate token format
+  if (!rawToken.startsWith(DELEGATION_TOKEN_PREFIX)) {
+    return {
+      ok: false,
+      error: `Invalid token format. Tokens must start with "${DELEGATION_TOKEN_PREFIX}".`,
+      code: 'INVALID_TOKEN',
+      details: { token: rawToken },
+    };
+  }
+
+  // 2. Scan for matching token
+  const scanner = new DelegationScanService(manager);
+  const scanResult = await scanner.findByToken(rawToken);
+
+  if (!scanResult) {
+    return {
+      ok: false,
+      error: 'No active run contains a delegation with this token.',
+      code: 'TOKEN_NOT_FOUND',
+      details: { token: rawToken },
+    };
+  }
+
+  const { parentState, stepId, substepId, delegation } = scanResult;
+  const lock = new DelegationLock(cwd);
+
+  // 3. Acquire delegation lock
+  try {
+    await lock.acquire(parentState.id);
+  } catch {
+    return {
+      ok: false,
+      error: `Could not acquire delegation lock for run ${parentState.id}. Another operation may be in progress.`,
+      code: 'DELEGATION_LOCK_TIMEOUT',
+      details: { parentRunId: parentState.id },
+    };
+  }
+
+  try {
+    // 4a. Re-load parent state (freshness check)
+    const freshParent = await manager.load(parentState.id);
+    if (!freshParent) {
+      return {
+        ok: false,
+        error: `Parent run ${parentState.id} no longer exists.`,
+        code: 'TOKEN_NOT_FOUND',
+        details: { parentRunId: parentState.id },
+      };
+    }
+
+    // Re-locate delegation on fresh state
+    const freshSubstep = (freshParent.substepStates ?? []).find(
+      (ss) => ss.id === (substepId ?? stepId),
+    );
+    const freshDelegation = freshSubstep?.delegation;
+
+    if (!freshDelegation) {
+      return {
+        ok: false,
+        error: 'Delegation no longer exists on parent step.',
+        code: 'TOKEN_NOT_FOUND',
+        details: { parentRunId: parentState.id, stepId },
+      };
+    }
+
+    // Verify token hash still matches
+    const tokenHash = hashDelegationToken(rawToken);
+    if (freshDelegation.tokenHash !== tokenHash) {
+      return {
+        ok: false,
+        error: 'Token hash mismatch after re-load.',
+        code: 'TOKEN_NOT_FOUND',
+        details: { parentRunId: parentState.id },
+      };
+    }
+
+    // 4b. Idempotent return if already claimed
+    if (freshDelegation.childRunId) {
+      return {
+        ok: true,
+        childRunId: freshDelegation.childRunId,
+        parentRunId: freshParent.id,
+        stepId,
+        loopResult: 'waiting',
+      };
+    }
+
+    // 4c. Check for cancellation
+    if (freshDelegation.cancelledAt) {
+      return {
+        ok: false,
+        error: 'This delegation has been cancelled and cannot be claimed.',
+        code: 'TOKEN_CANCELLED',
+        details: { parentRunId: freshParent.id, stepId, cancelledAt: freshDelegation.cancelledAt },
+      };
+    }
+
+    // 4d. Orphan reconciliation: scan for child run with matching tokenHash
+    const orphan = await scanner.findOrphanedChild(tokenHash);
+    if (orphan) {
+      // Adopt the orphan — set childRunId on parent
+      await updateStepDelegationChildRunId(manager, freshParent.id, substepId ?? stepId, orphan.id);
+      return {
+        ok: true,
+        childRunId: orphan.id,
+        parentRunId: freshParent.id,
+        stepId,
+        loopResult: 'waiting',
+      };
+    }
+
+    // 4e. Reconstitute context vars from frozen snapshot
+    const inheritedContextVars = reconstituteContextVars(delegation.contextSnapshot);
+
+    // 4f. Prepare child runbook
+    const prepResult = await prepareRunbook(delegation.childRunbookPath, varOpts, cwd, {
+      inheritedContextVars,
+    });
+    if (!prepResult.ok) {
+      return {
+        ok: false,
+        error: prepResult.error,
+        code: prepResult.code,
+        details: { runbook: delegation.childRunbookPath, ...prepResult.details },
+      };
+    }
+
+    // Build delegation linkage for the child run
+    const delegationLinkage: DelegationLinkage = {
+      parentRunId: freshParent.id,
+      parentStepId: substepId ?? stepId,
+      tokenHash,
+    };
+
+    const parentPrompted = freshParent.prompted ?? false;
+
+    // 4g. Launch child runbook
+    const launchResult = await launchRunbook(ctx, prepResult.prepared, {
+      runbookName: delegation.childRunbookPath,
+      prompted: parentPrompted,
+      parentRunbookId: freshParent.id,
+      delegationLinkage,
+      afterInit: async (childStateId) => {
+        // Set childRunId on parent delegation and RUNDOWN_RUN_ID in process.env
+        await updateStepDelegationChildRunId(
+          manager,
+          freshParent.id,
+          substepId ?? stepId,
+          childStateId,
+        );
+        process.env.RUNDOWN_RUN_ID = childStateId;
+      },
+    });
+
+    if (!launchResult.ok) {
+      return {
+        ok: false,
+        error: launchResult.error,
+        code: launchResult.code,
+        details: launchResult.details,
+      };
+    }
+
+    // Resolve the child run ID from state (afterInit has set it)
+    const childRunId = process.env.RUNDOWN_RUN_ID ?? 'unknown';
+
+    // Emit claimed output
+    output.status(
+      true,
+      'claimed',
+      `Claimed ${rawToken.slice(0, 12)}... → ${delegation.childRunbookPath}`,
+      {
+        action: 'claimed',
+        token: rawToken,
+        run_id: childRunId,
+        runbook: delegation.childRunbookPath,
+        parent_run_id: freshParent.id,
+        parent_step: substepId ? `${stepId}.${substepId}` : stepId,
+      },
+    );
+
+    return {
+      ok: true,
+      childRunId,
+      parentRunId: freshParent.id,
+      stepId,
+      loopResult: launchResult.loopResult,
+    };
+  } finally {
+    // 5. Always release lock
+    await lock.release(parentState.id);
+  }
 }

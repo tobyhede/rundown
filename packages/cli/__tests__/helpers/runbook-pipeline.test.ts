@@ -13,6 +13,11 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   getActiveForContext: jest.fn().mockReturnValue(null),
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',
+  DELEGATION_TOKEN_PREFIX: 'rdtk_',
+  DelegationScanService: jest.fn(),
+  DelegationLock: jest.fn(),
+  reconstituteContextVars: jest.fn().mockReturnValue({}),
+  hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
 }));
 
 // Mock @rundown-org/parser
