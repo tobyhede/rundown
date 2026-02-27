@@ -440,7 +440,7 @@ export async function handleAgentBinding(
     currentState: activeState,
     transitionPolicy: transitionConfig.policy,
     computeActionResult: transitionConfig.computeActionResult,
-    agentId: ctx.agentId,
+    agentId,
   });
 
   if (drained.status === 'stopped') {

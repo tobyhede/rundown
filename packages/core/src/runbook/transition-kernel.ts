@@ -4,7 +4,7 @@ import type { LastAction, Step } from './types.js';
 /**
  * Action type derived from structured LastAction.
  */
-export type ActionType = 'GOTO' | 'RETRY' | 'CONTINUE' | 'COMPLETE' | 'STOP';
+export type ActionType = 'GOTO' | 'RETRY' | 'CONTINUE' | 'COMPLETE' | 'STOP' | 'NEXT' | 'BREAK';
 
 interface SnapshotContext {
   lastAction?: LastAction;
@@ -52,13 +52,14 @@ function isLastAction(value: unknown): value is LastAction {
       if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
         return false;
       }
-      if (
-        'at' in value &&
-        value.at !== undefined &&
-        typeof value.at !== 'number' &&
-        typeof value.at !== 'string'
-      ) {
-        return false;
+      if ('at' in value && value.at !== undefined) {
+        if (typeof value.at === 'number') {
+          // numeric iteration index - ok
+        } else if (typeof value.at === 'string') {
+          if (!/^\{\{[^}]+\}\}$/.test(value.at)) return false;
+        } else {
+          return false;
+        }
       }
       return true;
     default:
@@ -173,6 +174,10 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'COMPLETE';
     case 'STOP':
       return 'STOP';
+    case 'NEXT':
+      return 'NEXT';
+    case 'BREAK':
+      return 'BREAK';
     default:
       return 'CONTINUE';
   }

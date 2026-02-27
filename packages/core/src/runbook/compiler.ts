@@ -1498,7 +1498,10 @@ export function compileRunbookToMachine(
                 target.stepName === config.stepName
                   ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
                   : 0,
-              retryCount: 0,
+              retryCount:
+                target.stepName === config.stepName && target.substepId === config.substepId
+                  ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
+                  : 0,
               iterationRetryCount: 0,
               substep: ({ event }: { event: RunbookEvent }) =>
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,

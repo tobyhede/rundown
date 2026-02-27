@@ -77,6 +77,14 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
     );
   }
 
+  // 3b. If substep specified, validate it exists in the step
+  if (parsed.substep && step.substeps) {
+    const validIds = step.substeps.map((ss) => ss.id);
+    if (!validIds.includes(parsed.substep)) {
+      throw Errors.delegationSubstepNotFound(parsed.substep, parsed.step, validIds);
+    }
+  }
+
   // 4. Verify step is at frontier
   if (state.step !== parsed.step) {
     throw Errors.delegationStepNotCurrent(parsed.step, state.step);

@@ -183,8 +183,8 @@ Variables use Handlebars syntax: `{{variable}}`.
 | Source | Scope | Description |
 | :--- | :--- | :--- |
 | CLI (`--var`) | Global | Expanded at startup. |
-| `{{Step}}`, `{{step}}` | Step | Current execution identifier for this runbook context (e.g., `1`, `1.2`). |
-| `{{Index}}`, `{{index}}` | Loop | Current iteration number for this runbook context. |
+| `{{Step}}` | Step | Current execution identifier for this runbook context (e.g., `1`, `1.2`). |
+| `{{Index}}` | Loop | Current iteration number for this runbook context. |
 | `{{context.current.*}}` | Step/Loop | Canonical current runbook context (`step`, `substep`, `index`, `at`). |
 | `{{context.parent.*}}` | Nested | Parent runbook structural context and template variables (`vars.*`). |
 | `{{context.ancestors.N.*}}` | Nested | Ancestor runbook contexts (`0` is nearest parent). |

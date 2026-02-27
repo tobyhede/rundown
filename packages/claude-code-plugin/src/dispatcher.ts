@@ -393,7 +393,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
 
     // File pattern filtering for tool hooks
     if (
-      (hookEvent === 'PostToolUse' || hookEvent === 'PostToolUseFailure') &&
+      (hookEvent === 'PreToolUse' || hookEvent === 'PostToolUse' || hookEvent === 'PostToolUseFailure') &&
       !(await gateMatchesFilePattern(gateConfig, input.tool_input?.file_path, input.cwd))
     ) {
       await logger.debug('Gate skipped - no file pattern match', { gate: gateName });

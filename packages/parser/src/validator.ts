@@ -106,7 +106,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
       diagnostics.push(
         error(
           step.line,
-          `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
+          `Step ${step.name}: Violates Exclusivity Rule. A step must have at most one of {Body, Substeps}.`,
         ),
       );
     }

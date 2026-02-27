@@ -230,6 +230,13 @@ export const ErrorCodes = {
     description: 'The specified child runbook cannot be resolved.',
     docSlug: 'delegation-runbook-not-found',
   },
+  DELEGATION_SUBSTEP_NOT_FOUND: {
+    code: 'RD-806',
+    category: ErrorCategory.DELEGATION,
+    title: 'Substep not found',
+    description: 'The specified substep ID does not exist in the target step.',
+    docSlug: 'delegation-substep-not-found',
+  },
 
   // Generic
   UNKNOWN_ERROR: {

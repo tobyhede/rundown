@@ -88,6 +88,9 @@ export const Errors = {
   delegationRunbookNotFound: (runbook: string): RundownError =>
     new RundownError('DELEGATION_RUNBOOK_NOT_FOUND', { runbook }),
 
+  delegationSubstepNotFound: (substep: string, step: string, available: string[]): RundownError =>
+    new RundownError('DELEGATION_SUBSTEP_NOT_FOUND', { substep, step, available: available.join(', ') }),
+
   // Generic
   unknown: (message: string, cause?: Error): RundownError =>
     new RundownError('UNKNOWN_ERROR', { message }, cause),

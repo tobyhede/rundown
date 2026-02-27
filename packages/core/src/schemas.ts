@@ -132,9 +132,9 @@ const RunbookStepSchema = z.string().min(1);
 const TargetIdentitySchema = z.object({
   targetStep: z.string().optional(),
   targetSubstep: z.string().optional(),
-  targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+  targetIteration: z.number().int().positive().optional(),
   targetFrameKey: z.string().optional(),
-  targetEntry: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+  targetEntry: z.number().int().positive().optional(),
 });
 
 /**

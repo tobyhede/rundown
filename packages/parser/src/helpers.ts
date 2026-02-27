@@ -212,7 +212,11 @@ function parseDescriptionAndAgent(remainder: string): {
 
   if (remainder.startsWith('(') && remainder.endsWith(')')) {
     // Just agent, no description: "(agent-type)"
-    return { description: '', agentType: remainder.slice(1, -1).trim() };
+    const agent = remainder.slice(1, -1).trim();
+    if (agent) {
+      return { description: '', agentType: agent };
+    }
+    return { description: remainder };
   }
 
   return { description: remainder };
