@@ -6,7 +6,6 @@ import {
   readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import type { TestWorkspace } from '../helpers/test-utils.js';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -364,7 +363,7 @@ Do the task.
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      expect(parentState).not.toBeNull();
 
       // Delegate substep 1.1
       result = runCli('delegate child.runbook.md --step 1.1', workspace);
@@ -429,12 +428,18 @@ Do the task.
       let result = runCli('run --prompted child.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
+      const childState = await getActiveState(workspace);
+      expect(childState).not.toBeNull();
+      const childRunId = childState!.id as string;
+
       // Pass should work normally without propagation
       result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
 
-      const state = await getActiveState(workspace);
-      expect(getVariables(state!).completed).toBe(true);
+      // Runbook completed and was deactivated — read state by ID
+      const finalState = await readRunbookState(workspace, childRunId);
+      expect(finalState).not.toBeNull();
+      expect(getVariables(finalState!).completed).toBe(true);
     });
 
     it('handles fail command without delegation linkage', async () => {
@@ -444,12 +449,18 @@ Do the task.
       let result = runCli('run --prompted child.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Fail should work normally without propagation
-      result = runCli('fail', workspace);
-      expect(result.exitCode).toBe(0);
+      const childState = await getActiveState(workspace);
+      expect(childState).not.toBeNull();
+      const childRunId = childState!.id as string;
 
-      const state = await getActiveState(workspace);
-      expect(getVariables(state!).stopped).toBe(true);
+      // Fail triggers STOP transition → exit code 1
+      result = runCli('fail', workspace);
+      expect(result.exitCode).toBe(1);
+
+      // Runbook stopped and was deactivated — read state by ID
+      const finalState = await readRunbookState(workspace, childRunId);
+      expect(finalState).not.toBeNull();
+      expect(getVariables(finalState!).stopped).toBe(true);
     });
 
     it('handles stop command without delegation linkage', async () => {
@@ -460,7 +471,7 @@ Do the task.
       expect(result.exitCode).toBe(0);
 
       // Stop should work normally without propagation
-      result = runCli('stop "User cancelled"', workspace);
+      result = runCli(['stop', 'User cancelled'], workspace);
       expect(result.exitCode).toBe(0);
 
       // State should be deleted
