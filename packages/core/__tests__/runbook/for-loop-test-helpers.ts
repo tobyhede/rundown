@@ -283,7 +283,7 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
         // Substep loop
         for (let sub = 0; sub < config.numSubsteps; sub++) {
           let event = nextEvent();
-          let substepAction: SubstepAction;
+          let substepAction: SubstepAction = config.substepFailAction;
 
           if (event === 'PASS') {
             substepAction = config.substepPassAction;
