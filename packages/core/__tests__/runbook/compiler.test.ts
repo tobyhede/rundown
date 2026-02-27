@@ -11,6 +11,11 @@ describe('runbook compiler', () => {
     fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
   };
 
+  function createRunbook(markdown: string): Step[] {
+    const runbook = parseRunbookDocument(markdown);
+    return [...runbook.steps];
+  }
+
   describe('static step compilation', () => {
     it('generates discrete states for substeps', () => {
       const steps: Step[] = [
@@ -3685,11 +3690,6 @@ describe('runbook compiler', () => {
   });
 
   describe('data source FOR loops', () => {
-    // Helper to parse markdown into steps
-    function createRunbook(markdown: string): Step[] {
-      const runbook = parseRunbookDocument(markdown);
-      return [...runbook.steps];
-    }
 
     it('creates ForContext with array source', () => {
       const steps = createRunbook(`
@@ -4303,10 +4303,6 @@ echo "processing"
   });
 
   describe('FOR shorthand canonicalization', () => {
-    function createRunbook(markdown: string): Step[] {
-      const runbook = parseRunbookDocument(markdown);
-      return [...runbook.steps];
-    }
 
     it('iterates a FOR step defined via step-level runbook-list shorthand', () => {
       const steps = createRunbook(`
@@ -5460,7 +5456,7 @@ echo "processing"
       actor.send({ type: 'FAIL' });
 
       // After BREAK: loop exits, aggregates only 2 iterations with iteration 2 failing
-      // Iteration-level PASS ANY (fail action is BREAK): iteration 2 failed → BREAK
+      // Iteration-level FAIL ANY (fail action is BREAK): iteration 2 failed → BREAK
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.iterationResults).toEqual(['pass']);
