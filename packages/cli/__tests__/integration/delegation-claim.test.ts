@@ -117,5 +117,23 @@ Run the child task.
 
     // Command should succeed
     expect(result.exitCode).toBe(0);
+
+    // Parse and assert JSON structure
+    const claimOutput = JSON.parse(result.stdout);
+    expect(claimOutput.action).toBe('claimed');
+    expect(claimOutput.token).toMatch(/^rdtk_.{7}\.\.\./);
+    expect(typeof claimOutput.run_id).toBe('string');
+    expect(typeof claimOutput.runbook).toBe('string');
+    expect(typeof claimOutput.parent_run_id).toBe('string');
+    expect(typeof claimOutput.parent_step).toBe('string');
+  });
+
+  it('claim --json outputs structured error for invalid token', () => {
+    const result = runCli('claim bad-token --json', workspace);
+    expect(result.exitCode).toBe(1);
+
+    const output = JSON.parse(result.stdout);
+    expect(output.error).toBeDefined();
+    expect(output.code).toBeDefined();
   });
 });
