@@ -341,7 +341,7 @@ describe('Config Loading - Additional Edge Cases', () => {
     await expect(loadConfig(testDir)).rejects.toThrow();
   });
 
-  test('gates as non-object does not throw due to JS lenient iteration', async () => {
+  test('rejects non-object gates value', async () => {
     const configObj = {
       hooks: {},
       gates: 'not an object',
@@ -349,10 +349,7 @@ describe('Config Loading - Additional Edge Cases', () => {
 
     await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
 
-    // Object.entries on a string iterates character indices without throwing
-    // This documents the actual behavior - no runtime error but malformed config
-    const config = await loadConfig(testDir);
-    expect(config).not.toBeNull();
+    await expect(loadConfig(testDir)).rejects.toThrow();
   });
 
   test('accepts hooks with no gates configured', async () => {
@@ -371,7 +368,7 @@ describe('Config Loading - Additional Edge Cases', () => {
     expect(config?.hooks.PostToolUse.enabled_tools).toEqual(['Edit']);
   });
 
-  test('rejects circular action references', async () => {
+  test('does not detect circular references during config load', async () => {
     const configObj = {
       hooks: {
         PostToolUse: { gates: ['gate-a'] },
