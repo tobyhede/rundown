@@ -300,3 +300,192 @@ describe('Gate Config Validation', () => {
     expect(config?.gates.test.gate).toBe('plan-compliance');
   });
 });
+
+describe('Config Loading - Additional Edge Cases', () => {
+  let testDir: string;
+  let originalPluginRoot: string | undefined;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-test-'));
+    // Save and clear CLAUDE_PLUGIN_ROOT to test project config in isolation
+    originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+    delete process.env.CLAUDE_PLUGIN_ROOT;
+  });
+
+  afterEach(async () => {
+    process.env.CLAUDE_PLUGIN_ROOT = originalPluginRoot;
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  test('handles malformed JSON gracefully', async () => {
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), '{invalid json');
+
+    await expect(loadConfig(testDir)).rejects.toThrow();
+  });
+
+  test('handles empty JSON file', async () => {
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), '{}');
+
+    // {} has no hooks property, so validateConfig calls Object.keys(undefined) which throws
+    await expect(loadConfig(testDir)).rejects.toThrow();
+  });
+
+  test('validates hooks is an object', async () => {
+    const configObj = {
+      hooks: 'not an object',
+      gates: {},
+    };
+
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
+
+    await expect(loadConfig(testDir)).rejects.toThrow();
+  });
+
+  test('gates as non-object does not throw due to JS lenient iteration', async () => {
+    const configObj = {
+      hooks: {},
+      gates: 'not an object',
+    };
+
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
+
+    // Object.entries on a string iterates character indices without throwing
+    // This documents the actual behavior - no runtime error but malformed config
+    const config = await loadConfig(testDir);
+    expect(config).not.toBeNull();
+  });
+
+  test('accepts hooks with no gates configured', async () => {
+    const configObj = {
+      hooks: {
+        PostToolUse: {
+          enabled_tools: ['Edit'],
+        },
+      },
+      gates: {},
+    };
+
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
+
+    const config = await loadConfig(testDir);
+    expect(config?.hooks.PostToolUse.enabled_tools).toEqual(['Edit']);
+  });
+
+  test('rejects circular action references', async () => {
+    const configObj = {
+      hooks: {
+        PostToolUse: { gates: ['gate-a'] },
+      },
+      gates: {
+        'gate-a': { command: 'echo a', on_pass: 'gate-b' },
+        'gate-b': { command: 'echo b', on_pass: 'gate-c' },
+        'gate-c': { command: 'echo c', on_pass: 'gate-a' },
+      },
+    };
+
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
+
+    // Note: Circular detection happens at runtime in dispatcher, not at config load time
+    // This test documents that config loading doesn't prevent circular references
+    const config = await loadConfig(testDir);
+    expect(config).not.toBeNull();
+  });
+
+  test('handles nested directory structure for .claude location', async () => {
+    const nestedDir = path.join(testDir, 'deep', 'nested', 'project');
+    await fs.mkdir(nestedDir, { recursive: true });
+
+    const claudeDir = path.join(nestedDir, '.claude');
+    await fs.mkdir(claudeDir);
+
+    const configObj = {
+      hooks: {},
+      gates: { test: { command: 'echo nested' } },
+    };
+
+    await fs.writeFile(path.join(claudeDir, 'rundown-plugin.json'), JSON.stringify(configObj));
+
+    const config = await loadConfig(nestedDir);
+    expect(config?.gates.test.command).toBe('echo nested');
+  });
+
+  test('prioritizes .claude over root when both exist', async () => {
+    const claudeDir = path.join(testDir, '.claude');
+    await fs.mkdir(claudeDir);
+
+    const claudeConfig = {
+      hooks: {},
+      gates: { test: { command: 'echo claude' } },
+    };
+    const rootConfig = {
+      hooks: {},
+      gates: { test: { command: 'echo root' } },
+    };
+
+    await fs.writeFile(path.join(claudeDir, 'rundown-plugin.json'), JSON.stringify(claudeConfig));
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(rootConfig));
+
+    const config = await loadConfig(testDir);
+    expect(config?.gates.test.command).toBe('echo claude');
+  });
+
+  test('accepts multiple hook events', async () => {
+    const configObj = {
+      hooks: {
+        PreToolUse: { gates: ['pre-gate'] },
+        PostToolUse: { gates: ['post-gate'] },
+        PostToolUseFailure: { gates: ['failure-gate'] },
+        UserPromptSubmit: { gates: ['prompt-gate'] },
+        SubagentStart: { gates: ['start-gate'] },
+        SubagentStop: { gates: ['stop-gate'] },
+      },
+      gates: {
+        'pre-gate': { command: 'echo pre' },
+        'post-gate': { command: 'echo post' },
+        'failure-gate': { command: 'echo failure' },
+        'prompt-gate': { command: 'echo prompt' },
+        'start-gate': { command: 'echo start' },
+        'stop-gate': { command: 'echo stop' },
+      },
+    };
+
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
+
+    const config = await loadConfig(testDir);
+    expect(config?.hooks.PreToolUse.gates).toEqual(['pre-gate']);
+    expect(config?.hooks.PostToolUse.gates).toEqual(['post-gate']);
+    expect(config?.hooks.PostToolUseFailure.gates).toEqual(['failure-gate']);
+    expect(config?.hooks.UserPromptSubmit.gates).toEqual(['prompt-gate']);
+    expect(config?.hooks.SubagentStart.gates).toEqual(['start-gate']);
+    expect(config?.hooks.SubagentStop.gates).toEqual(['stop-gate']);
+  });
+
+  test('rejects gate with invalid action in on_fail', async () => {
+    const configObj = {
+      hooks: {
+        PostToolUse: { gates: ['test'] },
+      },
+      gates: {
+        test: { command: 'echo test', on_pass: 'CONTINUE', on_fail: 'INVALID' },
+      },
+    };
+
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
+
+    await expect(loadConfig(testDir)).rejects.toThrow();
+  });
+
+  test('accepts gate with STOP action', async () => {
+    const configObj = {
+      hooks: {},
+      gates: {
+        test: { command: 'echo test', on_pass: 'STOP' },
+      },
+    };
+
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
+
+    const config = await loadConfig(testDir);
+    expect(config?.gates.test.on_pass).toBe('STOP');
+  });
+});

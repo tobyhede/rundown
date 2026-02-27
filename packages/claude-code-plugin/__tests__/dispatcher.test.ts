@@ -916,3 +916,307 @@ describe('gateMatchesFilePattern - debug logging', () => {
     });
   });
 });
+
+describe('Dispatcher - Additional Edge Cases', () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  test('PostToolUseFailure respects enabled_tools filter', () => {
+    const input: HookInput = {
+      hook_event_name: 'PostToolUseFailure',
+      cwd: '/test',
+      tool_name: 'Edit',
+    };
+
+    const hookConfig: HookConfig = {
+      enabled_tools: ['Edit', 'Write'],
+    };
+
+    expect(shouldProcessHook(input, hookConfig)).toBe(true);
+
+    const filteredInput: HookInput = {
+      hook_event_name: 'PostToolUseFailure',
+      cwd: '/test',
+      tool_name: 'Read',
+    };
+
+    expect(shouldProcessHook(filteredInput, hookConfig)).toBe(false);
+  });
+
+  test('SubagentStart respects enabled_agents filter', () => {
+    const input: HookInput = {
+      hook_event_name: 'SubagentStart',
+      cwd: '/test',
+      agent_type: 'code-review-agent',
+    };
+
+    const hookConfig: HookConfig = {
+      enabled_agents: ['code-review-agent', 'test-agent'],
+    };
+
+    expect(shouldProcessHook(input, hookConfig)).toBe(true);
+
+    const filteredInput: HookInput = {
+      hook_event_name: 'SubagentStart',
+      cwd: '/test',
+      agent_type: 'other-agent',
+    };
+
+    expect(shouldProcessHook(filteredInput, hookConfig)).toBe(false);
+  });
+
+  test('missing agent_type defaults to empty string for filtering', () => {
+    const input: HookInput = {
+      hook_event_name: 'SubagentStop',
+      cwd: '/test',
+    };
+
+    const hookConfig: HookConfig = {
+      enabled_agents: ['test-agent'],
+    };
+
+    expect(shouldProcessHook(input, hookConfig)).toBe(false);
+  });
+
+  test('missing tool_name defaults to empty string for filtering', () => {
+    const input: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: '/test',
+    };
+
+    const hookConfig: HookConfig = {
+      enabled_tools: ['Edit'],
+    };
+
+    expect(shouldProcessHook(input, hookConfig)).toBe(false);
+  });
+
+  test('empty enabled_tools list allows all tools', () => {
+    const input: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: '/test',
+      tool_name: 'AnyTool',
+    };
+
+    const hookConfig: HookConfig = {
+      enabled_tools: [],
+    };
+
+    expect(shouldProcessHook(input, hookConfig)).toBe(true);
+  });
+
+  test('empty enabled_agents list allows all agents', () => {
+    const input: HookInput = {
+      hook_event_name: 'SubagentStop',
+      cwd: '/test',
+      agent_type: 'any-agent',
+    };
+
+    const hookConfig: HookConfig = {
+      enabled_agents: [],
+    };
+
+    expect(shouldProcessHook(input, hookConfig)).toBe(true);
+  });
+
+  test('dispatch accumulates context from multiple gates', async () => {
+    const mockConfig = {
+      gates: {
+        'gate-1': {
+          command: 'echo "context from gate 1"',
+          on_pass: 'CONTINUE',
+        },
+        'gate-2': {
+          command: 'echo "context from gate 2"',
+          on_pass: 'CONTINUE',
+        },
+        'gate-3': {
+          command: 'echo "context from gate 3"',
+          on_pass: 'CONTINUE',
+        },
+      },
+      hooks: {
+        PostToolUse: {
+          gates: ['gate-1', 'gate-2', 'gate-3'],
+        },
+      },
+    };
+
+    await fs.writeFile(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify(mockConfig, null, 2),
+    );
+
+    const input: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: testDir,
+      tool_name: 'Edit',
+    };
+
+    const result = await dispatch(input);
+
+    expect(result.context).toContain('context from gate 1');
+    expect(result.context).toContain('context from gate 2');
+    expect(result.context).toContain('context from gate 3');
+  });
+
+  test('dispatch stops at first blocking gate', async () => {
+    const mockConfig = {
+      gates: {
+        'gate-1': {
+          command: 'echo "gate 1 passed"',
+          on_pass: 'CONTINUE',
+        },
+        'blocking-gate': {
+          command: 'exit 1',
+          on_fail: 'BLOCK',
+        },
+        'gate-3': {
+          command: 'echo "gate 3 should not run"',
+          on_pass: 'CONTINUE',
+        },
+      },
+      hooks: {
+        PostToolUse: {
+          gates: ['gate-1', 'blocking-gate', 'gate-3'],
+        },
+      },
+    };
+
+    await fs.writeFile(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify(mockConfig, null, 2),
+    );
+
+    const input: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: testDir,
+      tool_name: 'Edit',
+    };
+
+    const result = await dispatch(input);
+
+    expect(result.context).toContain('gate 1 passed');
+    expect(result.context).not.toContain('gate 3 should not run');
+    expect(result.blockReason).toBeDefined();
+  });
+
+  test('dispatch handles missing config gracefully', async () => {
+    // No rundown-plugin.json file created
+    const input: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: testDir,
+      tool_name: 'Edit',
+    };
+
+    const result = await dispatch(input);
+
+    // Should return empty result without error
+    expect(result.blockReason).toBeUndefined();
+    expect(result.stopMessage).toBeUndefined();
+  });
+
+  test('dispatch handles undefined gates array gracefully', async () => {
+    const mockConfig = {
+      gates: {
+        'test-gate': {
+          command: 'echo "test"',
+          on_pass: 'CONTINUE',
+        },
+      },
+      hooks: {
+        PostToolUse: {
+          // gates field missing
+        },
+      },
+    };
+
+    await fs.writeFile(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify(mockConfig, null, 2),
+    );
+
+    const input: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: testDir,
+      tool_name: 'Edit',
+    };
+
+    const result = await dispatch(input);
+
+    // Should complete without running any gates
+    expect(result.blockReason).toBeUndefined();
+  });
+
+  test('gateMatchesKeywords handles empty string prompt correctly', () => {
+    const gateConfig: GateConfig = {
+      command: 'npm test',
+      keywords: ['test'],
+    };
+
+    expect(gateMatchesKeywords(gateConfig, '')).toBe(false);
+  });
+
+  test('gateMatchesKeywords handles whitespace-only prompt', () => {
+    const gateConfig: GateConfig = {
+      command: 'npm test',
+      keywords: ['test'],
+    };
+
+    expect(gateMatchesKeywords(gateConfig, '   ')).toBe(false);
+  });
+
+  test('gateMatchesKeywords matches with extra whitespace', () => {
+    const gateConfig: GateConfig = {
+      command: 'npm test',
+      keywords: ['test'],
+    };
+
+    expect(gateMatchesKeywords(gateConfig, '  test  this  ')).toBe(true);
+  });
+
+  test('gateMatchesFilePattern handles relative file paths', async () => {
+    const config: GateConfig = {
+      command: 'echo test',
+      file_patterns: ['src/**/*.ts'],
+      on_pass: 'CONTINUE',
+    };
+
+    // Test with relative path (should be resolved to absolute)
+    const result = await gateMatchesFilePattern(config, 'src/index.ts', testDir);
+    expect(result).toBe(true);
+  });
+
+  test('gateMatchesFilePattern handles paths with special characters', async () => {
+    const config: GateConfig = {
+      command: 'echo test',
+      file_patterns: ['src/**/*.ts'],
+      on_pass: 'CONTINUE',
+    };
+
+    const specialPath = path.join(testDir, 'src/file-with-dashes_and_underscores.ts');
+    const result = await gateMatchesFilePattern(config, specialPath, testDir);
+    expect(result).toBe(true);
+  });
+
+  test('gateMatchesFilePattern handles invalid glob pattern gracefully', async () => {
+    const config: GateConfig = {
+      command: 'echo test',
+      file_patterns: ['[invalid-pattern'],
+      on_pass: 'CONTINUE',
+    };
+
+    const filePath = path.join(testDir, 'src/index.ts');
+    const result = await gateMatchesFilePattern(config, filePath, testDir);
+
+    // Should return false and not throw
+    expect(result).toBe(false);
+  });
+});

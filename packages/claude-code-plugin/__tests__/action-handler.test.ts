@@ -54,4 +54,75 @@ describe('Action Handler', () => {
     expect(action.continue).toBe(false);
     expect(action.stopMessage).toBe('stop message');
   });
+
+  test('STOP with reason fallback uses reason when stopReason is missing', () => {
+    const result: GateResult = { reason: 'fallback reason' };
+    const action = handleAction('STOP', result, mockConfig, mockInput);
+
+    expect(action.continue).toBe(false);
+    expect(action.stopMessage).toBe('fallback reason');
+  });
+
+  test('STOP without stopReason or reason uses default message', () => {
+    const result: GateResult = {};
+    const action = handleAction('STOP', result, mockConfig, mockInput);
+
+    expect(action.continue).toBe(false);
+    expect(action.stopMessage).toBe('Gate stopped execution');
+  });
+
+  test('gate chaining returns chainedGate name', () => {
+    const result: GateResult = { additionalContext: 'chain context' };
+    const action = handleAction('next-gate', result, mockConfig, mockInput);
+
+    expect(action.continue).toBe(true);
+    expect(action.context).toBe('chain context');
+    expect(action.chainedGate).toBe('next-gate');
+  });
+
+  test('gate chaining without context works correctly', () => {
+    const result: GateResult = {};
+    const action = handleAction('another-gate', result, mockConfig, mockInput);
+
+    expect(action.continue).toBe(true);
+    expect(action.context).toBeUndefined();
+    expect(action.chainedGate).toBe('another-gate');
+  });
+
+  test('CONTINUE with empty string context is preserved', () => {
+    const result: GateResult = { additionalContext: '' };
+    const action = handleAction('CONTINUE', result, mockConfig, mockInput);
+
+    expect(action.continue).toBe(true);
+    expect(action.context).toBe('');
+  });
+
+  test('BLOCK with empty reason string uses it instead of default', () => {
+    const result: GateResult = { reason: '' };
+    const action = handleAction('BLOCK', result, mockConfig, mockInput);
+
+    expect(action.continue).toBe(false);
+    // Empty string is not nullish, so ?? preserves it
+    expect(action.blockReason).toBe('');
+  });
+
+  test('handles action names with special characters in chaining', () => {
+    const result: GateResult = { additionalContext: 'test' };
+    const action = handleAction('gate-with-dashes_and_underscores', result, mockConfig, mockInput);
+
+    expect(action.continue).toBe(true);
+    expect(action.chainedGate).toBe('gate-with-dashes_and_underscores');
+  });
+
+  test('handles uppercase action variants', () => {
+    const result: GateResult = {};
+
+    // Test that only exact matches work (case sensitive)
+    const continueAction = handleAction('CONTINUE', result, mockConfig, mockInput);
+    expect(continueAction.continue).toBe(true);
+
+    // Any other string is treated as gate chaining
+    const lowerCaseAction = handleAction('continue', result, mockConfig, mockInput);
+    expect(lowerCaseAction.chainedGate).toBe('continue');
+  });
 });

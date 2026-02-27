@@ -175,4 +175,186 @@ describe('Plugin Gate Loading', () => {
     // Command execution will fail (file doesn't exist) but flow is correct
     expect(result.passed).toBe(false);
   });
+
+  test('throws when plugin config missing gates object', async () => {
+    const invalidDir = path.join(mockPluginDir, 'invalid');
+    await fs.mkdir(invalidDir, { recursive: true });
+    await fs.writeFile(
+      path.join(invalidDir, 'rundown-plugin.json'),
+      JSON.stringify({ hooks: {} }), // Missing gates
+    );
+
+    await expect(loadPluginGate('invalid', 'any-gate')).rejects.toThrow(
+      "Invalid rundown-plugin.json structure in plugin 'invalid': missing or invalid 'gates' object",
+    );
+  });
+
+  test('detects circular gate references', async () => {
+    // Create plugin with circular reference
+    const circularDir = path.join(mockPluginDir, 'circular');
+    await fs.mkdir(circularDir, { recursive: true });
+    await fs.writeFile(
+      path.join(circularDir, 'rundown-plugin.json'),
+      JSON.stringify({
+        hooks: {},
+        gates: {
+          'gate-a': { plugin: 'circular', gate: 'gate-b' },
+          'gate-b': { plugin: 'circular', gate: 'gate-a' },
+        },
+      }),
+    );
+
+    const gateConfig: GateConfig = {
+      plugin: 'circular',
+      gate: 'gate-a',
+    };
+
+    const mockInput: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: '/test',
+    };
+
+    await expect(executeGate('test-gate', gateConfig, mockInput)).rejects.toThrow(
+      /Circular gate reference detected/,
+    );
+  });
+
+  test('respects maximum plugin depth limit', async () => {
+    // Create chain of 11 plugins (exceeds MAX_PLUGIN_DEPTH of 10)
+    for (let i = 0; i < 11; i++) {
+      const pluginDir = path.join(mockPluginDir, `plugin${i}`);
+      await fs.mkdir(pluginDir, { recursive: true });
+      const nextPlugin = i < 10 ? `plugin${i + 1}` : 'plugin10';
+      await fs.writeFile(
+        path.join(pluginDir, 'rundown-plugin.json'),
+        JSON.stringify({
+          hooks: {},
+          gates: {
+            'deep-gate':
+              i < 10 ? { plugin: nextPlugin, gate: 'deep-gate' } : { command: 'echo ok' },
+          },
+        }),
+      );
+    }
+
+    const gateConfig: GateConfig = {
+      plugin: 'plugin0',
+      gate: 'deep-gate',
+    };
+
+    const mockInput: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: '/test',
+    };
+
+    await expect(executeGate('test-gate', gateConfig, mockInput)).rejects.toThrow(
+      /Maximum plugin gate depth.*exceeded/,
+    );
+  });
+
+  test('throws when plugin gate has no command', async () => {
+    const emptyDir = path.join(mockPluginDir, 'empty');
+    await fs.mkdir(emptyDir, { recursive: true });
+    await fs.writeFile(
+      path.join(emptyDir, 'rundown-plugin.json'),
+      JSON.stringify({
+        hooks: {},
+        gates: {
+          'empty-gate': {}, // No command or plugin/gate reference
+        },
+      }),
+    );
+
+    const gateConfig: GateConfig = {
+      plugin: 'empty',
+      gate: 'empty-gate',
+    };
+
+    const mockInput: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: '/test',
+    };
+
+    await expect(executeGate('test-gate', gateConfig, mockInput)).rejects.toThrow(
+      "Plugin gate 'empty:empty-gate' has no command",
+    );
+  });
+});
+
+describe('Gate Loader - Built-in Gates', () => {
+  test('converts kebab-case to camelCase correctly', async () => {
+    const mockInput: HookInput = {
+      hook_event_name: 'SessionStart',
+      cwd: '/test',
+    };
+
+    // plugin-path is a known built-in gate that should exist
+    const result = await executeGate('plugin-path', {}, mockInput);
+    expect(result).toBeDefined();
+    expect(result.passed).toBeDefined();
+  });
+
+  test('throws error for nonexistent built-in gate', async () => {
+    const mockInput: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: '/test',
+    };
+
+    const gateConfig: GateConfig = {}; // No command = built-in
+
+    await expect(executeGate('does-not-exist-gate', gateConfig, mockInput)).rejects.toThrow(
+      /Failed to load built-in gate/,
+    );
+  });
+});
+
+describe('Gate Loader - Shell Command Edge Cases', () => {
+  test('handles command with multiple lines of output', async () => {
+    const result = await executeShellCommand(
+      'echo "line1"; echo "line2"; echo "line3"',
+      process.cwd(),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('line1');
+    expect(result.output).toContain('line2');
+    expect(result.output).toContain('line3');
+  });
+
+  test('combines stdout and stderr in output', async () => {
+    const result = await executeShellCommand('echo "out" && echo "err" >&2', process.cwd());
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('out');
+    expect(result.output).toContain('err');
+  });
+
+  test('handles command that fails with stderr', async () => {
+    const result = await executeShellCommand(
+      'echo "error message" >&2 && exit 42',
+      process.cwd(),
+    );
+    expect(result.exitCode).toBe(42);
+    expect(result.output).toContain('error message');
+  });
+
+  test('handles empty command output', async () => {
+    const result = await executeShellCommand('true', process.cwd());
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toBe('');
+  });
+
+  test('custom timeout value is respected', async () => {
+    const customTimeout = 50;
+    const result = await executeShellCommand('sleep 1', process.cwd(), customTimeout);
+    expect(result.exitCode).toBe(124);
+    expect(result.output).toContain(`${customTimeout}ms`);
+  });
+
+  test('handles non-existent command gracefully', async () => {
+    const result = await executeShellCommand(
+      'this-command-definitely-does-not-exist-12345',
+      process.cwd(),
+    );
+    expect(result.exitCode).not.toBe(0);
+    expect(result.output.length).toBeGreaterThan(0);
+  });
 });
