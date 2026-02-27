@@ -89,7 +89,9 @@ Run the child task.
 
     result = runCli('delegate child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
-    const token = /Token:\s*(rdtk_\S+)/.exec(result.stdout)![1];
+    const tokenMatch2 = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    expect(tokenMatch2).not.toBeNull();
+    const token = tokenMatch2![1];
 
     // First claim
     result = runCli(`claim ${token}`, workspace);
