@@ -732,7 +732,7 @@ export const ScenarioSuiteRunResponseSchema = z
         path: ['passed'],
       });
     }
-    const actualPassed = data.cases.filter((c) => c.result === true).length;
+    const actualPassed = data.cases.filter((c) => c.result).length;
     if (data.passed !== actualPassed) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -740,7 +740,7 @@ export const ScenarioSuiteRunResponseSchema = z
         path: ['passed'],
       });
     }
-    const actualFailed = data.cases.filter((c) => c.result === false).length;
+    const actualFailed = data.cases.filter((c) => !c.result).length;
     if (data.failed !== actualFailed) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
