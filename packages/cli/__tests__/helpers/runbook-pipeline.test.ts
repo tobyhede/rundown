@@ -1383,6 +1383,7 @@ describe('claimAndLaunch', () => {
     };
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(false);
@@ -1439,6 +1440,7 @@ describe('claimAndLaunch', () => {
     };
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(true);
@@ -1496,6 +1498,7 @@ describe('claimAndLaunch', () => {
     };
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(false);
@@ -1563,6 +1566,7 @@ describe('claimAndLaunch', () => {
     };
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(true);
@@ -1639,6 +1643,7 @@ describe('claimAndLaunch', () => {
     };
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(true);
@@ -1711,6 +1716,7 @@ describe('claimAndLaunch', () => {
     };
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(false);
@@ -1786,6 +1792,7 @@ describe('claimAndLaunch', () => {
     };
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
     await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(mockCreate).toHaveBeenCalledWith(
