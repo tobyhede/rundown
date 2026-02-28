@@ -157,7 +157,7 @@ export async function handleDelegationCompletion(
   if (drained.status === 'stopped') {
     const freshParent = await manager.load(parentRunId);
     if (freshParent?.delegation) {
-      return handleDelegationCompletion(freshParent, 'fail', cwd, output, depth + 1);
+      await handleDelegationCompletion(freshParent, 'fail', cwd, output, depth + 1);
     }
     output.flush();
     return 'stopped';
@@ -184,17 +184,18 @@ export async function handleDelegationCompletion(
     );
     output.flush();
 
-    if (loopResult === 'stopped' || loopResult === 'done') {
-      // Check for cascade
+    if (loopResult === 'stopped') {
       const freshParent = await manager.load(parentRunId);
       if (freshParent?.delegation) {
-        const cascadeResult = loopResult === 'done' ? 'pass' : 'fail';
-        return handleDelegationCompletion(freshParent, cascadeResult, cwd, output, depth + 1);
+        await handleDelegationCompletion(freshParent, 'fail', cwd, output, depth + 1);
       }
-    }
-
-    if (loopResult === 'stopped') {
       return 'stopped';
+    }
+    if (loopResult === 'done') {
+      const freshParent = await manager.load(parentRunId);
+      if (freshParent?.delegation) {
+        return handleDelegationCompletion(freshParent, 'pass', cwd, output, depth + 1);
+      }
     }
     return 'handled';
   }

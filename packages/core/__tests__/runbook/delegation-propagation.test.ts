@@ -6,7 +6,7 @@ import {
   deriveActiveFrame,
 } from '../../src/runbook/targeting.js';
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- babel parser can't handle inline `type` keyword
-import { DelegationLinkage, RunbookState } from '../../src/runbook/types.js';
+import type { DelegationLinkage, RunbookState } from '../../src/runbook/types.js';
 
 describe('DelegationLinkage extended fields', () => {
   function makeSchemaState(delegation: Record<string, unknown>): Record<string, unknown> {

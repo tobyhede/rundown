@@ -219,6 +219,7 @@ describe('CLI program', () => {
       const result = runCli('status --no-color', workspace);
       expect(result.exitCode).toBe(0);
       // Output should not contain ANSI escape codes
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching ANSI escape sequences
       expect(result.stdout).not.toMatch(/\x1b\[\d+m/);
     });
   });

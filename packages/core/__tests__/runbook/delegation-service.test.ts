@@ -127,7 +127,7 @@ describe('createDelegation', () => {
 
   it('throws DELEGATION_ALREADY_EXISTS for duplicate active delegation', () => {
     const existingDelegation = {
-      tokenHash: 'sha256:' + 'a'.repeat(64),
+      tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'other-child.md',
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: null,
@@ -149,7 +149,7 @@ describe('createDelegation', () => {
 
   it('allows re-delegation when previous delegation is cancelled', () => {
     const cancelledDelegation = {
-      tokenHash: 'sha256:' + 'a'.repeat(64),
+      tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'other-child.md',
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: null,

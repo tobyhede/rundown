@@ -6,7 +6,7 @@ import {
   readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('claim command', () => {
@@ -168,7 +168,8 @@ Run the child task.
       result = runCli(`claim ${token} --json`, workspace);
       expect(result.exitCode).toBe(0);
 
-      const output = JSON.parse(result.stdout);
+      const jsonLines = result.stdout.trim().split('\n');
+      const output = JSON.parse(jsonLines[jsonLines.length - 1]);
       expect(output.action).toBe('claimed');
       expect(output.token).toMatch(/^rdtk_.{7}\.\.\./);
       expect(typeof output.run_id).toBe('string');
@@ -181,7 +182,8 @@ Run the child task.
       const result = runCli('claim bad-token --json', workspace);
       expect(result.exitCode).toBe(1);
 
-      const output = JSON.parse(result.stdout);
+      const jsonLines = result.stdout.trim().split('\n');
+      const output = JSON.parse(jsonLines[jsonLines.length - 1]);
       expect(output.error).toBeDefined();
       expect(output.code).toBeDefined();
     });
@@ -195,7 +197,8 @@ Run the child task.
       const token = JSON.parse(result.stdout).token as string;
 
       result = runCli(`claim ${token} --json`, workspace);
-      const output = JSON.parse(result.stdout);
+      const jsonLines = result.stdout.trim().split('\n');
+      const output = JSON.parse(jsonLines[jsonLines.length - 1]);
 
       // Verify all required fields
       expect(output).toHaveProperty('action');

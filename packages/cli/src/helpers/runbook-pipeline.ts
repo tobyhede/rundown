@@ -889,7 +889,7 @@ export async function claimAndLaunch(
   varOpts: VarOptions,
 ): Promise<ClaimResult> {
   const { output, manager, cwd } = ctx;
-  const truncatedToken = rawToken.slice(0, 12) + '...';
+  const truncatedToken = `${rawToken.slice(0, 12)}...`;
 
   // 1. Validate token format
   if (!rawToken.startsWith(DELEGATION_TOKEN_PREFIX)) {

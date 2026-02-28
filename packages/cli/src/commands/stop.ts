@@ -51,7 +51,15 @@ export function registerStopCommand(program: Command): void {
               ...state,
               variables: { ...state.variables, stopped: true },
             };
-            await handleDelegationCompletion(stoppedState, 'fail', cwd, output);
+            const propagationResult = await handleDelegationCompletion(
+              stoppedState,
+              'fail',
+              cwd,
+              output,
+            );
+            if (propagationResult === 'stopped') {
+              process.exitCode = 1;
+            }
           }
 
           output.flush();
