@@ -276,3 +276,244 @@ describe('Synthetic event context injection', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('Context file discovery - Additional Edge Cases', () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  test('returns null when .claude directory does not exist', async () => {
+    const result = await discoverContextFile(testDir, 'test-command', 'start');
+    expect(result).toBeNull();
+  });
+
+  test('returns null when context directory does not exist', async () => {
+    const claudeDir = path.join(testDir, '.claude');
+    await fs.mkdir(claudeDir);
+
+    const result = await discoverContextFile(testDir, 'test-command', 'start');
+    expect(result).toBeNull();
+  });
+
+  test('returns null when context file does not exist', async () => {
+    const contextDir = path.join(testDir, '.claude', 'context');
+    await fs.mkdir(contextDir, { recursive: true });
+
+    const result = await discoverContextFile(testDir, 'test-command', 'start');
+    expect(result).toBeNull();
+  });
+
+  test('discovers context with different stages', async () => {
+    const contextDir = path.join(testDir, '.claude', 'context');
+    await fs.mkdir(contextDir, { recursive: true });
+
+    await fs.writeFile(path.join(contextDir, 'test-command-start.md'), 'start content');
+    await fs.writeFile(path.join(contextDir, 'test-command-end.md'), 'end content');
+
+    const startResult = await discoverContextFile(testDir, 'test-command', 'start');
+    const endResult = await discoverContextFile(testDir, 'test-command', 'end');
+
+    expect(startResult).toBe(path.join(contextDir, 'test-command-start.md'));
+    expect(endResult).toBe(path.join(contextDir, 'test-command-end.md'));
+  });
+
+  test('handles command names with special characters', async () => {
+    const contextDir = path.join(testDir, '.claude', 'context');
+    await fs.mkdir(contextDir, { recursive: true });
+
+    await fs.writeFile(path.join(contextDir, 'my-command-with-dashes-start.md'), 'content');
+
+    const result = await discoverContextFile(testDir, 'my-command-with-dashes', 'start');
+    expect(result).toBe(path.join(contextDir, 'my-command-with-dashes-start.md'));
+  });
+
+  test('follows priority order - subdirectory wins over flat when both exist', async () => {
+    const contextBase = path.join(testDir, '.claude', 'context');
+    const slashCommandDir = path.join(contextBase, 'slash-command');
+    await fs.mkdir(slashCommandDir, { recursive: true });
+
+    await fs.writeFile(path.join(slashCommandDir, 'test-command-start.md'), 'subdir');
+
+    const result = await discoverContextFile(testDir, 'test-command', 'start');
+    expect(result).toBe(path.join(slashCommandDir, 'test-command-start.md'));
+  });
+
+  test('follows priority order - subdirectory wins over nested', async () => {
+    const contextBase = path.join(testDir, '.claude', 'context');
+    const slashCommandDir = path.join(contextBase, 'slash-command');
+    const nestedDir = path.join(slashCommandDir, 'test-command');
+    await fs.mkdir(nestedDir, { recursive: true });
+
+    await fs.writeFile(path.join(slashCommandDir, 'test-command-start.md'), 'subdir');
+    await fs.writeFile(path.join(nestedDir, 'start.md'), 'nested');
+
+    // Priority: flat > slash-command/name-stage.md > slash-command/name/stage.md
+    const result = await discoverContextFile(testDir, 'test-command', 'start');
+    expect(result).toBe(path.join(slashCommandDir, 'test-command-start.md'));
+  });
+
+  test('discovers skill context with namespace prefix', async () => {
+    const contextDir = path.join(testDir, '.claude', 'context', 'skill');
+    await fs.mkdir(contextDir, { recursive: true });
+
+    await fs.writeFile(path.join(contextDir, 'namespace-skill-name-start.md'), 'skill content');
+
+    const result = await discoverContextFile(testDir, 'namespace-skill-name', 'start');
+    expect(result).toBe(path.join(contextDir, 'namespace-skill-name-start.md'));
+  });
+});
+
+describe('Context injection - Additional Edge Cases', () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  test('handles missing cwd gracefully', async () => {
+    const input = {
+      hook_event_name: 'SlashCommandStart',
+      cwd: '/nonexistent/path',
+      command: '/test',
+    };
+
+    const result = await injectContext('SlashCommandStart', input as any);
+    expect(result).toBeNull();
+  });
+
+  test('handles empty command name', async () => {
+    const input = {
+      hook_event_name: 'SlashCommandStart',
+      cwd: testDir,
+      command: '',
+    };
+
+    const result = await injectContext('SlashCommandStart', input as any);
+    expect(result).toBeNull();
+  });
+
+  test('handles command name with leading slash', async () => {
+    const input = {
+      hook_event_name: 'SlashCommandStart',
+      cwd: testDir,
+      command: '/commit',
+    };
+
+    await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
+    await fs.writeFile(
+      path.join(testDir, '.claude', 'context', 'commit-start.md'),
+      'Commit context',
+    );
+
+    const result = await injectContext('SlashCommandStart', input as any);
+    expect(result).toBe('Commit context');
+  });
+
+  test('handles skill name with namespace separator', async () => {
+    const input = {
+      hook_event_name: 'SkillStart',
+      cwd: testDir,
+      skill: 'namespace:skill-name',
+    };
+
+    await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
+    await fs.writeFile(
+      path.join(testDir, '.claude', 'context', 'skill-name-start.md'),
+      'Skill context',
+    );
+
+    const result = await injectContext('SkillStart', input as any);
+    expect(result).toBe('Skill context');
+  });
+
+  test('reads full file content including newlines', async () => {
+    const input = {
+      hook_event_name: 'SlashCommandStart',
+      cwd: testDir,
+      command: '/test',
+    };
+
+    const multilineContent = 'Line 1\nLine 2\nLine 3\n\nLine 5';
+    await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
+    await fs.writeFile(path.join(testDir, '.claude', 'context', 'test-start.md'), multilineContent);
+
+    const result = await injectContext('SlashCommandStart', input as any);
+    expect(result).toBe(multilineContent);
+  });
+
+  test('handles empty context file', async () => {
+    const input = {
+      hook_event_name: 'SlashCommandStart',
+      cwd: testDir,
+      command: '/test',
+    };
+
+    await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
+    await fs.writeFile(path.join(testDir, '.claude', 'context', 'test-start.md'), '');
+
+    const result = await injectContext('SlashCommandStart', input as any);
+    expect(result).toBe('');
+  });
+
+  test('handles context file with Unicode content', async () => {
+    const input = {
+      hook_event_name: 'SlashCommandStart',
+      cwd: testDir,
+      command: '/test',
+    };
+
+    const unicodeContent = 'Unicode: 你好 世界 🚀 émoji';
+    await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
+    await fs.writeFile(path.join(testDir, '.claude', 'context', 'test-start.md'), unicodeContent);
+
+    const result = await injectContext('SlashCommandStart', input as any);
+    expect(result).toBe(unicodeContent);
+  });
+
+  test('SessionStart returns null (no context injection)', async () => {
+    const input = {
+      hook_event_name: 'SessionStart',
+      cwd: testDir,
+    };
+
+    const result = await injectContext('SessionStart', input as any);
+    expect(result).toBeNull();
+  });
+
+  test('ConfigChange returns null (no context injection)', async () => {
+    const input = {
+      hook_event_name: 'ConfigChange',
+      cwd: testDir,
+    };
+
+    const result = await injectContext('ConfigChange', input as any);
+    expect(result).toBeNull();
+  });
+
+  test('SkillEnd with namespace prefix', async () => {
+    const input = {
+      hook_event_name: 'SkillEnd',
+      cwd: testDir,
+      skill: 'namespace:test-skill',
+    };
+
+    await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
+    await fs.writeFile(
+      path.join(testDir, '.claude', 'context', 'test-skill-end.md'),
+      'Skill end context',
+    );
+
+    const result = await injectContext('SkillEnd', input as any);
+    expect(result).toBe('Skill end context');
+  });
+});

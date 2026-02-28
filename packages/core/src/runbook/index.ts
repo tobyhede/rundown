@@ -44,3 +44,6 @@ export {
   hashDelegationToken,
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
 } from './delegation-token.js';
+export { DelegationLock } from './delegation-lock.js';
+export { DelegationScanService, type TokenScanResult } from './delegation-scan.js';
+export { reconstituteContextVars } from './delegation-context.js';

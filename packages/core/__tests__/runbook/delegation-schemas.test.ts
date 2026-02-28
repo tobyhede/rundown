@@ -30,6 +30,32 @@ describe('AncestorSnapshotSchema', () => {
   });
 });
 
+describe('AncestorSnapshotSchema structural fields', () => {
+  it('accepts at and index fields', () => {
+    const result = AncestorSnapshotSchema.safeParse({
+      runId: 'run-1',
+      runbook: 'parent.md',
+      step: '2',
+      substep: '1',
+      vars: {},
+      at: '2.3.1',
+      index: 3,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts without at and index (backward compat)', () => {
+    const result = AncestorSnapshotSchema.safeParse({
+      runId: 'run-1',
+      runbook: 'parent.md',
+      step: '2',
+      substep: null,
+      vars: {},
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
 describe('ContextSnapshotSchema', () => {
   it('accepts valid context snapshot', () => {
     const result = ContextSnapshotSchema.safeParse({
@@ -50,6 +76,26 @@ describe('ContextSnapshotSchema', () => {
   it('accepts empty ancestors', () => {
     const result = ContextSnapshotSchema.safeParse({
       vars: {},
+      ancestors: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts step, substep, at, and index fields', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: { env: 'prod' },
+      ancestors: [],
+      step: '2',
+      substep: '1',
+      at: '2.3.1',
+      index: 3,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts without structural fields (backward compat)', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: { env: 'prod' },
       ancestors: [],
     });
     expect(result.success).toBe(true);

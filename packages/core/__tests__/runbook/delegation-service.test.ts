@@ -245,6 +245,39 @@ describe('createDelegation', () => {
     expect(ss2?.delegation?.childRunbookPath).toBe('child.md');
   });
 
+  it('captures step, substep, at, and index in context snapshot', () => {
+    const state = makeState({
+      step: '1',
+      substep: '2',
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 3,
+          start: 1,
+          end: 5,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+    });
+    const steps = makeSteps();
+    const result = createDelegation({ state, stepId: '1.2', childRunbookPath: 'child.md' }, steps);
+
+    expect(result.delegation.contextSnapshot.step).toBe('1');
+    expect(result.delegation.contextSnapshot.substep).toBe('2');
+    expect(result.delegation.contextSnapshot.at).toBe('1.3.2');
+    expect(result.delegation.contextSnapshot.index).toBe(3);
+  });
+
+  it('omits index from snapshot when not in a FOR loop', () => {
+    const state = makeState();
+    const steps = makeSteps();
+    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+
+    expect(result.delegation.contextSnapshot.step).toBe('1');
+    expect(result.delegation.contextSnapshot.index).toBeUndefined();
+  });
+
   it('works for simple step without substeps', () => {
     const state = makeState({
       substepStates: undefined,

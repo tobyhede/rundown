@@ -159,6 +159,8 @@ export const AncestorSnapshotSchema = z.object({
   step: z.string(),
   substep: z.string().nullable(),
   vars: z.record(z.string(), z.string()),
+  at: z.string().optional(),
+  index: z.number().int().positive().optional(),
 });
 
 /**
@@ -167,6 +169,10 @@ export const AncestorSnapshotSchema = z.object({
 export const ContextSnapshotSchema = z.object({
   vars: z.record(z.string(), z.string()),
   ancestors: z.array(AncestorSnapshotSchema).readonly(),
+  step: z.string().optional(),
+  substep: z.string().optional(),
+  at: z.string().optional(),
+  index: z.number().int().positive().optional(),
 });
 
 /**
@@ -314,6 +320,13 @@ export const RunbookStateSchema = z.object({
   agentId: z.string().optional(),
   parentRunbookId: z.string().optional(),
   parentStepId: StepIdSchema.optional(),
+  delegation: z
+    .object({
+      parentRunId: z.string(),
+      parentStepId: z.string(),
+      tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    })
+    .optional(),
   nested: z
     .object({
       runbook: z.string(),

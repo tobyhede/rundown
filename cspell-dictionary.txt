@@ -41,6 +41,7 @@ bashisms
 centralise
 coreutils
 deserialized
+idempotently
 esac
 exfiltration
 initialisation
@@ -158,6 +159,7 @@ behaviour
 categorises
 
 # Test fixture words
+émoji
 aindex
 ancvar
 NOTVALID
