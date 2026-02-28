@@ -302,12 +302,11 @@ Final step.
     it('fail command with --agent flag on non-agent runbook', async () => {
       runCli('run --prompted runbooks/simple.runbook.md', workspace);
 
-      // Try to fail with agent flag on non-agent runbook
+      // Agent has no stack and no binding on parent — resolves to no active runbook
       const result = runCli('fail --agent test-agent', workspace);
 
-      // Should handle gracefully (agent not bound to this runbook)
-      // Behavior depends on implementation
-      expect(result.exitCode).not.toBe(undefined);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('No active runbook');
     });
 
     it('consecutive fail commands maintain state consistency', async () => {
