@@ -161,7 +161,7 @@ export function registerAbortCommand(program: Command): void {
           await lock.acquire(parentState.id);
 
           let abortResult: ReturnType<typeof abortDelegation>;
-          let freshParent: RunbookState | null;
+          let freshParent: RunbookState | null = null;
           let childRunId: string | null = null;
           let childRunbookPath: string = scanResult.delegation.childRunbookPath;
 
