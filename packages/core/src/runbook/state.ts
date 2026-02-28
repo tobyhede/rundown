@@ -4,15 +4,12 @@ import * as path from 'node:path';
 import type {
   RunbookState,
   ForContext,
-  AgentBinding,
-  PendingStep,
   Substep,
   SubstepState,
   Runbook,
   DataSource,
   DelegationLinkage,
 } from './types.js';
-import type { StepId } from './step-id.js';
 import { RunbookStateSchema } from '../schemas.js';
 
 /** Directory path (relative to project root) where runbook execution state files are stored. */
@@ -27,15 +24,12 @@ function generateId(): string {
 }
 
 /**
- * Persisted session state tracking active runbook stacks per agent.
+ * Persisted session state tracking the active runbook stack.
  *
- * Each agent maintains an independent stack of runbook IDs. A single
- * shared stash slot allows temporarily parking a runbook.
+ * A single shared stash slot allows temporarily parking a runbook.
  */
 export interface SessionData {
-  /** Agent-specific runbook stacks, keyed by agent ID */
-  stacks: Partial<Record<string, string[]>>;
-  /** Default runbook stack used when no agent ID is specified */
+  /** Active runbook stack */
   defaultStack: string[];
   /** ID of a temporarily stashed runbook, if any */
   stashedRunbookId?: string;
@@ -43,9 +37,6 @@ export interface SessionData {
 
 interface CreateOptions {
   readonly runbookPath: string;
-  readonly agentId?: string;
-  readonly parentRunbookId?: string;
-  readonly parentStepId?: StepId;
   readonly prompted?: boolean;
   /** Delegation linkage when this run is created via `rd claim`. */
   readonly delegation?: DelegationLinkage;
@@ -116,13 +107,8 @@ export class RunbookStateManager {
       retryCount: 0,
       variables: {},
       steps: [],
-      pendingSteps: [],
-      agentBindings: {},
       resolvedCompletions: {},
       frameEntries: {},
-      agentId: options.agentId,
-      parentRunbookId: options.parentRunbookId,
-      parentStepId: options.parentStepId,
       delegation: options.delegation,
       startedAt: now,
       updatedAt: now,
@@ -274,100 +260,6 @@ export class RunbookStateManager {
   }
 
   /**
-   * Bind an agent to a specific step in the runbook.
-   *
-   * Creates a new agent binding with 'running' status. Used when a subagent
-   * starts working on a step.
-   *
-   * @param id - The runbook state ID
-   * @param agentId - The agent ID to bind
-   * @param pending - The pending step target the agent is working on
-   * @throws Error if the runbook with the given ID is not found
-   * @throws Error if the pending step is missing a canonical targetStep
-   */
-  async bindAgent(id: string, agentId: string, pending: PendingStep): Promise<void> {
-    const state = await this.load(id);
-    if (!state) throw new Error(`Runbook ${id} not found`);
-    if (!pending.targetStep) {
-      throw new Error(
-        `Pending step ${pending.stepId.step} is missing canonical targetStep. Re-queue the active step before binding.`,
-      );
-    }
-
-    const binding: AgentBinding = {
-      stepId: pending.stepId,
-      status: 'running',
-      targetStep: pending.targetStep,
-      targetSubstep: pending.targetSubstep,
-      targetIteration: pending.targetIteration,
-      targetFrameKey: pending.targetFrameKey,
-      targetEntry: pending.targetEntry,
-    };
-
-    await this.update(id, {
-      agentBindings: {
-        ...state.agentBindings,
-        [agentId]: binding,
-      },
-    });
-  }
-
-  /**
-   * Get the agent binding for a specific agent in a runbook.
-   *
-   * @param id - The runbook state ID
-   * @param agentId - The agent ID to look up
-   * @returns The agent binding, or null if the agent is not bound
-   * @throws Error if the runbook with the given ID is not found
-   */
-  async getAgentBinding(id: string, agentId: string): Promise<AgentBinding | null> {
-    const state = await this.load(id);
-    if (!state) throw new Error(`Runbook ${id} not found`);
-    return state.agentBindings[agentId] ?? null;
-  }
-
-  /**
-   * Update an existing agent binding with partial changes.
-   *
-   * @param id - The runbook state ID
-   * @param agentId - The agent ID whose binding to update
-   * @param updates - Partial binding updates (status, result, childRunbookId, targeting fields)
-   * @throws Error if the runbook with the given ID is not found
-   * @throws Error if the agent has no existing binding
-   */
-  async updateAgentBinding(
-    id: string,
-    agentId: string,
-    updates: Partial<
-      Pick<
-        AgentBinding,
-        | 'status'
-        | 'result'
-        | 'childRunbookId'
-        | 'targetStep'
-        | 'targetSubstep'
-        | 'targetIteration'
-        | 'targetFrameKey'
-        | 'targetEntry'
-      >
-    >,
-  ): Promise<void> {
-    const state = await this.load(id);
-    if (!state) throw new Error(`Runbook ${id} not found`);
-
-    const existing = state.agentBindings[agentId];
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (!existing) throw new Error(`No binding for agent ${agentId}`);
-
-    await this.update(id, {
-      agentBindings: {
-        ...state.agentBindings,
-        [agentId]: { ...existing, ...updates },
-      },
-    });
-  }
-
-  /**
    * Load the session data from disk.
    *
    * @returns The parsed session data, or a default empty session if the file doesn't exist
@@ -377,7 +269,7 @@ export class RunbookStateManager {
       const content = await fs.readFile(this.sessionPath, 'utf8');
       return JSON.parse(content) as SessionData;
     } catch {
-      return { stacks: {}, defaultStack: [] };
+      return { defaultStack: [] };
     }
   }
 
@@ -410,33 +302,10 @@ export class RunbookStateManager {
     const substepStates: SubstepState[] = substeps.map((s) => ({
       id: s.id,
       status: 'pending',
-      agentId: undefined,
       result: undefined,
     }));
 
     await this.update(id, { substepStates });
-  }
-
-  /**
-   * Bind an agent to a specific substep.
-   *
-   * Updates the substep's status to 'running' and records the agent ID.
-   *
-   * @param runbookId - The runbook state ID
-   * @param substepId - The substep ID to bind to
-   * @param agentId - The agent ID to bind
-   * @throws Error if the runbook with the given ID is not found
-   */
-  async bindSubstepAgent(runbookId: string, substepId: string, agentId: string): Promise<void> {
-    const state = await this.load(runbookId);
-    if (!state) throw new Error(`Runbook ${runbookId} not found`);
-
-    const substepStates = state.substepStates ?? [];
-    const updated = substepStates.map((s) =>
-      s.id === substepId ? { ...s, status: 'running' as const, agentId } : s,
-    );
-
-    await this.update(runbookId, { substepStates: updated });
   }
 
   /**

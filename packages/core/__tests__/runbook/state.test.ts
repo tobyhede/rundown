@@ -100,38 +100,18 @@ describe('RunbookStateManager', () => {
       expect(updated?.substepStates?.[0]).toEqual({
         id: '1',
         status: 'pending',
-        agentId: undefined,
         result: undefined,
       });
     });
   });
 
   describe('RunbookStateManager substep lifecycle', () => {
-    it('binds agent to substep', async () => {
-      const state = await manager.create('test.runbook.md', mockRunbook, {
-        runbookPath: 'test.runbook.md',
-      });
-      await manager.update(state.id, {
-        substepStates: [{ id: '1', status: 'pending' }],
-      });
-
-      await manager.bindSubstepAgent(state.id, '1', 'agent-123');
-
-      const updated = await manager.load(state.id);
-      expect(updated?.substepStates?.[0]).toEqual({
-        id: '1',
-        status: 'running',
-        agentId: 'agent-123',
-        result: undefined,
-      });
-    });
-
     it('completes substep with result', async () => {
       const state = await manager.create('test.runbook.md', mockRunbook, {
         runbookPath: 'test.runbook.md',
       });
       await manager.update(state.id, {
-        substepStates: [{ id: '1', status: 'running', agentId: 'agent-123' }],
+        substepStates: [{ id: '1', status: 'running' }],
       });
 
       await manager.completeSubstep(state.id, '1', 'pass');
@@ -140,7 +120,6 @@ describe('RunbookStateManager', () => {
       expect(updated?.substepStates?.[0]).toEqual({
         id: '1',
         status: 'done',
-        agentId: 'agent-123',
         result: 'pass',
       });
     });
@@ -158,94 +137,6 @@ describe('RunbookStateManager', () => {
         prompted: true,
       });
       expect(state.prompted).toBe(true);
-    });
-  });
-
-  describe('Agent bindings', () => {
-    it('bindAgent creates new binding', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-
-      await manager.bindAgent(state.id, 'agent-abc', { stepId: { step: '1' }, targetStep: '1' });
-
-      const binding = await manager.getAgentBinding(state.id, 'agent-abc');
-      expect(binding).toEqual({
-        stepId: { step: '1' },
-        status: 'running',
-        targetStep: '1',
-      });
-    });
-
-    it('getAgentBinding returns null for unbound agent', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-
-      const binding = await manager.getAgentBinding(state.id, 'nonexistent');
-
-      expect(binding).toBeNull();
-    });
-
-    it('updateAgentBinding modifies existing binding', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      await manager.bindAgent(state.id, 'agent-def', { stepId: { step: '2' }, targetStep: '2' });
-
-      await manager.updateAgentBinding(state.id, 'agent-def', {
-        status: 'done',
-        result: 'pass',
-      });
-
-      const binding = await manager.getAgentBinding(state.id, 'agent-def');
-      expect(binding?.status).toBe('done');
-      expect(binding?.result).toBe('pass');
-    });
-
-    it('updateAgentBinding throws for missing binding', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-
-      await expect(
-        manager.updateAgentBinding(state.id, 'missing-agent', { status: 'done' }),
-      ).rejects.toThrow('No binding for agent');
-    });
-
-    it('bindAgent throws for missing runbook', async () => {
-      await expect(
-        manager.bindAgent('nonexistent-id', 'agent', { stepId: { step: '1' }, targetStep: '1' }),
-      ).rejects.toThrow('not found');
-    });
-  });
-
-  describe('Pending steps', () => {
-    it('pushPendingStep adds to queue', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-
-      await lifecycleService.pushPendingStep(state.id, { stepId: { step: '1' } });
-      await lifecycleService.pushPendingStep(state.id, { stepId: { step: '2' } });
-
-      const updated = await manager.load(state.id);
-      expect(updated?.pendingSteps).toHaveLength(2);
-    });
-
-    it('popPendingStep removes from queue in FIFO order', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      await lifecycleService.pushPendingStep(state.id, { stepId: { step: 'first' } });
-      await lifecycleService.pushPendingStep(state.id, { stepId: { step: 'second' } });
-
-      const first = await lifecycleService.popPendingStep(state.id);
-      const second = await lifecycleService.popPendingStep(state.id);
-      const empty = await lifecycleService.popPendingStep(state.id);
-
-      expect(first?.stepId).toEqual({ step: 'first' });
-      expect(second?.stepId).toEqual({ step: 'second' });
-      expect(empty).toBeNull();
-    });
-
-    it('popPendingStep returns null for nonexistent runbook', async () => {
-      const result = await lifecycleService.popPendingStep('nonexistent');
-      expect(result).toBeNull();
-    });
-
-    it('pushPendingStep throws for missing runbook', async () => {
-      await expect(
-        lifecycleService.pushPendingStep('nonexistent', { stepId: { step: '1' } }),
-      ).rejects.toThrow('not found');
     });
   });
 
@@ -301,14 +192,9 @@ describe('RunbookStateManager', () => {
 
     it('loads legacy targetPath fields and strips them on save', async () => {
       const state = await manager.create('legacy.md', mockRunbook, { runbookPath: 'legacy.md' });
-      const deferredKey = '1||';
       const resolvedKey = '1||1|';
 
       await manager.update(state.id, {
-        pendingSteps: [{ stepId: { step: '1' }, targetStep: '1' }],
-        agentBindings: {
-          'agent-1': { stepId: { step: '1' }, status: 'running', targetStep: '1' },
-        },
         resolvedCompletions: {
           [resolvedKey]: {
             agentId: 'agent-1',
@@ -324,36 +210,17 @@ describe('RunbookStateManager', () => {
       const stateFilePath = join(testDir, '.claude/rundown/runs', `${state.id}.json`);
       const raw = JSON.parse(await readFile(stateFilePath, 'utf8')) as Record<string, unknown>;
 
-      const pending = (raw.pendingSteps as Record<string, unknown>[])[0];
-      pending.targetPath = '1';
-      const binding = (raw.agentBindings as Record<string, Record<string, unknown>>)['agent-1'];
-      binding.targetPath = '1';
       const resolved = (raw.resolvedCompletions as Record<string, Record<string, unknown>>)[
         resolvedKey
       ];
       resolved.targetPath = '1';
-      raw.deferredCompletions = {
-        [deferredKey]: {
-          agentId: 'agent-1',
-          result: 'pass',
-          targetStep: '1',
-          completedAt: new Date().toISOString(),
-          targetPath: '1',
-        },
-      };
       await writeFile(stateFilePath, JSON.stringify(raw), { mode: 0o600 });
 
       const loaded = await manager.load(state.id);
       expect(loaded).not.toBeNull();
-      const loadedPending = loaded?.pendingSteps[0] as unknown as
-        | { targetPath?: string }
-        | undefined;
-      const loadedBinding = loaded?.agentBindings['agent-1'] as { targetPath?: string } | undefined;
       const loadedResolved = loaded?.resolvedCompletions?.[resolvedKey] as
         | { targetPath?: string }
         | undefined;
-      expect(loadedPending?.targetPath).toBeUndefined();
-      expect(loadedBinding?.targetPath).toBeUndefined();
       expect(loadedResolved?.targetPath).toBeUndefined();
 
       await manager.update(state.id, { stepName: 'updated' });

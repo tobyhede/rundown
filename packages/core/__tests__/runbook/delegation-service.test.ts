@@ -15,8 +15,6 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     retryCount: 0,
     variables: {},
     steps: [{ id: '1', status: 'running' }],
-    pendingSteps: [],
-    agentBindings: {},
     startedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',
     substepStates: [
@@ -253,7 +251,7 @@ describe('createDelegation', () => {
   it('preserves existing substepStates when adding delegation', () => {
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'running', agentId: 'agent-a' },
+        { id: '1', status: 'running' },
         { id: '2', status: 'pending' },
       ],
     });
@@ -262,7 +260,6 @@ describe('createDelegation', () => {
 
     // Substep 1 should be untouched
     const ss1 = result.updatedSubstepStates.find((ss) => ss.id === '1');
-    expect(ss1?.agentId).toBe('agent-a');
     expect(ss1?.delegation).toBeUndefined();
 
     // Substep 2 should have delegation
@@ -396,7 +393,7 @@ describe('createDelegation', () => {
   it('preserves all existing substep properties when adding delegation', () => {
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'running', agentId: 'agent-1' },
+        { id: '1', status: 'running' },
         { id: '2', status: 'pending' },
       ],
     });
@@ -404,7 +401,6 @@ describe('createDelegation', () => {
     const result = createDelegation({ state, stepId: '1.2', childRunbookPath: 'child.md' }, steps);
 
     const ss1 = result.updatedSubstepStates.find((ss) => ss.id === '1');
-    expect(ss1?.agentId).toBe('agent-1');
     expect(ss1?.status).toBe('running');
     expect(ss1?.delegation).toBeUndefined();
 

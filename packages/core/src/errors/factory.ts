@@ -67,8 +67,6 @@ export const Errors = {
     new RundownError('SCENARIO_NOT_FOUND', { scenario, file }),
 
   // Agent
-  noPendingStep: (): RundownError => new RundownError('NO_PENDING_STEP'),
-
   agentNotBound: (agentId?: string): RundownError =>
     new RundownError('AGENT_NOT_BOUND', { agentId }),
 

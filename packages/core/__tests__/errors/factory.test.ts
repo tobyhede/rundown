@@ -181,13 +181,6 @@ describe('Errors factory - extended coverage', () => {
   });
 
   describe('Agent errors', () => {
-    it('noPendingStep creates correct error', () => {
-      const error = Errors.noPendingStep();
-
-      expect(error).toBeInstanceOf(RundownError);
-      expect(error.code).toBe('RD-701');
-    });
-
     it('agentNotBound creates error without agentId', () => {
       const error = Errors.agentNotBound();
 

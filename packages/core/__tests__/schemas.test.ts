@@ -20,8 +20,6 @@ const createValidState = (overrides: Record<string, unknown> = {}) => ({
   retryCount: 0,
   variables: {},
   steps: [],
-  pendingSteps: [],
-  agentBindings: {},
   startedAt: '2025-01-01T00:00:00Z',
   updatedAt: '2025-01-01T00:00:00Z',
   ...overrides,
@@ -110,29 +108,6 @@ describe('RunbookStateSchema - step name validation', () => {
 
   it('rejects non-string step', () => {
     const result = RunbookStateSchema.safeParse(createValidState({ step: 123 }));
-    expect(result.success).toBe(false);
-  });
-});
-
-describe('RunbookStateSchema - StepId validation', () => {
-  it('accepts valid StepId object', () => {
-    const result = RunbookStateSchema.safeParse(
-      createValidState({ pendingSteps: [{ stepId: { step: '1' } }] }),
-    );
-    expect(result.success).toBe(true);
-  });
-
-  it('accepts StepId with substep', () => {
-    const result = RunbookStateSchema.safeParse(
-      createValidState({ pendingSteps: [{ stepId: { step: '1', substep: '1' } }] }),
-    );
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects StepId without step field', () => {
-    const result = RunbookStateSchema.safeParse(
-      createValidState({ pendingSteps: [{ substep: '1' }] }),
-    );
     expect(result.success).toBe(false);
   });
 });
@@ -298,9 +273,9 @@ describe('RunbookStateSchema forStack', () => {
     }
   });
 
-  it('strips unknown legacy flat FOR fields', () => {
+  it('passes through unknown legacy flat FOR fields without migration', () => {
     // Old-format state with forIteration/forStart/forEnd/forVariable
-    // should be stripped by Zod (not migrated)
+    // Schema uses passthrough() so legacy fields are preserved (not stripped/migrated)
     const oldState = createValidState({
       forIteration: 2,
       forStart: 1,
@@ -312,11 +287,6 @@ describe('RunbookStateSchema forStack', () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      // Legacy fields should not appear in output (Zod strips unknown keys)
-      expect(result.data).not.toHaveProperty('forIteration');
-      expect(result.data).not.toHaveProperty('forStart');
-      expect(result.data).not.toHaveProperty('forEnd');
-      expect(result.data).not.toHaveProperty('forVariable');
       // No migration — forStack should remain undefined
       expect(result.data.forStack).toBeUndefined();
     }

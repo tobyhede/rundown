@@ -6,14 +6,14 @@ import {
   buildFrameKey,
   parseCompletionKey,
 } from './targeting.js';
-import type { PendingStep, ResolvedCompletion, RunbookState } from './types.js';
+import type { ResolvedCompletion, RunbookState } from './types.js';
 
 /**
  * Service for execution-flow helpers that read/write specific fields
  * on persisted runbook state.
  *
- * Encapsulates operations like recording step results, querying parent/child
- * runbook status, and managing the pending-step queue. Each method delegates
+ * Encapsulates operations like recording step results, querying runbook
+ * status, and managing resolved completions. Each method delegates
  * to {@link RunbookStateManager.update} or {@link RunbookStateManager.load}
  * internally.
  */
@@ -35,53 +35,14 @@ export class ExecutionLifecycleService {
   }
 
   /**
-   * Check if a parent runbook was started in prompted mode.
+   * Check if a runbook was started in prompted mode.
    *
-   * @param parentRunbookId - The parent runbook state ID
-   * @returns True if the parent runbook has prompted flag set, false otherwise
+   * @param runbookId - The runbook state ID to check
+   * @returns True if the runbook has prompted flag set, false otherwise
    */
-  async isParentPrompted(parentRunbookId: string): Promise<boolean> {
-    const parent = await this.manager.load(parentRunbookId);
+  async isParentPrompted(runbookId: string): Promise<boolean> {
+    const parent = await this.manager.load(runbookId);
     return parent?.prompted ?? false;
-  }
-
-  /**
-   * Push a pending step onto the runbook's pending step queue.
-   *
-   * Pending steps are used to correlate Step tool dispatch with SubagentStart
-   * events in orchestration scenarios.
-   *
-   * @param id - The runbook state ID
-   * @param pending - The pending step to push (includes stepId and optional child runbook path)
-   * @throws Error if the runbook with the given ID is not found
-   * @remarks This method uses a load-then-update pattern. It is safe under
-   * Rundown's single-process-per-runbook execution model but would need an
-   * atomic update if concurrent access were introduced.
-   */
-  async pushPendingStep(id: string, pending: PendingStep): Promise<void> {
-    const state = await this.manager.load(id);
-    if (!state) throw new Error(`Runbook ${id} not found`);
-
-    await this.manager.update(id, {
-      pendingSteps: [...state.pendingSteps, pending],
-    });
-  }
-
-  /**
-   * Pop the first pending step from the runbook's pending step queue.
-   *
-   * @param id - The runbook state ID
-   * @returns The first pending step, or null if the queue is empty or runbook not found
-   * @remarks Uses load-then-update; safe under single-process execution.
-   * See {@link pushPendingStep} for details.
-   */
-  async popPendingStep(id: string): Promise<PendingStep | null> {
-    const state = await this.manager.load(id);
-    if (!state || state.pendingSteps.length === 0) return null;
-
-    const [first, ...rest] = state.pendingSteps;
-    await this.manager.update(id, { pendingSteps: rest });
-    return first;
   }
 
   /**

@@ -179,13 +179,6 @@ export const ErrorCodes = {
   },
 
   // Agent Errors (7xx)
-  NO_PENDING_STEP: {
-    code: 'RD-701',
-    category: ErrorCategory.AGENT,
-    title: 'No pending step to bind',
-    description: 'There is no pending step available for agent binding.',
-    docSlug: 'no-pending-step',
-  },
   AGENT_NOT_BOUND: {
     code: 'RD-702',
     category: ErrorCategory.AGENT,
