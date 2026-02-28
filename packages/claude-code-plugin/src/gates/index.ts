@@ -9,8 +9,8 @@
 export * as pluginPath from './plugin-path.js';
 /** Step tracking gate for runbook state management */
 export * as onStepTracker from './on-step-tracker.js';
-/** Subagent start event gate */
-export * as onSubagentStart from './on-subagent-start.js';
+/** Delegation dispatch gate for PreToolUse(Task) */
+export * as onDelegationDispatch from './on-delegation-dispatch.js';
 /** Subagent stop event gate */
 export * as onSubagentStop from './on-subagent-stop.js';
 /** Skill start event gate with runbook auto-execution */

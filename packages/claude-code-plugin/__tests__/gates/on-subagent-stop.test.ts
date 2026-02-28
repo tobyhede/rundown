@@ -16,7 +16,7 @@ describe('on-subagent-stop gate', () => {
   });
 
   it('returns empty result when no context or violation', async () => {
-    mockHandleSubagentStop.mockReturnValue({});
+    mockHandleSubagentStop.mockResolvedValue({});
 
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
@@ -24,14 +24,13 @@ describe('on-subagent-stop gate', () => {
       agent_id: 'agent-123',
     };
 
-    const result = execute(input);
-
+    const result = await execute(input);
     expect(result).toEqual({});
   });
 
   it('returns additionalContext when context provided', async () => {
-    mockHandleSubagentStop.mockReturnValue({
-      context: 'Agent agent-123 complete.',
+    mockHandleSubagentStop.mockResolvedValue({
+      context: 'Delegation rdtk_ABC aborted due to agent failure.',
     });
 
     const input: HookInput = {
@@ -40,16 +39,15 @@ describe('on-subagent-stop gate', () => {
       agent_id: 'agent-123',
     };
 
-    const result = execute(input);
-
+    const result = await execute(input);
     expect(result).toEqual({
-      additionalContext: 'Agent agent-123 complete.',
+      additionalContext: 'Delegation rdtk_ABC aborted due to agent failure.',
     });
   });
 
   it('returns block decision when violation occurs', async () => {
-    mockHandleSubagentStop.mockReturnValue({
-      violation: 'SubagentStop for unknown agent: agent-xyz',
+    mockHandleSubagentStop.mockResolvedValue({
+      violation: 'Something went wrong',
     });
 
     const input: HookInput = {
@@ -58,11 +56,10 @@ describe('on-subagent-stop gate', () => {
       agent_id: 'agent-xyz',
     };
 
-    const result = execute(input);
-
+    const result = await execute(input);
     expect(result).toEqual({
       decision: 'block',
-      reason: 'SubagentStop for unknown agent: agent-xyz',
+      reason: 'Something went wrong',
     });
   });
 });
