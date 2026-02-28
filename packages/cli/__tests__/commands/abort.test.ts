@@ -225,7 +225,7 @@ Run the child task.
   });
 
   describe('edge cases', () => {
-    it('handles delegation with no substep ID', async () => {
+    it('handles delegation with substep ID', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
