@@ -239,7 +239,7 @@ Run the child task.
       expect(result.exitCode).toBe(0);
     });
 
-    it('handles concurrent abort attempts gracefully', async () => {
+    it('handles repeated abort attempts gracefully', async () => {
       const token = await setupDelegation();
 
       // First abort should succeed
@@ -263,9 +263,8 @@ Run the child task.
 
       // Pass multiple tokens - Commander should only use first positional arg
       const result = runCli(`abort ${token} extra-arg`, workspace);
-      // Commander may error on unexpected argument
-      // This documents the behavior
-      expect(result.exitCode).not.toBe(undefined);
+      // Commander errors on unexpected argument
+      expect(result.exitCode).toBe(1);
     });
   });
 
@@ -331,13 +330,13 @@ Run the child task.
   });
 
   describe('regression tests', () => {
-    it('handles abort during runbook execution', async () => {
+    it('handles force abort after claim completes', async () => {
       const token = await setupDelegation();
 
-      // Start claim but don't complete it
+      // Claim completes synchronously before abort
       runCli(`claim ${token}`, workspace);
 
-      // Force abort while execution is in progress
+      // Force abort after claim has completed
       const result = runCli(`abort ${token} --force`, workspace);
       expect(result.exitCode).toBe(0);
     });

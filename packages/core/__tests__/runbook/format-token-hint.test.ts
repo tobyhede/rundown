@@ -6,7 +6,7 @@ describe('truncateDelegationToken', () => {
     // rdtk_ + 32 base32 chars
     const token = `${TOKEN_PREFIX}ABCDEFGHIJKLMNOPQRSTUVWXYZ234567`;
     const hint = truncateDelegationToken(token);
-    expect(hint).toBe('rdtk_ABC...4567');
+    expect(hint).toBe(`${TOKEN_PREFIX}ABC...4567`);
   });
 
   it('returns short tokens as-is', () => {
@@ -31,6 +31,6 @@ describe('truncateDelegationToken', () => {
   it('truncates body of length 8 or more', () => {
     const token = `${TOKEN_PREFIX}ABCDEFGH`;
     const hint = truncateDelegationToken(token);
-    expect(hint).toBe('rdtk_ABC...EFGH'); // cspell:disable-line
+    expect(hint).toBe(`${TOKEN_PREFIX}ABC...EFGH`); // cspell:disable-line
   });
 });
