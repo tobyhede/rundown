@@ -1,14 +1,12 @@
 // src/workflow/hooks/subagent-stop.ts
 import type { HookInput } from '../../shared/index.js';
-import { rundown, setExecSync } from './rundown.js';
+import { Session } from '../../session.js';
+import { rundown } from './rundown.js';
 
 export interface SubagentStopResult {
   context?: string;
   violation?: string;
 }
-
-// Re-export for testing
-export { setExecSync };
 
 /**
  * Pattern for parsing STATUS field from agent output.
@@ -17,9 +15,15 @@ export { setExecSync };
 const STATUS_PATTERN = /STATUS:\s*(OK|PASS|BLOCKED|FAIL)/i;
 
 /**
- * Parse STATUS field from subagent output
+ * Parse STATUS field from subagent output using {@link STATUS_PATTERN}.
+ *
+ * Maps OK/PASS to 'pass' and BLOCKED/FAIL to 'fail'.
+ * Missing or unrecognized status defaults to 'pass'.
+ *
+ * @param output - Raw subagent output text to scan for STATUS field
+ * @returns Normalized status: 'pass' for OK/PASS/missing, 'fail' for BLOCKED/FAIL
  */
-function parseAgentStatus(output?: string): 'pass' | 'fail' {
+export function parseAgentStatus(output?: string): 'pass' | 'fail' {
   if (!output) return 'pass';
 
   const match = STATUS_PATTERN.exec(output);
@@ -30,52 +34,44 @@ function parseAgentStatus(output?: string): 'pass' | 'fail' {
 }
 
 /**
- * Handle SubagentStop hook
+ * Handle SubagentStop hook with delegation-aware abort.
+ *
+ * On failure, if a delegation token is active in session metadata,
+ * calls `rd abort <token> --force` to cancel the delegation.
+ * Successful delegations self-complete via the child run's own pass/fail.
  */
-export function handleSubagentStop(input: HookInput): SubagentStopResult {
+export async function handleSubagentStop(input: HookInput): Promise<SubagentStopResult> {
   if (input.hook_event_name !== 'SubagentStop') {
     return {};
   }
 
-  const agentId = input.agent_id;
-  if (!agentId) return {};
-
   const status = parseAgentStatus(input.last_assistant_message);
-  const command = status === 'pass' ? 'pass' : 'fail';
 
-  try {
-    const output = rundown([command, '--agent', agentId], input.cwd);
+  // Read and consume delegation token from session metadata
+  const session = new Session(input.cwd);
+  const meta = await session.get('metadata');
+  const raw = meta.delegation_active_token;
+  const token = typeof raw === 'string' ? raw : undefined;
 
-    const context = formatCompletionContext(output, agentId, status);
-    return { context };
-  } catch (error: unknown) {
-    const execError = error as { stderr?: Buffer | string };
-    const stderr = execError.stderr?.toString() ?? '';
-    if (stderr.includes('No binding for agent')) {
-      return {
-        violation: `SubagentStop for unknown agent: ${agentId}`,
-      };
-    }
+  // Clear the token (consume-once) regardless of outcome
+  if (token) {
+    const { delegation_active_token: _, ...rest } = meta;
+    await session.set('metadata', rest);
+  }
+
+  // Successful delegations self-complete via child run
+  if (status === 'pass' || !token) {
     return {};
   }
-}
 
-function formatCompletionContext(
-  cliOutput: string,
-  agentId: string,
-  result: 'pass' | 'fail',
-): string {
-  const lines: string[] = [];
-
-  if (result === 'fail') {
-    lines.push(`Agent ${agentId} FAILED.`);
-  } else {
-    lines.push(`Agent ${agentId} complete.`);
+  // Agent failed with an active delegation token — abort the delegation
+  try {
+    rundown(['abort', token, '--force'], input.cwd);
+    return {
+      context: `Delegation ${token} aborted due to agent failure.`,
+    };
+  } catch {
+    // Best-effort abort — continue without error
+    return {};
   }
-
-  if (cliOutput.trim()) {
-    lines.push(cliOutput);
-  }
-
-  return lines.join('\n');
 }

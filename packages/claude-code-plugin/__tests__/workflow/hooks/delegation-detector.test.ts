@@ -1,0 +1,93 @@
+import { describe, it, expect } from '@jest/globals';
+import {
+  detectDelegationMarker,
+  detectDelegationInTaskInput,
+} from '../../../src/workflow/hooks/delegation-detector.js';
+
+describe('detectDelegationMarker', () => {
+  const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+  it('finds token on its own line', () => {
+    const text = `RD_CLAIM_TOKEN=${VALID_TOKEN}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toEqual({ token: VALID_TOKEN });
+  });
+
+  it('finds token in multiline text', () => {
+    const text = `Some preamble text\nRD_CLAIM_TOKEN=${VALID_TOKEN}\nMore text after`;
+    const result = detectDelegationMarker(text);
+    expect(result).toEqual({ token: VALID_TOKEN });
+  });
+
+  it('returns null for bare token without RD_CLAIM_TOKEN= prefix', () => {
+    const text = VALID_TOKEN;
+    const result = detectDelegationMarker(text);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for marker mid-line (not at line start)', () => {
+    const text = `prefix RD_CLAIM_TOKEN=${VALID_TOKEN}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for empty string', () => {
+    const result = detectDelegationMarker('');
+    expect(result).toBeNull();
+  });
+
+  it('returns null for wrong-length token', () => {
+    const shortToken = 'rdtk_ABCDEF';
+    const text = `RD_CLAIM_TOKEN=${shortToken}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toBeNull();
+  });
+
+  it('returns first match with multiple markers', () => {
+    const token1 = 'rdtk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+    const token2 = 'rdtk_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+    const text = `RD_CLAIM_TOKEN=${token1}\nRD_CLAIM_TOKEN=${token2}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toEqual({ token: token1 });
+  });
+
+  it('returns null for bare token in prose without marker prefix', () => {
+    const text = `The agent received token ${VALID_TOKEN} for delegation.`;
+    const result = detectDelegationMarker(text);
+    expect(result).toBeNull();
+  });
+});
+
+describe('detectDelegationInTaskInput', () => {
+  const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+  it('checks prompt before description', () => {
+    const promptToken = 'rdtk_PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP';
+    const descToken = 'rdtk_DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD';
+    const result = detectDelegationInTaskInput(
+      `RD_CLAIM_TOKEN=${promptToken}`,
+      `RD_CLAIM_TOKEN=${descToken}`,
+    );
+    expect(result).toEqual({ token: promptToken });
+  });
+
+  it('falls back to description when prompt has no marker', () => {
+    const result = detectDelegationInTaskInput('No marker here', `RD_CLAIM_TOKEN=${VALID_TOKEN}`);
+    expect(result).toEqual({ token: VALID_TOKEN });
+  });
+
+  it('returns null when both undefined', () => {
+    const result = detectDelegationInTaskInput(undefined, undefined);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when both empty', () => {
+    const result = detectDelegationInTaskInput('', '');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when prompt is undefined and description has no marker', () => {
+    const result = detectDelegationInTaskInput(undefined, 'Just a description');
+    expect(result).toBeNull();
+  });
+});

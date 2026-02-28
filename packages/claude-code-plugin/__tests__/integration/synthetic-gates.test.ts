@@ -143,14 +143,15 @@ runbook: ${runbook}
     expect(result.blockReason).toBeUndefined();
   });
 
-  it('dispatches SubagentStart through on-subagent-start gate', async () => {
+  it('dispatches PreToolUse(Task) through on-delegation-dispatch gate', async () => {
     const input: HookInput = {
-      hook_event_name: 'SubagentStart',
-      agent_id: 'test-agent-123',
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Task',
+      tool_input: { prompt: 'No delegation marker here', description: 'Just a task' },
       cwd: testDir,
     };
 
-    // Should not throw - gate handles gracefully when no runbook active
+    // Should not block - no delegation marker means gate passes through
     const result = await dispatch(input);
 
     expect(result.blockReason).toBeUndefined();
@@ -160,10 +161,11 @@ runbook: ${runbook}
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       agent_id: 'test-agent-123',
+      last_assistant_message: 'STATUS: PASS',
       cwd: testDir,
     };
 
-    // Should not throw - gate handles gracefully
+    // Should not throw - gate handles gracefully (no active delegation token)
     const result = await dispatch(input);
 
     expect(result.blockReason).toBeUndefined();
