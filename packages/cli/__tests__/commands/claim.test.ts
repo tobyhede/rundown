@@ -171,7 +171,7 @@ Run the child task.
       const jsonLines = result.stdout.trim().split('\n');
       const output = JSON.parse(jsonLines[jsonLines.length - 1]);
       expect(output.action).toBe('claimed');
-      expect(output.token).toMatch(/^rdtk_.{7}\.\.\./);
+      expect(output.token).toMatch(/^rdtk_.{3}\.\.\..{4}$/);
       expect(typeof output.run_id).toBe('string');
       expect(typeof output.runbook).toBe('string');
       expect(typeof output.parent_run_id).toBe('string');

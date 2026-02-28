@@ -17,7 +17,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
-  DelegationScanService: jest.fn(),
+  DelegationScanService: jest.fn().mockImplementation(() => ({
+    findByToken: jest.fn().mockResolvedValue(null),
+  })),
   DelegationLock: jest.fn(),
   reconstituteContextVars: jest.fn().mockReturnValue({}),
   hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
@@ -113,6 +115,9 @@ beforeEach(() => {
     if (body.length <= 7) return token;
     return `${prefix}${body.slice(0, 3)}...${body.slice(-4)}`;
   });
+  (core.DelegationScanService as jest.Mock).mockImplementation(() => ({
+    findByToken: jest.fn().mockResolvedValue(null),
+  }));
   (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
   (core.deriveActiveFrame as jest.Mock).mockReturnValue({
     step: '1',
