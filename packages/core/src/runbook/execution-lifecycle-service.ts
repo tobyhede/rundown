@@ -40,7 +40,7 @@ export class ExecutionLifecycleService {
    * @param runbookId - The runbook state ID to check
    * @returns True if the runbook has prompted flag set, false otherwise
    */
-  async isParentPrompted(runbookId: string): Promise<boolean> {
+  async isPrompted(runbookId: string): Promise<boolean> {
     const parent = await this.manager.load(runbookId);
     return parent?.prompted ?? false;
   }

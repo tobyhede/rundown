@@ -52,7 +52,7 @@ interface CreateOptions {
  *
  * Handles creating, loading, saving, and updating runbook state.
  * State is persisted to `.claude/rundown/runs/` as JSON files.
- * Supports runbook stacks for per-agent isolation and nested runbooks.
+ * Supports runbook stacks for nested runbooks.
  */
 export class RunbookStateManager {
   private readonly cwd: string;

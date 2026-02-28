@@ -29,8 +29,6 @@ export interface EventEnvelope {
   readonly agentId?: string;
   /** Monotonic sequence number per runbook */
   readonly seq: number;
-  /** Parent runbook ID for nested execution */
-  readonly parentRunbookId?: string;
   /** Parent step ID for nested execution */
   readonly parentStepId?: string;
 }

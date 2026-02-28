@@ -34,7 +34,7 @@ export const HookInputSchema = z
     tool_use_id: z.string().optional(),
     error: z.string().optional(),
 
-    // SubagentStart/SubagentStop
+    // SubagentStop
     agent_id: z.string().optional(),
     agent_type: z.string().optional(),
     last_assistant_message: z.string().optional(),

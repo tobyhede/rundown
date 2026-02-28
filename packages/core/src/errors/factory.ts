@@ -66,10 +66,6 @@ export const Errors = {
   scenarioNotFound: (scenario: string, file?: string): RundownError =>
     new RundownError('SCENARIO_NOT_FOUND', { scenario, file }),
 
-  // Agent
-  agentNotBound: (agentId?: string): RundownError =>
-    new RundownError('AGENT_NOT_BOUND', { agentId }),
-
   // Delegation
   delegationStepNotFound: (step: string): RundownError =>
     new RundownError('DELEGATION_STEP_NOT_FOUND', { step }),

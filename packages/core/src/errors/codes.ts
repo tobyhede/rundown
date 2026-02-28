@@ -178,15 +178,6 @@ export const ErrorCodes = {
     docSlug: 'scenario-not-found',
   },
 
-  // Agent Errors (7xx)
-  AGENT_NOT_BOUND: {
-    code: 'RD-702',
-    category: ErrorCategory.AGENT,
-    title: 'Agent not bound',
-    description: 'This agent is not bound to any step.',
-    docSlug: 'agent-not-bound',
-  },
-
   // Delegation Errors (8xx)
   DELEGATION_STEP_NOT_FOUND: {
     code: 'RD-801',
