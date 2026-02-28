@@ -120,8 +120,9 @@ Run the child task.
     // Command should succeed
     expect(result.exitCode).toBe(0);
 
-    // Parse and assert JSON structure
-    const claimOutput = JSON.parse(result.stdout);
+    // Parse last JSON line — claim output follows child-run JSON events
+    const jsonLines = result.stdout.trim().split('\n');
+    const claimOutput = JSON.parse(jsonLines[jsonLines.length - 1]);
     expect(claimOutput.action).toBe('claimed');
     expect(claimOutput.token).toMatch(/^rdtk_.{7}\.\.\./);
     expect(typeof claimOutput.run_id).toBe('string');
