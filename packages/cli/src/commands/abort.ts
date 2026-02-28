@@ -288,7 +288,7 @@ export function registerAbortCommand(program: Command): void {
 
           // 11. If force + childRunId: propagate failure through parent (outside lock)
           if (options.force && childRunId) {
-            await propagateForceAbort(manager, freshParent.id, cwd, output);
+            await propagateForceAbort(manager, parentState.id, cwd, output);
           }
 
           // 12. Output result
