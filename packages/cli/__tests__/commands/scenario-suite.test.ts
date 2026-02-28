@@ -1,5 +1,5 @@
 import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('scenario-suite command', () => {

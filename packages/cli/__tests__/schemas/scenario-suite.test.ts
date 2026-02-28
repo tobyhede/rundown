@@ -244,8 +244,8 @@ describe('loadScenarioSuite', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.suite.name).toBe('Test Suite');
-      expect(result.suite.cases['happy']).toBeDefined();
-      expect(result.suite.cases['happy'].commands).toHaveLength(2);
+      expect(result.suite.cases.happy).toBeDefined();
+      expect(result.suite.cases.happy.commands).toHaveLength(2);
     }
   });
 });
