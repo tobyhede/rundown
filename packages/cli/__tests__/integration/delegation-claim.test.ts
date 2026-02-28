@@ -73,7 +73,7 @@ Run the child task.
     // Delegate substep 1.1 to child runbook
     result = runCli('delegate child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('Delegated');
+    expect(result.stdout).toContain('DELEGATED');
 
     // Extract token from output
     const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
@@ -130,11 +130,48 @@ Run the child task.
     const jsonLines = result.stdout.trim().split('\n');
     const claimOutput = JSON.parse(jsonLines[jsonLines.length - 1]);
     expect(claimOutput.action).toBe('claimed');
-    expect(claimOutput.token).toMatch(/^rdtk_.{7}\.\.\./);
+    expect(claimOutput.token).toMatch(/^rdtk_.{3}\.\.\..{4}$/);
     expect(typeof claimOutput.run_id).toBe('string');
     expect(typeof claimOutput.runbook).toBe('string');
     expect(typeof claimOutput.parent_run_id).toBe('string');
     expect(typeof claimOutput.parent_step).toBe('string');
+  });
+
+  it('claim with --var-file merges file variables into child context', async () => {
+    await writeParentRunbook();
+
+    // Child runbook echoes the variable to confirm it was received
+    const childContent = `## 1. Execute
+- PASS: COMPLETE
+
+Task uses {{ myVar }}.
+`;
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), childContent);
+
+    // Write a YAML var file
+    await writeFile(join(workspace.cwd, 'vars.yaml'), 'myVar: fromFile\n');
+
+    // Start parent, delegate
+    let result = runCli('run --prompted parent.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    result = runCli('delegate child.runbook.md --step 1.1', workspace);
+    expect(result.exitCode).toBe(0);
+    const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    expect(tokenMatch).not.toBeNull();
+    const token = tokenMatch![1];
+
+    // Claim with --var-file
+    result = runCli(`claim ${token} --var-file vars.yaml --json`, workspace);
+    expect(result.exitCode).toBe(0);
+
+    // Verify the variable was rendered in child execution output
+    expect(result.stdout).toContain('Task uses fromFile.');
+
+    // Parse last JSON line for claimed output
+    const jsonLines = result.stdout.trim().split('\n');
+    const claimOutput = JSON.parse(jsonLines[jsonLines.length - 1]);
+    expect(claimOutput.action).toBe('claimed');
   });
 
   it('claim --json outputs structured error for invalid token', () => {

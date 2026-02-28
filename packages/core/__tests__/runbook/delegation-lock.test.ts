@@ -136,4 +136,131 @@ describe('DelegationLock', () => {
 
     await lock.release('run-timeout');
   }, 10_000);
+
+  it('handles concurrent acquire attempts with retries', async () => {
+    await lock.acquire('run-concurrent');
+
+    // Schedule release after a short delay
+    setTimeout(() => {
+      void lock.release('run-concurrent');
+    }, 200);
+
+    // Second lock should retry and eventually acquire
+    const lock2 = new DelegationLock(tmpDir);
+    await lock2.acquire('run-concurrent');
+
+    // Verify lock2 now owns the lock
+    const lockPath = path.join(tmpDir, '.claude/rundown/locks/run-run-concurrent.delegation.lock');
+    const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+    expect(content.pid).toBe(process.pid);
+
+    await lock2.release('run-concurrent');
+  });
+
+  it('reclaims lock when file age exceeds stale threshold (60s)', async () => {
+    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    await fs.mkdir(lockDir, { recursive: true });
+
+    const lockPath = path.join(lockDir, 'run-run-old.delegation.lock');
+    // Write a lock that's 61 seconds old (exceeds 60s threshold)
+    const oldLock = {
+      pid: process.pid, // Even if PID is alive
+      created_at: new Date(Date.now() - 61_000).toISOString(),
+    };
+    await fs.writeFile(lockPath, JSON.stringify(oldLock));
+
+    // Should reclaim the old lock
+    await lock.acquire('run-old');
+
+    const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+    expect(content.pid).toBe(process.pid);
+    // Timestamp should be recent, not the old one
+    const age = Date.now() - new Date(content.created_at).getTime();
+    expect(age).toBeLessThan(1000);
+
+    await lock.release('run-old');
+  });
+
+  it('handles lock file disappearing between check and read (race condition)', async () => {
+    // This simulates a race where another process removes the lock between
+    // our EEXIST check and the readFile call in tryReclaimStale
+    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    await fs.mkdir(lockDir, { recursive: true });
+
+    const lockPath = path.join(lockDir, 'run-run-vanish.delegation.lock');
+    await fs.writeFile(
+      lockPath,
+      JSON.stringify({ pid: findDeadPid(), created_at: new Date().toISOString() }),
+    );
+
+    // Start acquire, then delete the lock file to simulate race
+    const acquirePromise = lock.acquire('run-vanish');
+
+    // Wait briefly for the first retry to hit
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    // Remove lock file (simulates another process releasing)
+    await fs.unlink(lockPath).catch(() => {
+      /* ignore if already gone */
+    });
+
+    // Should eventually succeed (acquire handles vanishing lock gracefully)
+    await acquirePromise;
+
+    await lock.release('run-vanish');
+  });
+
+  it('handles empty lock file (0 bytes)', async () => {
+    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    await fs.mkdir(lockDir, { recursive: true });
+
+    const lockPath = path.join(lockDir, 'run-run-empty.delegation.lock');
+    await fs.writeFile(lockPath, '');
+
+    // Should reclaim the empty (corrupted) lock
+    await lock.acquire('run-empty');
+
+    const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+    expect(content.pid).toBe(process.pid);
+
+    await lock.release('run-empty');
+  });
+
+  it('multiple sequential acquire-release cycles work correctly', async () => {
+    // Test that lock state is properly reset between cycles
+    for (let i = 0; i < 5; i++) {
+      await lock.acquire('run-cycle');
+      await lock.release('run-cycle');
+    }
+
+    // Final acquire should succeed
+    await lock.acquire('run-cycle');
+    await lock.release('run-cycle');
+
+    // Verify lock file is gone
+    const lockPath = path.join(tmpDir, '.claude/rundown/locks/run-run-cycle.delegation.lock');
+    await expect(fs.access(lockPath)).rejects.toThrow();
+  });
+
+  it('different run IDs have independent locks', async () => {
+    // Acquire locks for multiple different runs
+    await lock.acquire('run-a');
+    await lock.acquire('run-b');
+    await lock.acquire('run-c');
+
+    // All should coexist
+    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    const lockA = path.join(lockDir, 'run-run-a.delegation.lock');
+    const lockB = path.join(lockDir, 'run-run-b.delegation.lock');
+    const lockC = path.join(lockDir, 'run-run-c.delegation.lock');
+
+    await expect(fs.access(lockA)).resolves.toBeUndefined();
+    await expect(fs.access(lockB)).resolves.toBeUndefined();
+    await expect(fs.access(lockC)).resolves.toBeUndefined();
+
+    // Release all
+    await lock.release('run-a');
+    await lock.release('run-b');
+    await lock.release('run-c');
+  });
 });

@@ -55,7 +55,7 @@ export class DelegationScanService {
         if (ss.delegation?.tokenHash === hash) {
           return {
             parentState: state,
-            stepId: state.step,
+            stepId: ss.delegation.contextSnapshot.step ?? state.step,
             substepId: ss.id,
             delegation: ss.delegation,
           };

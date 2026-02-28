@@ -136,6 +136,8 @@ export class DelegationLock {
 
       if (dead || age > STALE_AGE_MS) {
         await fs.unlink(lockFile);
+        // Note: Between this unlink and the next open('wx') attempt in acquire(),
+        // another process may create the lock. This is safe — acquire() retries on EEXIST.
         return true;
       }
     } catch (err: unknown) {

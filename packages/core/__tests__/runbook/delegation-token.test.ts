@@ -2,6 +2,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   generateDelegationToken,
   hashDelegationToken,
+  truncateDelegationToken,
   TOKEN_PREFIX,
 } from '../../src/runbook/delegation-token.js';
 
@@ -25,6 +26,22 @@ describe('generateDelegationToken', () => {
   it('generates 100 distinct tokens', () => {
     const tokens = new Set(Array.from({ length: 100 }, () => generateDelegationToken()));
     expect(tokens.size).toBe(100);
+  });
+});
+
+describe('truncateDelegationToken', () => {
+  it('produces prefix+3...4 format for standard tokens', () => {
+    const token = generateDelegationToken();
+    const truncated = truncateDelegationToken(token);
+    const body = token.slice(TOKEN_PREFIX.length);
+
+    expect(truncated).toBe(`${TOKEN_PREFIX}${body.slice(0, 3)}...${body.slice(-4)}`);
+    expect(truncated).toMatch(/^rdtk_.{3}\.\.\..{4}$/);
+  });
+
+  it('returns short tokens unchanged', () => {
+    const shortToken = `${TOKEN_PREFIX}ABC`;
+    expect(truncateDelegationToken(shortToken)).toBe(shortToken);
   });
 });
 

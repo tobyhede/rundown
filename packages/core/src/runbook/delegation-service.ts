@@ -102,7 +102,8 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
   const existingStates = state.substepStates ?? [];
   const targetSubstep = existingStates.find((ss) => ss.id === substepId);
 
-  if (targetSubstep?.delegation?.cancelledAt === null) {
+  const existingDelegation = targetSubstep?.delegation;
+  if (existingDelegation?.cancelledAt === null && existingDelegation.childRunId === null) {
     throw Errors.delegationAlreadyExists(stepId);
   }
 

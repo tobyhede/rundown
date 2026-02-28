@@ -40,7 +40,10 @@ describe('delegate command', () => {
       const result = runCli('delegate runbooks/child.runbook.md --step 1.1', workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('Token: rdtk_');
+      expect(result.stdout).toContain('DELEGATED');
+      expect(result.stdout).toContain('Token:');
+      expect(result.stdout).toContain('rdtk_');
+      expect(result.stdout).toContain('RD_CLAIM_TOKEN=');
     });
 
     it('token has correct format (rdtk_ prefix, length 37)', async () => {
@@ -92,7 +95,7 @@ describe('delegate command', () => {
       expect(delegations?.[0]?.state).toBe('pending');
     });
 
-    it('JSON output has action, token, tokenHash, parentRunId', async () => {
+    it('JSON output has snake_case keys and claim_marker', async () => {
       await setupDelegation();
 
       const result = runCli(
@@ -104,8 +107,9 @@ describe('delegate command', () => {
       const output = JSON.parse(result.stdout) as Record<string, unknown>;
       expect(output.action).toBe('delegated');
       expect(output.token).toBeDefined();
-      expect(output.tokenHash).toBeDefined();
-      expect(output.parentRunId).toBeDefined();
+      expect(output.token_hash).toBeDefined();
+      expect(output.parent_run_id).toBeDefined();
+      expect(output.claim_marker).toMatch(/^RD_CLAIM_TOKEN=rdtk_/);
     });
   });
 

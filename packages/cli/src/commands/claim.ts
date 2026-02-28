@@ -4,11 +4,9 @@ import {
   RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
-  isNodeError,
-  getErrorMessage,
-  RunbookSyntaxError,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
+import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { collect } from './echo.js';
 import { claimAndLaunch, type RunPipelineContext } from '../helpers/runbook-pipeline.js';
@@ -38,63 +36,56 @@ export function registerClaimCommand(program: Command): void {
           var?: string[];
         },
       ) => {
-        const output = new OutputEmitter({ json: options.json });
+        await withErrorHandling(
+          async () => {
+            const output = new OutputEmitter({ json: options.json });
+            const cwd = getCwd();
+            const manager = new RunbookStateManager(cwd);
+            const actorService = new RunbookActorService(manager);
+            const sessionService = new SessionService(manager);
+            const lifecycleService = new ExecutionLifecycleService(manager);
 
-        try {
-          const cwd = getCwd();
-          const manager = new RunbookStateManager(cwd);
-          const actorService = new RunbookActorService(manager);
-          const sessionService = new SessionService(manager);
-          const lifecycleService = new ExecutionLifecycleService(manager);
+            const ctx: RunPipelineContext = {
+              output,
+              manager,
+              actorService,
+              sessionService,
+              lifecycleService,
+              cwd,
+            };
 
-          const ctx: RunPipelineContext = {
-            output,
-            manager,
-            actorService,
-            sessionService,
-            lifecycleService,
-            cwd,
-          };
+            const varOpts = { varFile: options.varFile, var: options.var };
+            const result = await claimAndLaunch(ctx, token, varOpts);
 
-          const varOpts = { varFile: options.varFile, var: options.var };
-          const result = await claimAndLaunch(ctx, token, varOpts);
-
-          if (!result.ok) {
-            output.error(result.error, result.code, result.details);
-            output.flush();
-            process.exit(1);
-          }
-
-          // Delegation propagation — if child auto-completed during launch
-          let propagationResult: 'handled' | 'stopped' | 'not-applicable' = 'not-applicable';
-          if (result.loopResult === 'done' || result.loopResult === 'stopped') {
-            const childState = await manager.load(result.childRunId);
-            if (childState?.delegation) {
-              const propResult = result.loopResult === 'done' ? 'pass' : 'fail';
-              propagationResult = await handleDelegationCompletion(
-                childState,
-                propResult,
-                cwd,
-                output,
-              );
+            if (!result.ok) {
+              output.error(result.error, result.code, result.details);
+              output.flush();
+              process.exit(1);
             }
-          }
 
-          output.flush();
-          if (result.loopResult === 'stopped' || propagationResult === 'stopped') {
-            process.exit(1);
-          }
-        } catch (error) {
-          if (isNodeError(error) && error.code === 'ENOENT') {
-            output.error('Runbook file not found', 'RUNBOOK_NOT_FOUND');
-          } else if (error instanceof RunbookSyntaxError) {
-            output.error(`Syntax error: ${error.message}`, 'INVALID_SYNTAX');
-          } else {
-            output.error(getErrorMessage(error), 'UNKNOWN_ERROR');
-          }
-          output.flush();
-          process.exit(1);
-        }
+            // Delegation propagation — propagate child result to parent
+            let shouldExitWithError = result.loopResult === 'stopped';
+            if (result.loopResult === 'done' || result.loopResult === 'stopped') {
+              const childState = await manager.load(result.childRunId);
+              if (childState?.delegation) {
+                const propResult = result.loopResult === 'done' ? 'pass' : 'fail';
+                const delegationResult = await handleDelegationCompletion(
+                  childState,
+                  propResult,
+                  cwd,
+                  output,
+                );
+                if (delegationResult === 'stopped') shouldExitWithError = true;
+              }
+            }
+
+            output.flush();
+            if (shouldExitWithError) {
+              process.exit(1);
+            }
+          },
+          { json: options.json },
+        );
       },
     );
 }
