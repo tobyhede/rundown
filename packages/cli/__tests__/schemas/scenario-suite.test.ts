@@ -1,4 +1,11 @@
-import { ScenarioSuiteCaseSchema, ScenarioSuiteSchema } from '../../src/schemas/scenario-suite.js';
+import { writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  ScenarioSuiteCaseSchema,
+  ScenarioSuiteSchema,
+  loadScenarioSuite,
+} from '../../src/schemas/scenario-suite.js';
 
 describe('ScenarioSuiteCaseSchema', () => {
   it('validates a complete case', () => {
@@ -163,5 +170,82 @@ describe('ScenarioSuiteSchema', () => {
 
     const result = ScenarioSuiteSchema.safeParse(suite);
     expect(result.success).toBe(true);
+  });
+});
+
+describe('loadScenarioSuite', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'rd-suite-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns error when file does not exist', async () => {
+    const result = await loadScenarioSuite(join(tmpDir, 'nonexistent.yaml'));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('Suite file not found');
+    }
+  });
+
+  it('returns error for invalid YAML', async () => {
+    const badYaml = join(tmpDir, 'bad.yaml');
+    await writeFile(badYaml, '{ invalid yaml: [');
+
+    const result = await loadScenarioSuite(badYaml);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('Invalid YAML');
+    }
+  });
+
+  it('returns error with details for invalid structure', async () => {
+    const invalidSuite = join(tmpDir, 'invalid.yaml');
+    await writeFile(
+      invalidSuite,
+      'version: 1\nname: Bad\ncases:\n  broken:\n    file: not-a-runbook.txt\n    commands: []\n',
+    );
+
+    const result = await loadScenarioSuite(invalidSuite);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('Invalid suite file');
+      expect(result.details).toBeDefined();
+      expect(result.details!.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('loads and validates a correct suite file', async () => {
+    const validSuite = join(tmpDir, 'valid.yaml');
+    await writeFile(
+      validSuite,
+      [
+        'version: 1',
+        'name: Test Suite',
+        'cases:',
+        '  happy:',
+        '    file: test.runbook.md',
+        '    commands:',
+        '      - rd run test.runbook.md',
+        '      - rd pass',
+        '    result: COMPLETE',
+      ].join('\n'),
+    );
+
+    const result = await loadScenarioSuite(validSuite);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.suite.name).toBe('Test Suite');
+      expect(result.suite.cases['happy']).toBeDefined();
+      expect(result.suite.cases['happy'].commands).toHaveLength(2);
+    }
   });
 });
