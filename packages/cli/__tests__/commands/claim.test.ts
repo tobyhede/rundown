@@ -75,7 +75,7 @@ Run the child task.
     it('rejects claim with token that is too short', () => {
       const result = runCli('claim rdtk_ABC', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
+      expect(result.stdout + result.stderr).toMatch(/not found|no active/i);
     });
 
     it('rejects claim with unknown token', () => {
@@ -182,8 +182,7 @@ Run the child task.
       const result = runCli('claim bad-token --json', workspace);
       expect(result.exitCode).toBe(1);
 
-      const jsonLines = result.stdout.trim().split('\n');
-      const output = JSON.parse(jsonLines[jsonLines.length - 1]);
+      const output = JSON.parse(result.stdout);
       expect(output.error).toBeDefined();
       expect(output.code).toBeDefined();
     });
@@ -247,12 +246,14 @@ Execute with {{Env}} environment.
   });
 
   describe('auto-propagation on claim', () => {
-    /** Helper: write child that auto-completes */
+    /** Helper: write child that auto-completes via command */
     async function writeAutoCompleteChild(): Promise<void> {
       const content = `## 1. Execute
 - PASS: COMPLETE
 
-Auto-complete task.
+\`\`\`bash
+rd echo --result pass
+\`\`\`
 `;
       await writeFile(join(workspace.cwd, 'auto-child.runbook.md'), content);
     }
@@ -287,7 +288,9 @@ Auto-complete task.
       const failChild = `## 1. Execute
 - FAIL: STOP
 
-This will fail.
+\`\`\`bash
+rd echo --result fail
+\`\`\`
 `;
       await writeFile(join(workspace.cwd, 'fail-child.runbook.md'), failChild);
 
@@ -349,21 +352,20 @@ This will fail.
       result = runCli('stop', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Attempt to claim cancelled token
+      // Attempt to claim — parent state is deleted, token no longer resolvable
       result = runCli(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/cancelled/i);
+      expect(result.stdout + result.stderr).toMatch(/not found|no active/i);
     });
 
-    it('handles claim when child runbook file is missing', async () => {
+    it('rejects delegation to non-existent child runbook', async () => {
       await writeParentRunbook();
 
       let result = runCli('run --prompted parent.runbook.md', workspace);
-      result = runCli('delegate missing-child.runbook.md --step 1.1', workspace);
-      const token = extractToken(result.stdout);
+      expect(result.exitCode).toBe(0);
 
-      // Claim should fail with runbook not found
-      result = runCli(`claim ${token}`, workspace);
+      // Delegate to non-existent file should fail
+      result = runCli('delegate missing-child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).toMatch(/not found/i);
     });

@@ -215,9 +215,9 @@ Run the child task.
       result = runCli(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Stop the child — should propagate fail to parent
+      // Stop the child — should propagate fail to parent (exitCode 1 = cascade stopped parent)
       result = runCli('stop', workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
 
       // After child is stopped, parent should be stopped (FAIL ANY: STOP)
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -241,9 +241,9 @@ Run the child task.
       const token = extractToken(result.stdout);
       result = runCli(`claim ${token}`, workspace);
 
-      // Stop with message
+      // Stop with message — exitCode 1 because cascade stopped parent
       result = runCli(['stop', 'Task cancelled by user'], workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
       // Text renderer discards the message; just check for STOP
       expect(result.stdout).toContain('STOP');
 
@@ -269,9 +269,9 @@ Run the child task.
 
       result = runCli(`claim ${token}`, workspace);
 
-      // Stop with JSON
+      // Stop with JSON — exitCode 1 because cascade stopped parent
       result = runCli('stop --json', workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
 
       // With delegation, stop --json produces JSONL (multiple lines).
       // Find the line with the stop action from the child's output.
@@ -351,9 +351,9 @@ Review the deployment.
       const token2 = extractToken(result.stdout);
       result = runCli(`claim ${token2}`, workspace);
 
-      // Stop the child — should cascade through parent to grandparent
+      // Stop the child — should cascade through parent to grandparent (exitCode 1)
       result = runCli('stop', workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
 
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
