@@ -15,13 +15,10 @@ export interface SubagentStopResult {
 const STATUS_PATTERN = /STATUS:\s*(OK|PASS|BLOCKED|FAIL)/i;
 
 /**
- * Parse STATUS field from subagent output using {@link STATUS_PATTERN}.
+ * Determine whether a subagent STATUS in the given output indicates a pass or a fail.
  *
- * Maps OK/PASS to 'pass' and BLOCKED/FAIL to 'fail'.
- * Missing or unrecognized status defaults to 'pass'.
- *
- * @param output - Raw subagent output text to scan for STATUS field
- * @returns Normalized status: 'pass' for OK/PASS/missing, 'fail' for BLOCKED/FAIL
+ * @param output - Raw subagent output text to search for a `STATUS:` field
+ * @returns `pass` if `STATUS` is `OK` or `PASS` (case-insensitive) or if no `STATUS` is present; `fail` otherwise
  */
 export function parseAgentStatus(output?: string): 'pass' | 'fail' {
   if (!output) return 'pass';
@@ -34,11 +31,12 @@ export function parseAgentStatus(output?: string): 'pass' | 'fail' {
 }
 
 /**
- * Handle SubagentStop hook with delegation-aware abort.
+ * Handle a SubagentStop hook by consuming any active delegation token and aborting its delegation if the subagent failed.
  *
- * On failure, if a delegation token is active in session metadata,
- * calls `rd abort <token> --force` to cancel the delegation.
- * Successful delegations self-complete via the child run's own pass/fail.
+ * Consumes the session's `delegation_active_token` (if present). If the parsed agent status is a failure and a token was active, attempts a best-effort abort of the delegation and returns a context message; otherwise returns an empty result.
+ *
+ * @param input - Hook event payload (includes cwd, hook_event_name, and last_assistant_message)
+ * @returns An object with `context` when an abort was attempted, or an empty object if no action was taken
  */
 export async function handleSubagentStop(input: HookInput): Promise<SubagentStopResult> {
   if (input.hook_event_name !== 'SubagentStop') {

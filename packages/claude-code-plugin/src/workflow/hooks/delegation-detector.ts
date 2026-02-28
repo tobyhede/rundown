@@ -24,10 +24,12 @@ export interface DelegationDetection {
 const CLAIM_MARKER_PATTERN = /^RD_CLAIM_TOKEN=(rdtk_[A-Z0-9]{32})$/m;
 
 /**
- * Detect a delegation marker in a single text field.
+ * Finds a delegation marker in a text field.
+ *
+ * Scans the provided text for a canonical RD_CLAIM_TOKEN line and, if present, returns the captured raw token.
  *
  * @param text - Text to scan for a delegation marker
- * @returns Detection result with token, or null if no marker found
+ * @returns The detected `DelegationDetection` with the extracted `token`, or `null` if no marker is found
  */
 export function detectDelegationMarker(text: string): DelegationDetection | null {
   if (!text) return null;
