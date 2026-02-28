@@ -26,9 +26,80 @@ import { createFailTransitionConfig } from '../helpers/transitions.js';
 import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
 
 /**
+ * Propagates a force-abort by draining resolved completions on the parent
+ * runbook and cascading to further ancestors if the parent reaches a terminal state.
+ *
+ * Runs outside the delegation lock so other operations aren't blocked during
+ * the potentially slow drain/execution loop.
+ *
+ * @param manager - State manager for loading/persisting runbook state
+ * @param parentRunId - The run ID of the parent runbook to propagate through
+ * @param cwd - Current working directory for runbook resolution
+ * @param output - Output emitter for forwarding execution events
+ */
+async function propagateForceAbort(
+  manager: RunbookStateManager,
+  parentRunId: string,
+  cwd: string,
+  output: OutputEmitter,
+): Promise<void> {
+  const transitionConfig = createFailTransitionConfig();
+  const parentActorService = new RunbookActorService(manager);
+  const sessionService = new SessionService(manager);
+  const lifecycleService = new ExecutionLifecycleService(manager);
+
+  const reloadedParent = await manager.load(parentRunId);
+  if (!reloadedParent) return;
+
+  const readonlySteps = getRunbookFromState(reloadedParent, cwd);
+  const parentSteps = [...readonlySteps];
+  const emitter = createBridgedEmitter(reloadedParent, output);
+
+  const drained = await drainResolvedCompletions({
+    manager,
+    actorService: parentActorService,
+    sessionService,
+    lifecycleService,
+    emitter,
+    runbookId: parentRunId,
+    steps: parentSteps,
+    currentState: reloadedParent,
+    transitionPolicy: transitionConfig.policy,
+    computeActionResult: transitionConfig.computeActionResult,
+  });
+
+  // If drain advanced to terminal, cascade propagation
+  if (drained.status === 'done' || drained.status === 'stopped') {
+    const cascadeParent = await manager.load(parentRunId);
+    if (cascadeParent?.delegation) {
+      const cascadeResult: 'pass' | 'fail' = drained.status === 'done' ? 'pass' : 'fail';
+      await handleDelegationCompletion(cascadeParent, cascadeResult, cwd, output);
+    }
+  } else if (drained.applied > 0) {
+    // Run execution loop to advance past resolved step
+    const loopResult = await runExecutionLoop(
+      manager,
+      parentRunId,
+      parentSteps,
+      cwd,
+      !!drained.state.prompted,
+      emitter,
+    );
+
+    if (loopResult === 'stopped' || loopResult === 'done') {
+      const cascadeParent = await manager.load(parentRunId);
+      if (cascadeParent?.delegation) {
+        const cascadeResult: 'pass' | 'fail' = loopResult === 'done' ? 'pass' : 'fail';
+        await handleDelegationCompletion(cascadeParent, cascadeResult, cwd, output);
+      }
+    }
+  }
+}
+
+/**
  * Abort command — cancels a delegation token.
  *
- * Implements an 11-step lock-verify-mutate-propagate protocol:
+ * Implements a 12-step lock-verify-mutate-propagate protocol:
  *
  *  1. Parse & validate token format
  *  2. Scan state for matching token hash
@@ -36,11 +107,12 @@ import { handleDelegationCompletion } from '../helpers/delegation-completion.js'
  *  4. Re-load parent state under lock
  *  5. Check if already resolved
  *  6. Call `abortDelegation()` pure function
- *  7. Persist updated parent state
- *  8. If force + childRunId: stop child run
- *  9. Record fail completion on parent substep
+ *  7. Handle early-exit results (already_cancelled, needs_force)
+ *  8. Persist updated parent state
+ *  9. If force + childRunId: stop child run and record fail completion
  * 10. Release lock
- * 11. Output result
+ * 11. If force + childRunId: propagate failure through parent
+ * 12. Output result
  *
  * @module commands/abort
  */
@@ -93,6 +165,14 @@ export function registerAbortCommand(program: Command): void {
           let childRunId: string | null = null;
           let childRunbookPath: string = scanResult.delegation.childRunbookPath;
 
+          /** Derive the completion key for a given substep from the current state. */
+          function deriveCompletionKey(state: RunbookState, substepId: string): string {
+            const frame = deriveActiveFrame(state);
+            const frameKey = state.activeFrameKey ?? frame.frameKey;
+            const entry = state.activeEntry ?? 1;
+            return buildCompletionKey(frameKey, entry, substepId);
+          }
+
           try {
             // 4. Re-load parent state under lock
             freshParent = await manager.load(parentState.id);
@@ -120,10 +200,7 @@ export function registerAbortCommand(program: Command): void {
             // 5. Check if already resolved (has resolved completion) when force + claimed
             if (options.force && freshDelegation.childRunId) {
               const lifecycleService = new ExecutionLifecycleService(manager);
-              const frame = deriveActiveFrame(freshParent);
-              const frameKey = freshParent.activeFrameKey ?? frame.frameKey;
-              const entry = freshParent.activeEntry ?? 1;
-              const completionKey = buildCompletionKey(frameKey, entry, targetSubstepId);
+              const completionKey = deriveCompletionKey(freshParent, targetSubstepId);
               const existing = await lifecycleService.getResolvedCompletion(
                 freshParent.id,
                 completionKey,
@@ -140,7 +217,7 @@ export function registerAbortCommand(program: Command): void {
               force: options.force,
             });
 
-            // 7. Handle result
+            // 7. Handle early-exit results (already_cancelled, needs_force)
             if (abortResult.status === 'already_cancelled') {
               if (options.json) {
                 output.json({
@@ -162,33 +239,34 @@ export function registerAbortCommand(program: Command): void {
               throw Errors.delegationAlreadyClaimed(targetSubstepId, abortResult.childRunId);
             }
 
-            // cancelled — persist updated substepStates
+            // 8. Persist updated parent state
             await manager.update(freshParent.id, {
               substepStates: abortResult.updatedSubstepStates,
             });
 
             childRunId = freshDelegation.childRunId ?? null;
 
-            // 8. If force + childRunId: stop child run and record fail completion
+            // 9. If force + childRunId: stop child run and record fail completion
             if (options.force && childRunId) {
               // Stop child run: capture linkage, delete state, pop session
               const childState = await manager.load(childRunId);
               if (childState) {
                 await manager.delete(childRunId);
                 const sessionService = new SessionService(manager);
-                // Only pop if the active session entry matches the child run being aborted
-                const activeState = await sessionService.getActive();
+                // Pop from the agent-specific stack if the child was agent-scoped
+                const agentId = childState.agentId;
+                const activeState = await sessionService.getActive(agentId);
                 if (activeState?.id === childRunId) {
-                  await sessionService.popRunbook();
+                  await sessionService.popRunbook(agentId);
                 }
               }
 
               // Record fail resolved completion on parent substep
               const lifecycleService = new ExecutionLifecycleService(manager);
+              const completionKey = deriveCompletionKey(freshParent, targetSubstepId);
               const frame = deriveActiveFrame(freshParent);
               const frameKey = freshParent.activeFrameKey ?? frame.frameKey;
               const entry = freshParent.activeEntry ?? 1;
-              const completionKey = buildCompletionKey(frameKey, entry, targetSubstepId);
               const completion = buildResolvedCompletion({
                 agentId: 'delegation',
                 result: 'fail',
@@ -204,68 +282,16 @@ export function registerAbortCommand(program: Command): void {
               );
             }
           } finally {
-            // 9. Release lock
+            // 10. Release lock
             await lock.release(parentState.id);
           }
 
-          // 10. If force + childRunId: drain resolved completions on parent (outside lock)
+          // 11. If force + childRunId: propagate failure through parent (outside lock)
           if (options.force && childRunId) {
-            const transitionConfig = createFailTransitionConfig();
-            const parentActorService = new RunbookActorService(manager);
-            const sessionService = new SessionService(manager);
-            const lifecycleService = new ExecutionLifecycleService(manager);
-
-            // Re-load parent state outside lock
-            const reloadedParent = await manager.load(freshParent.id);
-            if (reloadedParent) {
-              const readonlySteps = getRunbookFromState(reloadedParent, cwd);
-              const parentSteps = [...readonlySteps];
-              const emitter = createBridgedEmitter(reloadedParent, output);
-
-              const drained = await drainResolvedCompletions({
-                manager,
-                actorService: parentActorService,
-                sessionService,
-                lifecycleService,
-                emitter,
-                runbookId: freshParent.id,
-                steps: parentSteps,
-                currentState: reloadedParent,
-                transitionPolicy: transitionConfig.policy,
-                computeActionResult: transitionConfig.computeActionResult,
-              });
-
-              // If drain advanced to terminal, cascade propagation
-              if (drained.status === 'done' || drained.status === 'stopped') {
-                const cascadeParent = await manager.load(freshParent.id);
-                if (cascadeParent?.delegation) {
-                  const cascadeResult: 'pass' | 'fail' =
-                    drained.status === 'done' ? 'pass' : 'fail';
-                  await handleDelegationCompletion(cascadeParent, cascadeResult, cwd, output);
-                }
-              } else if (drained.applied > 0) {
-                // Run execution loop to advance past resolved step
-                const loopResult = await runExecutionLoop(
-                  manager,
-                  freshParent.id,
-                  parentSteps,
-                  cwd,
-                  !!drained.state.prompted,
-                  emitter,
-                );
-
-                if (loopResult === 'stopped' || loopResult === 'done') {
-                  const cascadeParent = await manager.load(freshParent.id);
-                  if (cascadeParent?.delegation) {
-                    const cascadeResult: 'pass' | 'fail' = loopResult === 'done' ? 'pass' : 'fail';
-                    await handleDelegationCompletion(cascadeParent, cascadeResult, cwd, output);
-                  }
-                }
-              }
-            }
+            await propagateForceAbort(manager, freshParent.id, cwd, output);
           }
 
-          // 11. Output
+          // 12. Output result
           if (options.json) {
             output.json({
               action: 'abort',

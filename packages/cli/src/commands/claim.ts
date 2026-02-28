@@ -63,16 +63,25 @@ export function registerClaimCommand(program: Command): void {
             }
 
             // Delegation propagation — if child auto-completed during launch
+            let shouldExitWithError = result.loopResult === 'stopped';
             if (result.loopResult === 'done' || result.loopResult === 'stopped') {
               const childState = await manager.load(result.childRunId);
               if (childState?.delegation) {
                 const propResult = childState.variables.completed ? 'pass' : 'fail';
-                await handleDelegationCompletion(childState, propResult, cwd, output);
+                const propagation = await handleDelegationCompletion(
+                  childState,
+                  propResult,
+                  cwd,
+                  output,
+                );
+                if (propagation === 'stopped') {
+                  shouldExitWithError = true;
+                }
               }
             }
 
             output.flush();
-            if (result.loopResult === 'stopped') {
+            if (shouldExitWithError) {
               process.exit(1);
             }
           },

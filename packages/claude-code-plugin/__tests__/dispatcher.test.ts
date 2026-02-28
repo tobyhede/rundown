@@ -1155,31 +1155,16 @@ describe('Dispatcher - Additional Edge Cases', () => {
     expect(result.blockReason).toBeUndefined();
   });
 
-  test('gateMatchesKeywords handles empty string prompt correctly', () => {
+  test.each([
+    { prompt: '   ', expected: false, desc: 'whitespace-only prompt' },
+    { prompt: '  test  this  ', expected: true, desc: 'whitespace-padded prompt with keyword' },
+  ])('gateMatchesKeywords handles $desc', ({ prompt, expected }) => {
     const gateConfig: GateConfig = {
       command: 'npm test',
       keywords: ['test'],
     };
 
-    expect(gateMatchesKeywords(gateConfig, '')).toBe(false);
-  });
-
-  test('gateMatchesKeywords handles whitespace-only prompt', () => {
-    const gateConfig: GateConfig = {
-      command: 'npm test',
-      keywords: ['test'],
-    };
-
-    expect(gateMatchesKeywords(gateConfig, '   ')).toBe(false);
-  });
-
-  test('gateMatchesKeywords matches with extra whitespace', () => {
-    const gateConfig: GateConfig = {
-      command: 'npm test',
-      keywords: ['test'],
-    };
-
-    expect(gateMatchesKeywords(gateConfig, '  test  this  ')).toBe(true);
+    expect(gateMatchesKeywords(gateConfig, prompt)).toBe(expected);
   });
 
   test('gateMatchesFilePattern handles relative file paths', async () => {

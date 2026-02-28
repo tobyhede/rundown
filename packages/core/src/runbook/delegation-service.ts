@@ -23,13 +23,32 @@ export interface AbortDelegationOptions {
   readonly force?: boolean;
 }
 
+/** Delegation was cancelled; caller must persist updated substep states. */
+interface AbortDelegationCancelledResult {
+  readonly status: 'cancelled';
+  /** Updated parent substep states containing the cancelled delegation timestamp. */
+  readonly updatedSubstepStates: readonly SubstepState[];
+}
+
+/** Delegation was already cancelled; no state change required. */
+interface AbortDelegationAlreadyCancelledResult {
+  readonly status: 'already_cancelled';
+}
+
+/** Delegation is claimed by a child run and requires `force` to cancel. */
+interface AbortDelegationNeedsForceResult {
+  readonly status: 'needs_force';
+  /** Child run currently holding the claimed delegation. */
+  readonly childRunId: string;
+}
+
 /**
- * Result of aborting a delegation.
+ * Possible outcomes when attempting to abort a delegation.
  */
 export type AbortDelegationResult =
-  | { readonly status: 'cancelled'; readonly updatedSubstepStates: readonly SubstepState[] }
-  | { readonly status: 'already_cancelled' }
-  | { readonly status: 'needs_force'; readonly childRunId: string };
+  | AbortDelegationCancelledResult
+  | AbortDelegationAlreadyCancelledResult
+  | AbortDelegationNeedsForceResult;
 
 /**
  * Options for creating a delegation.

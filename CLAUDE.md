@@ -40,6 +40,9 @@ rundown scenario ls <file>           # List scenarios in a runbook
 rundown scenario show <file> <name>  # Show scenario details
 rundown scenario run <file> <name>   # Run a scenario
 rundown prompt <content> # Output content in markdown fences
+rundown delegate <runbook> --step <id>  # Delegate substep to child runbook
+rundown claim <token>                   # Claim a delegation token and launch child
+rundown abort <token>                   # Cancel a delegation token (--force for claimed)
 ```
 
 The `rd` command is an alias for `rundown`.

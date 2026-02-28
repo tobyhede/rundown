@@ -246,6 +246,10 @@ export const DelegationStatusEntrySchema = z
     /** Child run ID (when claimed) */
     childRunId: z.string().optional().describe('Child run ID when delegation is claimed'),
   })
+  .refine((entry) => entry.state !== 'claimed' || !!entry.childRunId, {
+    message: 'childRunId is required when state is claimed',
+    path: ['childRunId'],
+  })
   .describe('Delegation status entry');
 
 // ============================================================================
@@ -761,7 +765,8 @@ export type CLIResponse =
   | ScenarioRunResponse
   | StashResponse
   | PopResponse
-  | EchoResponse;
+  | EchoResponse
+  | AbortResponse;
 
 /** Union of list outputs */
 export type CLIListResponse = ListResponse | ScenarioEntry[] | PruneResponse;

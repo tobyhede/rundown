@@ -36,6 +36,28 @@ import {
 import { formatTable } from '../../helpers/table-formatter.js';
 import type { OutputRenderer, RendererOptions } from './types.js';
 
+/** Data shape for status detail rendering. */
+interface StatusDetailData {
+  active?: boolean;
+  stashed?: boolean;
+  file?: string;
+  state?: string;
+  prompted?: boolean;
+  position?: {
+    current: string;
+    total: number;
+    substep?: string;
+    frameKey?: string;
+    entry?: number;
+    unresolved?: number;
+  };
+  step?: { name: string; description?: string };
+  lastAction?: { action: string; result?: boolean };
+  pending?: string[];
+  agents?: Record<string, { step: string; status: string; result?: string }>;
+  delegations?: { substep: string; runbook: string; state: string; childRunId?: string }[];
+}
+
 /**
  * Renders output events as human-readable text.
  *
@@ -202,26 +224,7 @@ export class TextRenderer implements OutputRenderer {
       pending,
       agents,
       delegations,
-    } = data as {
-      active?: boolean;
-      stashed?: boolean;
-      file?: string;
-      state?: string;
-      prompted?: boolean;
-      position?: {
-        current: string;
-        total: number;
-        substep?: string;
-        frameKey?: string;
-        entry?: number;
-        unresolved?: number;
-      };
-      step?: { name: string; description?: string };
-      lastAction?: { action: string; result?: boolean };
-      pending?: string[];
-      agents?: Record<string, { step: string; status: string; result?: string }>;
-      delegations?: { substep: string; runbook: string; state: string; childRunId?: string }[];
-    };
+    } = data as StatusDetailData;
 
     // No active runbook
     if (!active && !stashed) {
