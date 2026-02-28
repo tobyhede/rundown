@@ -4,6 +4,7 @@ import {
   RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
+  Errors,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -58,29 +59,20 @@ export function registerClaimCommand(program: Command): void {
             const result = await claimAndLaunch(ctx, token, varOpts);
 
             if (!result.ok) {
-              output.error(result.error, result.code, result.details);
-              output.flush();
-              process.exit(1);
+              throw Errors.unknown(result.error);
             }
 
-            // Delegation propagation — propagate child result to parent
-            let shouldExitWithError = result.loopResult === 'stopped';
+            // Delegation propagation — if child auto-completed during launch
             if (result.loopResult === 'done' || result.loopResult === 'stopped') {
               const childState = await manager.load(result.childRunId);
               if (childState?.delegation) {
-                const propResult = result.loopResult === 'done' ? 'pass' : 'fail';
-                const delegationResult = await handleDelegationCompletion(
-                  childState,
-                  propResult,
-                  cwd,
-                  output,
-                );
-                if (delegationResult === 'stopped') shouldExitWithError = true;
+                const propResult = childState.variables.completed ? 'pass' : 'fail';
+                await handleDelegationCompletion(childState, propResult, cwd, output);
               }
             }
 
             output.flush();
-            if (shouldExitWithError) {
+            if (result.loopResult === 'stopped') {
               process.exit(1);
             }
           },

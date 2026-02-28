@@ -62,6 +62,8 @@ export {
   StepQueuedResponseSchema,
   AgentBoundResponseSchema,
   RunCommandResponseSchema,
+  // Abort schema
+  AbortResponseSchema,
   // Derived TypeScript types
   type Position,
   type RunbookContext,
@@ -90,6 +92,7 @@ export {
   type StepQueuedResponse,
   type AgentBoundResponse,
   type RunCommandResponse,
+  type AbortResponse,
   type CLIResponse,
   type CLIListResponse,
 } from './zod-schemas.js';

@@ -155,6 +155,12 @@ export {
   type RunCommandResponse,
 } from './schema.js';
 
+// Abort schema
+export {
+  AbortResponseSchema,
+  type AbortResponse,
+} from './schema.js';
+
 // Union types
 export type { CLIResponse, CLIListResponse } from './schema.js';
 

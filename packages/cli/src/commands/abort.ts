@@ -26,6 +26,26 @@ import { createFailTransitionConfig } from '../helpers/transitions.js';
 import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
 
 /**
+ * Abort command — cancels a delegation token.
+ *
+ * Implements an 11-step lock-verify-mutate-propagate protocol:
+ *
+ *  1. Parse & validate token format
+ *  2. Scan state for matching token hash
+ *  3. Acquire delegation lock
+ *  4. Re-load parent state under lock
+ *  5. Check if already resolved
+ *  6. Call `abortDelegation()` pure function
+ *  7. Persist updated parent state
+ *  8. If force + childRunId: stop child run
+ *  9. Record fail completion on parent substep
+ * 10. Release lock
+ * 11. Output result
+ *
+ * @module commands/abort
+ */
+
+/**
  * Registers the 'abort' command for cancelling delegation tokens.
  *
  * Cancels a pending delegation or force-cancels a claimed (in-flight)
@@ -62,6 +82,7 @@ export function registerAbortCommand(program: Command): void {
           }
 
           const { parentState, substepId } = scanResult;
+          const targetSubstepId = substepId ?? scanResult.stepId;
           const lock = new DelegationLock(cwd);
 
           // 3. Acquire delegation lock
@@ -81,7 +102,7 @@ export function registerAbortCommand(program: Command): void {
 
             // Re-locate delegation on fresh state and verify token hash
             const freshSubstep = (freshParent.substepStates ?? []).find(
-              (ss) => ss.id === (substepId ?? scanResult.stepId),
+              (ss) => ss.id === targetSubstepId,
             );
             const freshDelegation = freshSubstep?.delegation;
 
@@ -102,7 +123,6 @@ export function registerAbortCommand(program: Command): void {
               const frame = deriveActiveFrame(freshParent);
               const frameKey = freshParent.activeFrameKey ?? frame.frameKey;
               const entry = freshParent.activeEntry ?? 1;
-              const targetSubstepId = substepId ?? scanResult.stepId;
               const completionKey = buildCompletionKey(frameKey, entry, targetSubstepId);
               const existing = await lifecycleService.getResolvedCompletion(
                 freshParent.id,
@@ -114,7 +134,6 @@ export function registerAbortCommand(program: Command): void {
             }
 
             // 6. Call abortDelegation() pure function
-            const targetSubstepId = substepId ?? scanResult.stepId;
             abortResult = abortDelegation({
               parentState: freshParent,
               substepId: targetSubstepId,
@@ -148,7 +167,7 @@ export function registerAbortCommand(program: Command): void {
               substepStates: abortResult.updatedSubstepStates,
             });
 
-            childRunId = freshSubstep.delegation.childRunId ?? null;
+            childRunId = freshDelegation.childRunId ?? null;
 
             // 8. If force + childRunId: stop child run and record fail completion
             if (options.force && childRunId) {
@@ -157,7 +176,11 @@ export function registerAbortCommand(program: Command): void {
               if (childState) {
                 await manager.delete(childRunId);
                 const sessionService = new SessionService(manager);
-                await sessionService.popRunbook();
+                // Only pop if the active session entry matches the child run being aborted
+                const activeState = await sessionService.getActive();
+                if (activeState?.id === childRunId) {
+                  await sessionService.popRunbook();
+                }
               }
 
               // Record fail resolved completion on parent substep
@@ -243,7 +266,6 @@ export function registerAbortCommand(program: Command): void {
           }
 
           // 11. Output
-          const targetSubstepId = substepId ?? scanResult.stepId;
           if (options.json) {
             output.json({
               action: 'abort',

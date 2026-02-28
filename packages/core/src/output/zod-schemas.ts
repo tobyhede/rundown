@@ -635,6 +635,36 @@ export const RunCommandResponseSchema = z
   .describe('Response from the run command');
 
 // ============================================================================
+// Abort Command Schema
+// ============================================================================
+
+/**
+ * Abort response schema.
+ *
+ * Output from `rd abort <token>` command.
+ */
+export const AbortResponseSchema = z
+  .object({
+    /** Action performed */
+    action: z.literal('abort').describe('Action type'),
+    /** Abort result status */
+    status: z.enum(['cancelled', 'already_cancelled']).describe('Abort result status'),
+    /** Truncated token hint */
+    token: z.string().describe('Truncated delegation token hint'),
+    /** Substep ID owning the delegation */
+    substep: z.string().describe('Substep ID'),
+    /** Child runbook path */
+    runbook: z.string().describe('Child runbook path'),
+    /** Parent run ID */
+    parentRunId: z.string().describe('Parent run ID'),
+    /** Whether --force was used */
+    force: z.boolean().optional().describe('Whether force mode was used'),
+    /** Child run ID (when force-cancelling claimed delegation) */
+    childRunId: z.string().optional().describe('Child run ID when force-cancelling'),
+  })
+  .describe('Response from the abort command');
+
+// ============================================================================
 // Derived TypeScript Types
 // ============================================================================
 
@@ -718,6 +748,9 @@ export type AgentBoundResponse = z.infer<typeof AgentBoundResponseSchema>;
 
 /** Run command response */
 export type RunCommandResponse = z.infer<typeof RunCommandResponseSchema>;
+
+/** Abort response */
+export type AbortResponse = z.infer<typeof AbortResponseSchema>;
 
 /** Union of all CLI responses */
 export type CLIResponse =
