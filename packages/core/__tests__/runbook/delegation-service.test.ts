@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
-import { createDelegation, type DelegateOptions } from '../../src/runbook/delegation-service.js';
+import { createDelegation } from '../../src/runbook/delegation-service.js';
+import type { DelegateOptions } from '../../src/runbook/delegation-service.js';
 import { hashDelegationToken, TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
 import type { RunbookState, Step, AncestorSnapshot } from '../../src/runbook/types.js';
 
@@ -355,7 +356,7 @@ describe('createDelegation', () => {
     };
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'completed', delegation: completedDelegation },
+        { id: '1', status: 'done', delegation: completedDelegation },
         { id: '2', status: 'pending' },
       ],
     });
@@ -395,7 +396,7 @@ describe('createDelegation', () => {
   it('preserves all existing substep properties when adding delegation', () => {
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'running', agentId: 'agent-1', startedAt: '2026-02-27T10:00:00.000Z' },
+        { id: '1', status: 'running', agentId: 'agent-1' },
         { id: '2', status: 'pending' },
       ],
     });
@@ -404,7 +405,7 @@ describe('createDelegation', () => {
 
     const ss1 = result.updatedSubstepStates.find((ss) => ss.id === '1');
     expect(ss1?.agentId).toBe('agent-1');
-    expect(ss1?.startedAt).toBe('2026-02-27T10:00:00.000Z');
+    expect(ss1?.status).toBe('running');
     expect(ss1?.delegation).toBeUndefined();
 
     const ss2 = result.updatedSubstepStates.find((ss) => ss.id === '2');

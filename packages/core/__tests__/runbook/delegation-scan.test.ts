@@ -324,7 +324,11 @@ describe('DelegationScanService', () => {
 
     it('handles state files with large substepStates arrays', async () => {
       const token = generateDelegationToken();
-      const substeps = Array.from({ length: 100 }, (_, i) => ({
+      const substeps: Array<{
+        id: string;
+        status: 'pending' | 'running' | 'done';
+        delegation?: ReturnType<typeof makeDelegation>;
+      }> = Array.from({ length: 100 }, (_, i) => ({
         id: String(i + 1),
         status: 'pending' as const,
       }));
