@@ -45,7 +45,9 @@ export function registerStopCommand(program: Command): void {
           output.metadata(buildMetadata(state));
           output.stopped(message ?? 'Runbook stopped');
 
-          // Propagate FAIL to parent if delegation exists
+          // Propagate FAIL to parent if delegation exists.
+          // The return value is intentionally ignored: a user-initiated stop
+          // always succeeds (exit 0) even if the parent propagation itself stops.
           if (delegationLinkage) {
             const stoppedState: RunbookState = {
               ...state,

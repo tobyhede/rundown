@@ -103,6 +103,7 @@ export async function handleDelegationCompletion(
     const entry =
       parentEntry ??
       (frameKey === parentState.activeFrameKey ? parentState.activeEntry : undefined) ??
+      parentState.frameEntries?.[frameKey] ??
       1;
     const completionKey = buildCompletionKey(frameKey, entry, parentStepId);
 
