@@ -113,17 +113,18 @@ describe('handleSubagentStop', () => {
 
     it('returns empty when abort call fails (best-effort)', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        jest.fn().mockImplementation(() => {
-          throw new Error('abort failed');
-        }) as never,
-      );
+      const mockExec = jest.fn().mockImplementation(() => {
+        throw new Error('abort failed');
+      });
+      setExecSync(mockExec as never);
 
       const input = createMockHookInput('SubagentStop', {
         last_assistant_message: 'STATUS: FAIL',
       });
 
       const result = await handleSubagentStop(input);
+      // Abort was attempted but failed gracefully
+      expect(mockExec).toHaveBeenCalled();
       expect(result).toEqual({});
     });
 

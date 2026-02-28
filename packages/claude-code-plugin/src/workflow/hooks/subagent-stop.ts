@@ -1,15 +1,12 @@
 // src/workflow/hooks/subagent-stop.ts
 import type { HookInput } from '../../shared/index.js';
 import { Session } from '../../session.js';
-import { rundown, setExecSync } from './rundown.js';
+import { rundown } from './rundown.js';
 
 export interface SubagentStopResult {
   context?: string;
   violation?: string;
 }
-
-// Re-export for testing
-export { setExecSync };
 
 /**
  * Pattern for parsing STATUS field from agent output.
@@ -47,7 +44,8 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
   // Read and consume delegation token from session metadata
   const session = new Session(input.cwd);
   const meta = await session.get('metadata');
-  const token = meta.delegation_active_token as string | undefined;
+  const raw = meta.delegation_active_token;
+  const token = typeof raw === 'string' ? raw : undefined;
 
   // Clear the token (consume-once) regardless of outcome
   if (token) {
