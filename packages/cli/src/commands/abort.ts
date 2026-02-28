@@ -253,11 +253,9 @@ export function registerAbortCommand(program: Command): void {
               if (childState) {
                 await manager.delete(childRunId);
                 const sessionService = new SessionService(manager);
-                // Pop from the agent-specific stack if the child was agent-scoped
-                const agentId = childState.agentId;
-                const activeState = await sessionService.getActive(agentId);
+                const activeState = await sessionService.getActive();
                 if (activeState?.id === childRunId) {
-                  await sessionService.popRunbook(agentId);
+                  await sessionService.popRunbook();
                 }
               }
 

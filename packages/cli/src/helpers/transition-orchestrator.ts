@@ -25,10 +25,6 @@ import {
 export interface TerminalSideEffectsPolicy {
   /** Whether to pop the runbook from the session stack. */
   popRunbook: boolean;
-  /** Whether to update the parent runbook's agent binding. */
-  updateParentBinding: boolean;
-  /** Result to propagate to the parent agent binding. */
-  parentResult: 'pass' | 'fail';
 }
 
 /** Policy governing side effects for each terminal outcome. */
@@ -96,8 +92,6 @@ interface OrchestrateTransitionArgs {
   actionResult: boolean;
   /** Policy governing side effects for terminal outcomes. */
   policy: TransitionOrchestrationPolicy;
-  /** Agent identifier for parent binding updates and session stack operations. */
-  agentId?: string;
   /** The command string that triggered this transition, included in events. */
   command?: string;
 }
@@ -137,21 +131,11 @@ function buildTransitionPositions(
 }
 
 async function applyTerminalSideEffects(
-  manager: RunbookStateManager,
   sessionService: SessionService,
-  state: RunbookState,
-  agentId: string | undefined,
   policy: TerminalSideEffectsPolicy,
 ): Promise<void> {
-  if (policy.updateParentBinding && agentId && state.parentRunbookId) {
-    await manager.updateAgentBinding(state.parentRunbookId, agentId, {
-      status: 'done',
-      result: policy.parentResult,
-    });
-  }
-
   if (policy.popRunbook) {
-    await sessionService.popRunbook(agentId);
+    await sessionService.popRunbook();
   }
 }
 
@@ -182,7 +166,6 @@ export async function orchestrateTransition(
     result,
     actionResult,
     policy,
-    agentId,
     command,
   } = args;
 
@@ -222,13 +205,7 @@ export async function orchestrateTransition(
       finalPosition: positions.to,
     });
 
-    await applyTerminalSideEffects(
-      manager,
-      sessionService,
-      previousState,
-      agentId,
-      policy.onComplete,
-    );
+    await applyTerminalSideEffects(sessionService, policy.onComplete);
     return { status: 'done', action, from: positions.from, to: positions.to, message };
   }
 
@@ -246,13 +223,7 @@ export async function orchestrateTransition(
       reason: 'fail_transition',
     });
 
-    await applyTerminalSideEffects(
-      manager,
-      sessionService,
-      previousState,
-      agentId,
-      policy.onStopped,
-    );
+    await applyTerminalSideEffects(sessionService, policy.onStopped);
     return { status: 'stopped', action, from: positions.from, to: positions.to, message };
   }
 

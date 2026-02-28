@@ -25,16 +25,15 @@ export function registerCompleteCommand(program: Command): void {
     .command('complete')
     .description('Force early completion of current runbook (runbooks auto-complete on final step)')
     .argument('[message]', 'Completion message')
-    .option('--agent <agentId>', 'Complete runbook in agent-specific stack')
     .option('--json', 'Output as JSON for programmatic use')
-    .action(async (message: string | undefined, options: { agent?: string; json?: boolean }) => {
+    .action(async (message: string | undefined, options: { json?: boolean }) => {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ json: options.json });
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
-          const state = await sessionService.getActive(options.agent);
+          const state = await sessionService.getActive();
 
           if (!state) {
             output.noActiveRunbook('complete');
@@ -50,7 +49,7 @@ export function registerCompleteCommand(program: Command): void {
             step: steps[steps.length - 1].name,
             variables: { ...state.variables, completed: true },
           });
-          await sessionService.popRunbook(options.agent);
+          await sessionService.popRunbook();
 
           // Emit completion
           output.complete(message ?? 'Runbook completed successfully');

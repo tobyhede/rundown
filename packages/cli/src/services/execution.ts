@@ -202,20 +202,15 @@ interface ApplyResultTransitionArgs {
   result: 'pass' | 'fail';
   transitionPolicy: TransitionOrchestrationPolicy;
   computeActionResult?: (actionType: ActionType) => boolean;
-  agentId?: string;
   command?: string;
 }
 
 const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
   onComplete: {
     popRunbook: true,
-    updateParentBinding: true,
-    parentResult: 'pass',
   },
   onStopped: {
     popRunbook: true,
-    updateParentBinding: true,
-    parentResult: 'fail',
   },
 };
 
@@ -232,7 +227,6 @@ async function applyResultTransition({
   result,
   transitionPolicy,
   computeActionResult,
-  agentId,
   command,
 }: ApplyResultTransitionArgs): Promise<
   { status: 'continue'; state: RunbookState } | { status: 'done' } | { status: 'stopped' }
@@ -263,7 +257,6 @@ async function applyResultTransition({
     result,
     actionResult,
     policy: transitionPolicy,
-    agentId,
     command,
   });
 
@@ -298,8 +291,6 @@ export interface DrainResolvedCompletionsArgs {
   transitionPolicy: TransitionOrchestrationPolicy;
   /** Optional function to compute action result for transition evaluation. */
   computeActionResult?: (actionType: ActionType) => boolean;
-  /** Optional agent ID for agent-scoped draining. */
-  agentId?: string;
   /** Optional command string for event context. */
   command?: string;
 }
@@ -343,7 +334,6 @@ export async function drainResolvedCompletions({
   currentState,
   transitionPolicy,
   computeActionResult,
-  agentId,
   command,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
   let state = currentState;
@@ -398,7 +388,6 @@ export async function drainResolvedCompletions({
       result: completion.result,
       transitionPolicy,
       computeActionResult,
-      agentId,
       command,
     });
     applied += 1;
@@ -421,7 +410,6 @@ export async function drainResolvedCompletions({
  * @param cwd - Current working directory for command execution
  * @param prompted - Whether to run in prompted mode (no auto-execution)
  * @param emitter - Event emitter for execution events
- * @param agentId - Optional agent ID for agent-specific runbook stacks
  * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only step reached
  */
 export async function runExecutionLoop(
@@ -431,12 +419,7 @@ export async function runExecutionLoop(
   cwd: string,
   prompted: boolean,
   emitter: ExecutionEventEmitter,
-  agentId?: string,
 ): Promise<'done' | 'stopped' | 'waiting'> {
-  // Note: state is loaded here and reloaded at end of each loop iteration.
-  // Some immutable properties (parentRunbookId, agentId) are accessed from
-  // the initial load for completion handling. This is safe because these
-  // properties are set at runbook creation and never modified.
   const state = await manager.load(runbookId);
   if (!state) return 'stopped';
 
@@ -472,17 +455,9 @@ export async function runExecutionLoop(
       if (iterResult.terminal === 'complete') {
         const completionMessage = extractLastMessage(iterResult.state.snapshot);
 
-        // Terminal bookkeeping: mark variables and update parent agent binding
-        // (mirrors the normal isComplete path below)
         await manager.update(runbookId, {
           variables: { ...iterResult.state.variables, completed: true },
         });
-        if (agentId && currentState.parentRunbookId) {
-          await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
-            status: 'done',
-            result: 'pass',
-          });
-        }
 
         emitter.emit('RUNBOOK_COMPLETED', {
           message: completionMessage,
@@ -493,23 +468,15 @@ export async function runExecutionLoop(
             iterResult.state.forStack,
           ),
         });
-        await sessionService.popRunbook(agentId);
+        await sessionService.popRunbook();
         return 'done';
       }
       if (iterResult.terminal === 'stopped') {
         const stopMessage = extractLastMessage(iterResult.state.snapshot);
 
-        // Terminal bookkeeping: mark variables and update parent agent binding
-        // (mirrors the normal isStopped path below)
         await manager.update(runbookId, {
           variables: { ...iterResult.state.variables, stopped: true },
         });
-        if (agentId && currentState.parentRunbookId) {
-          await manager.updateAgentBinding(currentState.parentRunbookId, agentId, {
-            status: 'done',
-            result: 'fail',
-          });
-        }
 
         const stopPos = buildStepPosition(
           iterResult.state.step,
@@ -523,7 +490,7 @@ export async function runExecutionLoop(
           reason: 'fail_transition',
         });
 
-        await sessionService.popRunbook(agentId);
+        await sessionService.popRunbook();
         return 'stopped';
       }
       // No terminal state — machine transitioned to next step after loop exit
@@ -558,7 +525,6 @@ export async function runExecutionLoop(
       steps,
       currentState,
       transitionPolicy: EXECUTION_TERMINAL_POLICY,
-      agentId,
     });
     if (drainResult.status === 'done') return 'done';
     if (drainResult.status === 'stopped') return 'stopped';
@@ -688,7 +654,6 @@ export async function runExecutionLoop(
       currentStep,
       result: lastResult,
       transitionPolicy: EXECUTION_TERMINAL_POLICY,
-      agentId,
       command: displayCommand,
     });
     if (transitionResult.status === 'done') return 'done';

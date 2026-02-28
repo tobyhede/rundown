@@ -22,9 +22,8 @@ export function registerPopCommand(program: Command): void {
   program
     .command('pop')
     .description('Resume enforcement from stashed runbook')
-    .option('--agent <agentId>', 'Pop runbook to agent-specific stack')
     .option('--json', 'Output as JSON for programmatic use')
-    .action(async (options: { agent?: string; json?: boolean }) => {
+    .action(async (options: { json?: boolean }) => {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
@@ -32,7 +31,7 @@ export function registerPopCommand(program: Command): void {
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
 
-          const state = await sessionService.unstash(options.agent);
+          const state = await sessionService.unstash();
 
           if (!state) {
             output.status(false, 'pop', 'No stashed runbook to restore');

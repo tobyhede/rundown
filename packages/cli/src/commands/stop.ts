@@ -17,16 +17,15 @@ export function registerStopCommand(program: Command): void {
     .command('stop')
     .description('Abort current runbook')
     .argument('[message]', 'Stop message')
-    .option('--agent <agentId>', 'Stop runbook in agent-specific stack')
     .option('--json', 'Output as JSON for programmatic use')
-    .action(async (message: string | undefined, options: { agent?: string; json?: boolean }) => {
+    .action(async (message: string | undefined, options: { json?: boolean }) => {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
           const output = new OutputEmitter({ json: options.json });
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
-          const state = await sessionService.getActive(options.agent);
+          const state = await sessionService.getActive();
 
           if (!state) {
             output.noActiveRunbook('stop');
@@ -39,7 +38,7 @@ export function registerStopCommand(program: Command): void {
 
           // Delete and clear
           await manager.delete(state.id);
-          await sessionService.popRunbook(options.agent);
+          await sessionService.popRunbook();
 
           // Emit structured output - renderer decides format
           output.metadata(buildMetadata(state));
