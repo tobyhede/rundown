@@ -95,7 +95,7 @@ export class DelegationLock {
     }
 
     throw new Error(
-      `Delegation lock timeout for run ${parentRunId}. ` + 'Another operation may be in progress.',
+      `Delegation lock timeout for run ${parentRunId}. Another operation may be in progress.`,
     );
   }
 

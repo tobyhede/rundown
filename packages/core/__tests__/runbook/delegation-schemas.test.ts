@@ -104,7 +104,7 @@ describe('ContextSnapshotSchema', () => {
 
 describe('StepDelegationSchema', () => {
   const validDelegation = {
-    tokenHash: 'sha256:' + 'a'.repeat(64),
+    tokenHash: `sha256:${'a'.repeat(64)}`,
     childRunbookPath: 'child-runbook.md',
     contextSnapshot: {
       vars: { env: 'staging' },
@@ -131,7 +131,7 @@ describe('StepDelegationSchema', () => {
   it('rejects tokenHash with wrong hex length', () => {
     const result = StepDelegationSchema.safeParse({
       ...validDelegation,
-      tokenHash: 'sha256:' + 'a'.repeat(32),
+      tokenHash: `sha256:${'a'.repeat(32)}`,
     });
     expect(result.success).toBe(false);
   });
@@ -173,7 +173,7 @@ describe('SubstepStateSchema backward compatibility', () => {
       id: '1',
       status: 'pending' as const,
       delegation: {
-        tokenHash: 'sha256:' + 'b'.repeat(64),
+        tokenHash: `sha256:${'b'.repeat(64)}`,
         childRunbookPath: 'child.md',
         contextSnapshot: { vars: {}, ancestors: [] },
         childRunId: null,
@@ -192,7 +192,7 @@ describe('SubstepStateSchema backward compatibility', () => {
 describe('RunbookStateSchema round-trip with delegation', () => {
   it('preserves delegation data through parse', () => {
     const delegation = {
-      tokenHash: 'sha256:' + 'c'.repeat(64),
+      tokenHash: `sha256:${'c'.repeat(64)}`,
       childRunbookPath: 'child.md',
       contextSnapshot: {
         vars: { env: 'prod' },

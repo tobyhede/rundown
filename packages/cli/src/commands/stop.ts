@@ -1,11 +1,12 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService } from '@rundown-org/core';
+import { RunbookStateManager, SessionService, type RunbookState } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -33,6 +34,9 @@ export function registerStopCommand(program: Command): void {
             return;
           }
 
+          // Capture delegation linkage before delete
+          const delegationLinkage = state.delegation;
+
           // Delete and clear
           await manager.delete(state.id);
           await sessionService.popRunbook(options.agent);
@@ -40,6 +44,18 @@ export function registerStopCommand(program: Command): void {
           // Emit structured output - renderer decides format
           output.metadata(buildMetadata(state));
           output.stopped(message ?? 'Runbook stopped');
+
+          // Propagate FAIL to parent if delegation exists.
+          // The return value is intentionally ignored: a user-initiated stop
+          // always succeeds (exit 0) even if the parent propagation itself stops.
+          if (delegationLinkage) {
+            const stoppedState: RunbookState = {
+              ...state,
+              variables: { ...state.variables, stopped: true },
+            };
+            await handleDelegationCompletion(stoppedState, 'fail', cwd, output);
+          }
+
           output.flush();
         },
         { json: options.json },

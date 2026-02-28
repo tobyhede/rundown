@@ -325,6 +325,9 @@ export const RunbookStateSchema = z.object({
       parentRunId: z.string(),
       parentStepId: z.string(),
       tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      parentStep: z.string().optional(),
+      parentFrameKey: z.string().optional(),
+      parentEntry: z.number().int().positive().optional(),
     })
     .optional(),
   nested: z

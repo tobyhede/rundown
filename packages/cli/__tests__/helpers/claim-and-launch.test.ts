@@ -10,6 +10,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (step: string, substep?: string, iteration?: number) =>
       `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
   ),
+  deriveActiveFrame: jest
+    .fn()
+    .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1' }),
   getActiveForContext: jest.fn().mockReturnValue(null),
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',
@@ -99,6 +102,12 @@ beforeEach(() => {
   // Restore defaults after reset
   (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
   (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
+  (core.deriveActiveFrame as jest.Mock).mockReturnValue({
+    step: '1',
+    substep: undefined,
+    iteration: undefined,
+    frameKey: '1',
+  });
 });
 
 describe('claimAndLaunch', () => {

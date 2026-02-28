@@ -10,10 +10,14 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (step: string, substep?: string, iteration?: number) =>
       `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
   ),
+  deriveActiveFrame: jest
+    .fn()
+    .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1' }),
   getActiveForContext: jest.fn().mockReturnValue(null),
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
+  RunbookStateManager: jest.fn(),
   DelegationScanService: jest.fn(),
   DelegationLock: jest.fn(),
   reconstituteContextVars: jest.fn().mockReturnValue({}),
@@ -84,6 +88,25 @@ const { validateSources, prepareRunbook, queueStep, startRunbook, bindAgent } = 
   '../../src/helpers/runbook-pipeline'
 );
 
+function makeState(id: string, overrides: Record<string, unknown> = {}): any {
+  return {
+    id,
+    runbook: 'test.md',
+    runbookPath: '/tmp/test.md',
+    runbookSrc: '## 1. Step\n- PASS: COMPLETE',
+    step: '1',
+    stepName: 'Step',
+    retryCount: 0,
+    variables: {},
+    steps: [{ id: '1', status: 'running' }],
+    pendingSteps: [],
+    agentBindings: {},
+    startedAt: '2026-02-27T10:00:00.000Z',
+    updatedAt: '2026-02-27T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
 function makeStep(overrides: Record<string, unknown> = {}): any {
   return {
     name: '1',
@@ -136,6 +159,14 @@ beforeEach(() => {
   (expandForClauseVariables as jest.Mock).mockImplementation((content: string) => content);
   (expandLoopVariables as jest.Mock).mockImplementation((text: string) => text);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS: CONTINUE');
+  (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
+  (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
+  (core.deriveActiveFrame as jest.Mock).mockReturnValue({
+    step: '1',
+    substep: undefined,
+    iteration: undefined,
+    frameKey: '1',
+  });
 });
 
 describe('validateSources', () => {
@@ -1312,5 +1343,464 @@ describe('bindAgent', () => {
       expect(result.error).toContain('maximum depth');
     }
     expect(resolveRunbookFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('claimAndLaunch', () => {
+  it('returns error when token format is invalid', async () => {
+    const ctx = {
+      output: {} as any,
+      manager: {} as any,
+      actorService: {} as any,
+      sessionService: {} as any,
+      lifecycleService: {} as any,
+      cwd: '/test',
+    };
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const result = await claimAndLaunch(ctx as any, 'bad-token', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RD-807');
+      expect(result.error).toContain('rdtk_');
+    }
+  });
+
+  it('returns error when token not found', async () => {
+    const mockScanner = {
+      findByToken: jest.fn<any>().mockResolvedValue(null),
+    };
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+
+    const ctx = {
+      output: {} as any,
+      manager: {} as any,
+      actorService: {} as any,
+      sessionService: {} as any,
+      lifecycleService: {} as any,
+      cwd: '/test',
+    };
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RD-808');
+    }
+  });
+
+  it('returns idempotent result when token already claimed', async () => {
+    const delegation = {
+      tokenHash: 'sha256:mock',
+      childRunbookPath: 'child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: 'existing-child-id',
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState('parent-id', {
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const mockScanner = {
+      findByToken: jest
+        .fn<any>()
+        .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
+    };
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+
+    const mockManager = {
+      load: jest.fn<any>().mockResolvedValue(parentState),
+    };
+    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+
+    const mockLock = jest.fn().mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+
+    const ctx = {
+      output: {} as any,
+      manager: mockManager,
+      actorService: {} as any,
+      sessionService: {} as any,
+      lifecycleService: {} as any,
+      cwd: '/test',
+    };
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.childRunId).toBe('existing-child-id');
+      expect(result.loopResult).toBe('waiting');
+    }
+  });
+
+  it('returns error when delegation was cancelled', async () => {
+    const delegation = {
+      tokenHash: 'sha256:mock',
+      childRunbookPath: 'child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: null,
+      createdAt: new Date().toISOString(),
+      cancelledAt: new Date().toISOString(),
+    };
+
+    const parentState = makeState('parent-id', {
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const mockScanner = {
+      findByToken: jest
+        .fn<any>()
+        .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
+    };
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+
+    const mockManager = {
+      load: jest.fn<any>().mockResolvedValue(parentState),
+    };
+    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+
+    const mockLock = jest.fn().mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+
+    const ctx = {
+      output: {} as any,
+      manager: mockManager,
+      actorService: {} as any,
+      sessionService: {} as any,
+      lifecycleService: {} as any,
+      cwd: '/test',
+    };
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RD-809');
+    }
+  });
+
+  it('adopts orphaned child when found', async () => {
+    const tokenHash = 'sha256:mock';
+    const delegation = {
+      tokenHash,
+      childRunbookPath: 'child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: null,
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState('parent-id', {
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const orphanState = makeState('orphan-id', {
+      delegation: {
+        parentRunId: 'parent-id',
+        parentStepId: '1',
+        tokenHash,
+      },
+    });
+
+    const mockScanner = {
+      findByToken: jest
+        .fn<any>()
+        .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
+      findOrphanedChild: jest.fn<any>().mockResolvedValue(orphanState),
+    };
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+
+    const mockManager = {
+      load: jest.fn<any>().mockResolvedValue(parentState),
+      update: jest.fn<any>().mockResolvedValue(undefined),
+    };
+    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+
+    const mockLock = jest.fn().mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+
+    const ctx = {
+      output: {} as any,
+      manager: mockManager,
+      actorService: {} as any,
+      sessionService: {} as any,
+      lifecycleService: {} as any,
+      cwd: '/test',
+    };
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.childRunId).toBe('orphan-id');
+    }
+    expect(mockManager.update).toHaveBeenCalled();
+  });
+
+  it('launches new child when no orphan exists', async () => {
+    const tokenHash = 'sha256:mock';
+    const delegation = {
+      tokenHash,
+      childRunbookPath: 'child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: null,
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState('parent-id', {
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const mockScanner = {
+      findByToken: jest
+        .fn<any>()
+        .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
+      findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
+    };
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+
+    resolveRunbookFile.mockResolvedValue('/test/child.md');
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({ steps: [makeStep()] } as any);
+    (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
+
+    const mockCreate = jest.fn<any>().mockResolvedValue({
+      id: 'new-child-id',
+      title: 'Child',
+    });
+    const mockUpdate = jest.fn<any>().mockResolvedValue(undefined);
+
+    const mockManager = {
+      load: jest.fn<any>().mockResolvedValue(parentState),
+      create: mockCreate,
+      update: mockUpdate,
+      initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+    };
+    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+
+    const mockLock = jest.fn().mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+
+    runExecutionLoop.mockResolvedValue('waiting');
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as any,
+      manager: mockManager,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      lifecycleService: makeLifecycle(),
+      cwd: '/test',
+    };
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.childRunId).toBe('new-child-id');
+      expect(result.loopResult).toBe('waiting');
+    }
+    expect(mockCreate).toHaveBeenCalledWith(
+      'child.md',
+      expect.anything(),
+      expect.objectContaining({
+        delegation: expect.objectContaining({
+          parentRunId: 'parent-id',
+          tokenHash,
+        }),
+      }),
+    );
+  });
+
+  it('returns error when child runbook file not found', async () => {
+    const tokenHash = 'sha256:mock';
+    const delegation = {
+      tokenHash,
+      childRunbookPath: 'missing.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: null,
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState('parent-id', {
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const mockScanner = {
+      findByToken: jest
+        .fn<any>()
+        .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
+      findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
+    };
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+
+    resolveRunbookFile.mockResolvedValue(null); // File not found
+
+    const mockManager = {
+      load: jest.fn<any>().mockResolvedValue(parentState),
+    };
+    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+    (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
+
+    const mockLock = jest.fn().mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+
+    const ctx = {
+      output: {} as any,
+      manager: mockManager,
+      actorService: {} as any,
+      sessionService: {} as any,
+      lifecycleService: {} as any,
+      cwd: '/test',
+    };
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RUNBOOK_NOT_FOUND');
+    }
+  });
+
+  it('inherits prompted flag from parent', async () => {
+    const tokenHash = 'sha256:mock';
+    const delegation = {
+      tokenHash,
+      childRunbookPath: 'child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: null,
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState('parent-id', {
+      prompted: true,
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const mockScanner = {
+      findByToken: jest
+        .fn<any>()
+        .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
+      findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
+    };
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+
+    resolveRunbookFile.mockResolvedValue('/test/child.md');
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({ steps: [makeStep()] } as any);
+    (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
+
+    const mockCreate = jest.fn<any>().mockResolvedValue({
+      id: 'child-id',
+      title: 'Child',
+    });
+
+    const mockManager = {
+      load: jest.fn<any>().mockResolvedValue(parentState),
+      create: mockCreate,
+      update: jest.fn<any>().mockResolvedValue(undefined),
+      initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+    };
+    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+
+    const mockLock = jest.fn().mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+
+    runExecutionLoop.mockResolvedValue('waiting');
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as any,
+      manager: mockManager,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      lifecycleService: makeLifecycle(),
+      cwd: '/test',
+    };
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    // cspell:disable-next-line
+    await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      'child.md',
+      expect.anything(),
+      expect.objectContaining({
+        prompted: true,
+      }),
+    );
   });
 });

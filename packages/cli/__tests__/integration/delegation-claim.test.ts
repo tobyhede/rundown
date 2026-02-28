@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  runCli,
+  getActiveState,
+  readRunbookState,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -138,5 +144,88 @@ Run the child task.
     const output = JSON.parse(result.stdout);
     expect(output.error).toBeDefined();
     expect(output.code).toBeDefined();
+  });
+
+  describe('auto-propagation on claim', () => {
+    /** Helper: write a child runbook that auto-completes (no prompting needed). */
+    async function writeAutoCompleteChildRunbook(): Promise<void> {
+      const content = `## 1. Execute
+- PASS: COMPLETE
+
+\`\`\`bash
+rd echo --result pass
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'auto-child.runbook.md'), content);
+    }
+
+    it('auto-propagates when child completes during claim', async () => {
+      await writeParentRunbook();
+      await writeAutoCompleteChildRunbook();
+
+      // Start parent in non-prompted mode (so child will auto-complete)
+      let result = runCli('run parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Verify parent is waiting at substep 1.1
+      const parentState = await getActiveState(workspace);
+      expect(parentState).not.toBeNull();
+      expect(parentState!.step).toBe('1');
+      expect(parentState!.substep).toBe('1');
+      const parentRunId = parentState!.id as string;
+
+      // Delegate substep 1.1
+      result = runCli('delegate auto-child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = /Token:\s*(rdtk_\S+)/.exec(result.stdout)![1];
+
+      // Claim the token — child should auto-complete and propagate back to parent
+      result = runCli(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      // After claim, parent should have advanced to substep 1.2
+      // (because child completed and propagated PASS to parent substep 1.1)
+      const updatedParent = await readRunbookState(workspace, parentRunId);
+      expect(updatedParent).not.toBeNull();
+      expect(updatedParent!.step).toBe('1');
+      expect(updatedParent!.substep).toBe('2');
+    });
+
+    it('auto-propagates fail when child stops during claim', async () => {
+      await writeParentRunbook();
+      // Write a child that will fail/stop
+      const failChildContent = `## 1. Execute
+- FAIL: STOP
+
+\`\`\`bash
+rd echo --result fail
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'fail-child.runbook.md'), failChildContent);
+
+      // Start parent
+      let result = runCli('run parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      // Delegate substep 1.1
+      result = runCli('delegate fail-child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = /Token:\s*(rdtk_\S+)/.exec(result.stdout)![1];
+
+      // Claim — child will auto-fail and propagate FAIL to parent
+      // Parent has FAIL ANY: STOP, so it should stop
+      result = runCli(`claim ${token}`, workspace);
+      // Claim exits with 1 when the result is stopped
+      expect(result.exitCode).toBe(1);
+
+      // Parent should be stopped
+      const updatedParent = await readRunbookState(workspace, parentRunId);
+      expect(updatedParent).not.toBeNull();
+      const vars = updatedParent!.variables as Record<string, unknown>;
+      expect(vars.stopped).toBe(true);
+    });
   });
 });

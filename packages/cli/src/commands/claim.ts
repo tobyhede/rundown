@@ -12,6 +12,7 @@ import { getCwd } from '../helpers/context.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { collect } from './echo.js';
 import { claimAndLaunch, type RunPipelineContext } from '../helpers/runbook-pipeline.js';
+import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'claim' command for claiming delegation tokens.
@@ -64,8 +65,23 @@ export function registerClaimCommand(program: Command): void {
             process.exit(1);
           }
 
+          // Delegation propagation — if child auto-completed during launch
+          let propagationResult: 'handled' | 'stopped' | 'not-applicable' = 'not-applicable';
+          if (result.loopResult === 'done' || result.loopResult === 'stopped') {
+            const childState = await manager.load(result.childRunId);
+            if (childState?.delegation) {
+              const propResult = result.loopResult === 'done' ? 'pass' : 'fail';
+              propagationResult = await handleDelegationCompletion(
+                childState,
+                propResult,
+                cwd,
+                output,
+              );
+            }
+          }
+
           output.flush();
-          if (result.loopResult === 'stopped') {
+          if (result.loopResult === 'stopped' || propagationResult === 'stopped') {
             process.exit(1);
           }
         } catch (error) {

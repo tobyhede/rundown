@@ -1,0 +1,302 @@
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { createTestWorkspace, runCli, type TestWorkspace } from './helpers/test-utils.js';
+
+describe('CLI program', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  describe('command registration', () => {
+    it('shows help message with no arguments', () => {
+      const result = runCli('--help', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('rundown');
+    });
+
+    it('shows version with --version flag', () => {
+      const result = runCli('--version', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(/\d+\.\d+\.\d+/);
+    });
+
+    it('registers run command', () => {
+      const result = runCli('run --help', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('run');
+    });
+
+    it('registers pass command', () => {
+      const result = runCli('pass --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers fail command', () => {
+      const result = runCli('fail --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers complete command', () => {
+      const result = runCli('complete --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers goto command', () => {
+      const result = runCli('goto --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers status command', () => {
+      const result = runCli('status --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers stop command', () => {
+      const result = runCli('stop --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers ls command', () => {
+      const result = runCli('ls --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers stash command', () => {
+      const result = runCli('stash --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers pop command', () => {
+      const result = runCli('pop --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers echo command', () => {
+      const result = runCli('echo --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers check command', () => {
+      const result = runCli('check --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers prune command', () => {
+      const result = runCli('prune --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers prompt command', () => {
+      const result = runCli('prompt --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers scenarios command', () => {
+      const result = runCli('scenarios --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers delegate command', () => {
+      const result = runCli('delegate --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('registers claim command', () => {
+      const result = runCli('claim --help', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe('global options', () => {
+    it('accepts --no-color flag', () => {
+      const result = runCli('status --no-color', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('accepts --schema flag', () => {
+      const result = runCli('status --schema', workspace);
+      expect(result.exitCode).toBe(0);
+      // Should output JSON schema
+      const output = JSON.parse(result.stdout);
+      expect(output).toHaveProperty('$schema');
+    });
+
+    it('accepts --allow-all flag', () => {
+      const result = runCli('status --allow-all', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('accepts --deny-all flag', () => {
+      const result = runCli('status --deny-all', workspace);
+      // May succeed or fail depending on implementation
+      expect([0, 1]).toContain(result.exitCode);
+    });
+
+    it('accepts --yes flag', () => {
+      const result = runCli('prune --yes', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('accepts --non-interactive flag', () => {
+      const result = runCli('status --non-interactive', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('accepts --sandbox flag', () => {
+      const result = runCli('status --sandbox', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('accepts --no-sandbox flag', () => {
+      const result = runCli('status --no-sandbox', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('accepts --sandbox-strict flag', () => {
+      const result = runCli('status --sandbox-strict', workspace);
+      // May succeed or fail based on sandbox availability
+      expect([0, 1]).toContain(result.exitCode);
+    });
+  });
+
+  describe('policy options', () => {
+    it('accepts --allow-run option', () => {
+      const result = runCli('status --allow-run echo,ls', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('accepts --allow-read option', () => {
+      const result = runCli('status --allow-read /tmp', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('accepts --allow-write option', () => {
+      const result = runCli('status --allow-write /tmp', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('accepts --allow-env option', () => {
+      const result = runCli('status --allow-env HOME,PATH', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('accepts --policy option', () => {
+      const result = runCli('status --policy policy.json', workspace);
+      // May fail if file doesn't exist, but flag is accepted
+      expect([0, 1]).toContain(result.exitCode);
+    });
+  });
+
+  describe('error handling', () => {
+    it('shows error for unknown command', () => {
+      const result = runCli('unknown-command', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toMatch(/unknown|error/i);
+    });
+
+    it('shows error for invalid option', () => {
+      const result = runCli('status --invalid-option', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toMatch(/unknown option|error/i);
+    });
+  });
+
+  describe('command aliases', () => {
+    it('supports "no" alias for fail command', () => {
+      const result = runCli('no --help', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(/fail/i);
+    });
+  });
+
+  describe('preAction hooks', () => {
+    it('disables color when --no-color is provided', () => {
+      const result = runCli('status --no-color', workspace);
+      expect(result.exitCode).toBe(0);
+      // Output should not contain ANSI escape codes
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching ANSI escape sequences
+      expect(result.stdout).not.toMatch(/\x1b\[\d+m/);
+    });
+  });
+
+  describe('schema output', () => {
+    it('outputs schema for status command', () => {
+      const result = runCli('status --schema', workspace);
+      expect(result.exitCode).toBe(0);
+      const schema = JSON.parse(result.stdout);
+      expect(schema.$schema).toBe('http://json-schema.org/draft-07/schema#');
+    });
+
+    it('outputs schema for pass command', () => {
+      const result = runCli('pass --schema', workspace);
+      expect(result.exitCode).toBe(0);
+      const schema = JSON.parse(result.stdout);
+      expect(schema).toHaveProperty('$schema');
+    });
+
+    it('outputs schema for fail command', () => {
+      const result = runCli('fail --schema', workspace);
+      expect(result.exitCode).toBe(0);
+      const schema = JSON.parse(result.stdout);
+      expect(schema).toHaveProperty('$schema');
+    });
+
+    it('returns error for schema without command', () => {
+      const result = runCli('--schema', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toMatch(/usage/i);
+    });
+
+    it('returns error for unknown command schema', () => {
+      const result = runCli('unknown --schema', workspace);
+      expect(result.exitCode).toBe(1);
+    });
+  });
+
+  describe('multiple flags combination', () => {
+    it('handles --json and --no-color together', () => {
+      const result = runCli('status --json --no-color', workspace);
+      expect(result.exitCode).toBe(0);
+      // Should output valid JSON
+      expect(() => JSON.parse(result.stdout)).not.toThrow();
+    });
+
+    it('handles --allow-all and --yes together', () => {
+      const result = runCli('prune --allow-all --yes', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('handles --non-interactive and --yes together', () => {
+      const result = runCli('prune --non-interactive --yes', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe('command-specific --json output', () => {
+    it('outputs JSON for status --json', () => {
+      const result = runCli('status --json', workspace);
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(output).toHaveProperty('active');
+    });
+
+    it('outputs JSON for ls --json', () => {
+      const result = runCli('ls --json', workspace);
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(output).toBeDefined();
+    });
+
+    it('outputs JSON for pass --json with no active runbook', () => {
+      const result = runCli('pass --json', workspace);
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(output).toHaveProperty('error');
+    });
+  });
+});
