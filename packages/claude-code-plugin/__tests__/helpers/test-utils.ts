@@ -101,14 +101,6 @@ export function createMockHookInput(
         ...rest,
       };
 
-    case 'SubagentStart':
-      return {
-        ...base,
-        agent_id: 'test-agent-123',
-        agent_type: 'test-namespace:test-agent',
-        ...rest,
-      };
-
     case 'SubagentStop':
       return {
         ...base,

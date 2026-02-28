@@ -444,7 +444,6 @@ describe('Config Loading - Additional Edge Cases', () => {
         PostToolUse: { gates: ['post-gate'] },
         PostToolUseFailure: { gates: ['failure-gate'] },
         UserPromptSubmit: { gates: ['prompt-gate'] },
-        SubagentStart: { gates: ['start-gate'] },
         SubagentStop: { gates: ['stop-gate'] },
       },
       gates: {
@@ -452,7 +451,6 @@ describe('Config Loading - Additional Edge Cases', () => {
         'post-gate': { command: 'echo post' },
         'failure-gate': { command: 'echo failure' },
         'prompt-gate': { command: 'echo prompt' },
-        'start-gate': { command: 'echo start' },
         'stop-gate': { command: 'echo stop' },
       },
     };
@@ -464,7 +462,6 @@ describe('Config Loading - Additional Edge Cases', () => {
     expect(config?.hooks.PostToolUse.gates).toEqual(['post-gate']);
     expect(config?.hooks.PostToolUseFailure.gates).toEqual(['failure-gate']);
     expect(config?.hooks.UserPromptSubmit.gates).toEqual(['prompt-gate']);
-    expect(config?.hooks.SubagentStart.gates).toEqual(['start-gate']);
     expect(config?.hooks.SubagentStop.gates).toEqual(['stop-gate']);
   });
 

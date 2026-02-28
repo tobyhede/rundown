@@ -9,7 +9,6 @@ const KNOWN_HOOK_EVENTS = [
   'PreToolUse',
   'PostToolUse',
   'PostToolUseFailure',
-  'SubagentStart',
   'SubagentStop',
   'UserPromptSubmit',
   'SlashCommandStart',

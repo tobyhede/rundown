@@ -43,7 +43,6 @@ describe('Synthetic Event Registry Coverage', () => {
       const nonSyntheticEvents = [
         'PreToolUse',
         'PostToolUse',
-        'SubagentStart',
         'SubagentStop',
         'UserPromptSubmit',
         'Stop',
@@ -170,7 +169,6 @@ describe('Synthetic Event Registry Coverage', () => {
         createMockHookInput('PreToolUse', { tool_name: 'Bash' }),
         createMockHookInput('PostToolUse', { tool_name: 'Edit' }),
         createMockHookInput('PostToolUse', { tool_name: 'Write' }),
-        createMockHookInput('SubagentStart'),
         createMockHookInput('SubagentStop'),
       ];
 

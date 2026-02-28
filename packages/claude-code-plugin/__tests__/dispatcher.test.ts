@@ -950,7 +950,7 @@ describe('Dispatcher - Additional Edge Cases', () => {
     expect(shouldProcessHook(filteredInput, hookConfig)).toBe(false);
   });
 
-  test('SubagentStart respects enabled_agents filter', () => {
+  test('SubagentStart is not filtered (no longer handled)', () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStart',
       cwd: '/test',
@@ -961,15 +961,8 @@ describe('Dispatcher - Additional Edge Cases', () => {
       enabled_agents: ['code-review-agent', 'test-agent'],
     };
 
+    // SubagentStart is no longer processed, so it passes through without filtering
     expect(shouldProcessHook(input, hookConfig)).toBe(true);
-
-    const filteredInput: HookInput = {
-      hook_event_name: 'SubagentStart',
-      cwd: '/test',
-      agent_type: 'other-agent',
-    };
-
-    expect(shouldProcessHook(filteredInput, hookConfig)).toBe(false);
   });
 
   test('missing agent_type defaults to empty string for filtering', () => {

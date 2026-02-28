@@ -86,7 +86,7 @@ describe('GateConfig Type', () => {
 describe('HookInput subagent fields', () => {
   it('includes agent_id field', () => {
     const input: HookInput = {
-      hook_event_name: 'SubagentStart',
+      hook_event_name: 'SubagentStop',
       cwd: '/test',
       agent_id: 'agent-abc-123',
     };

@@ -38,8 +38,8 @@ export function shouldProcessHook(input: HookInput, hookConfig: HookConfig): boo
     }
   }
 
-  // SubagentStart/SubagentStop filtering
-  if (hookEvent === 'SubagentStart' || hookEvent === 'SubagentStop') {
+  // SubagentStop filtering
+  if (hookEvent === 'SubagentStop') {
     if (hookConfig.enabled_agents && hookConfig.enabled_agents.length > 0) {
       const agentType = input.agent_type ?? '';
       return hookConfig.enabled_agents.includes(agentType);
@@ -203,9 +203,6 @@ async function updateSessionState(input: HookInput): Promise<void> {
 
       case 'SkillEnd':
         await session.set('active_skill', null);
-        break;
-
-      case 'SubagentStart':
         break;
 
       case 'PostToolUse':
