@@ -188,7 +188,10 @@ describe('DelegationLock', () => {
     await fs.mkdir(lockDir, { recursive: true });
 
     const lockPath = path.join(lockDir, 'run-run-vanish.delegation.lock');
-    await fs.writeFile(lockPath, JSON.stringify({ pid: findDeadPid(), created_at: new Date().toISOString() }));
+    await fs.writeFile(
+      lockPath,
+      JSON.stringify({ pid: findDeadPid(), created_at: new Date().toISOString() }),
+    );
 
     // Start acquire, then delete the lock file to simulate race
     const acquirePromise = lock.acquire('run-vanish');
@@ -197,7 +200,9 @@ describe('DelegationLock', () => {
     await new Promise((resolve) => setTimeout(resolve, 80));
 
     // Remove lock file (simulates another process releasing)
-    await fs.unlink(lockPath).catch(() => { /* ignore if already gone */ });
+    await fs.unlink(lockPath).catch(() => {
+      /* ignore if already gone */
+    });
 
     // Should eventually succeed
     await acquirePromise;

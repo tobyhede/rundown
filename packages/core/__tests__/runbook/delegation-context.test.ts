@@ -240,7 +240,7 @@ describe('reconstituteContextVars', () => {
       vars: {
         'key-with-dashes': 'value1',
         'key.with.dots': 'value2',
-        'key_with_underscores': 'value3',
+        key_with_underscores: 'value3',
       },
       ancestors: [],
     };

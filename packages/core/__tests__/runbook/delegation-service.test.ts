@@ -361,7 +361,10 @@ describe('createDelegation', () => {
     });
     const steps = makeSteps();
 
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'new-child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'new-child.md' },
+      steps,
+    );
 
     expect(result.token).toBeDefined();
     const updated = result.updatedSubstepStates.find((ss) => ss.id === '1');
@@ -417,10 +420,16 @@ describe('createDelegation', () => {
     });
     const steps = makeSteps();
 
-    const result1 = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child1.md' }, steps);
+    const result1 = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child1.md' },
+      steps,
+    );
 
     // Create delegation on different substep
-    const result2 = createDelegation({ state, stepId: '1.2', childRunbookPath: 'child2.md' }, steps);
+    const result2 = createDelegation(
+      { state, stepId: '1.2', childRunbookPath: 'child2.md' },
+      steps,
+    );
 
     expect(result1.token).not.toBe(result2.token);
     expect(result1.tokenHash).not.toBe(result2.tokenHash);
