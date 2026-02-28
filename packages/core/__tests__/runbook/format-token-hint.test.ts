@@ -31,6 +31,6 @@ describe('truncateDelegationToken', () => {
   it('truncates body of length 8 or more', () => {
     const token = `${TOKEN_PREFIX}ABCDEFGH`;
     const hint = truncateDelegationToken(token);
-    expect(hint).toBe('rdtk_ABC...EFGH');
+    expect(hint).toBe('rdtk_ABC...EFGH'); // cspell:disable-line
   });
 });

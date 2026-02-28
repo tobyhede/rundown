@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli, getActiveState, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  runCli,
+  getActiveState,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -208,6 +213,7 @@ Run the child task.
     it('handles malformed JSON in state file gracefully', async () => {
       // This is hard to test without directly corrupting files
       // but the command should handle errors gracefully
+      // cspell:disable-next-line
       const result = runCli('abort rdtk_INVALIDTOKEN123456789012345678', workspace);
       expect(result.exitCode).toBe(1);
     });
@@ -320,7 +326,7 @@ Run the child task.
       // Check that parent is no longer active (was stopped)
       const afterAbortState = await getActiveState(workspace);
       // The parent should have been stopped or advanced
-      expect(afterAbortState === null || afterAbortState!.id !== parentState!.id).toBe(true);
+      expect(afterAbortState === null || afterAbortState.id !== parentState!.id).toBe(true);
     });
   });
 

@@ -5,7 +5,7 @@ import type { RunbookState, StepDelegation, SubstepState } from '../../src/runbo
 /** Helper: create a delegation object. */
 function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
   return {
-    tokenHash: 'sha256:' + 'a'.repeat(64),
+    tokenHash: `sha256:${'a'.repeat(64)}`,
     childRunbookPath: 'child.md',
     contextSnapshot: { vars: {}, ancestors: [] },
     childRunId: null,
