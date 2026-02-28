@@ -164,14 +164,6 @@ describe('output format integration tests', () => {
       expect(result.stdout).toContain('## 1.');
       expect(result.stdout).toContain('First step');
     });
-
-    it('shows pending steps when present', async () => {
-      runCli('run --step 1', workspace);
-
-      const result = runCli('status', workspace);
-
-      expect(result.stdout).toContain('Pending');
-    });
   });
 
   describe('stop command output', () => {

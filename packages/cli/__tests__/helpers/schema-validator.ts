@@ -37,8 +37,6 @@ export {
   StashResponseSchema,
   PopResponseSchema,
   ExecutionSummarySchema,
-  StepQueuedResponseSchema,
-  AgentBoundResponseSchema,
   RunCommandResponseSchema,
   // Command mapping
   COMMAND_SCHEMAS,
@@ -61,8 +59,6 @@ import {
   PopResponseSchema,
   ErrorResponseSchema,
   ExecutionSummarySchema,
-  StepQueuedResponseSchema,
-  AgentBoundResponseSchema,
 } from '../../src/schemas/output-schemas.js';
 
 // ============================================================================
@@ -233,20 +229,6 @@ export function validatePopOutput(data: unknown): ValidationResult {
  */
 export function validateErrorOutput(data: unknown): ValidationResult {
   return validateSchema(ErrorResponseSchema, data);
-}
-
-/**
- * Validate step queued JSON output (run --step).
- */
-export function validateStepQueuedOutput(data: unknown): ValidationResult {
-  return validateSchema(StepQueuedResponseSchema, data);
-}
-
-/**
- * Validate agent bound JSON output (run --agent).
- */
-export function validateAgentBoundOutput(data: unknown): ValidationResult {
-  return validateSchema(AgentBoundResponseSchema, data);
 }
 
 // ============================================================================

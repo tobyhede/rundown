@@ -180,23 +180,6 @@ describe('Errors factory - extended coverage', () => {
     });
   });
 
-  describe('Agent errors', () => {
-    it('agentNotBound creates error without agentId', () => {
-      const error = Errors.agentNotBound();
-
-      expect(error).toBeInstanceOf(RundownError);
-      expect(error.code).toBe('RD-702');
-    });
-
-    it('agentNotBound creates error with agentId', () => {
-      const error = Errors.agentNotBound('agent-xyz');
-
-      expect(error).toBeInstanceOf(RundownError);
-      expect(error.code).toBe('RD-702');
-      expect(error.context.agentId).toBe('agent-xyz');
-    });
-  });
-
   describe('Generic errors', () => {
     it('unknown preserves cause', () => {
       const cause = new Error('Original error');

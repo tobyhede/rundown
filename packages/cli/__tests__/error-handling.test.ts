@@ -75,14 +75,5 @@ This doesn't have proper ## headers
 
       expect(result.stderr.length).toBeGreaterThan(0);
     });
-
-    it('shows specific error for invalid step format', async () => {
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
-
-      const result = runCli('run --step invalid-format', workspace);
-
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('Invalid step ID');
-    });
   });
 });

@@ -229,26 +229,26 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  describe('isParentPrompted', () => {
+  describe('isPrompted', () => {
     it('returns true when parent has prompted flag', async () => {
       const parent = await manager.create('parent.md', mockRunbook, {
         runbookPath: 'parent.md',
         prompted: true,
       });
 
-      const result = await lifecycleService.isParentPrompted(parent.id);
+      const result = await lifecycleService.isPrompted(parent.id);
       expect(result).toBe(true);
     });
 
     it('returns false when parent has no prompted flag', async () => {
       const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
 
-      const result = await lifecycleService.isParentPrompted(parent.id);
+      const result = await lifecycleService.isPrompted(parent.id);
       expect(result).toBe(false);
     });
 
     it('returns false for nonexistent parent', async () => {
-      const result = await lifecycleService.isParentPrompted('nonexistent');
+      const result = await lifecycleService.isPrompted('nonexistent');
       expect(result).toBe(false);
     });
   });

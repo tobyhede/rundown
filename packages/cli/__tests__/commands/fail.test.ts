@@ -86,27 +86,6 @@ describe('fail command', () => {
   });
 
   describe('runbook fail with stack', () => {
-    it('agent runbook pops and blocks when fail causes STOP', async () => {
-      // Create a single-step runbook that blocks on fail
-      const singleStep = `## 1. Do it
-
-- PASS: COMPLETE
-- FAIL: STOP
-`;
-      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'single-fail.md'), singleStep);
-
-      runCli('run --prompted runbooks/single-fail.md --agent agent-001', workspace);
-
-      // Fail runbook - should block and pop
-      const result = runCli('fail --agent agent-001', workspace);
-      expect(result.exitCode).toBe(1);
-
-      // Agent stack should be empty
-      const statusResult = runCli('status --agent agent-001', workspace);
-      expect(statusResult.stdout).toContain('No active runbook');
-    });
-
     it('pops to parent runbook on fail completion', async () => {
       // Create parent/child runbooks
       const parentRunbook = `## 1. Step one
@@ -138,32 +117,6 @@ Do work.
       // Should now be on parent
       const statusResult = runCli('status', workspace);
       expect(statusResult.stdout).toContain('parent-fail.md');
-    });
-  });
-
-  describe('state consistency in execution loop', () => {
-    it('uses updated state for retry execution loop', async () => {
-      // Create a runbook with agent-scoped RETRY that continues execution
-      const retryRunbook = `## 1. Retry step
-- FAIL: RETRY 3
-- PASS: COMPLETE
-
-\`\`\`bash
-rd echo --result pass
-\`\`\`
-`;
-      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'agent-retry.md'), retryRunbook);
-
-      runCli('run --prompted runbooks/agent-retry.md --agent test-agent', workspace);
-
-      // Fail to trigger RETRY which should continue execution with updated state
-      const result = runCli('fail --agent test-agent --json', workspace);
-
-      // The execution loop should run with updated state (retryCount incremented)
-      // Verify the retry action was emitted correctly
-      expect(result.stdout).toContain('retry');
-      expect(result.exitCode).toBe(0); // Should complete after retry succeeds
     });
   });
 
@@ -299,16 +252,6 @@ Final step.
       expect(state?.variables.stopped).toBe(true);
     });
 
-    it('fail command with --agent flag on non-agent runbook', async () => {
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
-
-      // Agent has no stack and no binding on parent — resolves to no active runbook
-      const result = runCli('fail --agent test-agent', workspace);
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('No active runbook');
-    });
-
     it('consecutive fail commands maintain state consistency', async () => {
       // Create a runbook that transitions on second fail
       const multiFailRunbook = `## 1. Retry step
@@ -342,27 +285,6 @@ Final step.
       // Third fail - exhausted retries, should use on_fail (implicit STOP)
       result = runCli('fail', workspace);
       expect(result.exitCode).toBe(1);
-    });
-
-    it('fail with both --json and --agent flags', async () => {
-      const agentRunbook = `## 1. Agent task
-- PASS: COMPLETE
-- FAIL: STOP
-
-Do agent work.
-`;
-      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'agent-task.md'), agentRunbook);
-
-      runCli('run --prompted runbooks/agent-task.md --agent agent-001', workspace);
-
-      // Fail with both flags
-      const result = runCli('fail --agent agent-001 --json', workspace);
-
-      // Should produce valid JSON output
-      expect(() => JSON.parse(result.stdout)).not.toThrow();
-      const output = JSON.parse(result.stdout);
-      expect(output).toHaveProperty('action');
     });
 
     it('fail on runbook with no explicit fail transition uses default', async () => {

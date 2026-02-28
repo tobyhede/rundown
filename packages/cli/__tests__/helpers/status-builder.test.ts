@@ -52,8 +52,6 @@ function makeState(overrides: Partial<RunbookState> = {}): any {
     retryCount: 0,
     variables: {},
     steps: [],
-    pendingSteps: [],
-    agentBindings: {},
     startedAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     ...overrides,
@@ -232,48 +230,6 @@ describe('buildActiveStatus', () => {
     expect(result.lastAction).toEqual({ action: 'CONTINUE', result: true });
   });
 
-  it('includes pending steps when present', () => {
-    const state = makeState({
-      pendingSteps: [{ stepId: { step: '2' }, targetStep: '2' }] as any,
-    });
-    const steps = [makeStep()];
-
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
-      file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
-    });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
-    const result = buildActiveStatus(state, '/test');
-
-    expect(result.pending).toEqual(['2']);
-  });
-
-  it('includes agent bindings when present', () => {
-    const state = makeState({
-      agentBindings: {
-        'agent-1': { stepId: { step: '1' }, targetStep: '1', status: 'running' },
-      } as any,
-    });
-    const steps = [makeStep()];
-
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
-      file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
-    });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
-    const result = buildActiveStatus(state, '/test');
-
-    expect(result.agents).toEqual({
-      'agent-1': { step: '1', status: 'running', result: undefined },
-    });
-  });
-
   it('omits step when currentStep not found', () => {
     const state = makeState({ step: 'nonexistent' });
     const steps = [makeStep({ name: '1' })];
@@ -290,41 +246,5 @@ describe('buildActiveStatus', () => {
     const result = buildActiveStatus(state, '/test');
 
     expect(result.step).toBeUndefined();
-  });
-
-  it('omits pending when empty', () => {
-    const state = makeState({ pendingSteps: [] });
-    const steps = [makeStep()];
-
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
-      file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
-    });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
-
-    const result = buildActiveStatus(state, '/test');
-
-    expect(result.pending).toBeUndefined();
-  });
-
-  it('omits agents when empty', () => {
-    const state = makeState({ agentBindings: {} });
-    const steps = [makeStep()];
-
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
-      file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
-    });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
-
-    const result = buildActiveStatus(state, '/test');
-
-    expect(result.agents).toBeUndefined();
   });
 });
