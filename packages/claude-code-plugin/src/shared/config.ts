@@ -104,7 +104,7 @@ export function validateConfig(config: RundownPluginConfig): void {
   // Invariant: gates must be a plain object (not a string, number, etc.)
   // The type cast from JSON.parse is unsound, so validate at runtime
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime guard for external JSON data
-  if (typeof config.gates !== 'object' || config.gates === null) {
+  if (typeof config.gates !== 'object' || config.gates === null || Array.isArray(config.gates)) {
     throw new Error('Invalid config: gates must be an object');
   }
 
