@@ -17,7 +17,7 @@ import { execFileSync, execSync } from 'node:child_process';
 import { parse as shellParse } from 'shell-quote';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadScenarioSuite, type ScenarioSuiteCase } from '../schemas/scenario-suite.js';
-import type { AssertionResult } from '../helpers/scenario-runbook.js';
+import type { AssertionResult, PersistedState } from '../helpers/scenario-runbook.js';
 import { evaluateExpectations } from '../helpers/scenario-runbook.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,18 +25,6 @@ const __dirname = dirname(__filename);
 
 /** Path to the CLI executable */
 const CLI_PATH = join(__dirname, '..', 'cli.js');
-
-/**
- * Shape of persisted state read from state files.
- */
-interface PersistedState {
-  step?: string;
-  retryCount?: number;
-  lastAction?: { type: string };
-  lastResult?: string;
-  variables?: Record<string, boolean | number | string>;
-  steps?: readonly { status: string }[];
-}
 
 /**
  * Get effective result for a suite case, preferring `result` over `expect.result`.

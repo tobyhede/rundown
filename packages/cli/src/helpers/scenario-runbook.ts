@@ -79,7 +79,7 @@ export interface ScenarioRunResult {
  * Shape of persisted state read from state files.
  * Subset of RunbookState relevant to assertion evaluation.
  */
-interface PersistedState {
+export interface PersistedState {
   step?: string;
   retryCount?: number;
   lastAction?: { type: string };

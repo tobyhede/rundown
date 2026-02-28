@@ -717,6 +717,38 @@ export const ScenarioSuiteRunResponseSchema = z
     /** Per-case results */
     cases: z.array(ScenarioRunResponseSchema).describe('Individual case results'),
   })
+  .superRefine((data, ctx) => {
+    if (data.total !== data.cases.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `total (${String(data.total)}) must equal cases.length (${String(data.cases.length)})`,
+        path: ['total'],
+      });
+    }
+    if (data.passed + data.failed !== data.total) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `passed (${String(data.passed)}) + failed (${String(data.failed)}) must equal total (${String(data.total)})`,
+        path: ['passed'],
+      });
+    }
+    const actualPassed = data.cases.filter((c) => c.result === true).length;
+    if (data.passed !== actualPassed) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `passed (${String(data.passed)}) must equal number of cases with result === true (${String(actualPassed)})`,
+        path: ['passed'],
+      });
+    }
+    const actualFailed = data.cases.filter((c) => c.result === false).length;
+    if (data.failed !== actualFailed) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `failed (${String(data.failed)}) must equal number of cases with result === false (${String(actualFailed)})`,
+        path: ['failed'],
+      });
+    }
+  })
   .describe('Aggregate response from running a scenario suite');
 
 // ============================================================================
@@ -820,10 +852,15 @@ export type CLIResponse =
   | StatusResponse
   | CheckResponse
   | ScenarioRunResponse
+  | ScenarioSuiteRunResponse
   | StashResponse
   | PopResponse
   | EchoResponse
   | AbortResponse;
 
 /** Union of list outputs */
-export type CLIListResponse = ListResponse | ScenarioEntry[] | PruneResponse;
+export type CLIListResponse =
+  | ListResponse
+  | ScenarioEntry[]
+  | ScenarioSuiteCaseEntry[]
+  | PruneResponse;

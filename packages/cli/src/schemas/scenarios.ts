@@ -82,13 +82,19 @@ export type ScenarioExpect = z.infer<typeof ScenarioExpectSchema>;
 /**
  * Get the effective result from a scenario, preferring `result` over `expect.result`.
  *
- * The refinement on ScenarioSchema guarantees at least one is set.
+ * The refinement on ScenarioSchema guarantees at least one is set for validated
+ * scenarios, but this function performs a runtime check for safety.
  *
  * @param scenario - A validated scenario
  * @returns The effective terminal result ('COMPLETE' or 'STOP')
+ * @throws {Error} When neither `scenario.result` nor `scenario.expect?.result` is defined
  */
 export function getEffectiveResult(scenario: Scenario): 'COMPLETE' | 'STOP' {
-  return (scenario.result ?? scenario.expect?.result)!;
+  const result = scenario.result ?? scenario.expect?.result;
+  if (result === undefined) {
+    throw new Error('Scenario has neither result nor expect.result defined');
+  }
+  return result;
 }
 
 /**
