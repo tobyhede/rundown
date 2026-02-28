@@ -21,7 +21,12 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   DelegationLock: jest.fn(),
   reconstituteContextVars: jest.fn().mockReturnValue({}),
   hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
-  truncateDelegationToken: jest.fn((token: string) => `${token.slice(0, 12)}...`),
+  truncateDelegationToken: jest.fn((token: string) => {
+    const prefix = 'rdtk_';
+    const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
+    if (body.length <= 7) return token;
+    return `${prefix}${body.slice(0, 3)}...${body.slice(-4)}`;
+  }),
   ErrorCodes: {
     INVALID_TOKEN: { code: 'RD-807' },
     TOKEN_NOT_FOUND: { code: 'RD-808' },
@@ -102,9 +107,12 @@ beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
   (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
-  (core.truncateDelegationToken as jest.Mock).mockImplementation(
-    (token: string) => `${token.slice(0, 12)}...`,
-  );
+  (core.truncateDelegationToken as jest.Mock).mockImplementation((token: string) => {
+    const prefix = 'rdtk_';
+    const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
+    if (body.length <= 7) return token;
+    return `${prefix}${body.slice(0, 3)}...${body.slice(-4)}`;
+  });
   (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
   (core.deriveActiveFrame as jest.Mock).mockReturnValue({
     step: '1',
@@ -337,8 +345,18 @@ describe('claimAndLaunch', () => {
       expect(result.parentRunId).toBe('run-1');
     }
 
-    // Verify update was called to adopt the orphan
-    expect(ctx.manager.update).toHaveBeenCalled();
+    // Verify update wrote the orphan's childRunId onto the parent delegation
+    expect(ctx.manager.update).toHaveBeenCalledWith(
+      'run-1',
+      expect.objectContaining({
+        substepStates: expect.arrayContaining([
+          expect.objectContaining({
+            id: '1',
+            delegation: expect.objectContaining({ childRunId: 'orphan-run-id' }),
+          }),
+        ]),
+      }),
+    );
   });
 
   it('re-throws non-timeout lock errors instead of masking them', async () => {

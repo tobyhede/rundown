@@ -165,6 +165,9 @@ Task uses {{ myVar }}.
     result = runCli(`claim ${token} --var-file vars.yaml --json`, workspace);
     expect(result.exitCode).toBe(0);
 
+    // Verify the variable was rendered in child execution output
+    expect(result.stdout).toContain('Task uses fromFile.');
+
     // Parse last JSON line for claimed output
     const jsonLines = result.stdout.trim().split('\n');
     const claimOutput = JSON.parse(jsonLines[jsonLines.length - 1]);
