@@ -183,7 +183,7 @@ Run the child task.
       expect(result.exitCode).toBe(1);
 
       const output = JSON.parse(result.stdout);
-      expect(output.error).toBeDefined();
+      expect(output.message).toBeDefined();
       expect(output.code).toBeDefined();
     });
 

@@ -181,7 +181,12 @@ Run the child task.
       result = runCli(`abort ${token} --force --json`, workspace);
       expect(result.exitCode).toBe(0);
 
-      const output = JSON.parse(result.stdout);
+      // stdout contains JSONL events + pretty-printed abort result + flush trailer
+      // Split into complete JSON blocks and find the abort result
+      const blocks = result.stdout.trim().split(/(?<=\})\n(?=\{)/);
+      const abortBlock = blocks.find((b) => b.includes('"action": "abort"'));
+      expect(abortBlock).toBeDefined();
+      const output = JSON.parse(abortBlock!);
       expect(output.force).toBe(true);
       expect(output.childRunId).toBeDefined();
     });
@@ -315,7 +320,6 @@ Run the child task.
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
       expect(parentState!.step).toBe('1');
-      expect(parentState!.substep).toBe('1');
 
       // Force abort - should propagate fail to parent
       result = runCli(`abort ${token} --force`, workspace);

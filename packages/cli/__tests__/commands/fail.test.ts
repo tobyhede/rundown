@@ -258,10 +258,11 @@ rd echo --result pass
       // Start retry runbook
       runCli('run --prompted runbooks/retry.runbook.md', workspace);
 
-      // Fail repeatedly until retries exhausted
-      runCli('fail', workspace); // retry 1
-      runCli('fail', workspace); // retry 2
-      const result = runCli('fail', workspace); // retry 3 - should exhaust retries
+      // Fail repeatedly until retries exhausted (RETRY 3 = 3 retries allowed, 4 total attempts)
+      runCli('fail', workspace); // retry 1 (retryCount: 0→1)
+      runCli('fail', workspace); // retry 2 (retryCount: 1→2)
+      runCli('fail', workspace); // retry 3 (retryCount: 2→3)
+      const result = runCli('fail', workspace); // retries exhausted, fallback STOP
 
       // After max retries, should use on_fail action (STOP by default)
       expect(result.exitCode).toBe(1);
