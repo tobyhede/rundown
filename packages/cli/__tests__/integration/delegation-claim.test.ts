@@ -152,7 +152,9 @@ Run the child task.
       const content = `## 1. Execute
 - PASS: COMPLETE
 
-Auto-complete task.
+\`\`\`bash
+rd echo --result pass
+\`\`\`
 `;
       await writeFile(join(workspace.cwd, 'auto-child.runbook.md'), content);
     }
@@ -195,7 +197,9 @@ Auto-complete task.
       const failChildContent = `## 1. Execute
 - FAIL: STOP
 
-This will fail.
+\`\`\`bash
+rd echo --result fail
+\`\`\`
 `;
       await writeFile(join(workspace.cwd, 'fail-child.runbook.md'), failChildContent);
 
