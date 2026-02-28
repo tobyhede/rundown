@@ -15,7 +15,13 @@ export interface SubagentStopResult {
 const STATUS_PATTERN = /STATUS:\s*(OK|PASS|BLOCKED|FAIL)/i;
 
 /**
- * Parse STATUS field from subagent output
+ * Parse STATUS field from subagent output using {@link STATUS_PATTERN}.
+ *
+ * Maps OK/PASS to 'pass' and BLOCKED/FAIL to 'fail'.
+ * Missing or unrecognized status defaults to 'pass'.
+ *
+ * @param output - Raw subagent output text to scan for STATUS field
+ * @returns Normalized status: 'pass' for OK/PASS/missing, 'fail' for BLOCKED/FAIL
  */
 export function parseAgentStatus(output?: string): 'pass' | 'fail' {
   if (!output) return 'pass';

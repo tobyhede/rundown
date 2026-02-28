@@ -9,6 +9,7 @@ import { handleDelegationDispatch } from '../workflow/hooks/delegation-dispatch.
  *
  * @param input - Hook input containing Task tool metadata
  * @returns Gate result: block on violation, context on marker detection, or empty
+ * @throws Propagates errors from handleDelegationDispatch if session I/O fails
  */
 export async function execute(input: HookInput): Promise<GateResult> {
   const result = await handleDelegationDispatch(input);
