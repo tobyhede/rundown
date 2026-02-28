@@ -36,6 +36,28 @@ import {
 import { formatTable } from '../../helpers/table-formatter.js';
 import type { OutputRenderer, RendererOptions } from './types.js';
 
+/** Data shape for status detail rendering. */
+interface StatusDetailData {
+  active?: boolean;
+  stashed?: boolean;
+  file?: string;
+  state?: string;
+  prompted?: boolean;
+  position?: {
+    current: string;
+    total: number;
+    substep?: string;
+    frameKey?: string;
+    entry?: number;
+    unresolved?: number;
+  };
+  step?: { name: string; description?: string };
+  lastAction?: { action: string; result?: boolean };
+  pending?: string[];
+  agents?: Record<string, { step: string; status: string; result?: string }>;
+  delegations?: { substep: string; runbook: string; state: string; childRunId?: string }[];
+}
+
 /**
  * Renders output events as human-readable text.
  *
@@ -190,26 +212,19 @@ export class TextRenderer implements OutputRenderer {
    * Render status response as formatted text.
    */
   private renderStatusDetail(data: Record<string, unknown>): void {
-    const { active, stashed, file, state, prompted, position, step, lastAction, pending, agents } =
-      data as {
-        active?: boolean;
-        stashed?: boolean;
-        file?: string;
-        state?: string;
-        prompted?: boolean;
-        position?: {
-          current: string;
-          total: number;
-          substep?: string;
-          frameKey?: string;
-          entry?: number;
-          unresolved?: number;
-        };
-        step?: { name: string; description?: string };
-        lastAction?: { action: string; result?: boolean };
-        pending?: string[];
-        agents?: Record<string, { step: string; status: string; result?: string }>;
-      };
+    const {
+      active,
+      stashed,
+      file,
+      state,
+      prompted,
+      position,
+      step,
+      lastAction,
+      pending,
+      agents,
+      delegations,
+    } = data as StatusDetailData;
 
     // No active runbook
     if (!active && !stashed) {
@@ -265,6 +280,22 @@ export class TextRenderer implements OutputRenderer {
       for (const [agentId, binding] of Object.entries(agents)) {
         const resultStr = binding.result ? ` (${binding.result})` : '';
         this.writer.writeLine(`  ${agentId}: ${binding.step} [${binding.status}]${resultStr}`);
+      }
+    }
+
+    // Show delegations
+    if (delegations && delegations.length > 0) {
+      this.writer.writeLine('\nDelegations:');
+      for (const d of delegations) {
+        let stateLabel: string;
+        if (d.state === 'claimed') {
+          stateLabel = `(claimed: ${d.childRunId ?? 'unknown'})`;
+        } else if (d.state === 'cancelled') {
+          stateLabel = '(cancelled)';
+        } else {
+          stateLabel = '(pending claim)';
+        }
+        this.writer.writeLine(`  ${d.substep}  ${d.runbook}  DELEGATED  ${stateLabel}`);
       }
     }
   }

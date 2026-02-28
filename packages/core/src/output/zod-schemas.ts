@@ -227,6 +227,32 @@ export const ActionResponseSchema = z
   .passthrough();
 
 // ============================================================================
+// Delegation Status Schema
+// ============================================================================
+
+/**
+ * Delegation status entry for status display.
+ */
+export const DelegationStatusEntrySchema = z
+  .object({
+    /** Substep ID that owns the delegation (e.g., "1.1") */
+    substep: z.string().describe('Substep ID owning the delegation'),
+    /** Path to the child runbook */
+    runbook: z.string().describe('Child runbook path'),
+    /** Current delegation state */
+    state: z
+      .enum(['pending', 'claimed', 'cancelled'])
+      .describe('Delegation state: pending, claimed, or cancelled'),
+    /** Child run ID (when claimed) */
+    childRunId: z.string().optional().describe('Child run ID when delegation is claimed'),
+  })
+  .refine((entry) => entry.state !== 'claimed' || !!entry.childRunId, {
+    message: 'childRunId is required when state is claimed',
+    path: ['childRunId'],
+  })
+  .describe('Delegation status entry');
+
+// ============================================================================
 // Status Command Schema
 // ============================================================================
 
@@ -277,6 +303,11 @@ export const StatusResponseSchema = z
       })
       .optional()
       .describe('Last action information'),
+    /** Active delegations on the current step */
+    delegations: z
+      .array(DelegationStatusEntrySchema)
+      .optional()
+      .describe('Active delegations on the current step'),
     // Flat structure fields
     file: z.string().optional().describe('Path to the active runbook file'),
     state: z.string().optional().describe('Current runbook execution state'),
@@ -608,6 +639,36 @@ export const RunCommandResponseSchema = z
   .describe('Response from the run command');
 
 // ============================================================================
+// Abort Command Schema
+// ============================================================================
+
+/**
+ * Abort response schema.
+ *
+ * Output from `rd abort <token>` command.
+ */
+export const AbortResponseSchema = z
+  .object({
+    /** Action performed */
+    action: z.literal('abort').describe('Action type'),
+    /** Abort result status */
+    status: z.enum(['cancelled', 'already_cancelled']).describe('Abort result status'),
+    /** Truncated token hint */
+    token: z.string().describe('Truncated delegation token hint'),
+    /** Substep ID owning the delegation */
+    substep: z.string().describe('Substep ID'),
+    /** Child runbook path */
+    runbook: z.string().describe('Child runbook path'),
+    /** Parent run ID */
+    parentRunId: z.string().describe('Parent run ID'),
+    /** Whether --force was used */
+    force: z.boolean().optional().describe('Whether force mode was used'),
+    /** Child run ID (when force-cancelling claimed delegation) */
+    childRunId: z.string().optional().describe('Child run ID when force-cancelling'),
+  })
+  .describe('Response from the abort command');
+
+// ============================================================================
 // Derived TypeScript Types
 // ============================================================================
 
@@ -631,6 +692,9 @@ export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 
 /** Action response (pass, fail, goto, stop, complete) */
 export type ActionResponse = z.infer<typeof ActionResponseSchema>;
+
+/** Delegation status entry */
+export type DelegationStatusEntry = z.infer<typeof DelegationStatusEntrySchema>;
 
 /** Status response */
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
@@ -689,6 +753,9 @@ export type AgentBoundResponse = z.infer<typeof AgentBoundResponseSchema>;
 /** Run command response */
 export type RunCommandResponse = z.infer<typeof RunCommandResponseSchema>;
 
+/** Abort response */
+export type AbortResponse = z.infer<typeof AbortResponseSchema>;
+
 /** Union of all CLI responses */
 export type CLIResponse =
   | ActionResponse
@@ -698,7 +765,8 @@ export type CLIResponse =
   | ScenarioRunResponse
   | StashResponse
   | PopResponse
-  | EchoResponse;
+  | EchoResponse
+  | AbortResponse;
 
 /** Union of list outputs */
 export type CLIListResponse = ListResponse | ScenarioEntry[] | PruneResponse;

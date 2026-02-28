@@ -333,15 +333,16 @@ describe('Context file discovery - Additional Edge Cases', () => {
     expect(result).toBe(path.join(contextDir, 'my-command-with-dashes-start.md'));
   });
 
-  test('follows priority order - subdirectory wins over flat when both exist', async () => {
+  test('follows priority order - flat wins over subdirectory when both exist', async () => {
     const contextBase = path.join(testDir, '.claude', 'context');
     const slashCommandDir = path.join(contextBase, 'slash-command');
     await fs.mkdir(slashCommandDir, { recursive: true });
 
+    await fs.writeFile(path.join(contextBase, 'test-command-start.md'), 'flat');
     await fs.writeFile(path.join(slashCommandDir, 'test-command-start.md'), 'subdir');
 
     const result = await discoverContextFile(testDir, 'test-command', 'start');
-    expect(result).toBe(path.join(slashCommandDir, 'test-command-start.md'));
+    expect(result).toBe(path.join(contextBase, 'test-command-start.md'));
   });
 
   test('follows priority order - subdirectory wins over nested', async () => {

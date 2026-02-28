@@ -42,6 +42,10 @@ export {
   ScenarioListSchema,
   ScenarioRunResponseSchema,
   ScenarioErrorResponseSchema,
+  // Delegation schemas
+  DelegationStatusEntrySchema,
+  // Abort schema
+  AbortResponseSchema,
   // Prune schema (same format as ls output)
   PruneResponseSchema,
   // Execution schemas
@@ -120,6 +124,7 @@ import {
   ExecutionSummarySchema,
   RunCommandResponseSchema,
   AvailableRunbooksListSchema,
+  AbortResponseSchema,
 } from '@rundown-org/core';
 
 /**
@@ -146,4 +151,5 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
   'scenario ls': ScenarioListSchema,
   'scenario show': ScenarioDetailSchema,
   'scenario run': ScenarioRunResponseSchema,
+  abort: AbortResponseSchema,
 };

@@ -583,6 +583,90 @@ describe('TextRenderer', () => {
     });
   });
 
+  describe('delegation display in status detail', () => {
+    it('renders delegations section when present', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: DetailOutput = {
+        type: 'detail',
+        data: {
+          active: true,
+          stashed: false,
+          file: 'parent.md',
+          state: 'running',
+          position: { current: '1', total: 2 },
+          step: { name: '1', description: 'Review' },
+          delegations: [
+            { substep: '1.1', runbook: 'review-code.md', state: 'pending' },
+            { substep: '1.2', runbook: 'review-tests.md', state: 'claimed', childRunId: 'run_abc' },
+            { substep: '1.3', runbook: 'review-security.md', state: 'cancelled' },
+          ],
+        },
+        format: 'status',
+      };
+
+      renderer.render(event);
+      const output = writer.lines.join('\n');
+
+      expect(output).toContain('Delegations:');
+      expect(output).toContain('1.1');
+      expect(output).toContain('review-code.md');
+      expect(output).toContain('(pending claim)');
+      expect(output).toContain('1.2');
+      expect(output).toContain('(claimed: run_abc)');
+      expect(output).toContain('1.3');
+      expect(output).toContain('(cancelled)');
+    });
+
+    it('does not render delegations section when absent', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: DetailOutput = {
+        type: 'detail',
+        data: {
+          active: true,
+          stashed: false,
+          file: 'parent.md',
+          state: 'running',
+          position: { current: '1', total: 2 },
+          step: { name: '1', description: 'Review' },
+        },
+        format: 'status',
+      };
+
+      renderer.render(event);
+      const output = writer.lines.join('\n');
+
+      expect(output).not.toContain('Delegations:');
+    });
+
+    it('does not render delegations section when empty', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      const event: DetailOutput = {
+        type: 'detail',
+        data: {
+          active: true,
+          stashed: false,
+          file: 'parent.md',
+          state: 'running',
+          position: { current: '1', total: 2 },
+          step: { name: '1', description: 'Review' },
+          delegations: [],
+        },
+        format: 'status',
+      };
+
+      renderer.render(event);
+      const output = writer.lines.join('\n');
+
+      expect(output).not.toContain('Delegations:');
+    });
+  });
+
   describe('flush', () => {
     it('is a no-op', () => {
       const writer = createMockWriter();

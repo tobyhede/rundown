@@ -243,4 +243,143 @@ rd echo --result pass
       expect(parseResult.success).toBe(true);
     });
   });
+
+  describe('edge cases and boundary conditions', () => {
+    it('fail with no active runbook exits cleanly', async () => {
+      // No runbook started
+      const result = runCli('fail', workspace);
+
+      // Should exit without error (graceful handling)
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('No active runbook');
+    });
+
+    it('fail after max retries exhausted triggers fallback action', async () => {
+      // Start retry runbook
+      runCli('run --prompted runbooks/retry.runbook.md', workspace);
+
+      // Fail repeatedly until retries exhausted (RETRY 3 = 3 retries allowed, 4 total attempts)
+      runCli('fail', workspace); // retry 1 (retryCount: 0→1)
+      runCli('fail', workspace); // retry 2 (retryCount: 1→2)
+      runCli('fail', workspace); // retry 3 (retryCount: 2→3)
+      const result = runCli('fail', workspace); // retries exhausted, fallback STOP
+
+      // After max retries, should use on_fail action (STOP by default)
+      expect(result.exitCode).toBe(1);
+    });
+
+    it('fail on substep with PASS ALL transition', async () => {
+      // Create runbook with substeps and PASS ALL
+      const substepRunbook = `## 1. Process
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+### 1.1 First substep
+Do first task.
+
+### 1.2 Second substep
+Do second task.
+
+## 2. Done
+- PASS: COMPLETE
+
+Final step.
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'substep-fail-any.md'), substepRunbook);
+
+      runCli('run --prompted runbooks/substep-fail-any.md', workspace);
+
+      // Fail on first substep - should trigger FAIL ANY: STOP
+      const result = runCli('fail', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const states = await getAllStates(workspace);
+      const state = states.find((s) => s.runbook === 'runbooks/substep-fail-any.md');
+      expect(state?.variables.stopped).toBe(true);
+    });
+
+    it('fail command with --agent flag on non-agent runbook', async () => {
+      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+
+      // Agent has no stack and no binding on parent — resolves to no active runbook
+      const result = runCli('fail --agent test-agent', workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('No active runbook');
+    });
+
+    it('consecutive fail commands maintain state consistency', async () => {
+      // Create a runbook that transitions on second fail
+      const multiFailRunbook = `## 1. Retry step
+- FAIL: RETRY 2
+- PASS: CONTINUE
+
+Try this step.
+
+## 2. Done
+- PASS: COMPLETE
+
+Final step.
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'multi-fail.md'), multiFailRunbook);
+
+      runCli('run --prompted runbooks/multi-fail.md', workspace);
+
+      // First fail - retry
+      let result = runCli('fail', workspace);
+      let state = await getActiveState(workspace);
+      expect(state?.retryCount).toBe(1);
+      expect(state?.step).toBe('1');
+
+      // Second fail - retry again
+      result = runCli('fail', workspace);
+      state = await getActiveState(workspace);
+      expect(state?.retryCount).toBe(2);
+      expect(state?.step).toBe('1');
+
+      // Third fail - exhausted retries, should use on_fail (implicit STOP)
+      result = runCli('fail', workspace);
+      expect(result.exitCode).toBe(1);
+    });
+
+    it('fail with both --json and --agent flags', async () => {
+      const agentRunbook = `## 1. Agent task
+- PASS: COMPLETE
+- FAIL: STOP
+
+Do agent work.
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'agent-task.md'), agentRunbook);
+
+      runCli('run --prompted runbooks/agent-task.md --agent agent-001', workspace);
+
+      // Fail with both flags
+      const result = runCli('fail --agent agent-001 --json', workspace);
+
+      // Should produce valid JSON output
+      expect(() => JSON.parse(result.stdout)).not.toThrow();
+      const output = JSON.parse(result.stdout);
+      expect(output).toHaveProperty('action');
+    });
+
+    it('fail on runbook with no explicit fail transition uses default', async () => {
+      // Create runbook with only PASS transition (no explicit FAIL)
+      const noFailTransition = `## 1. Step
+- PASS: COMPLETE
+
+Do something.
+`;
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'no-fail.md'), noFailTransition);
+
+      runCli('run --prompted runbooks/no-fail.md', workspace);
+
+      // Fail should use default action (STOP)
+      const result = runCli('fail', workspace);
+      expect(result.exitCode).toBe(1);
+    });
+  });
 });

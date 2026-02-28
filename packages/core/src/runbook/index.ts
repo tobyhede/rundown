@@ -36,8 +36,11 @@ export { RunbookActorService, type ActorSyncResult, type AnyActorRef } from './a
 export type { RunbookEvent } from './compiler.js';
 export {
   createDelegation,
+  abortDelegation,
   type DelegateOptions,
   type DelegateResult,
+  type AbortDelegationOptions,
+  type AbortDelegationResult,
 } from './delegation-service.js';
 export {
   generateDelegationToken,

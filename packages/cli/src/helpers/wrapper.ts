@@ -62,7 +62,7 @@ export async function withErrorHandling(
     const rundownError = toRundownError(error);
 
     if (options.json) {
-      console.error(JSON.stringify(rundownError.toJSON(), null, 2));
+      console.log(JSON.stringify(rundownError.toJSON(), null, 2));
     } else {
       console.error(rundownError.toCliString(options.verbose));
     }

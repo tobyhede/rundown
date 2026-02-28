@@ -104,6 +104,12 @@ export const Errors = {
   delegationLockTimeout: (parentRunId: string): RundownError =>
     new RundownError('DELEGATION_LOCK_TIMEOUT', { parentRunId }),
 
+  delegationAlreadyClaimed: (step: string, childRunId: string): RundownError =>
+    new RundownError('DELEGATION_ALREADY_CLAIMED', { step, childRunId }),
+
+  delegationAlreadyResolved: (step: string): RundownError =>
+    new RundownError('DELEGATION_ALREADY_RESOLVED', { step }),
+
   // Generic
   unknown: (message: string, cause?: Error): RundownError =>
     new RundownError('UNKNOWN_ERROR', { message }, cause),

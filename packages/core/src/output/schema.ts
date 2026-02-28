@@ -33,6 +33,7 @@ export {
   // Action schemas
   ActionResponseSchema,
   StatusResponseSchema,
+  DelegationStatusEntrySchema,
   // List schemas
   ActiveRunbookEntrySchema,
   AvailableRunbookEntrySchema,
@@ -61,6 +62,8 @@ export {
   StepQueuedResponseSchema,
   AgentBoundResponseSchema,
   RunCommandResponseSchema,
+  // Abort schema
+  AbortResponseSchema,
   // Derived TypeScript types
   type Position,
   type RunbookContext,
@@ -69,6 +72,7 @@ export {
   type SuccessResponse,
   type ErrorResponse,
   type ActionResponse,
+  type DelegationStatusEntry,
   type StatusResponse,
   type ActiveRunbookEntry,
   type AvailableRunbookEntry,
@@ -88,6 +92,7 @@ export {
   type StepQueuedResponse,
   type AgentBoundResponse,
   type RunCommandResponse,
+  type AbortResponse,
   type CLIResponse,
   type CLIListResponse,
 } from './zod-schemas.js';

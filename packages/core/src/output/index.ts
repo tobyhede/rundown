@@ -82,7 +82,9 @@ export {
 export {
   ActionResponseSchema,
   StatusResponseSchema,
+  DelegationStatusEntrySchema,
   type ActionResponse,
+  type DelegationStatusEntry,
   type StatusResponse as SchemaStatusResponse,
 } from './schema.js';
 
@@ -151,6 +153,12 @@ export {
   type StepQueuedResponse,
   type AgentBoundResponse,
   type RunCommandResponse,
+} from './schema.js';
+
+// Abort schema
+export {
+  AbortResponseSchema,
+  type AbortResponse,
 } from './schema.js';
 
 // Union types
