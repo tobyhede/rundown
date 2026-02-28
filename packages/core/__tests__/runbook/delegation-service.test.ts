@@ -316,4 +316,183 @@ describe('createDelegation', () => {
     expect(result.updatedSubstepStates[0].id).toBe('1');
     expect(result.updatedSubstepStates[0].delegation).toBeDefined();
   });
+
+  it('throws for invalid step ID format (non-numeric)', () => {
+    const state = makeState();
+    const steps = makeSteps();
+
+    expect(() =>
+      createDelegation({ state, stepId: 'invalid', childRunbookPath: 'child.md' }, steps),
+    ).toThrow(/step not found/i);
+  });
+
+  it('throws for step ID with too many parts (e.g., 1.2.3)', () => {
+    const state = makeState();
+    const steps = makeSteps();
+
+    // parseStepIdFromString should reject this format
+    expect(() =>
+      createDelegation({ state, stepId: '1.2.3', childRunbookPath: 'child.md' }, steps),
+    ).toThrow(/step not found/i);
+  });
+
+  it('captures empty templateVars when state has none', () => {
+    const state = makeState({ templateVars: undefined });
+    const steps = makeSteps();
+    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+
+    expect(result.delegation.contextSnapshot.vars).toEqual({});
+  });
+
+  it('allows re-delegation after child run completes (childRunId set)', () => {
+    const completedDelegation = {
+      tokenHash: `sha256:${'a'.repeat(64)}`,
+      childRunbookPath: 'old-child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: 'completed-run-123',
+      createdAt: '2026-02-27T10:00:00.000Z',
+      cancelledAt: null,
+    };
+    const state = makeState({
+      substepStates: [
+        { id: '1', status: 'completed', delegation: completedDelegation },
+        { id: '2', status: 'pending' },
+      ],
+    });
+    const steps = makeSteps();
+
+    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'new-child.md' }, steps);
+
+    expect(result.token).toBeDefined();
+    const updated = result.updatedSubstepStates.find((ss) => ss.id === '1');
+    expect(updated?.delegation?.childRunbookPath).toBe('new-child.md');
+    expect(updated?.delegation?.childRunId).toBeNull();
+    expect(updated?.delegation?.tokenHash).not.toBe(completedDelegation.tokenHash);
+  });
+
+  it('includes extraVars with higher precedence than templateVars', () => {
+    const state = makeState({ templateVars: { env: 'staging', region: 'us-west' } });
+    const steps = makeSteps();
+    const result = createDelegation(
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        extraVars: { env: 'production', tier: 'premium' },
+      },
+      steps,
+    );
+
+    // extraVars should override templateVars
+    expect(result.delegation.contextSnapshot.vars.env).toBe('production');
+    expect(result.delegation.contextSnapshot.vars.region).toBe('us-west');
+    expect(result.delegation.contextSnapshot.vars.tier).toBe('premium');
+  });
+
+  it('preserves all existing substep properties when adding delegation', () => {
+    const state = makeState({
+      substepStates: [
+        { id: '1', status: 'running', agentId: 'agent-1', startedAt: '2026-02-27T10:00:00.000Z' },
+        { id: '2', status: 'pending' },
+      ],
+    });
+    const steps = makeSteps();
+    const result = createDelegation({ state, stepId: '1.2', childRunbookPath: 'child.md' }, steps);
+
+    const ss1 = result.updatedSubstepStates.find((ss) => ss.id === '1');
+    expect(ss1?.agentId).toBe('agent-1');
+    expect(ss1?.startedAt).toBe('2026-02-27T10:00:00.000Z');
+    expect(ss1?.delegation).toBeUndefined();
+
+    const ss2 = result.updatedSubstepStates.find((ss) => ss.id === '2');
+    expect(ss2?.delegation).toBeDefined();
+  });
+
+  it('tokens are unique across multiple delegations', () => {
+    const state = makeState({
+      substepStates: [
+        { id: '1', status: 'pending' },
+        { id: '2', status: 'pending' },
+      ],
+    });
+    const steps = makeSteps();
+
+    const result1 = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child1.md' }, steps);
+
+    // Create delegation on different substep
+    const result2 = createDelegation({ state, stepId: '1.2', childRunbookPath: 'child2.md' }, steps);
+
+    expect(result1.token).not.toBe(result2.token);
+    expect(result1.tokenHash).not.toBe(result2.tokenHash);
+  });
+
+  it('handles state with forStack for iteration context', () => {
+    const state = makeState({
+      step: '1',
+      substep: '1',
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 5,
+          start: 1,
+          end: 10,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+    });
+    const steps = makeSteps();
+    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+
+    expect(result.delegation.contextSnapshot.index).toBe(5);
+    expect(result.delegation.contextSnapshot.at).toBe('1.5.1');
+  });
+
+  it('omits index from snapshot when forStack is empty', () => {
+    const state = makeState({ forStack: [] });
+    const steps = makeSteps();
+    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+
+    expect(result.delegation.contextSnapshot.index).toBeUndefined();
+  });
+
+  it('handles null substep in state', () => {
+    const state = makeState({ substep: undefined });
+    const steps = makeSteps();
+    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+
+    expect(result.delegation.contextSnapshot.substep).toBeUndefined();
+  });
+
+  it('handles ancestors with empty vars', () => {
+    const ancestor: AncestorSnapshot = {
+      runId: 'anc-1',
+      runbook: 'ancestor.md',
+      step: '2',
+      substep: null,
+      vars: {},
+    };
+    const state = makeState();
+    const steps = makeSteps();
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', ancestors: [ancestor] },
+      steps,
+    );
+
+    expect(result.delegation.contextSnapshot.ancestors).toHaveLength(1);
+    expect(result.delegation.contextSnapshot.ancestors[0].vars).toEqual({});
+  });
+
+  it('createdAt timestamp is recent and valid ISO format', () => {
+    const state = makeState();
+    const steps = makeSteps();
+    const before = new Date();
+    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const after = new Date();
+
+    const createdAt = new Date(result.delegation.createdAt);
+    expect(createdAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(createdAt.getTime()).toBeLessThanOrEqual(after.getTime());
+    expect(result.delegation.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  });
 });

@@ -387,4 +387,210 @@ describe('claimAndLaunch', () => {
       'EACCES: permission denied',
     );
   });
+
+  it('returns TOKEN_NOT_FOUND when parent state no longer exists after lock', async () => {
+    const ctx = makeCtx();
+
+    const parentState = {
+      id: 'run-deleted',
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation: {
+            tokenHash: 'sha256:mock',
+            childRunbookPath: 'child.md',
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    // Mock scan
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => ({
+      findByToken: jest.fn<any>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    }));
+
+    // Mock lock
+    (core.DelegationLock as jest.Mock).mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+
+    // Mock manager.load returning null (state was deleted)
+    (ctx.manager.load as jest.Mock).mockResolvedValue(null);
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RD-808');
+      expect(result.error).toContain('no longer exists');
+    }
+  });
+
+  it('returns TOKEN_NOT_FOUND when delegation disappears after lock', async () => {
+    const ctx = makeCtx();
+
+    const parentState = {
+      id: 'run-1',
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation: {
+            tokenHash: 'sha256:mock',
+            childRunbookPath: 'child.md',
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    // Mock scan
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => ({
+      findByToken: jest.fn<any>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    }));
+
+    // Mock lock
+    (core.DelegationLock as jest.Mock).mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+
+    // Mock manager.load returning state without delegation
+    (ctx.manager.load as jest.Mock).mockResolvedValue({
+      id: 'run-1',
+      substepStates: [{ id: '1', status: 'pending' }],
+    });
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RD-808');
+      expect(result.error).toContain('no longer exists');
+    }
+  });
+
+  it('returns TOKEN_NOT_FOUND when token hash mismatches after reload', async () => {
+    const ctx = makeCtx();
+
+    const parentState = {
+      id: 'run-1',
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation: {
+            tokenHash: 'sha256:original',
+            childRunbookPath: 'child.md',
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    // Mock scan returning original hash
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => ({
+      findByToken: jest.fn<any>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    }));
+
+    // Mock lock
+    (core.DelegationLock as jest.Mock).mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+
+    // Mock manager.load returning state with different hash
+    (ctx.manager.load as jest.Mock).mockResolvedValue({
+      id: 'run-1',
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation: {
+            tokenHash: 'sha256:different',
+            childRunbookPath: 'child.md',
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    });
+
+    // hashDelegationToken should return the original mock hash
+    (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:original');
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RD-808');
+      expect(result.error).toContain('mismatch');
+    }
+  });
+
+  it('handles empty token string', async () => {
+    const ctx = makeCtx();
+    const result = await claimAndLaunch(ctx, '', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RD-807');
+      expect(result.error).toMatch(/invalid token format/i);
+    }
+  });
+
+  it('handles token with correct prefix but wrong length', async () => {
+    const ctx = makeCtx();
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_SHORT', {});
+
+    // Should validate format - scanner may return null or validation may catch it
+    expect(result.ok).toBe(false);
+    expect([core.ErrorCodes.INVALID_TOKEN.code, core.ErrorCodes.TOKEN_NOT_FOUND.code]).toContain(
+      result.code,
+    );
+  });
+
+  it('truncates token in error details for invalid format', async () => {
+    const ctx = makeCtx();
+    const result = await claimAndLaunch(ctx, 'invalid-very-long-token-string-here', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.details?.token) {
+      // Should contain ellipsis for truncation
+      expect(String(result.details.token)).toMatch(/\.\.\./);
+    }
+  });
 });

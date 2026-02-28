@@ -200,4 +200,180 @@ describe('reconstituteContextVars', () => {
     expect(result['context.parent.parent.step']).toBe('5');
     expect(result['context.parent.parent.substep']).toBeUndefined();
   });
+
+  it('handles snapshot with large number of ancestors (depth limit)', () => {
+    // Test with 10 levels of ancestors
+    const ancestors: AncestorSnapshot[] = [];
+    for (let i = 0; i < 10; i++) {
+      ancestors.push({
+        runId: `run-${String(i)}`,
+        runbook: `runbook-${String(i)}.md`,
+        step: String(i + 1),
+        substep: null,
+        vars: { level: String(i) },
+      });
+    }
+
+    const snapshot: ContextSnapshot = {
+      vars: { level: 'parent' },
+      ancestors,
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    // Verify parent
+    expect(result['context.ancestors.0.vars.level']).toBe('parent');
+
+    // Verify all ancestors are accessible
+    for (let i = 0; i < 10; i++) {
+      expect(result[`context.ancestors.${String(i + 1)}.step`]).toBe(String(i + 1));
+      expect(result[`context.ancestors.${String(i + 1)}.vars.level`]).toBe(String(i));
+    }
+
+    // Verify chain form for a few levels
+    expect(result['context.parent.parent.step']).toBe('1');
+    expect(result['context.parent.parent.parent.step']).toBe('2');
+  });
+
+  it('handles vars with special characters in keys', () => {
+    const snapshot: ContextSnapshot = {
+      vars: {
+        'key-with-dashes': 'value1',
+        'key.with.dots': 'value2',
+        'key_with_underscores': 'value3',
+      },
+      ancestors: [],
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.parent.vars.key-with-dashes']).toBe('value1');
+    expect(result['context.parent.vars.key.with.dots']).toBe('value2');
+    expect(result['context.parent.vars.key_with_underscores']).toBe('value3');
+  });
+
+  it('handles vars with empty string values', () => {
+    const snapshot: ContextSnapshot = {
+      vars: { emptyVar: '', normalVar: 'value' },
+      ancestors: [],
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.parent.vars.emptyVar']).toBe('');
+    expect(result['context.parent.vars.normalVar']).toBe('value');
+  });
+
+  it('handles ancestors with no vars field', () => {
+    const ancestor: AncestorSnapshot = {
+      runId: 'anc-run',
+      runbook: 'ancestor.md',
+      step: '2',
+      substep: null,
+      vars: {},
+    };
+    const snapshot: ContextSnapshot = {
+      vars: {},
+      ancestors: [ancestor],
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    // Should have structural keys but no vars keys
+    expect(result['context.ancestors.1.step']).toBe('2');
+    const varKeys = Object.keys(result).filter((k) => k.startsWith('context.ancestors.1.vars.'));
+    expect(varKeys).toHaveLength(0);
+  });
+
+  it('handles snapshot with only structural fields (no vars)', () => {
+    const snapshot: ContextSnapshot = {
+      vars: {},
+      ancestors: [],
+      step: '3',
+      substep: '2',
+      at: '3.2',
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.parent.step']).toBe('3');
+    expect(result['context.parent.substep']).toBe('2');
+    expect(result['context.parent.at']).toBe('3.2');
+
+    // No vars should be present
+    const varKeys = Object.keys(result).filter((k) => k.includes('.vars.'));
+    expect(varKeys).toHaveLength(0);
+  });
+
+  it('does not mutate input snapshot', () => {
+    const snapshot: ContextSnapshot = {
+      vars: { env: 'staging' },
+      ancestors: [
+        {
+          runId: 'anc',
+          runbook: 'anc.md',
+          step: '1',
+          substep: null,
+          vars: { region: 'us-west' },
+        },
+      ],
+    };
+
+    const originalVars = { ...snapshot.vars };
+    const originalAncestors = [...snapshot.ancestors];
+
+    reconstituteContextVars(snapshot);
+
+    // Verify snapshot wasn't mutated
+    expect(snapshot.vars).toEqual(originalVars);
+    expect(snapshot.ancestors).toEqual(originalAncestors);
+  });
+
+  it('handles numeric string values in vars', () => {
+    const snapshot: ContextSnapshot = {
+      vars: { port: '8080', count: '42' },
+      ancestors: [],
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.parent.vars.port']).toBe('8080');
+    expect(result['context.parent.vars.count']).toBe('42');
+  });
+
+  it('index is properly stringified when present', () => {
+    const snapshot: ContextSnapshot = {
+      vars: {},
+      ancestors: [],
+      step: '1',
+      index: 0, // Zero is valid
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.parent.index']).toBe('0');
+    expect(result['context.ancestors.0.index']).toBe('0');
+  });
+
+  it('handles snapshot with deeply nested context.* keys to exclude', () => {
+    const snapshot: ContextSnapshot = {
+      vars: {
+        normalVar: 'value',
+        'context.parent.vars.old': 'should-exclude',
+        'context.ancestors.0.step': 'should-exclude',
+        'context.something.else': 'should-exclude',
+      },
+      ancestors: [],
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.parent.vars.normalVar']).toBe('value');
+
+    // All context.* keys should be excluded
+    const contextKeys = Object.keys(result).filter((k) =>
+      k.startsWith('context.parent.vars.context.'),
+    );
+    expect(contextKeys).toHaveLength(0);
+  });
 });
