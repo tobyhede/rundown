@@ -168,7 +168,7 @@ beforeEach(() => {
   ]);
   (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
   (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-    status: 'running',
+    status: 'continue',
     applied: 1,
     state: makeState('parent-run-id'),
   });
@@ -285,7 +285,7 @@ describe('handleDelegationCompletion', () => {
     wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-      status: 'running',
+      status: 'continue',
       applied: 0,
       state: parentState,
     });
@@ -319,7 +319,7 @@ describe('handleDelegationCompletion', () => {
     wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-      status: 'running',
+      status: 'continue',
       applied: 1,
       state: parentState,
     });
@@ -350,7 +350,7 @@ describe('handleDelegationCompletion', () => {
     wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-      status: 'running',
+      status: 'continue',
       applied: 1,
       state: parentState,
     });
@@ -462,7 +462,7 @@ describe('handleDelegationCompletion', () => {
     wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-      status: 'running',
+      status: 'continue',
       applied: 0,
       state: parentState,
     });
@@ -489,7 +489,7 @@ describe('handleDelegationCompletion', () => {
     wireMocks(manager, lifecycleService);
 
     (drainResolvedCompletions as jest.Mock).mockResolvedValue({
-      status: 'running',
+      status: 'continue',
       applied: 0,
       state: parentState,
     });

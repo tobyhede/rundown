@@ -102,6 +102,12 @@ beforeEach(() => {
   // Restore defaults after reset
   (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
   (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
+  (core.deriveActiveFrame as jest.Mock).mockReturnValue({
+    step: '1',
+    substep: undefined,
+    iteration: undefined,
+    frameKey: '1',
+  });
 });
 
 describe('claimAndLaunch', () => {

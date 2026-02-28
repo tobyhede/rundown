@@ -70,7 +70,7 @@ export function registerClaimCommand(program: Command): void {
           if (result.loopResult === 'done' || result.loopResult === 'stopped') {
             const childState = await manager.load(result.childRunId);
             if (childState?.delegation) {
-              const propResult = childState.variables.completed ? 'pass' : 'fail';
+              const propResult = result.loopResult === 'done' ? 'pass' : 'fail';
               propagationResult = await handleDelegationCompletion(
                 childState,
                 propResult,

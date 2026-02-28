@@ -371,7 +371,7 @@ rd echo --result fail
     });
   });
 
-  describe('concurrent claims', () => {
+  describe('successive claims', () => {
     it('handles rapid successive claims of same token', async () => {
       await writeParentRunbook();
       await writeChildRunbook();

@@ -100,7 +100,10 @@ export async function handleDelegationCompletion(
 
     // 4. Build completion key from stored parent frame identity
     const frameKey = parentFrameKey ?? deriveActiveFrame(parentState).frameKey;
-    const entry = parentEntry ?? parentState.activeEntry ?? 1;
+    const entry =
+      parentEntry ??
+      (frameKey === parentState.activeFrameKey ? parentState.activeEntry : undefined) ??
+      1;
     const completionKey = buildCompletionKey(frameKey, entry, parentStepId);
 
     // 5. Record resolved completion

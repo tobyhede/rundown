@@ -66,7 +66,7 @@ describe('DelegationLinkage extended fields', () => {
   });
 });
 
-describe('hasDelegationLinkage helper logic', () => {
+describe('DelegationLinkage type shape', () => {
   it('returns true when delegation field is present', () => {
     const linkage: DelegationLinkage = {
       parentRunId: 'run-parent',
