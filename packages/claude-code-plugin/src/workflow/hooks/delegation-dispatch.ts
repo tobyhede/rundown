@@ -16,14 +16,16 @@ export interface DelegationDispatchResult {
 }
 
 /**
- * Handle PreToolUse(Task) events that contain a delegation marker.
+ * Detect delegation markers in a PreToolUse Task event, persist the delegation token in
+ * session metadata for abort correlation, and produce a Markdown context instructing
+ * the subagent to claim the token and report results.
  *
- * Detects `RD_CLAIM_TOKEN=` markers in Task prompt/description,
- * enriches the subagent prompt with `rd claim <token>` instructions,
- * and stores the token in session metadata for SubagentStop abort correlation.
+ * The context includes a claim command (`rd claim <token>`) and may include best-effort
+ * runbook/step hints when available.
  *
- * @param input - Hook input from Claude Code
- * @returns Dispatch result with context enrichment or empty object
+ * @param input - Hook input received from Claude Code for the event
+ * @returns A Dispatch result containing `context` with the delegation instructions when a token
+ *          is found; an empty object when no delegation is detected or the event is not applicable.
  */
 export async function handleDelegationDispatch(
   input: HookInput,
