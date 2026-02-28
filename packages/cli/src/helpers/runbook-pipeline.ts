@@ -33,6 +33,7 @@ import {
   DelegationLock,
   reconstituteContextVars,
   hashDelegationToken,
+  truncateDelegationToken,
   DELEGATION_TOKEN_PREFIX,
   ErrorCodes,
 } from '@rundown-org/core';
@@ -889,7 +890,7 @@ export async function claimAndLaunch(
   varOpts: VarOptions,
 ): Promise<ClaimResult> {
   const { output, manager, cwd } = ctx;
-  const truncatedToken = `${rawToken.slice(0, 12)}...`;
+  const truncatedToken = truncateDelegationToken(rawToken);
 
   // 1. Validate token format
   if (!rawToken.startsWith(DELEGATION_TOKEN_PREFIX)) {
@@ -1071,7 +1072,7 @@ export async function claimAndLaunch(
     output.status(
       true,
       'claimed',
-      `Claimed ${rawToken.slice(0, 12)}... → ${freshDelegation.childRunbookPath}`,
+      `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
       {
         action: 'claimed',
         token: truncatedToken,

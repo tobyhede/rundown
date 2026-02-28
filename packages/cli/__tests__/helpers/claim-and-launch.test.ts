@@ -21,6 +21,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   DelegationLock: jest.fn(),
   reconstituteContextVars: jest.fn().mockReturnValue({}),
   hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
+  truncateDelegationToken: jest.fn((token: string) => `${token.slice(0, 12)}...`),
   ErrorCodes: {
     INVALID_TOKEN: { code: 'RD-807' },
     TOKEN_NOT_FOUND: { code: 'RD-808' },
@@ -101,6 +102,9 @@ beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
   (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
+  (core.truncateDelegationToken as jest.Mock).mockImplementation(
+    (token: string) => `${token.slice(0, 12)}...`,
+  );
   (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
   (core.deriveActiveFrame as jest.Mock).mockReturnValue({
     step: '1',
@@ -276,6 +280,65 @@ describe('claimAndLaunch', () => {
       expect(result.childRunId).toBe('existing-child-run');
       expect(result.parentRunId).toBe('run-1');
     }
+  });
+
+  it('adopts orphaned child run when findOrphanedChild returns a match', async () => {
+    const ctx = makeCtx();
+
+    const parentState = {
+      id: 'run-1',
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation: {
+            tokenHash: 'sha256:mock',
+            childRunbookPath: 'child.md',
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    const orphanState = {
+      id: 'orphan-run-id',
+      delegation: { parentRunId: 'run-1', parentStepId: '1', tokenHash: 'sha256:mock' },
+    };
+
+    // Mock scan — findByToken returns parent, findOrphanedChild returns orphan
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => ({
+      findByToken: jest.fn<any>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+      findOrphanedChild: jest.fn<any>().mockResolvedValue(orphanState),
+    }));
+
+    // Mock lock
+    (core.DelegationLock as jest.Mock).mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+
+    // Mock manager.load returning fresh state with unclaimed delegation
+    (ctx.manager.load as jest.Mock).mockResolvedValue(parentState);
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.childRunId).toBe('orphan-run-id');
+      expect(result.parentRunId).toBe('run-1');
+    }
+
+    // Verify update was called to adopt the orphan
+    expect(ctx.manager.update).toHaveBeenCalled();
   });
 
   it('re-throws non-timeout lock errors instead of masking them', async () => {

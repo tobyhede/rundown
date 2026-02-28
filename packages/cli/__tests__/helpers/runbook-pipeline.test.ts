@@ -22,6 +22,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   DelegationLock: jest.fn(),
   reconstituteContextVars: jest.fn().mockReturnValue({}),
   hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
+  truncateDelegationToken: jest.fn((token: string) => `${token.slice(0, 12)}...`),
   ErrorCodes: {
     INVALID_TOKEN: { code: 'RD-807' },
     TOKEN_NOT_FOUND: { code: 'RD-808' },

@@ -147,6 +147,31 @@ describe('createDelegation', () => {
     ).toThrow(/active delegation exists/i);
   });
 
+  it('allows re-delegation when previous delegation has childRunId set', () => {
+    const claimedDelegation = {
+      tokenHash: `sha256:${'a'.repeat(64)}`,
+      childRunbookPath: 'other-child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: 'run_123',
+      createdAt: '2026-02-27T10:00:00.000Z',
+      cancelledAt: null,
+    };
+    const state = makeState({
+      substepStates: [
+        { id: '1', status: 'pending', delegation: claimedDelegation },
+        { id: '2', status: 'pending' },
+      ],
+    });
+    const steps = makeSteps();
+
+    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+
+    expect(result.token).toBeDefined();
+    const updated = result.updatedSubstepStates.find((ss) => ss.id === '1');
+    expect(updated?.delegation?.childRunbookPath).toBe('child.md');
+    expect(updated?.delegation?.childRunId).toBeNull();
+  });
+
   it('allows re-delegation when previous delegation is cancelled', () => {
     const cancelledDelegation = {
       tokenHash: `sha256:${'a'.repeat(64)}`,

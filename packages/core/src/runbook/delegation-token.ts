@@ -47,6 +47,21 @@ export function generateDelegationToken(): string {
 }
 
 /**
+ * Truncate a delegation token for display.
+ *
+ * Format: `rdtk_` prefix + first 3 body chars + `...` + last 4 body chars.
+ * Example: `rdtk_6H3...D5XY`
+ *
+ * @param token - The full delegation token
+ * @returns Truncated token string for display
+ */
+export function truncateDelegationToken(token: string): string {
+  const body = token.slice(TOKEN_PREFIX.length);
+  if (body.length <= 7) return token;
+  return `${TOKEN_PREFIX}${body.slice(0, 3)}...${body.slice(-4)}`;
+}
+
+/**
  * Compute a SHA-256 hash of a delegation token.
  *
  * The hash is stored in state instead of the raw token to prevent

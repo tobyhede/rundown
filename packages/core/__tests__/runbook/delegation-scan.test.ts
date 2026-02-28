@@ -103,6 +103,44 @@ describe('DelegationScanService', () => {
       const result = await scanner.findByToken(token);
       expect(result).toBeNull();
     });
+
+    it('returns stepId from contextSnapshot, not current state.step', async () => {
+      const token = generateDelegationToken();
+      const delegation = {
+        ...makeDelegation(token),
+        contextSnapshot: { vars: {}, ancestors: [], step: '1' },
+      };
+
+      const state = makeState('run-parent', {
+        step: '3',
+        substepStates: [{ id: '1', status: 'pending', delegation }],
+      });
+      await writeState(state);
+
+      const result = await scanner.findByToken(token);
+
+      expect(result).not.toBeNull();
+      expect(result!.stepId).toBe('1');
+    });
+
+    it('falls back to state.step when contextSnapshot.step is undefined', async () => {
+      const token = generateDelegationToken();
+      const delegation = {
+        ...makeDelegation(token),
+        contextSnapshot: { vars: {}, ancestors: [] },
+      };
+
+      const state = makeState('run-parent', {
+        step: '3',
+        substepStates: [{ id: '1', status: 'pending', delegation }],
+      });
+      await writeState(state);
+
+      const result = await scanner.findByToken(token);
+
+      expect(result).not.toBeNull();
+      expect(result!.stepId).toBe('3');
+    });
   });
 
   describe('findOrphanedChild', () => {

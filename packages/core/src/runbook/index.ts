@@ -42,6 +42,7 @@ export {
 export {
   generateDelegationToken,
   hashDelegationToken,
+  truncateDelegationToken,
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
 } from './delegation-token.js';
 export { DelegationLock } from './delegation-lock.js';
