@@ -28,9 +28,17 @@ const CLI_PATH = join(__dirname, '..', 'cli.js');
 
 /**
  * Get effective result for a suite case, preferring `result` over `expect.result`.
+ *
+ * @param c - A validated suite case
+ * @returns The effective terminal result ('COMPLETE' or 'STOP')
+ * @throws {Error} When neither `result` nor `expect.result` is defined
  */
 function getCaseEffectiveResult(c: ScenarioSuiteCase): 'COMPLETE' | 'STOP' {
-  return (c.result ?? c.expect?.result)!;
+  const result = c.result ?? c.expect?.result;
+  if (result === undefined) {
+    throw new Error('Suite case has neither result nor expect.result defined');
+  }
+  return result;
 }
 
 /**
