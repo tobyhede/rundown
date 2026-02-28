@@ -49,7 +49,6 @@ describe('DelegationLock', () => {
 
     const lockPath = path.join(tmpDir, '.claude/rundown/locks/run-run-perms.delegation.lock');
     const stat = await fs.stat(lockPath);
-    // eslint-disable-next-line no-bitwise
     const fileMode = stat.mode & 0o777;
     expect(fileMode).toBe(0o600);
 
@@ -61,7 +60,6 @@ describe('DelegationLock', () => {
 
     const lockDir = path.join(tmpDir, '.claude/rundown/locks');
     const stat = await fs.stat(lockDir);
-    // eslint-disable-next-line no-bitwise
     const dirMode = stat.mode & 0o777;
     expect(dirMode).toBe(0o700);
 

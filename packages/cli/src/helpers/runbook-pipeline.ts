@@ -913,7 +913,7 @@ export async function claimAndLaunch(
     };
   }
 
-  const { parentState, stepId, substepId, delegation } = scanResult;
+  const { parentState, stepId, substepId, delegation: _delegation } = scanResult;
   const lock = new DelegationLock(cwd);
 
   // 3. Acquire delegation lock

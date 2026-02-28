@@ -222,9 +222,9 @@ describe('Plugin Gate Loading', () => {
   test('respects maximum plugin depth limit', async () => {
     // Create chain of 11 plugins (exceeds MAX_PLUGIN_DEPTH of 10)
     for (let i = 0; i < 11; i++) {
-      const pluginDir = path.join(mockPluginDir, `plugin${i}`);
+      const pluginDir = path.join(mockPluginDir, `plugin${String(i)}`);
       await fs.mkdir(pluginDir, { recursive: true });
-      const nextPlugin = i < 10 ? `plugin${i + 1}` : 'plugin10';
+      const nextPlugin = i < 10 ? `plugin${String(i + 1)}` : 'plugin10';
       await fs.writeFile(
         path.join(pluginDir, 'rundown-plugin.json'),
         JSON.stringify({
@@ -343,7 +343,7 @@ describe('Gate Loader - Shell Command Edge Cases', () => {
     const customTimeout = 50;
     const result = await executeShellCommand('sleep 1', process.cwd(), customTimeout);
     expect(result.exitCode).toBe(124);
-    expect(result.output).toContain(`${customTimeout}ms`);
+    expect(result.output).toContain(`${String(customTimeout)}ms`);
   });
 
   test('handles non-existent command gracefully', async () => {
