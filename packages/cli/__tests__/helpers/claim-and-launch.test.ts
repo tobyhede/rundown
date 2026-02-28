@@ -10,6 +10,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (step: string, substep?: string, iteration?: number) =>
       `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
   ),
+  deriveActiveFrame: jest
+    .fn()
+    .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1' }),
   getActiveForContext: jest.fn().mockReturnValue(null),
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',

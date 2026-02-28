@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import {
-  createTestWorkspace,
-  runCli,
-  type TestWorkspace,
-} from './helpers/test-utils.js';
+import { createTestWorkspace, runCli, type TestWorkspace } from './helpers/test-utils.js';
 
 describe('CLI program', () => {
   let workspace: TestWorkspace;
@@ -285,7 +281,7 @@ describe('CLI program', () => {
       const result = runCli('status --json', workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
-      expect(output).toHaveProperty('action');
+      expect(output).toHaveProperty('active');
     });
 
     it('outputs JSON for ls --json', () => {

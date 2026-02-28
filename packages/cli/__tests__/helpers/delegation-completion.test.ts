@@ -8,8 +8,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
   DelegationLock: jest.fn(),
-  buildCompletionKey: jest.fn((frameKey: string, entry: number, substepId: string) =>
-    `${frameKey}|${String(entry)}|${substepId}`
+  buildCompletionKey: jest.fn(
+    (frameKey: string, entry: number, substepId: string) =>
+      `${frameKey}|${String(entry)}|${substepId}`,
   ),
   buildResolvedCompletion: jest.fn((data: any) => data),
   deriveActiveFrame: jest.fn((state: any) => ({
@@ -124,28 +125,33 @@ function makeLifecycleService(resolvedCompletions: Map<string, any> = new Map())
   return {
     getResolvedCompletion: jest
       .fn<any>()
-      .mockImplementation(async (_runId: string, key: string) => resolvedCompletions.get(key) ?? null),
+      .mockImplementation(
+        async (_runId: string, key: string) => resolvedCompletions.get(key) ?? null,
+      ),
     upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
   };
 }
 
 function wireMocks(manager: any, lifecycleService: any): void {
   const MockManager = core.RunbookStateManager as jest.MockedClass<typeof core.RunbookStateManager>;
-  const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<typeof core.ExecutionLifecycleService>;
+  const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
+    typeof core.ExecutionLifecycleService
+  >;
   const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
   const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
 
   MockManager.mockImplementation(() => manager);
   MockLifecycle.mockImplementation(() => lifecycleService);
-  MockActor.mockImplementation(() => ({} as any));
-  MockSession.mockImplementation(() => ({} as any));
+  MockActor.mockImplementation(() => ({}) as any);
+  MockSession.mockImplementation(() => ({}) as any);
 }
 
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations
   (core.buildCompletionKey as jest.Mock).mockImplementation(
-    (frameKey: string, entry: number, substepId: string) => `${frameKey}|${String(entry)}|${substepId}`
+    (frameKey: string, entry: number, substepId: string) =>
+      `${frameKey}|${String(entry)}|${substepId}`,
   );
   (core.buildResolvedCompletion as jest.Mock).mockImplementation((data: any) => data);
   (core.deriveActiveFrame as jest.Mock).mockImplementation((state: any) => ({
@@ -293,7 +299,7 @@ describe('handleDelegationCompletion', () => {
         agentId: 'delegation',
         result: 'pass',
         targetSubstep: '1',
-      })
+      }),
     );
   });
 
@@ -324,7 +330,7 @@ describe('handleDelegationCompletion', () => {
       expect.objectContaining({
         runbookId: 'parent-run-id',
         currentState: parentState,
-      })
+      }),
     );
   });
 
@@ -357,7 +363,7 @@ describe('handleDelegationCompletion', () => {
       expect.any(Array),
       '/test',
       false,
-      expect.any(Object)
+      expect.any(Object),
     );
   });
 
