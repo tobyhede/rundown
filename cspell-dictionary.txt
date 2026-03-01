@@ -33,6 +33,7 @@ minimatch
 picomatch
 vitest
 xstate
+microstep
 zod
 
 # Technical terms
@@ -126,8 +127,8 @@ unsub
 
 # Project-specific identifiers
 BADACTION
-rdtk
 cipherpowers
+rdtk
 Hede
 myrepo
 myorg

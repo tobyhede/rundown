@@ -57,9 +57,8 @@ Executes a command or displays a prompt. Max one code block per step.
 | Tag | Type | Behavior |
 | :--- | :--- | :--- |
 | `bash`, `sh`, `shell` | Executable | Runs in shell. Exit 0 = PASS, else FAIL. |
-| `prompt`, `{language} prompt`, `{language}` | Prompt | Output only. Not executed. |
-
-All non-executable code blocks with a language tag are treated as prompt blocks. Bare code fences (no info string) are ignored.
+| `bash prompt`, `prompt` | Display | Output only. Not executed. |
+| `json`, etc. | Display | Output only. |
 
 Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
 
@@ -83,9 +82,9 @@ List of external runbooks to execute.
 - ./deploy-api.runbook.md
 ```
 
-At step level, this syntax is canonicalized to implicit sequential substeps (`1`, `2`, ...), one runbook reference per substep.
+At step level, this syntax is canonicalized to implicit sequential substeps (`1`, `2`, ...), one workflow per substep.
 When step-level prompt text appears above this shorthand body, it is attached to the first generated implicit substep only.
-These two forms are structurally equivalent:
+These two forms are execution-equivalent:
 
 ```markdown
 ## 2. Review the plan
@@ -101,24 +100,12 @@ These two forms are structurally equivalent:
 - review-structural-integrity.runbook.md
 ```
 
-Runtime default behavior differs when parent transitions are omitted:
-- Step-level runbook-list shorthand is inferred as deferred and uses parent aggregation defaults (`PASS ALL: CONTINUE`, `FAIL ANY: STOP`).
-- Explicit H3 substeps are immediate by default and keep non-deferred pass-through behavior unless you define parent transitions explicitly.
-
 ### 3.4 Runtime Target Identity
 Runtime dispatch/completion identity is canonicalized as:
 
 `step + substep + iteration`
 
 Execution path notation such as `1.2.1` (`STEP.INDEX.SUBSTEP`) is display-only. It is neither authoring syntax nor a canonical identifier.
-
-### 3.5 Deferred Inference
-`deferred` is inferred runtime metadata (not user-authored syntax in this release).
-
-- Inferred `true`: steps with a `FOR` clause, and step-level runbook-list shorthand.
-- Inferred `false`: explicit H3 substeps without `FOR`.
-
-Deferred steps bubble substep outcomes to parent aggregation by default. Immediate steps do not.
 
 ## 4. Control Flow
 
@@ -130,7 +117,7 @@ Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
 | Component | Values | Description |
 | :--- | :--- | :--- |
 | **Result** | `PASS` (`YES`), `FAIL` (`NO`) | Outcome of the step's body. |
-| **Aggregation** | `ALL`, `ANY` | For substeps. Step-level runbook-list shorthand is canonicalized to substeps. Deferred parent default: `PASS ALL`, `FAIL ANY`. |
+| **Aggregation** | `ALL`, `ANY` | For substeps. Step-level runbook-list shorthand is canonicalized to substeps. Default: `PASS ALL`, `FAIL ANY`. |
 
 Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` (pessimistic — any failure stops), or `PASS ANY` with `FAIL ALL` (optimistic — only total failure stops). Non-complementary combinations are invalid because they create evaluation gaps (ALL/ALL) or overlaps (ANY/ANY).
 
@@ -138,10 +125,6 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 *   If only `PASS` defined: `FAIL` -> `STOP`.
 *   If only `FAIL` defined: `PASS` -> `CONTINUE`.
 *   If neither is defined: `PASS: CONTINUE`, `FAIL: STOP`.
-
-When a parent step with substeps omits parent transitions:
-*   Deferred parent (`FOR` or step-level runbook-list shorthand): aggregate with `PASS ALL: CONTINUE` and `FAIL ANY: STOP`.
-*   Immediate parent (explicit substeps, no `FOR`): keep non-deferred pass-through semantics.
 
 ### 4.2 Actions
 
@@ -159,7 +142,7 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 
 **GOTO Syntax**:
 *   `GOTO 3`: Jump to Step 3.
-*   `GOTO 3` (FOR step, no AT): Defaults to the FOR range's start value (e.g. iteration 1 for `FOR 1 TO 5`, iteration 5 for `FOR 5 TO 10`).
+*   `GOTO 3` (FOR step, no AT): Defaults to iteration 1.
 *   `GOTO 3 AT 1`: Jump to Step 3, iteration 1 (if FOR step).
 *   `GOTO 3 AT {{Index}}`: Re-enter Step 3 at current iteration.
 
@@ -183,7 +166,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Limits**: Open-ended data source iteration is capped at 10,000 iterations. Numeric bounds are capped at 10,000 at parse time.
 *   **Source references**: `{{ source }}` in FOR clauses is NOT template-expanded. It is a data source identifier resolved at runtime. Template-variable bounds (`{{ Max }}`) ARE expanded before parsing.
 *   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
-*   **Descending data sources**: Descending windows (`start > end`) iterate data source items in reverse position order.
+*   **No descending data sources**: Descending windows (`start > end`) are not supported for data sources.
 *   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
 *   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
@@ -200,8 +183,8 @@ Variables use Handlebars syntax: `{{variable}}`.
 | Source | Scope | Description |
 | :--- | :--- | :--- |
 | CLI (`--var`) | Global | Expanded at startup. |
-| `{{Step}}` | Step | Current execution identifier for this runbook context (e.g., `1`, `1.2`). |
-| `{{Index}}` | Loop | Current iteration number for this runbook context. |
+| `{{Step}}`, `{{step}}` | Step | Current execution identifier for this runbook context (e.g., `1`, `1.2`). |
+| `{{Index}}`, `{{index}}` | Loop | Current iteration number for this runbook context. |
 | `{{context.current.*}}` | Step/Loop | Canonical current runbook context (`step`, `substep`, `index`, `at`). |
 | `{{context.parent.*}}` | Nested | Parent runbook structural context and template variables (`vars.*`). |
 | `{{context.ancestors.N.*}}` | Nested | Ancestor runbook contexts (`0` is nearest parent). |
