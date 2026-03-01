@@ -267,7 +267,13 @@ export class RunbookStateManager {
   async loadSession(): Promise<SessionData> {
     try {
       const content = await fs.readFile(this.sessionPath, 'utf8');
-      return JSON.parse(content) as SessionData;
+      const raw = JSON.parse(content) as Record<string, unknown>;
+      return {
+        defaultStack: Array.isArray(raw.defaultStack) ? (raw.defaultStack as string[]) : [],
+        ...(typeof raw.stashedRunbookId === 'string'
+          ? { stashedRunbookId: raw.stashedRunbookId }
+          : {}),
+      };
     } catch {
       return { defaultStack: [] };
     }

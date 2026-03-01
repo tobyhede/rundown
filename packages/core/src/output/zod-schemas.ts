@@ -38,8 +38,6 @@ export const CLIErrorCodes = {
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   /** No stashed runbook to restore */
   NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
-  /** Agent binding operation failed */
-  AGENT_BINDING_ERROR: 'AGENT_BINDING_ERROR',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
@@ -59,7 +57,6 @@ export const ErrorCodeSchema = z
     'INVALID_SYNTAX',
     'VALIDATION_ERROR',
     'NO_STASHED_RUNBOOK',
-    'AGENT_BINDING_ERROR',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',
