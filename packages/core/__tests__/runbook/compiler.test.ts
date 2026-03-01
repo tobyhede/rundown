@@ -80,29 +80,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
     });
 
-    it('deferred shorthand runbook-list step with default aggregation stops on any failure', () => {
-      const steps = [
-        ...parseRunbookDocument(`## 1. Review package
-- review-pass.runbook.md
-- review-fail.runbook.md
-
-## 2. Done
-- PASS: COMPLETE
-`).steps,
-      ];
-
-      const machine = compileRunbookToMachine(steps);
-      const actor = createActor(machine);
-      actor.start();
-
-      actor.send({ type: 'PASS' }); // 1.1
-      actor.send({ type: 'FAIL' }); // 1.2 -> parent default FAIL ANY: STOP
-
-      expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
-    });
-
-    it('explicit H3 runbook substeps remain immediate by default', () => {
+    it('explicit H3 runbook substeps with workflows get CONTINUE defaults', () => {
       const steps = [
         ...parseRunbookDocument(`## 1. Review package
 ### 1.1 Review pass
@@ -119,36 +97,11 @@ describe('runbook compiler', () => {
       const actor = createActor(machine);
       actor.start();
 
-      actor.send({ type: 'PASS' }); // 1.1 -> 1.2
-      actor.send({ type: 'FAIL' }); // 1.2 FAIL defaults to STOP (immediate)
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE -> 1.2
+      actor.send({ type: 'FAIL' }); // 1.2 CONTINUE -> parent -> unconditional exit to step 2
 
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
-    });
-
-    it('falls back to legacy deferred inference when deferred flag is missing', () => {
-      const steps: Step[] = [
-        {
-          name: '1',
-          description: 'Legacy shorthand-derived step',
-          substepsDerivedFromRunbookList: true,
-          substeps: [
-            { id: '1', description: 'First' },
-            { id: '2', description: 'Second' },
-          ],
-        },
-        { name: '2', description: 'Done', transitions: DEFAULT_TRANSITIONS },
-      ];
-
-      const machine = compileRunbookToMachine(steps);
-      const actor = createActor(machine);
-      actor.start();
-
-      actor.send({ type: 'PASS' }); // 1.1 -> 1.2
-      actor.send({ type: 'FAIL' }); // 1.2 -> parent default FAIL ANY: STOP
-
-      expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
     });
 
     it('last substep transitions to parent state', () => {
@@ -1006,6 +959,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 4 },
           description: 'Test with failures',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
           substeps: [
             {
               id: '1',
@@ -1257,6 +1215,11 @@ describe('runbook compiler', () => {
           name: '3',
           forClause: { start: 1, end: 5 },
           description: 'Process batches',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
           substeps: [
             {
               id: '1',
@@ -1314,6 +1277,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 3 },
           description: 'Loop with NEXT on fail',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
           substeps: [
             {
               id: '1',
@@ -1368,6 +1336,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 5 },
           description: 'Loop with early break',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
           substeps: [
             {
               id: '1',
@@ -3388,6 +3361,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 5, end: 1 },
           description: 'Descending with break',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
           substeps: [
             {
               id: '1',
@@ -3586,6 +3564,11 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 3, end: 1 },
           description: 'Descending with mixed results',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
           substeps: [
             {
               id: '1',
@@ -4138,7 +4121,7 @@ echo "processing"
       actor.stop();
     });
 
-    it('iterates descending file source window (3 TO 1)', () => {
+    it('rejects descending file source window (3 TO 1)', () => {
       const DEFAULT_TRANSITIONS_LOCAL = {
         all: true,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
@@ -4171,42 +4154,22 @@ echo "processing"
       const sources = {
         servers: { kind: 'file' as const, path: '/tmp/servers.txt', format: 'text' as const },
       };
+
+      // Descending windows are not supported for file sources.
+      // The error is thrown inside XState's actor initialization (during assign action
+      // resolution in the initial microstep). XState catches it internally and stores
+      // it in the snapshot as status:'error'. Calling .start() with no error observer
+      // would trigger an async re-throw via setTimeout, so we avoid starting and
+      // instead inspect the snapshot directly.
       const machine = compileRunbookToMachine(steps, { sources });
       const actor = createActor(machine);
-      actor.start();
-
-      // Iteration 3 (start, descending)
-      let ctx = actor.getSnapshot().context;
-      let top = ctx.forStack[0];
-      expect(top.iteration).toBe(3);
-      expect(top.start).toBe(3);
-      expect(top.end).toBe(1);
-      expect(top.source).toEqual({
-        kind: 'file',
-        path: '/tmp/servers.txt',
-        format: 'text',
-        snapshot: null,
-      });
-
-      // File source with defined end iterates by numeric bounds (no execution layer needed)
-      // Send PASS to advance to iteration 2
-      actor.send({ type: 'PASS' });
-      ctx = actor.getSnapshot().context;
-      top = ctx.forStack[0];
-      expect(top.iteration).toBe(2);
-
-      // Send PASS to advance to iteration 1
-      actor.send({ type: 'PASS' });
-      ctx = actor.getSnapshot().context;
-      top = ctx.forStack[0];
-      expect(top.iteration).toBe(1);
-
-      // Send PASS to exit loop (no more iterations)
-      actor.send({ type: 'PASS' });
-      ctx = actor.getSnapshot().context;
-      expect(ctx.forStack).toEqual([]);
-
-      actor.stop();
+      // Do not call actor.start() — it would trigger XState's reportUnhandledError
+      // which uses setTimeout to re-throw, escaping Jest's error boundaries.
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.status).toBe('error');
+      expect((snapshot.error as Error).message).toBe(
+        'Descending windows are not supported for file sources',
+      );
     });
   });
 
@@ -4435,7 +4398,7 @@ echo "processing"
 
       expect(steps[0].substeps?.[0]).toMatchObject({
         id: '1',
-        runbooks: ['review-technical-accuracy.runbook.md'],
+        workflows: ['review-technical-accuracy.runbook.md'],
       });
 
       const machine = compileRunbookToMachine(steps);

@@ -6,7 +6,6 @@
  * @param description - Optional heading description text
  * @param separator - Separator inserted between id and description when present
  * @returns Markdown heading string
- * @throws {RangeError} If level is not an integer between 1 and 6
  */
 export function renderHeading(
   level: number,
@@ -14,9 +13,6 @@ export function renderHeading(
   description?: string,
   separator = ' ',
 ): string {
-  if (!Number.isInteger(level) || level < 1 || level > 6) {
-    throw new RangeError(`Heading level must be an integer 1–6, got ${String(level)}`);
-  }
   const marker = '#'.repeat(level);
   const text = description?.trim();
   if (!text) return `${marker} ${id}`;
@@ -31,11 +27,5 @@ export function renderHeading(
  * @returns Markdown code fence string
  */
 export function renderCodeFence(code: string, lang?: string): string {
-  let fenceLen = 3;
-  const match = code.match(/`{3,}/g);
-  if (match) {
-    fenceLen = Math.max(fenceLen, ...match.map((m) => m.length)) + 1;
-  }
-  const fence = '`'.repeat(fenceLen);
-  return `${fence}${lang ?? ''}\n${code}\n${fence}`;
+  return `\`\`\`${lang ?? ''}\n${code}\n\`\`\``;
 }

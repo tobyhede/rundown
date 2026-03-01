@@ -98,7 +98,7 @@ describe('renderSubstep', () => {
     const substep: Substep = {
       id: '1',
       description: 'With child runbook',
-      runbooks: ['task.runbook.md'],
+      workflows: ['task.runbook.md'],
     };
     expect(renderSubstep(substep, '1')).toBe('### 1.1 With child runbook\n\n- task.runbook.md');
   });
@@ -179,7 +179,7 @@ describe('renderStep', () => {
         {
           id: '1',
           description: '',
-          runbooks: ['review-technical-accuracy.runbook.md'],
+          workflows: ['review-technical-accuracy.runbook.md'],
         },
       ],
     } as Step;
@@ -198,7 +198,7 @@ describe('renderStep', () => {
           id: '1',
           description: '',
           prompt: 'Review the following items carefully.',
-          runbooks: ['review.runbook.md'],
+          workflows: ['review.runbook.md'],
         },
       ],
     } as Step;
