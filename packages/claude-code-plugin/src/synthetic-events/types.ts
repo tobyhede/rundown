@@ -23,7 +23,10 @@ export interface SyntheticEvent {
 }
 
 /**
- * Check if an event name is synthetic (not fired by Claude Code)
+ * Check if an event name is synthetic (not fired by Claude Code).
+ *
+ * @param eventName - The event name to check
+ * @returns True if the event name is a {@link SyntheticEventName}
  */
 export function isSyntheticEvent(eventName: string): eventName is SyntheticEventName {
   return ['SkillStart', 'SkillEnd', 'SlashCommandStart', 'SlashCommandEnd'].includes(eventName);

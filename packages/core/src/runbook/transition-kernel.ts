@@ -88,8 +88,8 @@ export function extractLastAction(snapshot: unknown): LastAction | undefined {
  */
 export function extractRetryMax(snapshot: unknown): number {
   const ctx = narrowSnapshotContext(snapshot);
-  if (ctx && 'retryMax' in ctx) {
-    return ctx.retryMax ?? 0;
+  if (ctx && 'retryMax' in ctx && typeof ctx.retryMax === 'number') {
+    return ctx.retryMax;
   }
   return 0;
 }
@@ -105,8 +105,8 @@ export function extractRetryMax(snapshot: unknown): number {
  */
 export function extractRetryDisplayCount(snapshot: unknown, retryCount: number): number {
   const ctx = narrowSnapshotContext(snapshot);
-  if (ctx && 'iterationRetryCount' in ctx) {
-    const iterationRetryCount = ctx.iterationRetryCount ?? 0;
+  if (ctx && 'iterationRetryCount' in ctx && typeof ctx.iterationRetryCount === 'number') {
+    const iterationRetryCount = ctx.iterationRetryCount;
     if (iterationRetryCount > 0) return iterationRetryCount;
   }
   return retryCount;

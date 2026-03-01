@@ -134,8 +134,8 @@ export async function runCli(args: string[]): Promise<CliResult> {
       if (execError.stdout) {
         const data = parseJsonOrJsonl(execError.stdout);
         if (data && typeof data === 'object') {
-          const error = (data as { error?: string }).error;
-          return { success: false, error: error ?? 'Command failed', data };
+          const parsedError = (data as { error?: string }).error;
+          return { success: false, error: parsedError ?? 'Command failed', data };
         }
       }
 
@@ -143,8 +143,8 @@ export async function runCli(args: string[]): Promise<CliResult> {
       if (execError.stderr) {
         const data = parseJsonOrJsonl(execError.stderr);
         if (data && typeof data === 'object') {
-          const error = (data as { error?: string }).error;
-          return { success: false, error: error ?? 'Command failed', data };
+          const parsedError = (data as { error?: string }).error;
+          return { success: false, error: parsedError ?? 'Command failed', data };
         }
       }
 

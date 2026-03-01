@@ -27,5 +27,12 @@ export function renderHeading(
  * @returns Markdown code fence string
  */
 export function renderCodeFence(code: string, lang?: string): string {
-  return `\`\`\`${lang ?? ''}\n${code}\n\`\`\``;
+  let fenceLen = 3;
+  const backtickRuns = code.match(/`+/g);
+  if (backtickRuns) {
+    const maxRun = Math.max(...backtickRuns.map((r) => r.length));
+    if (maxRun >= 3) fenceLen = maxRun + 1;
+  }
+  const fence = '`'.repeat(fenceLen);
+  return `${fence}${lang ?? ''}\n${code}\n${fence}`;
 }

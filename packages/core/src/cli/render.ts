@@ -71,6 +71,6 @@ export function renderStepForCLI(model: Readonly<DisplayStepModel>): string {
     lines.push(renderCodeFence(model.command.code, model.command.lang));
   }
 
-  // Command is not rendered here - it's shown via printCommandExec() with colored prompt
+  // Command rendered above via renderCodeFence; execution output shown by printCommandExec()
   return lines.join('\n');
 }

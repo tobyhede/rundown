@@ -283,7 +283,7 @@ function extractNameAndStage(
 
     case 'SubagentStart':
       return input.agent_type
-        ? { name: input.agent_type.split(':').pop() ?? input.agent_type, stage: 'start' }
+        ? { name: input.agent_type.replace(/^[^:]+:/, ''), stage: 'start' }
         : null;
 
     default:

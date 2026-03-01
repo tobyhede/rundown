@@ -1,7 +1,12 @@
 import { RunbookSyntaxError, type ParsedConditional, type AggregationModifier } from './types.js';
 import type { Action, Transitions } from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
-import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
+import {
+  parseStepIdFromString,
+  stepIdToString,
+  isReservedWord,
+  NAMED_IDENTIFIER_PATTERN,
+} from './step-id.js';
 import type { ForClause } from './ast.js';
 
 /**
@@ -808,7 +813,7 @@ export function formatAction(action: Action): string {
     case 'STOP':
       return action.message ? `STOP "${action.message}"` : 'STOP';
     case 'GOTO':
-      return `GOTO ${action.target.step}`;
+      return `GOTO ${stepIdToString(action.target)}`;
     case 'NEXT':
       return 'NEXT';
     case 'BREAK':
