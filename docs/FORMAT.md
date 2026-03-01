@@ -56,7 +56,7 @@ where agent_type is:
 
 where substep_id is:
   positive_integer                              -- short form (parent prefix omitted)
-  | parent_ref "." { positive_integer | name }  -- qualified form
+  | parent_ref "." ( positive_integer | name )  -- qualified form
 
 where parent_ref is:
   positive_integer    -- for static parent
@@ -279,7 +279,7 @@ Canonical runtime targeting is `step + substep + iteration`.
 
 | Input | Expands To |
 |-------|------------|
-| `GOTO N` (FOR step) | `GOTO N AT 1` |
+| `GOTO N` (FOR step) | `GOTO N AT <range start>` |
 | `GOTO N AT I` (FOR step) | `GOTO N AT I` |
 
 ### Implicit Transitions

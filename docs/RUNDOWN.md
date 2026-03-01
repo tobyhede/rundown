@@ -787,7 +787,7 @@ rundown goto 3.1     # Jump to substep 3.1
 | `GOTO N.M AT I` | Any step | Jump to substep M of FOR step N at iteration I |
 | `GOTO Name AT I` | Any step | Enter named FOR step at iteration I |
 
-The `AT` qualifier is only valid when the target is a step with a FOR annotation. If `AT` is omitted for a FOR step, it defaults to iteration 1 (restart from beginning). See [SPEC.md GOTO](./SPEC.md#goto) for full details.
+The `AT` qualifier is only valid when the target is a step with a FOR annotation. If `AT` is omitted for a FOR step, it defaults to the FOR range's start value (e.g. iteration 1 for `FOR 1 TO 5`, iteration 5 for `FOR 5 TO 10`). See [SPEC.md GOTO](./SPEC.md#goto) for full details.
 
 ### Status Commands
 

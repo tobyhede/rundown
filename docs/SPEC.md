@@ -158,7 +158,7 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 
 **GOTO Syntax**:
 *   `GOTO 3`: Jump to Step 3.
-*   `GOTO 3` (FOR step, no AT): Defaults to iteration 1.
+*   `GOTO 3` (FOR step, no AT): Defaults to the FOR range's start value (e.g. iteration 1 for `FOR 1 TO 5`, iteration 5 for `FOR 5 TO 10`).
 *   `GOTO 3 AT 1`: Jump to Step 3, iteration 1 (if FOR step).
 *   `GOTO 3 AT {{Index}}`: Re-enter Step 3 at current iteration.
 
