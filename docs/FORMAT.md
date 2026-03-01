@@ -279,7 +279,7 @@ Canonical runtime targeting is `step + substep + iteration`.
 
 | Input | Expands To |
 |-------|------------|
-| `GOTO N` (FOR step) | `GOTO N AT <range start>` |
+| `GOTO N` (FOR step) | `GOTO N AT <range start>` (see [FOR Clause](#for-clause) for range start determination) |
 | `GOTO N AT I` (FOR step) | `GOTO N AT I` |
 
 ### Implicit Transitions

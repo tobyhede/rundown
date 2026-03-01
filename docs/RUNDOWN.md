@@ -779,7 +779,7 @@ rundown goto 3.1     # Jump to substep 3.1
 
 | Target | Valid From | Description |
 |--------|------------|-------------|
-| `GOTO N` | Any step | Jump to step N (if FOR step, implies AT 1) |
+| `GOTO N` | Any step | Jump to step N (if FOR step, defaults to AT range start) |
 | `GOTO N.M` | Any step | Jump to substep M of step N |
 | `GOTO Name` | Any step | Jump to named step |
 | `GOTO Name.M` | Any step | Jump to substep M of named step |

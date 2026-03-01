@@ -692,9 +692,7 @@ rd echo server={{ server }}
 
     const events = parseJsonEvents(result.stdout);
 
-    const commandStartedEvents = events.filter(
-      (e: { type: string }) => e.type === 'command_started',
-    );
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
     // Should have exactly 3 iterations (positions 3, 2, 1 = gamma, beta, alpha)
     expect(commandStartedEvents).toHaveLength(3);
