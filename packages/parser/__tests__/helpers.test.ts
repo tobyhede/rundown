@@ -1152,8 +1152,11 @@ describe('extractSubstepHeader edge cases', () => {
     expect(extractSubstepHeader('@invalid.1 Something')).toBeNull();
   });
 
-  it('returns null for nothing after dot', () => {
-    expect(extractSubstepHeader('1.')).toBeNull();
+  it('treats trailing dot on bare numeric as separator', () => {
+    expect(extractSubstepHeader('1.')).toEqual({
+      id: '1',
+      description: '',
+    });
   });
 
   it('returns null for invalid substep id', () => {
@@ -1585,6 +1588,34 @@ describe('C2: substep short form (bare numeric)', () => {
     expect(extractSubstepHeader('1 (code-agent)')).toEqual({
       id: '1',
       description: '(code-agent)',
+    });
+  });
+
+  it('strips trailing period separator from bare numeric', () => {
+    expect(extractSubstepHeader('1. Title')).toEqual({
+      id: '1',
+      description: 'Title',
+    });
+  });
+
+  it('strips trailing paren separator from bare numeric', () => {
+    expect(extractSubstepHeader('1) Title')).toEqual({
+      id: '1',
+      description: 'Title',
+    });
+  });
+
+  it('strips trailing colon separator from bare numeric', () => {
+    expect(extractSubstepHeader('2: Review code')).toEqual({
+      id: '2',
+      description: 'Review code',
+    });
+  });
+
+  it('handles bare numeric with separator and no description', () => {
+    expect(extractSubstepHeader('3.')).toEqual({
+      id: '3',
+      description: '',
     });
   });
 

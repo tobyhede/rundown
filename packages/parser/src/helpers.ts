@@ -201,13 +201,18 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
   if (!trimmed) return null;
 
   const spaceIdx = trimmed.indexOf(' ');
-  const firstToken = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
+  const firstTokenRaw = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
 
-  // Branch 1: Bare positive integer (e.g., "1", "2 Description", "3) Title")
+  // Strip trailing separator chars (e.g., "1." → "1", "3)" → "3")
+  let tokenEnd = firstTokenRaw.length;
+  while (tokenEnd > 0 && TRAILING_SEPARATORS.has(firstTokenRaw[tokenEnd - 1])) tokenEnd--;
+  const firstToken = firstTokenRaw.slice(0, tokenEnd);
+
+  // Branch 1: Bare positive integer (e.g., "1", "2 Description", "1. Title", "3) Title")
   if (/^\d+$/.test(firstToken)) {
     const num = parseInt(firstToken, 10);
     if (num > 0) {
-      const afterFirstToken = spaceIdx !== -1 ? trimmed.slice(spaceIdx) : '';
+      const afterFirstToken = trimmed.slice(firstTokenRaw.length);
       const description = stripSeparator(afterFirstToken);
       return { id: firstToken, description };
     }

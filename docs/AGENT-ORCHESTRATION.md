@@ -15,7 +15,7 @@ How Rundown orchestrates work through agents. This document covers the five orch
   - [1. Sequential Runbook Steps](#1-sequential-runbook-steps)
   - [2. Skill-Guided Single Agent](#2-skill-guided-single-agent)
   - [3. Runbook + Skill Composition](#3-runbook--skill-composition)
-  - [4. Substeps with Agent Types](#4-substeps-with-agent-types)
+  - [4. Substeps with Agent Dispatch](#4-substeps-with-agent-dispatch)
   - [5. Parallel Fan-Out / Fan-In](#5-parallel-fan-out--fan-in)
 - [Choosing a Model](#choosing-a-model)
 - [Agent Type Conventions](#agent-type-conventions)
@@ -139,6 +139,7 @@ Verify test coverage and assertions.
 ```
 
 **Command sequence:**
+
 ```bash
 # Parent queues substep
 rd run --step 2.1
@@ -210,7 +211,7 @@ Each agent writes its findings to `.work/{date}-verify-{agentId}.md`, ending wit
 | Linear checklist, CI pipeline | [Sequential Steps](#1-sequential-runbook-steps) | Low |
 | Methodology guidance, flexible execution | [Skill-Guided](#2-skill-guided-single-agent) | Low |
 | Enforced ordering + methodology | [Runbook + Skill](#3-runbook--skill-composition) | Medium |
-| Distinct subtasks, specialised agents | [Substeps with Agent Types](#4-substeps-with-agent-types) | Medium |
+| Distinct subtasks, specialised agents | [Substeps with Agent Dispatch](#4-substeps-with-agent-dispatch) | Medium |
 | Independent review, consensus | [Parallel Fan-Out](#5-parallel-fan-out--fan-in) | High |
 
 **Decision flow:**
