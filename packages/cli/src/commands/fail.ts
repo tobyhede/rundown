@@ -61,7 +61,7 @@ export function registerFailCommand(program: Command): void {
             ctx.actor.stop();
           }
           if (shouldExitWithError) {
-            process.exit(1);
+            process.exitCode = 1;
           }
         },
         { json: options.json },

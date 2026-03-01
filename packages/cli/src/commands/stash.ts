@@ -34,7 +34,12 @@ export function registerStashCommand(program: Command): void {
           const totalSteps = await getStepTotal(cwd, state.runbook);
 
           // Stash the runbook
-          await sessionService.stash();
+          const stashedId = await sessionService.stash();
+          if (!stashedId) {
+            output.status(false, 'stash', 'A runbook is already stashed. Pop it first.');
+            output.flush();
+            return;
+          }
 
           // Emit structured output - TextRenderer handles stash action specially
           output.metadata(buildMetadata(state));
@@ -43,7 +48,7 @@ export function registerStashCommand(program: Command): void {
               current: state.step,
               total: totalSteps,
             },
-            stashedId: state.id,
+            stashedId,
           });
           output.flush();
         },
