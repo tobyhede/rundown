@@ -183,7 +183,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Limits**: Open-ended data source iteration is capped at 10,000 iterations. Numeric bounds are capped at 10,000 at parse time.
 *   **Source references**: `{{ source }}` in FOR clauses is NOT template-expanded. It is a data source identifier resolved at runtime. Template-variable bounds (`{{ Max }}`) ARE expanded before parsing.
 *   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
-*   **No descending data sources**: Descending windows (`start > end`) are not supported for data sources.
+*   **Descending data sources**: Descending windows (`start > end`) iterate data source items in reverse position order.
 *   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
 *   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.

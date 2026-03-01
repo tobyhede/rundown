@@ -1190,7 +1190,7 @@ JSON output compatibility:
 | "Invalid step target" | Bad goto format | Use "N" or "N.M" |
 | "FOR loop references undefined data source" | Sourced FOR clause without matching source | Define source in config.yaml or --var-file |
 | "File drift detected" | Data file changed during iteration | Ensure file stability or restart runbook |
-| "Descending windows are not supported for file sources" | `start > end` on file source | File sources must iterate forward |
+
 
 ### State Recovery
 
