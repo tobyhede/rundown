@@ -110,11 +110,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step with substeps',
           forClause: { start: 1, end: 3 },
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
             { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
@@ -141,11 +137,7 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Review step',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -188,11 +180,7 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Setup',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: 'ErrorHandler',
@@ -214,11 +202,7 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'First',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: 'ErrorHandler',
@@ -252,11 +236,7 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Step 1',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -283,11 +263,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Substep 1.2',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -329,11 +305,7 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Step 1',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
         },
       ];
       const machine = compileRunbookToMachine(steps);
@@ -727,11 +699,7 @@ describe('runbook compiler', () => {
         {
           name: '2',
           description: 'Setup',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -741,20 +709,12 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Fetch',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
             {
               id: '2',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -827,11 +787,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -881,11 +837,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -925,11 +877,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -959,11 +907,7 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 4 },
           description: 'Test with failures',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -1025,11 +969,7 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 2 },
           description: 'For without substeps',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -1076,11 +1016,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1125,11 +1061,7 @@ describe('runbook compiler', () => {
         {
           name: '2',
           description: 'Setup',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -1148,11 +1080,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Process (skipped by NEXT)',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1205,21 +1133,13 @@ describe('runbook compiler', () => {
         {
           name: '2',
           description: 'Setup',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
           forClause: { start: 1, end: 5 },
           description: 'Process batches',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -1233,11 +1153,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1277,11 +1193,7 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 3 },
           description: 'Loop with NEXT on fail',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -1336,20 +1248,12 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 5 },
           description: 'Loop with early break',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
               description: 'Increment',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
             {
               id: '2',
@@ -1474,11 +1378,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1538,11 +1438,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1585,11 +1481,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1641,11 +1533,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1703,11 +1591,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Substep 2',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1771,11 +1655,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Process',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1838,11 +1718,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Sub',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1903,11 +1779,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Sub',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -1940,11 +1812,7 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Start',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -1954,20 +1822,12 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'First',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
             {
               id: '2',
               description: 'Second',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -2253,11 +2113,7 @@ describe('runbook compiler', () => {
             {
               id: '2',
               description: 'Second sub',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -2492,11 +2348,7 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 3 },
           description: 'Loop with PASS ALL',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -2546,11 +2398,7 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 3 },
           description: 'Loop with PASS ALL',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -2598,20 +2446,12 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 3 },
           description: 'Loop with all passes',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
               description: 'Always pass',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -2698,11 +2538,7 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 5 },
           description: 'Loop with BREAK',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -2762,11 +2598,7 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 2 },
           description: 'Loop with NEXT',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -2906,11 +2738,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Target substep',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -3137,11 +2965,7 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Recover',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -3361,11 +3185,7 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 5, end: 1 },
           description: 'Descending with break',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -3564,11 +3384,7 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 3, end: 1 },
           description: 'Descending with mixed results',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -4194,11 +4010,7 @@ echo "processing"
             {
               id: '1',
               description: 'Process {{line}}',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -4241,11 +4053,7 @@ echo "processing"
             {
               id: '1',
               description: 'Process {{line}}',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -4293,11 +4101,7 @@ echo "processing"
             {
               id: '1',
               description: 'Process {{line}}',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -4351,11 +4155,7 @@ echo "processing"
             {
               id: '1',
               description: 'Process {{line}}',
-              transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -4532,11 +4332,7 @@ echo "processing"
         {
           name: '1',
           description: 'Review step',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -4742,11 +4538,7 @@ echo "processing"
         {
           name: '1',
           description: 'Review step',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -4782,11 +4574,7 @@ echo "processing"
         {
           name: '1',
           description: 'Review step',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -4838,11 +4626,7 @@ echo "processing"
           name: '1',
           description: 'FOR loop',
           forClause: { start: 1, end: 3 },
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [{ id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS }],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
@@ -4903,11 +4687,7 @@ echo "processing"
           name: '1',
           description: 'FOR loop',
           forClause: { start: 1, end: 3 },
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -5425,11 +5205,7 @@ echo "processing"
             },
           },
           description: 'Loop with substeps',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -5497,11 +5273,7 @@ echo "processing"
             },
           },
           description: 'Loop with BREAK on fail',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -5548,11 +5320,7 @@ echo "processing"
           name: '1',
           forClause: { start: 1, end: 2 },
           description: 'Loop without explicit forClause transitions',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -5612,11 +5380,7 @@ echo "processing"
         {
           name: '1',
           description: 'Non-FOR step with 2 substeps',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -5680,11 +5444,7 @@ echo "processing"
             },
           },
           description: 'Loop with PASS ANY (all: false)',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -5753,11 +5513,7 @@ echo "processing"
             },
           },
           description: 'Loop with RETRY on fail',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -5814,11 +5570,7 @@ echo "processing"
             },
           },
           description: 'Loop with RETRY 1 CONTINUE on fail',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -5878,11 +5630,7 @@ echo "processing"
             },
           },
           description: 'Loop with RETRY on fail',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
@@ -5944,11 +5692,7 @@ echo "processing"
             },
           },
           description: 'Loop with RETRY 1 CONTINUE',
-          transitions: {
-            all: true,
-            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-          },
+          transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',

@@ -1,13 +1,27 @@
 // plugin/core/src/synthetic-events/types.ts
 
-// SubagentStart/SubagentStop are NOT synthetic: Claude Code provides native
-// SubagentStart/SubagentStop hook events, making synthetic detection unnecessary.
+/**
+ * Names of synthetic events that Rundown derives from Claude Code hook events.
+ *
+ * These events are not fired directly by Claude Code. Instead, Rundown detects
+ * them by pattern-matching on native hook event data (e.g. tool input containing
+ * a Skill tool invocation triggers `SkillStart`).
+ *
+ * Note: `SubagentStart`/`SubagentStop` are NOT synthetic — Claude Code provides
+ * native hook events for those, so synthetic detection is unnecessary.
+ */
 export type SyntheticEventName =
   | 'SkillStart'
   | 'SkillEnd'
   | 'SlashCommandStart'
   | 'SlashCommandEnd';
 
+/**
+ * A synthetic event derived from a Claude Code hook event.
+ *
+ * Produced by the synthetic event detector when a native hook event matches
+ * a known pattern (e.g. a `ToolUse` event invoking the Skill tool).
+ */
 export interface SyntheticEvent {
   /** The Claude Code event that triggered detection */
   originalEvent: string;
