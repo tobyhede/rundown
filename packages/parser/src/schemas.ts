@@ -180,7 +180,7 @@ export type Transitions = Readonly<z.output<typeof TransitionsSchema>>;
 export const SubstepSchema = z.object({
   id: z.string(),
   description: z.string(),
-  workflows: z.array(z.string()).readonly().optional(),
+  runbooks: z.array(z.string()).readonly().optional(),
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
   transitions: TransitionsSchema.optional(),

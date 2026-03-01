@@ -214,7 +214,7 @@ function substituteSubstep(substep: Substep, variables: Record<string, unknown>)
     description: substituteText(substep.description, variables),
     prompt: substep.prompt ? substituteText(substep.prompt, variables) : substep.prompt,
     command: substituteCommand(substep.command, variables),
-    workflows: substep.workflows?.map((runbookPath) => substituteText(runbookPath, variables)),
+    runbooks: substep.runbooks?.map((runbookPath) => substituteText(runbookPath, variables)),
   };
 }
 

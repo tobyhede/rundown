@@ -64,9 +64,9 @@ export function renderTransitions(transitions: Transitions): string {
 export function renderSubstep(substep: Substep, parentStepName: string): string {
   const lines: string[] = [];
   lines.push(renderHeading(3, `${parentStepName}.${substep.id}`, substep.description));
-  if (substep.workflows?.length) {
+  if (substep.runbooks?.length) {
     lines.push('');
-    for (const runbookPath of substep.workflows) {
+    for (const runbookPath of substep.runbooks) {
       lines.push(`- ${runbookPath}`);
     }
   }
@@ -164,7 +164,7 @@ export function renderStep(step: Step): string {
       lines.push('');
     }
     for (const shorthandSubstep of shorthandSubsteps) {
-      const runbookPath = shorthandSubstep.workflows?.[0];
+      const runbookPath = shorthandSubstep.runbooks?.[0];
       if (!runbookPath) continue;
       lines.push(`- ${runbookPath}`);
     }

@@ -1348,7 +1348,7 @@ export function compileRunbookToMachine(
     if (step.substeps && step.substeps.length > 0) {
       step.substeps.forEach((substep) => {
         const inferredTransitions =
-          substep.workflows && substep.workflows.length > 0
+          substep.runbooks && substep.runbooks.length > 0
             ? DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS
             : DEFAULT_TRANSITIONS;
         allStates.push({

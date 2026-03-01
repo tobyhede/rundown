@@ -80,7 +80,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
     });
 
-    it('explicit H3 runbook substeps with workflows get CONTINUE defaults', () => {
+    it('explicit H3 runbook substeps with runbooks get CONTINUE defaults', () => {
       const steps = [
         ...parseRunbookDocument(`## 1. Review package
 ### 1.1 Review pass
@@ -4398,7 +4398,7 @@ echo "processing"
 
       expect(steps[0].substeps?.[0]).toMatchObject({
         id: '1',
-        workflows: ['review-technical-accuracy.runbook.md'],
+        runbooks: ['review-technical-accuracy.runbook.md'],
       });
 
       const machine = compileRunbookToMachine(steps);
@@ -4491,7 +4491,7 @@ echo "processing"
 
       // All four runbooks canonicalized into four implicit substeps (one runbook each)
       expect(steps[0].substeps).toHaveLength(4);
-      expect(steps[0].substeps?.map((substep) => substep.workflows)).toEqual([
+      expect(steps[0].substeps?.map((substep) => substep.runbooks)).toEqual([
         ['review-technical-accuracy.runbook.md'],
         ['review-structural-integrity.runbook.md'],
         ['review-build-runtime.runbook.md'],
