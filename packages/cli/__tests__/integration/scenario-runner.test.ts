@@ -113,7 +113,7 @@ function copyPatternToWorkspace(relativePath: string, workspace: TestWorkspace):
 
 /**
  * Extract referenced runbook files from scenario commands.
- * Finds patterns like: rd run --step 1 child-task.runbook.md
+ * Finds patterns like: rd delegate child-task.runbook.md --step 1
  */
 function extractReferencedRunbooks(scenario: Scenario): string[] {
   const referenced: string[] = [];
@@ -171,8 +171,7 @@ async function executeScenario(
     const args = cmd.replace(/^rd\s+/, '');
     const result = runCli(args, workspace);
 
-    const isAgentFail = /^rd\s+fail\b/.test(cmd) && cmd.includes('--agent');
-    const allowNonZero = (isLastCommand && scenario.result === 'STOP') || isAgentFail;
+    const allowNonZero = isLastCommand && scenario.result === 'STOP';
 
     if (!allowNonZero && result.exitCode !== 0) {
       throw new Error(

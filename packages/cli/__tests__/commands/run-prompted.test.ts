@@ -5,7 +5,6 @@ import {
   createTestWorkspace,
   runCli,
   getActiveState,
-  readSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -71,19 +70,24 @@ describe('start --prompted', () => {
       expect(result.stdout).not.toContain('$ rd echo');
     });
 
-    it('inherits prompted flag in child runbooks', async () => {
-      // Start parent runbook in prompted mode
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
-      const session1 = await readSession(workspace);
-      const _parentId = session1.active;
+    it('inherits prompted flag in child runbooks via delegation', async () => {
+      // Start parent runbook (with substeps) in prompted mode
+      runCli('run --prompted runbooks/substeps.runbook.md', workspace);
 
-      // Queue step with child runbook
-      runCli(['run', '--step', '1', 'runbooks/with-commands.runbook.md'], workspace);
+      // Delegate substep to child runbook
+      const delegateResult = runCli(
+        'delegate runbooks/with-commands.runbook.md --step 1.1',
+        workspace,
+      );
+      expect(delegateResult.exitCode).toBe(0);
+      const token = delegateResult.stdout.match(/rdtk_\S+/)?.[0];
+      expect(token).toBeDefined();
 
-      // Bind agent (creates child runbook)
-      runCli(['run', '--agent', 'test-agent'], workspace);
+      // Claim the delegation token — launches child runbook
+      const claimResult = runCli(`claim ${token}`, workspace);
+      expect(claimResult.exitCode).toBe(0);
 
-      // Child should inherit prompted flag
+      // Child should inherit prompted flag from parent
       const state = await getActiveState(workspace);
       expect(state?.prompted).toBe(true);
     });

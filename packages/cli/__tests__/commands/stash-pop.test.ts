@@ -153,8 +153,6 @@ rd echo "hello"
       retryCount: 0,
       variables: {},
       steps: [],
-      pendingSteps: [],
-      agentBindings: {},
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       runbookSrc, // Include runbookSrc so pop can read steps
