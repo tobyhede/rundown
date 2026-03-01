@@ -8,7 +8,10 @@ frontmatter
 substep
 substeps
 preamble
+microstep
 worktree
+workflow
+workflows
 worktrees
 
 # Capitalizations
@@ -33,7 +36,6 @@ minimatch
 picomatch
 vitest
 xstate
-microstep
 zod
 
 # Technical terms

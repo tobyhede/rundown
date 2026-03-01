@@ -690,5 +690,8 @@ rd echo server={{ server }}
     );
     // Descending windows are not supported for file sources
     expect(result.exitCode).toBe(1);
+    expect(result.stderr + result.stdout).toContain(
+      'Descending windows are not supported for file sources',
+    );
   });
 });
