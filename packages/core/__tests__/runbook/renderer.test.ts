@@ -422,7 +422,7 @@ echo hello
 ## 2. Continue`;
 
     const parsed = parseRunbook(markdown);
-    expect(parsed[0].substeps?.[0].runbooks).toEqual(['setup.runbook.md']);
+    expect(parsed[0].substeps?.[0].workflows).toEqual(['setup.runbook.md']);
   });
 
   it('round-trips step-level runbook-list shorthand via implicit substep', () => {
@@ -441,7 +441,7 @@ echo hello
 
     expect(parsed2[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
     expect(parsed2[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(parsed2[0].substeps?.map((substep) => substep.runbooks)).toEqual([
+    expect(parsed2[0].substeps?.map((substep) => substep.workflows)).toEqual([
       ['review-technical-accuracy.runbook.md'],
       ['review-structural-integrity.runbook.md'],
     ]);

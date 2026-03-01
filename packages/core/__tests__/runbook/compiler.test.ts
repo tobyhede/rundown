@@ -4528,7 +4528,7 @@ echo "processing"
 
       // All four runbooks canonicalized into four implicit substeps (one runbook each)
       expect(steps[0].substeps).toHaveLength(4);
-      expect(steps[0].substeps?.map((substep) => substep.runbooks)).toEqual([
+      expect(steps[0].substeps?.map((substep) => substep.workflows)).toEqual([
         ['review-technical-accuracy.runbook.md'],
         ['review-structural-integrity.runbook.md'],
         ['review-build-runtime.runbook.md'],

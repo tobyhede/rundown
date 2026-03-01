@@ -171,7 +171,7 @@ export function parseRunbookDocument(
         command: ps.command,
         prompt: promptText.trim() || undefined,
         transitions: transitions ?? undefined,
-        runbooks: runbooks.length > 0 ? runbooks : undefined,
+        workflows: runbooks.length > 0 ? runbooks : undefined,
         line: ps.line,
       };
       currentStep.substeps.push(substep);
@@ -295,6 +295,7 @@ export function parseRunbookDocument(
           lang: 'prompt',
         };
       }
+      // Other code blocks (json, etc.) are ignored - not valid in runbooks
 
       if (cmd) {
         if (currentStep.pendingSubstep) {
@@ -581,14 +582,13 @@ function finalizeStep(
       id: String(index + 1),
       description: '',
       prompt: index === 0 ? prompt : undefined,
-      runbooks: [runbookPath],
+      workflows: [runbookPath],
       line: step.line,
     }));
 
     return {
       name: step.name,
       substepsDerivedFromRunbookList: true,
-      deferred: true,
       forClause: step.forClause,
       description: step.description,
       transitions: transitions ?? undefined,
@@ -599,7 +599,6 @@ function finalizeStep(
 
   return {
     name: step.name,
-    deferred: step.forClause ? true : undefined,
     forClause: step.forClause,
     description: step.description,
     command: step.command,

@@ -106,7 +106,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
       diagnostics.push(
         error(
           step.line,
-          `Step ${step.name}: Violates Exclusivity Rule. A step must have at most one of {Body, Substeps}.`,
+          `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
         ),
       );
     }
@@ -196,7 +196,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
     if (step.substeps) {
       for (const substep of step.substeps) {
         const sHasCommand = substep.command !== undefined;
-        const sHasRunbooks = substep.runbooks !== undefined && substep.runbooks.length > 0;
+        const sHasRunbooks = substep.workflows !== undefined && substep.workflows.length > 0;
 
         if (sHasCommand && sHasRunbooks) {
           diagnostics.push(

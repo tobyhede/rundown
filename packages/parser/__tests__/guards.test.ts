@@ -159,29 +159,29 @@ describe('hasSubsteps', () => {
 });
 
 describe('hasRunbooks', () => {
-  it('returns true when substep has runbooks defined', () => {
-    const substep = createSubstep({ runbooks: ['task.runbook.md'] });
+  it('returns true when substep has workflows defined', () => {
+    const substep = createSubstep({ workflows: ['task.runbook.md'] });
     expect(hasRunbooks(substep)).toBe(true);
   });
 
-  it('returns false when substep has undefined runbooks', () => {
-    const substep = createSubstep({ runbooks: undefined });
+  it('returns false when substep has undefined workflows', () => {
+    const substep = createSubstep({ workflows: undefined });
     expect(hasRunbooks(substep)).toBe(false);
   });
 
-  it('returns false when substep has empty runbooks array', () => {
-    const substep = createSubstep({ runbooks: [] });
+  it('returns false when substep has empty workflows array', () => {
+    const substep = createSubstep({ workflows: [] });
     expect(hasRunbooks(substep)).toBe(false);
   });
 
   describe('type narrowing', () => {
-    it('narrows type to include non-empty runbooks array', () => {
+    it('narrows type to include non-empty workflows array', () => {
       const substep = createSubstep({
-        runbooks: ['narrowed.runbook.md'],
+        workflows: ['narrowed.runbook.md'],
       });
       if (hasRunbooks(substep)) {
-        // TypeScript should know substep.runbooks is readonly string[]
-        const firstWorkflow: string = substep.runbooks[0];
+        // TypeScript should know substep.workflows is readonly string[]
+        const firstWorkflow: string = substep.workflows[0];
         expect(firstWorkflow).toBe('narrowed.runbook.md');
       }
     });
