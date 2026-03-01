@@ -71,7 +71,7 @@ export interface GateConfig {
 export interface HookConfig {
   /** Tool names that trigger this hook (PostToolUse only) */
   enabled_tools?: string[];
-  /** Agent types that trigger this hook (SubagentStop only) */
+  /** Agent types that trigger this hook (SubagentStart/Stop only) */
   enabled_agents?: string[];
   /** Gate names to execute when this hook fires */
   gates?: string[];
