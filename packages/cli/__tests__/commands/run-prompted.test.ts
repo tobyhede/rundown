@@ -84,12 +84,13 @@ describe('start --prompted', () => {
       expect(token).toBeDefined();
 
       // Claim the delegation token — launches child runbook
-      const claimResult = runCli(`claim ${String(token)}`, workspace);
+      const claimResult = runCli(`claim ${token!}`, workspace);
       expect(claimResult.exitCode).toBe(0);
 
       // Child should inherit prompted flag from parent
       const state = await getActiveState(workspace);
       expect(state?.prompted).toBe(true);
+      expect(state?.runbook).toContain('with-commands');
     });
   });
 

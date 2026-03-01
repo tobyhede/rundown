@@ -289,6 +289,12 @@ describe('RunbookStateSchema forStack', () => {
     if (result.success) {
       // No migration — forStack should remain undefined
       expect(result.data.forStack).toBeUndefined();
+      // Verify legacy fields are preserved by passthrough (not stripped)
+      const data = result.data as Record<string, unknown>;
+      expect(data.forIteration).toBe(2);
+      expect(data.forStart).toBe(1);
+      expect(data.forEnd).toBe(3);
+      expect(data.forVariable).toBe('item');
     }
   });
 });
