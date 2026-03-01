@@ -134,7 +134,7 @@ describe('validator strict rules', () => {
               id: '1',
               description: 'S',
               command: { code: 'echo', language: 'bash' },
-              runbooks: ['w.runbook.md'],
+              workflows: ['w.runbook.md'],
             },
           ],
         }),

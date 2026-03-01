@@ -13,8 +13,7 @@ describe('Step-level runbooks', () => {
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].runbooks).toEqual(['task-details.runbook.md']);
-    expect(steps[0].deferred).toBeUndefined();
+    expect(steps[0].substeps![0].workflows).toEqual(['task-details.runbook.md']);
   });
 
   it('rejects step with both runbooks and substeps', () => {
@@ -43,7 +42,7 @@ Do work.
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].runbooks).toEqual([
+    expect(steps[0].substeps?.[0].workflows).toEqual([
       'runbook-a.runbook.md',
       'runbook-b.runbook.md',
     ]);
@@ -66,24 +65,7 @@ describe('parseRunbook with substep runbooks', () => {
 
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].runbooks).toEqual(['review.runbook.md', 'security.runbook.md']);
-    expect(steps[0].deferred).toBeUndefined();
-  });
-
-  it('omits deferred for explicit non-FOR substeps', () => {
-    const markdown = `## 1. Review
-
-### 1.1 Check A
-- PASS: CONTINUE
-- FAIL: STOP
-
-### 1.2 Check B
-- PASS: CONTINUE
-- FAIL: STOP
-`;
-
-    const steps = parseRunbook(markdown);
-    expect(steps[0].deferred).toBeUndefined();
+    expect(steps[0].substeps?.[0].workflows).toEqual(['review.runbook.md', 'security.runbook.md']);
   });
 });
 
@@ -137,17 +119,16 @@ Please look at this example.
     expect(steps[0].prompt).toBeUndefined(); // No prompt text from prompt blocks
   });
 
-  it('treats unrecognized language code blocks as prompt', () => {
+  it('treats other tags as passive prose', () => {
     const markdown = `## 1. Example
 \`\`\`json
 {"key": "value"}
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].command).toEqual({
-      code: `rd prompt '{"key": "value"}'`,
-      lang: 'prompt',
-    });
+    // JSON code blocks are ignored - not valid for execution
+    expect(steps[0].command).toBeUndefined();
+    expect(steps[0].prompt).toBeUndefined();
   });
 
   it('treats prompt code blocks as rd prompt commands', () => {
@@ -772,7 +753,7 @@ npm test
 - task.runbook.md
 `;
       const steps = parseRunbook(md);
-      expect(steps[0].substeps?.[0].runbooks).toEqual(['task.runbook.md']);
+      expect(steps[0].substeps?.[0].workflows).toEqual(['task.runbook.md']);
     });
 
     it('rejects list items after content in step', () => {
@@ -808,7 +789,6 @@ echo batch
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].deferred).toBe(true);
   });
 
   describe('FOR clause nested transitions', () => {
@@ -1051,7 +1031,7 @@ Review the following items.
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
     expect(sub?.prompt).toBe('Review the following items.');
-    expect(sub?.runbooks).toEqual(['task.runbook.md']);
+    expect(sub?.workflows).toEqual(['task.runbook.md']);
   });
 
   it('returns empty prompt when substep has only runbook references', () => {
@@ -1067,7 +1047,7 @@ Review the following items.
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
     expect(sub?.prompt).toBeUndefined();
-    expect(sub?.runbooks).toEqual(['alpha.runbook.md', 'beta.runbook.md']);
+    expect(sub?.workflows).toEqual(['alpha.runbook.md', 'beta.runbook.md']);
   });
 
   it('preserves prompt text alongside runbook refs in substep', () => {
@@ -1085,7 +1065,7 @@ Review the tasks carefully.
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
     expect(sub?.prompt).toContain('Review the tasks carefully.');
-    expect(sub?.runbooks).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
+    expect(sub?.workflows).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
   });
 
   it('canonicalizes step-level runbook refs into runbook-list-derived substeps', () => {
@@ -1099,17 +1079,16 @@ Review the tasks carefully.
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
     expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(steps[0].deferred).toBe(true);
     expect(steps[0].substeps).toHaveLength(2);
     expect(steps[0].substeps?.[0]).toMatchObject({
       id: '1',
       description: '',
-      runbooks: ['deploy.runbook.md'],
+      workflows: ['deploy.runbook.md'],
     });
     expect(steps[0].substeps?.[1]).toMatchObject({
       id: '2',
       description: '',
-      runbooks: ['verify.runbook.md'],
+      workflows: ['verify.runbook.md'],
     });
   });
 
@@ -1128,7 +1107,7 @@ Review this checklist.
       id: '1',
       description: '',
       prompt: 'Review this checklist.',
-      runbooks: ['deploy.runbook.md'],
+      workflows: ['deploy.runbook.md'],
     });
   });
 
@@ -1148,9 +1127,8 @@ Review this checklist.
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
     expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(steps[0].deferred).toBe(true);
     expect(steps[0].substeps).toHaveLength(4);
-    expect(steps[0].substeps?.map((s) => s.runbooks)).toEqual([
+    expect(steps[0].substeps?.map((s) => s.workflows)).toEqual([
       ['review-technical-accuracy.runbook.md'],
       ['review-structural-integrity.runbook.md'],
       ['review-build-runtime.runbook.md'],
@@ -1228,7 +1206,7 @@ describe('regex boundaries and runbook patterns', () => {
 - simple.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps?.[0].runbooks).toEqual(['simple.runbook.md']);
+    expect(steps[0].substeps?.[0].workflows).toEqual(['simple.runbook.md']);
   });
 
   it('matches path-like runbook ref', () => {
@@ -1239,7 +1217,7 @@ describe('regex boundaries and runbook patterns', () => {
 - path/to/complex-name.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps?.[0].runbooks).toEqual(['path/to/complex-name.runbook.md']);
+    expect(steps[0].substeps?.[0].workflows).toEqual(['path/to/complex-name.runbook.md']);
   });
 
   it('does not treat .runbook.md.txt as a runbook ref', () => {
@@ -1414,7 +1392,7 @@ Check the items.
     // Prompt should contain the text but NOT the runbook line
     expect(sub?.prompt).toContain('Check the items.');
     expect(sub?.prompt).not.toContain('setup.runbook.md');
-    expect(sub?.runbooks).toEqual(['setup.runbook.md']);
+    expect(sub?.workflows).toEqual(['setup.runbook.md']);
   });
 
   it('trims whitespace from filtered content', () => {

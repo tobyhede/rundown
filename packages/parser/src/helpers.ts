@@ -1,12 +1,7 @@
 import { RunbookSyntaxError, type ParsedConditional, type AggregationModifier } from './types.js';
 import type { Action, Transitions } from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
-import {
-  parseStepIdFromString,
-  stepIdToString,
-  isReservedWord,
-  NAMED_IDENTIFIER_PATTERN,
-} from './step-id.js';
+import { parseStepIdFromString, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 import type { ForClause } from './ast.js';
 
 /**
@@ -763,10 +758,9 @@ export function isExecutableCodeBlock(lang: string | null | undefined): boolean 
  * Check if a code block language tag indicates a prompt block.
  *
  * Prompt blocks contain text to be displayed or sent to an agent.
- * Unrecognized languages (e.g. json, typescript, yaml) default to prompt behavior.
  *
  * @param lang - The code block language tag
- * @returns True if prompt (including unrecognized languages), false if executable (bash/sh/shell), null for bare fences (no info string)
+ * @returns True if "prompt", false if executable (bash/sh/shell), null for other/unknown types
  */
 export function isPromptCodeBlock(lang: string | null | undefined): boolean | null {
   if (!lang) return null;
@@ -779,7 +773,7 @@ export function isPromptCodeBlock(lang: string | null | undefined): boolean | nu
     if (parts.length > 1 && parts[1]?.toLowerCase() === 'prompt') return true;
     return false;
   }
-  return true;
+  return null;
 }
 
 /**
@@ -814,7 +808,7 @@ export function formatAction(action: Action): string {
     case 'STOP':
       return action.message ? `STOP "${action.message}"` : 'STOP';
     case 'GOTO':
-      return `GOTO ${stepIdToString(action.target)}`;
+      return `GOTO ${action.target.step}`;
     case 'NEXT':
       return 'NEXT';
     case 'BREAK':

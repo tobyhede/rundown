@@ -43,15 +43,15 @@ export function hasSubsteps(step: Step): step is Step & { substeps: readonly Sub
  * Type guard: checks if a substep has nested runbooks defined.
  *
  * When this guard returns true, TypeScript narrows the type to include
- * a non-empty runbooks array of runbook references.
+ * a non-empty workflows array of runbook references.
  *
  * @param substep - The Substep to check
  * @returns True if the substep has one or more runbook references, enabling type narrowing
  */
 export function hasRunbooks(
   substep: Substep,
-): substep is Substep & { runbooks: readonly string[] } {
-  return substep.runbooks !== undefined && substep.runbooks.length > 0;
+): substep is Substep & { workflows: readonly string[] } {
+  return substep.workflows !== undefined && substep.workflows.length > 0;
 }
 
 /**
