@@ -80,11 +80,11 @@ describe('start --prompted', () => {
         workspace,
       );
       expect(delegateResult.exitCode).toBe(0);
-      const token = delegateResult.stdout.match(/rdtk_\S+/)?.[0];
+      const token = /rdtk_\S+/.exec(delegateResult.stdout)?.[0];
       expect(token).toBeDefined();
 
       // Claim the delegation token — launches child runbook
-      const claimResult = runCli(`claim ${token}`, workspace);
+      const claimResult = runCli(`claim ${String(token)}`, workspace);
       expect(claimResult.exitCode).toBe(0);
 
       // Child should inherit prompted flag from parent
