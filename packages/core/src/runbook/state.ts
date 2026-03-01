@@ -265,18 +265,38 @@ export class RunbookStateManager {
    * @returns The parsed session data, or a default empty session if the file doesn't exist
    */
   async loadSession(): Promise<SessionData> {
+    let content: string;
     try {
-      const content = await fs.readFile(this.sessionPath, 'utf8');
-      const raw = JSON.parse(content) as Record<string, unknown>;
-      return {
-        defaultStack: Array.isArray(raw.defaultStack) ? (raw.defaultStack as string[]) : [],
-        ...(typeof raw.stashedRunbookId === 'string'
-          ? { stashedRunbookId: raw.stashedRunbookId }
-          : {}),
-      };
-    } catch {
-      return { defaultStack: [] };
+      content = await fs.readFile(this.sessionPath, 'utf8');
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { defaultStack: [] };
+      }
+      throw err;
     }
+
+    const raw = JSON.parse(content) as Record<string, unknown>;
+
+    if ('stacks' in raw) {
+      throw new Error(
+        'Legacy per-agent session format detected. Delete the session file and restart.',
+      );
+    }
+
+    const rawStack = Array.isArray(raw.defaultStack) ? raw.defaultStack : [];
+    const defaultStack = rawStack.filter((e): e is string => typeof e === 'string');
+    if (rawStack.length > 0 && defaultStack.length !== rawStack.length) {
+      throw new Error(
+        'Session file contains invalid entries in defaultStack. Delete the session file and restart.',
+      );
+    }
+
+    return {
+      defaultStack,
+      ...(typeof raw.stashedRunbookId === 'string'
+        ? { stashedRunbookId: raw.stashedRunbookId }
+        : {}),
+    };
   }
 
   /**
