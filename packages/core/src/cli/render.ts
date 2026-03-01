@@ -7,15 +7,12 @@ type RenderableItem = Step | Substep;
  * Normalized display model for CLI step/substep rendering.
  */
 export interface DisplayStepModel {
-  /** Markdown heading depth: 2 for steps (##), 3 for substeps (###). */
   readonly headingLevel: 2 | 3;
-  /** Qualified identifier shown in the heading (e.g. "3" or "3.1"). */
   readonly headingId: string;
   readonly description: string;
   readonly prompt?: string;
   readonly command?: {
     readonly code: string;
-    /** Optional language tag for the fenced code block (e.g. "bash", "sql"). */
     readonly lang?: string;
   };
 }
@@ -74,5 +71,6 @@ export function renderStepForCLI(model: Readonly<DisplayStepModel>): string {
     lines.push(renderCodeFence(model.command.code, model.command.lang));
   }
 
+  // Command is not rendered here - it's shown via printCommandExec() with colored prompt
   return lines.join('\n');
 }
