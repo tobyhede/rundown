@@ -38,8 +38,8 @@ export function shouldProcessHook(input: HookInput, hookConfig: HookConfig): boo
     }
   }
 
-  // SubagentStop filtering
-  if (hookEvent === 'SubagentStop') {
+  // SubagentStart/SubagentStop filtering
+  if (hookEvent === 'SubagentStart' || hookEvent === 'SubagentStop') {
     if (hookConfig.enabled_agents && hookConfig.enabled_agents.length > 0) {
       const agentType = input.agent_type ?? '';
       return hookConfig.enabled_agents.includes(agentType);
@@ -203,6 +203,9 @@ async function updateSessionState(input: HookInput): Promise<void> {
 
       case 'SkillEnd':
         await session.set('active_skill', null);
+        break;
+
+      case 'SubagentStart':
         break;
 
       case 'PostToolUse':
@@ -390,9 +393,7 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
 
     // File pattern filtering for tool hooks
     if (
-      (hookEvent === 'PreToolUse' ||
-        hookEvent === 'PostToolUse' ||
-        hookEvent === 'PostToolUseFailure') &&
+      (hookEvent === 'PostToolUse' || hookEvent === 'PostToolUseFailure') &&
       !(await gateMatchesFilePattern(gateConfig, input.tool_input?.file_path, input.cwd))
     ) {
       await logger.debug('Gate skipped - no file pattern match', { gate: gateName });

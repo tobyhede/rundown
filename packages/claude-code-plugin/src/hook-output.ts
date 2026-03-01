@@ -15,15 +15,6 @@ interface HookSpecificOutput {
   permissionDecisionReason?: string;
 }
 
-/**
- * Structured output returned by hook handlers to Claude Code.
- *
- * @property continue - Whether to continue execution after the hook
- * @property stopReason - Reason for stopping execution (when continue is false)
- * @property decision - Block decision for PreToolUse permission hooks
- * @property reason - Human-readable reason for the decision
- * @property hookSpecificOutput - Additional context for Claude Code to display
- */
 export interface ClaudeHookOutput {
   continue?: boolean;
   stopReason?: string;
@@ -48,10 +39,6 @@ function makeContextOutput(
 
 /**
  * Build Claude Code hook JSON output using the modern hookSpecificOutput contract.
- *
- * @param input - The hook input from Claude Code containing the event name and payload
- * @param result - The dispatch result from the event handler
- * @returns Structured output for Claude Code hook response
  */
 export function buildHookOutput(input: HookInput, result: DispatchResult): ClaudeHookOutput {
   const hookEventName = input.hook_event_name;
