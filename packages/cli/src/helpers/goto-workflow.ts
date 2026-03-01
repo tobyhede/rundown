@@ -5,7 +5,7 @@
  * testable functions. The command file becomes a thin shell that
  * parses options, calls these functions, and handles exit codes.
  *
- * @module helpers/goto-runbook
+ * @module helpers/goto-workflow
  */
 
 import {

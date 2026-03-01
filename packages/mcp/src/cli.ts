@@ -67,7 +67,7 @@ function parseJsonOrJsonl(stdout: string): unknown {
   const parsedLines: unknown[] = [];
   for (const line of trimmed.split('\n')) {
     const candidate = line.trim();
-    if (!candidate.startsWith('{')) continue; // Skip non-object lines (only objects carry CLI event data)
+    if (!candidate.startsWith('{')) continue;
     try {
       parsedLines.push(JSON.parse(candidate) as unknown);
     } catch {
@@ -134,8 +134,8 @@ export async function runCli(args: string[]): Promise<CliResult> {
       if (execError.stdout) {
         const data = parseJsonOrJsonl(execError.stdout);
         if (data && typeof data === 'object') {
-          const parsedError = (data as { error?: string }).error;
-          return { success: false, error: parsedError ?? 'Command failed', data };
+          const error = (data as { error?: string }).error;
+          return { success: false, error: error ?? 'Command failed', data };
         }
       }
 
@@ -143,8 +143,8 @@ export async function runCli(args: string[]): Promise<CliResult> {
       if (execError.stderr) {
         const data = parseJsonOrJsonl(execError.stderr);
         if (data && typeof data === 'object') {
-          const parsedError = (data as { error?: string }).error;
-          return { success: false, error: parsedError ?? 'Command failed', data };
+          const error = (data as { error?: string }).error;
+          return { success: false, error: error ?? 'Command failed', data };
         }
       }
 
