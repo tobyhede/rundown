@@ -9,7 +9,6 @@
 
 import {
   buildStepPosition,
-  deriveExecutionAt,
   countNumberedSteps,
   type ActionBlockData,
   type ResolvedCompletion,
@@ -64,10 +63,6 @@ export interface StatusOutputData {
   };
   /** Most recent action taken (pass, fail, goto). */
   lastAction?: ActionBlockData;
-  /** Pending transition labels awaiting user input. */
-  pending?: string[];
-  /** Active child agents keyed by agent name. */
-  agents?: Record<string, { step: string; status: string; result?: string }>;
   /** Active delegations on substeps. */
   delegations?: Array<{
     substep: string;
@@ -151,15 +146,6 @@ export function buildActiveStatus(
   cwd: string,
   stashedId?: string,
 ): StatusOutputData {
-  const toTargetAt = (target: {
-    targetStep?: string;
-    targetSubstep?: string;
-    targetIteration?: number;
-  }): string | undefined => {
-    if (!target.targetStep) return undefined;
-    return deriveExecutionAt(target.targetStep, target.targetSubstep, target.targetIteration);
-  };
-
   const steps = getRunbookFromState(activeState, cwd);
   const currentStepIndex = steps.findIndex((s) => s.name === activeState.step);
   const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
@@ -186,23 +172,6 @@ export function buildActiveStatus(
       actionBlockData.result = activeState.lastResult === 'pass';
     }
   }
-
-  const pendingTargets = activeState.pendingSteps
-    .map((p) => toTargetAt(p))
-    .filter((targetAt): targetAt is string => targetAt !== undefined);
-
-  const activeAgents = Object.entries(activeState.agentBindings).reduce<
-    Record<string, { step: string; status: string; result?: string }>
-  >((acc, [agentId, binding]) => {
-    const targetAt = toTargetAt(binding);
-    if (!targetAt) return acc;
-    acc[agentId] = {
-      step: targetAt,
-      status: binding.status,
-      result: binding.result,
-    };
-    return acc;
-  }, {});
 
   const basePosition = buildStepPosition(
     displayStep,
@@ -255,8 +224,6 @@ export function buildActiveStatus(
       },
     }),
     lastAction: actionBlockData,
-    pending: pendingTargets.length > 0 ? pendingTargets : undefined,
-    agents: Object.keys(activeAgents).length > 0 ? activeAgents : undefined,
     ...(delegations.length > 0 ? { delegations } : {}),
   };
 }

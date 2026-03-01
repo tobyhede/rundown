@@ -19,16 +19,15 @@ export function registerStatusCommand(program: Command): void {
   program
     .command('status')
     .description('Show current runbook state')
-    .option('--agent <agentId>', 'Show status for agent-specific runbook')
     .option('--json', 'Output as JSON for programmatic use')
-    .action(async (options: { agent?: string; json?: boolean }) => {
+    .action(async (options: { json?: boolean }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
         const output = new OutputEmitter({ json: options.json });
 
         const manager = new RunbookStateManager(cwd);
         const sessionService = new SessionService(manager);
-        const state = await sessionService.getActive(options.agent);
+        const state = await sessionService.getActive();
         const stashedId = await sessionService.getStashedRunbookId();
 
         // Case 1: No active runbook and nothing stashed

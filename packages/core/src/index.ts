@@ -20,9 +20,6 @@ export {
   AncestorSnapshotSchema,
 } from './schemas.js';
 
-// Runbook types
-export type { PendingStep } from './runbook/types.js';
-
 // Errors
 export * from './errors.js';
 

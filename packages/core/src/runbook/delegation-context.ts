@@ -3,8 +3,8 @@ import type { ContextSnapshot } from './types.js';
 /**
  * Reconstitute inherited context variables from a frozen delegation snapshot.
  *
- * Rebuilds the variable map that `buildInheritedContextVars` would produce
- * by walking live parent state, but from the frozen snapshot instead.
+ * Rebuilds inherited context variables by walking the frozen snapshot instead
+ * of live parent state.
  *
  * Produces the following addressing schemes:
  * - `context.parent.vars.*` and `context.ancestors.0.vars.*` from snapshot.vars

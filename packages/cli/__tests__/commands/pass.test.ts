@@ -190,37 +190,6 @@ Do child work.
     });
   });
 
-  describe('agent runbook completion', () => {
-    it('should complete agent runbook independently of parent', async () => {
-      // Start parent runbook (prompted mode to keep it active)
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
-      const session1 = await readSession(workspace);
-      const parentId = session1.active;
-
-      // Start agent runbook independently (not via binding)
-      runCli('run --prompted runbooks/simple.runbook.md --agent test-agent', workspace);
-
-      // Agent has its own runbook
-      const session2 = await readSession(workspace);
-      expect(session2.stacks['test-agent']).toBeDefined();
-      expect(session2.stacks['test-agent'].length).toBe(1);
-
-      // Parent still in default stack
-      expect(session2.defaultStack).toContain(parentId);
-
-      // Complete agent's runbook
-      runCli(['pass', '--agent', 'test-agent'], workspace); // Step 1: CONTINUE -> Step 2
-      runCli(['pass', '--agent', 'test-agent'], workspace); // Step 2: DONE -> complete
-
-      // Agent stack should be empty now
-      const session3 = await readSession(workspace);
-      expect(session3.stacks['test-agent'] ?? []).toHaveLength(0);
-
-      // Parent should still be active in default stack
-      expect(session3.defaultStack).toContain(parentId);
-    });
-  });
-
   describe('runbook completion with stack', () => {
     it('pops to parent runbook on completion', async () => {
       // Create parent/child runbooks
@@ -251,24 +220,6 @@ Do work.
       // Should now be on parent
       result = runCli('status', workspace);
       expect(result.stdout).toContain('parent.md');
-    });
-
-    it('agent runbook pops to null when no parent', async () => {
-      // Create a single-step runbook for quick completion
-      const singleStep = `## 1. Do it
-- PASS: COMPLETE
-`;
-      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'single.md'), singleStep);
-
-      runCli('run --prompted runbooks/single.md --agent agent-001', workspace);
-
-      // Complete runbook
-      runCli('pass --agent agent-001', workspace);
-
-      // Agent stack should be empty
-      const result = runCli('status --agent agent-001', workspace);
-      expect(result.stdout).toContain('No active runbook');
     });
   });
 

@@ -15,16 +15,15 @@ export function registerStashCommand(program: Command): void {
   program
     .command('stash')
     .description('Pause runbook enforcement, preserve state')
-    .option('--agent <agentId>', 'Stash runbook from agent-specific stack')
     .option('--json', 'Output as JSON for programmatic use')
-    .action(async (options: { agent?: string; json?: boolean }) => {
+    .action(async (options: { json?: boolean }) => {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
           const output = new OutputEmitter({ json: options.json });
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
-          const state = await sessionService.getActive(options.agent);
+          const state = await sessionService.getActive();
 
           if (!state) {
             output.noActiveRunbook();
@@ -35,7 +34,12 @@ export function registerStashCommand(program: Command): void {
           const totalSteps = await getStepTotal(cwd, state.runbook);
 
           // Stash the runbook
-          await sessionService.stash(options.agent);
+          const stashedId = await sessionService.stash();
+          if (!stashedId) {
+            output.status(false, 'stash', 'A runbook is already stashed. Pop it first.');
+            output.flush();
+            return;
+          }
 
           // Emit structured output - TextRenderer handles stash action specially
           output.metadata(buildMetadata(state));
@@ -44,7 +48,7 @@ export function registerStashCommand(program: Command): void {
               current: state.step,
               total: totalSteps,
             },
-            stashedId: state.id,
+            stashedId,
           });
           output.flush();
         },

@@ -9,7 +9,6 @@ describe('Schema Property Tests', () => {
       'PostToolUse',
       'PreToolUse',
       'SubagentStop',
-      'SubagentStart',
       'UserPromptSubmit',
       'Stop',
       'Shutdown',

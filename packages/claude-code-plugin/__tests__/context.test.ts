@@ -236,41 +236,11 @@ describe('Synthetic event context injection', () => {
     expect(result).toBe('Code review end context');
   });
 
-  it('handles SubagentStart', async () => {
+  it('SubagentStart is not handled (removed with old delegation model)', async () => {
     const input = {
       hook_event_name: 'SubagentStart',
       cwd: testDir,
       agent_type: 'cipherpowers:code-review-agent',
-    };
-    await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
-    await fs.writeFile(
-      path.join(testDir, '.claude', 'context', 'code-review-agent-start.md'),
-      'Review context',
-    );
-    const result = await injectContext('SubagentStart', input as any);
-    expect(result).toBe('Review context');
-  });
-
-  it('handles SubagentStart using agent_type from modern payload', async () => {
-    const input = {
-      hook_event_name: 'SubagentStart',
-      cwd: testDir,
-      agent_type: 'cipherpowers:analysis-agent',
-    };
-    await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
-    await fs.writeFile(
-      path.join(testDir, '.claude', 'context', 'analysis-agent-start.md'),
-      'Analysis context',
-    );
-
-    const result = await injectContext('SubagentStart', input as any);
-    expect(result).toBe('Analysis context');
-  });
-
-  it('SubagentStart returns null when agent_type is missing', async () => {
-    const input = {
-      hook_event_name: 'SubagentStart',
-      cwd: testDir,
     };
     const result = await injectContext('SubagentStart', input as any);
     expect(result).toBeNull();

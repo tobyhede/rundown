@@ -54,8 +54,6 @@ export type { Runbook } from '@rundown-org/parser';
  */
 export type { StepId } from '@rundown-org/parser';
 
-import type { StepId } from '@rundown-org/parser';
-
 /**
  * JSON primitive value (string, number, boolean, or null).
  *
@@ -101,63 +99,13 @@ export type LastAction =
   | { readonly type: 'BREAK' };
 
 /**
- * A step queued for agent binding, optionally with a child runbook.
- * Used in the pending step queue to correlate Step tool dispatch with SubagentStart.
- */
-export interface PendingStep {
-  readonly stepId: StepId;
-  readonly runbook?: string; // Child runbook file path (relative)
-  /** Canonical target step for runtime routing. */
-  readonly targetStep?: string;
-  /** Canonical target substep for runtime routing. */
-  readonly targetSubstep?: string;
-  /** Canonical target loop iteration for runtime routing. */
-  readonly targetIteration?: number;
-  /** Canonical target frame key (`step|iteration`) for completion identity. */
-  readonly targetFrameKey?: string;
-  /** Canonical target frame entry (monotonic per frame). */
-  readonly targetEntry?: number;
-}
-
-/**
- * Agent binding status
- */
-export type AgentStatus = 'running' | 'done' | 'stopped';
-
-/**
- * Agent binding result (for completed agents)
- */
-export type AgentResult = 'pass' | 'fail';
-
-/**
  * Runtime state of a substep within a step
  */
 export interface SubstepState {
   readonly id: string; // Matches Substep.id ("1", "2", or dynamic instance)
   readonly status: 'pending' | 'running' | 'done';
-  readonly agentId?: string; // Agent bound to this substep
-  readonly result?: AgentResult; // 'pass' | 'fail' when done
+  readonly result?: 'pass' | 'fail'; // Result when done
   readonly delegation?: StepDelegation; // Delegation attached to this substep
-}
-
-/**
- * Agent binding - tracks which step an agent is working on
- */
-export interface AgentBinding {
-  readonly stepId: StepId;
-  readonly childRunbookId?: string;
-  readonly status: AgentStatus;
-  readonly result?: AgentResult;
-  /** Canonical target step for runtime routing. */
-  readonly targetStep?: string;
-  /** Canonical target substep for runtime routing. */
-  readonly targetSubstep?: string;
-  /** Canonical target loop iteration for runtime routing. */
-  readonly targetIteration?: number;
-  /** Canonical target frame key (`step|iteration`) for completion identity. */
-  readonly targetFrameKey?: string;
-  /** Canonical target frame entry (monotonic per frame). */
-  readonly targetEntry?: number;
 }
 
 /**
@@ -167,8 +115,8 @@ export interface AgentBinding {
 export interface ResolvedCompletion {
   /** Identifier of the agent that produced this completion. */
   readonly agentId: string;
-  /** Whether the agent passed or failed. */
-  readonly result: AgentResult;
+  /** Whether the completion passed or failed. */
+  readonly result: 'pass' | 'fail';
   /** Step name this completion targets (e.g. "1", "ErrorHandler"). */
   readonly targetStep: string;
   /** Substep ID within the target step, if applicable. */
@@ -419,8 +367,6 @@ export interface RunbookState {
   readonly steps: readonly StepState[];
 
   // Orchestration fields
-  readonly pendingSteps: readonly PendingStep[];
-  readonly agentBindings: Readonly<Record<string, AgentBinding>>;
   readonly resolvedCompletions?: Readonly<Record<string, ResolvedCompletion>>;
   /** Monotonic entry counter by frame key (`step|iteration`). */
   readonly frameEntries?: Readonly<Record<string, number>>;
@@ -431,11 +377,6 @@ export interface RunbookState {
 
   // Substep tracking
   readonly substepStates?: readonly SubstepState[];
-
-  // Child runbook fields
-  readonly agentId?: string;
-  readonly parentRunbookId?: string;
-  readonly parentStepId?: StepId;
 
   /** Delegation linkage data when this run was created via `rd claim`. */
   readonly delegation?: DelegationLinkage;

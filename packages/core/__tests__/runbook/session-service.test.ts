@@ -32,25 +32,13 @@ describe('SessionService', () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  describe('Per-agent runbook stacks', () => {
-    it('pushRunbook adds to default stack when no agentId', async () => {
+  describe('Runbook stack operations', () => {
+    it('pushRunbook adds to stack', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       await sessionService.pushRunbook(state.id);
 
       const active = await sessionService.getActive();
       expect(active?.id).toBe(state.id);
-    });
-
-    it('pushRunbook adds to agent-specific stack', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      await sessionService.pushRunbook(state.id, 'agent-001');
-
-      const active = await sessionService.getActive('agent-001');
-      expect(active?.id).toBe(state.id);
-
-      // Default stack should be empty
-      const defaultActive = await sessionService.getActive();
-      expect(defaultActive).toBeNull();
     });
 
     it('popRunbook removes from stack and returns new top', async () => {
@@ -98,27 +86,6 @@ describe('SessionService', () => {
       await sessionService.popRunbook();
       expect(await sessionService.getActive()).toBeNull();
     });
-
-    it('parallel agents have independent stacks', async () => {
-      const main = await manager.create('main.md', mockRunbook, { runbookPath: 'main.md' });
-      const child1 = await manager.create('child1.md', mockRunbook, { runbookPath: 'child1.md' });
-      const child2 = await manager.create('child2.md', mockRunbook, { runbookPath: 'child2.md' });
-
-      await sessionService.pushRunbook(main.id);
-      await sessionService.pushRunbook(child1.id, 'agent-001');
-      await sessionService.pushRunbook(child2.id, 'agent-002');
-
-      // Each agent sees their own runbook
-      expect((await sessionService.getActive())?.id).toBe(main.id);
-      expect((await sessionService.getActive('agent-001'))?.id).toBe(child1.id);
-      expect((await sessionService.getActive('agent-002'))?.id).toBe(child2.id);
-
-      // Pop one agent doesn't affect others
-      await sessionService.popRunbook('agent-001');
-      expect(await sessionService.getActive('agent-001')).toBeNull();
-      expect((await sessionService.getActive('agent-002'))?.id).toBe(child2.id);
-      expect((await sessionService.getActive())?.id).toBe(main.id);
-    });
   });
 
   describe('Stash and pop operations', () => {
@@ -155,27 +122,6 @@ describe('SessionService', () => {
       expect(restored).toBeNull();
     });
 
-    it('stash works with agent-specific stacks', async () => {
-      const state = await manager.create('agent.md', mockRunbook, { runbookPath: 'agent.md' });
-      await sessionService.pushRunbook(state.id, 'agent-x');
-
-      const stashedId = await sessionService.stash('agent-x');
-
-      expect(stashedId).toBe(state.id);
-      expect(await sessionService.getActive('agent-x')).toBeNull();
-    });
-
-    it('unstash restores to agent-specific stack', async () => {
-      const state = await manager.create('agent.md', mockRunbook, { runbookPath: 'agent.md' });
-      await sessionService.pushRunbook(state.id, 'agent-y');
-      await sessionService.stash('agent-y');
-
-      const restored = await sessionService.unstash('agent-y');
-
-      expect(restored?.id).toBe(state.id);
-      expect((await sessionService.getActive('agent-y'))?.id).toBe(state.id);
-    });
-
     it('unstash returns null and clears stash when persisted state is missing', async () => {
       const state = await manager.create('temp.md', mockRunbook, { runbookPath: 'temp.md' });
       await sessionService.pushRunbook(state.id);
@@ -193,19 +139,21 @@ describe('SessionService', () => {
     it('stash refuses to overwrite existing stash', async () => {
       const s1 = await manager.create('a.md', mockRunbook, { runbookPath: 'a.md' });
       const s2 = await manager.create('b.md', mockRunbook, { runbookPath: 'b.md' });
-      await sessionService.pushRunbook(s1.id, 'agent-001');
-      await sessionService.pushRunbook(s2.id, 'agent-002');
+      await sessionService.pushRunbook(s1.id);
 
-      const first = await sessionService.stash('agent-001');
-      const second = await sessionService.stash('agent-002');
+      const first = await sessionService.stash();
+
+      // Push second runbook after stashing first
+      await sessionService.pushRunbook(s2.id);
+      const second = await sessionService.stash();
 
       // First stash succeeds, second is refused
       expect(first).toBe(s1.id);
       expect(second).toBeNull();
       // Original stash preserved
       expect(await sessionService.getStashedRunbookId()).toBe(s1.id);
-      // agent-002's runbook remains on its stack (not popped)
-      expect((await sessionService.getActive('agent-002'))?.id).toBe(s2.id);
+      // Second runbook remains on the stack (not popped)
+      expect((await sessionService.getActive())?.id).toBe(s2.id);
     });
   });
 });

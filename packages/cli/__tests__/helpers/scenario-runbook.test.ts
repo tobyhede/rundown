@@ -272,7 +272,7 @@ describe('extractReferencedRunbooks', () => {
   it('extracts multiple unique references', () => {
     const scenario: any = {
       result: 'COMPLETE',
-      commands: ['rd run main.runbook.md', 'rd run --step 2 child.runbook.md'],
+      commands: ['rd run main.runbook.md', 'rd delegate child.runbook.md --step 2'],
     };
 
     const refs = extractReferencedRunbooks(scenario);

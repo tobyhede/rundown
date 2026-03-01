@@ -57,8 +57,9 @@ Executes a command or displays a prompt. Max one code block per step.
 | Tag | Type | Behavior |
 | :--- | :--- | :--- |
 | `bash`, `sh`, `shell` | Executable | Runs in shell. Exit 0 = PASS, else FAIL. |
-| `bash prompt`, `prompt` | Display | Output only. Not executed. |
-| `json`, etc. | Display | Output only. |
+| `prompt`, `{language} prompt`, `{language}` | Prompt | Output only. Not executed. |
+
+All non-executable code blocks with a language tag are treated as prompt blocks. Bare code fences (no info string) are ignored.
 
 Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
 
@@ -158,7 +159,7 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 
 **GOTO Syntax**:
 *   `GOTO 3`: Jump to Step 3.
-*   `GOTO 3` (FOR step, no AT): Defaults to iteration 1.
+*   `GOTO 3` (FOR step, no AT): Defaults to the FOR range's start value (e.g. iteration 1 for `FOR 1 TO 5`, iteration 5 for `FOR 5 TO 10`).
 *   `GOTO 3 AT 1`: Jump to Step 3, iteration 1 (if FOR step).
 *   `GOTO 3 AT {{Index}}`: Re-enter Step 3 at current iteration.
 
@@ -182,7 +183,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Limits**: Open-ended data source iteration is capped at 10,000 iterations. Numeric bounds are capped at 10,000 at parse time.
 *   **Source references**: `{{ source }}` in FOR clauses is NOT template-expanded. It is a data source identifier resolved at runtime. Template-variable bounds (`{{ Max }}`) ARE expanded before parsing.
 *   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
-*   **No descending data sources**: Descending windows (`start > end`) are not supported for data sources.
+*   **Descending data sources**: Descending windows (`start > end`) iterate data source items in reverse position order.
 *   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
 *   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.

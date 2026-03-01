@@ -175,7 +175,6 @@ describe('runExecutionLoop', () => {
     mockManager = {
       load: jest.fn(),
       update: jest.fn(),
-      updateAgentBinding: jest.fn(),
     };
 
     mockLifecycleService.ensureActiveEntry.mockReset();
@@ -358,109 +357,6 @@ describe('runExecutionLoop', () => {
       }),
     );
     expect(mockSessionService.popRunbook).toHaveBeenCalled();
-  });
-
-  it('performs terminal bookkeeping when loop exhaustion completes a child runbook', async () => {
-    const childAgentId = 'agent-42';
-    const parentId = 'parent-run-789';
-    const exhaustedState = {
-      id: runbookId,
-      step: '1',
-      substep: undefined,
-      variables: { someVar: 'val' },
-      snapshot: {
-        status: 'done',
-        value: 'COMPLETE',
-        context: { lastMessage: 'Loop done' },
-      },
-    };
-
-    // Override ForIterationService mock to return exhausted+complete
-    (core.ForIterationService as any).mockImplementation(() => ({
-      prepareIteration: jest.fn().mockResolvedValue({
-        status: 'exhausted',
-        state: exhaustedState,
-        terminal: 'complete',
-      }),
-    }));
-
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      status: 'running',
-      parentRunbookId: parentId,
-    });
-
-    const result = await runExecutionLoop(
-      mockManager,
-      runbookId,
-      steps,
-      '/tmp',
-      false,
-      mockEmitter,
-      childAgentId,
-    );
-
-    expect(result).toBe('done');
-    // variables.completed must be set
-    expect(mockManager.update).toHaveBeenCalledWith(runbookId, {
-      variables: { someVar: 'val', completed: true },
-    });
-    // Parent agent binding must be updated
-    expect(mockManager.updateAgentBinding).toHaveBeenCalledWith(parentId, childAgentId, {
-      status: 'done',
-      result: 'pass',
-    });
-    expect(mockSessionService.popRunbook).toHaveBeenCalledWith(childAgentId);
-  });
-
-  it('performs terminal bookkeeping when loop exhaustion stops a child runbook', async () => {
-    const childAgentId = 'agent-99';
-    const parentId = 'parent-run-456';
-    const exhaustedState = {
-      id: runbookId,
-      step: '1',
-      substep: undefined,
-      variables: {},
-      snapshot: null,
-    };
-
-    (core.ForIterationService as any).mockImplementation(() => ({
-      prepareIteration: jest.fn().mockResolvedValue({
-        status: 'exhausted',
-        state: exhaustedState,
-        terminal: 'stopped',
-      }),
-    }));
-
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      status: 'running',
-      parentRunbookId: parentId,
-    });
-
-    const result = await runExecutionLoop(
-      mockManager,
-      runbookId,
-      steps,
-      '/tmp',
-      false,
-      mockEmitter,
-      childAgentId,
-    );
-
-    expect(result).toBe('stopped');
-    // variables.stopped must be set
-    expect(mockManager.update).toHaveBeenCalledWith(runbookId, {
-      variables: { stopped: true },
-    });
-    // Parent agent binding must be updated with fail
-    expect(mockManager.updateAgentBinding).toHaveBeenCalledWith(parentId, childAgentId, {
-      status: 'done',
-      result: 'fail',
-    });
-    expect(mockSessionService.popRunbook).toHaveBeenCalledWith(childAgentId);
   });
 
   it('emits expanded command text in STEP_ENTERED payload for prompted mode', async () => {

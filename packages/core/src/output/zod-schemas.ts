@@ -38,8 +38,6 @@ export const CLIErrorCodes = {
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   /** No stashed runbook to restore */
   NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
-  /** Agent binding operation failed */
-  AGENT_BINDING_ERROR: 'AGENT_BINDING_ERROR',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
@@ -59,7 +57,6 @@ export const ErrorCodeSchema = z
     'INVALID_SYNTAX',
     'VALIDATION_ERROR',
     'NO_STASHED_RUNBOOK',
-    'AGENT_BINDING_ERROR',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',
@@ -608,35 +605,11 @@ export const ExecutionSummarySchema = z
   .passthrough();
 
 /**
- * Step queued response schema (run --step output).
- */
-export const StepQueuedResponseSchema = z
-  .object({
-    action: z.literal('step_queued').describe('Action type for step queue'),
-    stepId: z.string().describe('Step identifier that was queued'),
-    runbook: z.string().optional().describe('Runbook filename'),
-    targetAt: z.string().optional().describe('Derived execution location for the queued target'),
-  })
-  .describe('Response when a step is queued for execution');
-
-/**
- * Agent bound response schema (run --agent output).
- */
-export const AgentBoundResponseSchema = z
-  .object({
-    action: z.literal('agent_bound').describe('Action type for agent binding'),
-    agent: z.string().describe('Agent identifier that was bound'),
-    stepId: z.string().describe('Step identifier the agent is bound to'),
-    targetAt: z.string().optional().describe('Derived execution location for the bound target'),
-  })
-  .describe('Response when an agent is bound to a step');
-
-/**
  * Combined run command response schema.
  */
-export const RunCommandResponseSchema = z
-  .union([ExecutionSummarySchema, StepQueuedResponseSchema, AgentBoundResponseSchema])
-  .describe('Response from the run command');
+export const RunCommandResponseSchema = ExecutionSummarySchema.describe(
+  'Response from the run command',
+);
 
 // ============================================================================
 // Abort Command Schema
@@ -743,12 +716,6 @@ export type PopResponse = z.infer<typeof PopResponseSchema>;
 
 /** Execution summary */
 export type ExecutionSummary = z.infer<typeof ExecutionSummarySchema>;
-
-/** Step queued response */
-export type StepQueuedResponse = z.infer<typeof StepQueuedResponseSchema>;
-
-/** Agent bound response */
-export type AgentBoundResponse = z.infer<typeof AgentBoundResponseSchema>;
 
 /** Run command response */
 export type RunCommandResponse = z.infer<typeof RunCommandResponseSchema>;

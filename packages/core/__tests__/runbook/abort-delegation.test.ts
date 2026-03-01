@@ -26,8 +26,6 @@ function makeState(substepStates: SubstepState[]): RunbookState {
     retryCount: 0,
     variables: {},
     steps: [{ id: '1', status: 'running' }],
-    pendingSteps: [],
-    agentBindings: {},
     startedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',
     substepStates,

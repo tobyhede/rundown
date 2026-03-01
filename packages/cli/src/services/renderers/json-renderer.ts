@@ -259,9 +259,8 @@ export class JSONRenderer implements OutputRenderer {
    * Streams the event immediately as a JSON Lines entry,
    * enabling real-time output for execution commands.
    *
-   * Includes full envelope fields (runbook, agentId, parentRunbookId, parentStepId)
-   * to enable downstream tooling to attribute events in multi-agent or nested
-   * runbook scenarios.
+   * Includes envelope fields (runbook, agentId, parentStepId) to enable
+   * downstream tooling to attribute events in nested runbook scenarios.
    *
    * @param event - The execution event to render
    */
@@ -286,9 +285,6 @@ export class JSONRenderer implements OutputRenderer {
     // Include optional envelope fields when present
     if (event.agentId !== undefined) {
       jsonlLine.agentId = event.agentId;
-    }
-    if (event.parentRunbookId !== undefined) {
-      jsonlLine.parentRunbookId = event.parentRunbookId;
     }
     if (event.parentStepId !== undefined) {
       jsonlLine.parentStepId = event.parentStepId;

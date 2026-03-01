@@ -71,36 +71,6 @@ describe('stop command', () => {
     });
   });
 
-  describe('stop agent runbook', () => {
-    beforeEach(async () => {
-      runCli('run --prompted runbooks/simple.runbook.md --agent test-agent', workspace);
-    });
-
-    it('stops agent-scoped runbook', async () => {
-      const result = runCli('stop --agent test-agent', workspace);
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('STOP');
-
-      // Agent stack should be empty
-      const session = await readSession(workspace);
-      expect(session.stacks['test-agent'] ?? []).toHaveLength(0);
-    });
-
-    it('does not affect default stack', async () => {
-      // Start a runbook in default stack
-      runCli('run --prompted runbooks/goto.runbook.md', workspace);
-      const defaultState = await getActiveState(workspace);
-
-      // Stop agent runbook
-      runCli('stop --agent test-agent', workspace);
-
-      // Default stack should still have its runbook
-      const session = await readSession(workspace);
-      expect(session.active).toBe(defaultState!.id);
-    });
-  });
-
   describe('stop with runbook stack', () => {
     it('pops to parent runbook', async () => {
       // Create parent/child runbooks

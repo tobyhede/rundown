@@ -50,8 +50,6 @@ export {
   PruneResponseSchema,
   // Execution schemas
   ExecutionSummarySchema,
-  StepQueuedResponseSchema,
-  AgentBoundResponseSchema,
   RunCommandResponseSchema,
 } from '@rundown-org/core';
 

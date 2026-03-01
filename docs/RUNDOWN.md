@@ -779,7 +779,7 @@ rundown goto 3.1     # Jump to substep 3.1
 
 | Target | Valid From | Description |
 |--------|------------|-------------|
-| `GOTO N` | Any step | Jump to step N (if FOR step, implies AT 1) |
+| `GOTO N` | Any step | Jump to step N (if FOR step, defaults to AT range start) |
 | `GOTO N.M` | Any step | Jump to substep M of step N |
 | `GOTO Name` | Any step | Jump to named step |
 | `GOTO Name.M` | Any step | Jump to substep M of named step |
@@ -787,7 +787,7 @@ rundown goto 3.1     # Jump to substep 3.1
 | `GOTO N.M AT I` | Any step | Jump to substep M of FOR step N at iteration I |
 | `GOTO Name AT I` | Any step | Enter named FOR step at iteration I |
 
-The `AT` qualifier is only valid when the target is a step with a FOR annotation. If `AT` is omitted for a FOR step, it defaults to iteration 1 (restart from beginning). See [SPEC.md GOTO](./SPEC.md#goto) for full details.
+The `AT` qualifier is only valid when the target is a step with a FOR annotation. If `AT` is omitted for a FOR step, it defaults to the FOR range's start value (e.g. iteration 1 for `FOR 1 TO 5`, iteration 5 for `FOR 5 TO 10`). See [SPEC.md GOTO](./SPEC.md#goto) for full details.
 
 ### Status Commands
 
@@ -1190,7 +1190,7 @@ JSON output compatibility:
 | "Invalid step target" | Bad goto format | Use "N" or "N.M" |
 | "FOR loop references undefined data source" | Sourced FOR clause without matching source | Define source in config.yaml or --var-file |
 | "File drift detected" | Data file changed during iteration | Ensure file stability or restart runbook |
-| "Descending windows are not supported for file sources" | `start > end` on file source | File sources must iterate forward |
+
 
 ### State Recovery
 

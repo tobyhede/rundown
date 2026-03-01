@@ -4090,6 +4090,124 @@ echo "processing"
 
       actor.stop();
     });
+
+    it('iterates descending array source window (4 TO 2)', () => {
+      const steps = createRunbook(`
+## 1. Process items
+- FOR item IN 4 TO 2 OF {{ items }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item
+- PASS: CONTINUE
+
+\`\`\`bash
+echo "processing"
+\`\`\`
+`);
+      const sources = {
+        items: { kind: 'array' as const, items: ['a', 'b', 'c', 'd', 'e'] },
+      };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 4 (start)
+      let ctx = actor.getSnapshot().context;
+      let top = ctx.forStack[0];
+      expect(top.iteration).toBe(4);
+      expect(top.start).toBe(4);
+      expect(top.end).toBe(2);
+
+      // Send PASS to advance to iteration 3
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      top = ctx.forStack[0];
+      expect(top.iteration).toBe(3);
+
+      // Send PASS to advance to iteration 2
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      top = ctx.forStack[0];
+      expect(top.iteration).toBe(2);
+
+      // Send PASS to exit loop (no more iterations)
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      expect(ctx.forStack).toEqual([]);
+
+      actor.stop();
+    });
+
+    it('iterates descending file source window (3 TO 1)', () => {
+      const DEFAULT_TRANSITIONS_LOCAL = {
+        all: true,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+      };
+
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'File loop',
+          forClause: { start: 3, end: 1, variable: 'server', source: 'servers' },
+          substeps: [
+            {
+              id: '1',
+              description: 'Process {{server}}',
+              transitions: DEFAULT_TRANSITIONS_LOCAL,
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS_LOCAL,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+          },
+        },
+      ];
+
+      const sources = {
+        servers: { kind: 'file' as const, path: '/tmp/servers.txt', format: 'text' as const },
+      };
+      const machine = compileRunbookToMachine(steps, { sources });
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 3 (start, descending)
+      let ctx = actor.getSnapshot().context;
+      let top = ctx.forStack[0];
+      expect(top.iteration).toBe(3);
+      expect(top.start).toBe(3);
+      expect(top.end).toBe(1);
+      expect(top.source).toEqual({
+        kind: 'file',
+        path: '/tmp/servers.txt',
+        format: 'text',
+        snapshot: null,
+      });
+
+      // File source with defined end iterates by numeric bounds (no execution layer needed)
+      // Send PASS to advance to iteration 2
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      top = ctx.forStack[0];
+      expect(top.iteration).toBe(2);
+
+      // Send PASS to advance to iteration 1
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      top = ctx.forStack[0];
+      expect(top.iteration).toBe(1);
+
+      // Send PASS to exit loop (no more iterations)
+      actor.send({ type: 'PASS' });
+      ctx = actor.getSnapshot().context;
+      expect(ctx.forStack).toEqual([]);
+
+      actor.stop();
+    });
   });
 
   describe('MAX_FILE_ITERATIONS circuit breaker', () => {

@@ -6,8 +6,8 @@
  * substep. This module implements the propagation protocol described in
  * §6.3 of the delegation design.
  *
- * The pattern mirrors {@link handleAgentCompletion} in transitions.ts but
- * uses {@link DelegationLinkage} instead of agent bindings.
+ * Uses {@link DelegationLinkage} to track and propagate completion results
+ * through the delegation chain.
  *
  * @module helpers/delegation-completion
  */

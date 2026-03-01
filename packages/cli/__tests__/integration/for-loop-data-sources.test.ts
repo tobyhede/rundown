@@ -613,4 +613,91 @@ rd echo item={{ item.name }}
     expect(output).toMatch(/bad-items\.jsonl/);
     expect(output).toMatch(/line\s+2/);
   });
+
+  it('iterates descending array source (4 TO 2) in reverse order', async () => {
+    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await writeFile(
+      join(workspace.cwd, '.rundown', 'config.yaml'),
+      `items:
+  - alpha
+  - beta
+  - gamma
+  - delta
+  - epsilon
+`,
+    );
+
+    await writeFile(
+      join(workspace.cwd, 'descending-array.runbook.md'),
+      `---
+name: Descending Array
+---
+# Descending
+
+## 1. Process items
+- FOR item IN 4 TO 2 OF {{ items }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle item
+- PASS: CONTINUE
+
+\`\`\`bash
+rd echo item={{ item }}
+\`\`\`
+`,
+    );
+
+    const result = runCli('run --json descending-array.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    // Should have exactly 3 iterations (positions 4, 3, 2 = delta, gamma, beta)
+    expect(commandStartedEvents).toHaveLength(3);
+    expect(commandStartedEvents[0].command).toContain('item=delta');
+    expect(commandStartedEvents[1].command).toContain('item=gamma');
+    expect(commandStartedEvents[2].command).toContain('item=beta');
+  });
+
+  it('iterates descending file source (3 TO 1) in reverse order', async () => {
+    await writeFile(join(workspace.cwd, 'servers.txt'), 'alpha\nbeta\ngamma\ndelta\nepsilon\n');
+
+    await writeFile(
+      join(workspace.cwd, 'descending-file.runbook.md'),
+      `---
+name: Descending File
+---
+# Descending File
+
+## 1. Process servers
+- FOR server IN 3 TO 1 OF {{ servers }}
+- PASS ALL: CONTINUE
+
+### 1.1 Handle server
+- PASS: CONTINUE
+
+\`\`\`bash
+rd echo server={{ server }}
+\`\`\`
+`,
+    );
+
+    const result = runCli(
+      'run --json --var servers=file:servers.txt descending-file.runbook.md',
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    // Should have exactly 3 iterations (positions 3, 2, 1 = gamma, beta, alpha)
+    expect(commandStartedEvents).toHaveLength(3);
+    expect(commandStartedEvents[0].command).toContain('server=gamma');
+    expect(commandStartedEvents[1].command).toContain('server=beta');
+    expect(commandStartedEvents[2].command).toContain('server=alpha');
+  });
 });

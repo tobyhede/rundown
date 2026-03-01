@@ -6,7 +6,6 @@ describe('SubstepState type', () => {
     const subtaskState: SubstepState = {
       id: '1',
       status: 'pending',
-      agentId: undefined,
       result: undefined,
     };
 
@@ -106,8 +105,6 @@ describe('RunbookState runbookSrc field', () => {
       retryCount: 0,
       variables: {},
       steps: [],
-      pendingSteps: [],
-      agentBindings: {},
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       runbookSrc: '# Test Runbook\n\n## 1. Test Step',

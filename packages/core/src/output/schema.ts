@@ -59,8 +59,6 @@ export {
   PopResponseSchema,
   // Execution schemas
   ExecutionSummarySchema,
-  StepQueuedResponseSchema,
-  AgentBoundResponseSchema,
   RunCommandResponseSchema,
   // Abort schema
   AbortResponseSchema,
@@ -89,8 +87,6 @@ export {
   type StashResponse,
   type PopResponse,
   type ExecutionSummary,
-  type StepQueuedResponse,
-  type AgentBoundResponse,
   type RunCommandResponse,
   type AbortResponse,
   type CLIResponse,

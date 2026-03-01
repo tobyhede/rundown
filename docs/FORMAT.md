@@ -56,7 +56,7 @@ where agent_type is:
 
 where substep_id is:
   positive_integer                              -- short form (parent prefix omitted)
-  | parent_ref "." { positive_integer | name }  -- qualified form
+  | parent_ref "." ( positive_integer | name )  -- qualified form
 
 where parent_ref is:
   positive_integer    -- for static parent
@@ -279,7 +279,7 @@ Canonical runtime targeting is `step + substep + iteration`.
 
 | Input | Expands To |
 |-------|------------|
-| `GOTO N` (FOR step) | `GOTO N AT 1` |
+| `GOTO N` (FOR step) | `GOTO N AT <range start>` (see [FOR Clause](#for-clause) for range start determination) |
 | `GOTO N AT I` (FOR step) | `GOTO N AT I` |
 
 ### Implicit Transitions
@@ -302,7 +302,9 @@ STOP and COMPLETE accept optional messages. Include a message only when it provi
 | Info String | Behavior |
 |------------------------|----------|
 | `bash`, `sh`, `shell`  | Execute; exit 0=PASS, non-zero=FAIL |
-| `{language} prompt`    | Output only  |
-| other / none           | Output only  |
+| `prompt`, `{language} prompt`, `{language}` | Output only (prompt) |
+| none (bare fence)       | Ignored  |
+
+All code blocks with a language tag that is not executable default to prompt behavior.
 
 Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
