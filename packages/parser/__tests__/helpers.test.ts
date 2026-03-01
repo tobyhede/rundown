@@ -167,15 +167,29 @@ describe('isPromptCodeBlock', () => {
     });
   });
 
-  describe('passive/other tags (returns null)', () => {
-    it('returns null for json', () => {
-      expect(isPromptCodeBlock('json')).toBeNull();
+  describe('unrecognized languages default to prompt', () => {
+    it('returns true for json', () => {
+      expect(isPromptCodeBlock('json')).toBe(true);
     });
 
-    it('returns null for typescript', () => {
-      expect(isPromptCodeBlock('typescript')).toBeNull();
+    it('returns true for typescript', () => {
+      expect(isPromptCodeBlock('typescript')).toBe(true);
     });
 
+    it('returns true for yaml', () => {
+      expect(isPromptCodeBlock('yaml')).toBe(true);
+    });
+
+    it('returns true for python', () => {
+      expect(isPromptCodeBlock('python')).toBe(true);
+    });
+
+    it('returns true for json prompt', () => {
+      expect(isPromptCodeBlock('json prompt')).toBe(true);
+    });
+  });
+
+  describe('no language tag (returns null)', () => {
     it('returns null for empty string', () => {
       expect(isPromptCodeBlock('')).toBeNull();
     });

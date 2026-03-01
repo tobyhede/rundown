@@ -137,16 +137,17 @@ Please look at this example.
     expect(steps[0].prompt).toBeUndefined(); // No prompt text from prompt blocks
   });
 
-  it('treats other tags as passive prose', () => {
+  it('treats unrecognized language code blocks as prompt', () => {
     const markdown = `## 1. Example
 \`\`\`json
 {"key": "value"}
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    // JSON code blocks are ignored - not valid for execution
-    expect(steps[0].command).toBeUndefined();
-    expect(steps[0].prompt).toBeUndefined();
+    expect(steps[0].command).toEqual({
+      code: `rd prompt '{"key": "value"}'`,
+      lang: 'prompt',
+    });
   });
 
   it('treats prompt code blocks as rd prompt commands', () => {

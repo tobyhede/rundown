@@ -302,7 +302,9 @@ STOP and COMPLETE accept optional messages. Include a message only when it provi
 | Info String | Behavior |
 |------------------------|----------|
 | `bash`, `sh`, `shell`  | Execute; exit 0=PASS, non-zero=FAIL |
-| `{language} prompt`    | Output only  |
-| other / none           | Output only  |
+| `prompt`, `{language} prompt`, `{language}` | Output only (prompt) |
+| none (bare fence)       | Ignored  |
+
+All code blocks with a language tag that is not executable default to prompt behavior.
 
 Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.

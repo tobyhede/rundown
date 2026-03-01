@@ -57,8 +57,9 @@ Executes a command or displays a prompt. Max one code block per step.
 | Tag | Type | Behavior |
 | :--- | :--- | :--- |
 | `bash`, `sh`, `shell` | Executable | Runs in shell. Exit 0 = PASS, else FAIL. |
-| `bash prompt`, `prompt` | Display | Output only. Not executed. |
-| `json`, etc. | Display | Output only. |
+| `prompt`, `{language} prompt`, `{language}` | Prompt | Output only. Not executed. |
+
+All non-executable code blocks with a language tag are treated as prompt blocks. Bare code fences (no info string) are ignored.
 
 Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
 

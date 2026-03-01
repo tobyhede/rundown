@@ -295,7 +295,6 @@ export function parseRunbookDocument(
           lang: 'prompt',
         };
       }
-      // Other code blocks (json, etc.) are ignored - not valid in runbooks
 
       if (cmd) {
         if (currentStep.pendingSubstep) {
