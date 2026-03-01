@@ -3,8 +3,16 @@ import type { HookInput } from '../../shared/index.js';
 import { Session } from '../../session.js';
 import { rundown } from './rundown.js';
 
+/**
+ * Result from handling a SubagentStop hook event.
+ *
+ * Returned by {@link handleSubagentStop} to communicate whether the subagent
+ * stop produced actionable context or a policy/runtime violation.
+ */
 export interface SubagentStopResult {
+  /** Summary of the action taken (e.g. delegation abort message). Undefined when no action was needed. */
   context?: string;
+  /** Description of the policy or runtime error that caused the stop. Undefined when the subagent stopped normally. */
   violation?: string;
 }
 
