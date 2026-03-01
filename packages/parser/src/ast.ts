@@ -62,8 +62,6 @@ export interface Substep {
   readonly id: string;
   /** Human-readable description from the substep header */
   readonly description: string;
-  /** Agent type, e.g., "code-review-agent" from "(code-review-agent)" */
-  readonly agentType?: string;
   /** Executable command from code block */
   readonly command?: Command;
   /** Single consolidated prompt text */

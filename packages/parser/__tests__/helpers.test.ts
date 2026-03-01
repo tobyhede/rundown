@@ -609,7 +609,6 @@ describe('extractSubstepHeader with named substeps', () => {
         stepRef: '1',
         id: '1',
         description: 'First substep',
-        agentType: undefined,
       });
     });
   });
@@ -621,7 +620,6 @@ describe('extractSubstepHeader with named substeps', () => {
         stepRef: '1',
         id: 'Cleanup',
         description: 'Handle cleanup',
-        agentType: undefined,
       });
     });
 
@@ -631,7 +629,6 @@ describe('extractSubstepHeader with named substeps', () => {
         stepRef: 'ErrorHandler',
         id: 'Recover',
         description: 'Recovery logic',
-        agentType: undefined,
       });
     });
 
@@ -641,12 +638,56 @@ describe('extractSubstepHeader with named substeps', () => {
         stepRef: '1',
         id: 'A',
         description: 'Do',
-        agentType: undefined,
       });
     });
 
     it('rejects reserved word as substep name', () => {
       expect(extractSubstepHeader('1.NEXT Invalid')).toBeNull();
+    });
+  });
+
+  describe('bare named substeps', () => {
+    it('parses bare name with no description', () => {
+      expect(extractSubstepHeader('ErrorHandler')).toEqual({
+        id: 'ErrorHandler',
+        description: '',
+      });
+    });
+
+    it('parses bare name with description', () => {
+      expect(extractSubstepHeader('ErrorHandler Handle the error')).toEqual({
+        id: 'ErrorHandler',
+        description: 'Handle the error',
+      });
+    });
+
+    it('parses bare name with colon separator', () => {
+      expect(extractSubstepHeader('ErrorHandler: Handle the error')).toEqual({
+        id: 'ErrorHandler',
+        description: 'Handle the error',
+      });
+    });
+
+    it('parses bare name with paren separator', () => {
+      expect(extractSubstepHeader('ErrorHandler) Title')).toEqual({
+        id: 'ErrorHandler',
+        description: 'Title',
+      });
+    });
+
+    it('rejects reserved word GOTO', () => {
+      expect(extractSubstepHeader('GOTO')).toBeNull();
+    });
+
+    it('rejects reserved word PASS', () => {
+      expect(extractSubstepHeader('PASS')).toBeNull();
+    });
+
+    it('accepts underscore-prefixed identifier', () => {
+      expect(extractSubstepHeader('_private')).toEqual({
+        id: '_private',
+        description: '',
+      });
     });
   });
 });
@@ -1096,8 +1137,11 @@ describe('extractSubstepHeader edge cases', () => {
     expect(extractSubstepHeader('')).toBeNull();
   });
 
-  it('returns null for string without dot', () => {
-    expect(extractSubstepHeader('NoDot')).toBeNull();
+  it('parses bare name (no dot) as bare named substep', () => {
+    expect(extractSubstepHeader('NoDot')).toEqual({
+      id: 'NoDot',
+      description: '',
+    });
   });
 
   it('returns null for string starting with dot', () => {
@@ -1108,31 +1152,32 @@ describe('extractSubstepHeader edge cases', () => {
     expect(extractSubstepHeader('@invalid.1 Something')).toBeNull();
   });
 
-  it('returns null for nothing after dot', () => {
-    expect(extractSubstepHeader('1.')).toBeNull();
+  it('treats trailing dot on bare numeric as separator', () => {
+    expect(extractSubstepHeader('1.')).toEqual({
+      id: '1',
+      description: '',
+    });
   });
 
   it('returns null for invalid substep id', () => {
     expect(extractSubstepHeader('1.@invalid Something')).toBeNull();
   });
 
-  it('extracts agent type from parentheses at end', () => {
+  it('treats former agent-type parentheses as description text', () => {
     const result = extractSubstepHeader('1.1 Run tests (test-agent)');
     expect(result).toEqual({
       stepRef: '1',
       id: '1',
-      description: 'Run tests',
-      agentType: 'test-agent',
+      description: 'Run tests (test-agent)',
     });
   });
 
-  it('extracts agent type without description', () => {
+  it('treats standalone agent-type parentheses as description text', () => {
     const result = extractSubstepHeader('1.1 (code-agent)');
     expect(result).toEqual({
       stepRef: '1',
       id: '1',
-      description: '',
-      agentType: 'code-agent',
+      description: '(code-agent)',
     });
   });
 
@@ -1142,7 +1187,6 @@ describe('extractSubstepHeader edge cases', () => {
       stepRef: '1',
       id: '1',
       description: '',
-      agentType: undefined,
     });
   });
 });
@@ -1523,7 +1567,6 @@ describe('C2: substep short form (bare numeric)', () => {
     expect(extractSubstepHeader('1')).toEqual({
       id: '1',
       description: '',
-      agentType: undefined,
     });
   });
 
@@ -1531,23 +1574,48 @@ describe('C2: substep short form (bare numeric)', () => {
     expect(extractSubstepHeader('2 Review code')).toEqual({
       id: '2',
       description: 'Review code',
-      agentType: undefined,
     });
   });
 
-  it('parses "3 Review (agent)" with agent type', () => {
+  it('treats former agent-type parentheses as description text', () => {
     expect(extractSubstepHeader('3 Review (agent)')).toEqual({
       id: '3',
-      description: 'Review',
-      agentType: 'agent',
+      description: 'Review (agent)',
     });
   });
 
-  it('parses "1 (code-agent)" with agent only', () => {
+  it('treats standalone agent-type parentheses as description text', () => {
     expect(extractSubstepHeader('1 (code-agent)')).toEqual({
       id: '1',
+      description: '(code-agent)',
+    });
+  });
+
+  it('strips trailing period separator from bare numeric', () => {
+    expect(extractSubstepHeader('1. Title')).toEqual({
+      id: '1',
+      description: 'Title',
+    });
+  });
+
+  it('strips trailing paren separator from bare numeric', () => {
+    expect(extractSubstepHeader('1) Title')).toEqual({
+      id: '1',
+      description: 'Title',
+    });
+  });
+
+  it('strips trailing colon separator from bare numeric', () => {
+    expect(extractSubstepHeader('2: Review code')).toEqual({
+      id: '2',
+      description: 'Review code',
+    });
+  });
+
+  it('handles bare numeric with separator and no description', () => {
+    expect(extractSubstepHeader('3.')).toEqual({
+      id: '3',
       description: '',
-      agentType: 'code-agent',
     });
   });
 
@@ -1560,7 +1628,6 @@ describe('C2: substep short form (bare numeric)', () => {
       stepRef: '1',
       id: '1',
       description: 'Description',
-      agentType: undefined,
     });
   });
 });
