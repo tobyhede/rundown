@@ -4,7 +4,7 @@ import type { Command } from 'commander';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-runbook.js';
+import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
 
 /**
  * Registers the 'goto' command for jumping to specific steps.
