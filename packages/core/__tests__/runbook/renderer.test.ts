@@ -89,9 +89,9 @@ describe('renderSubstep', () => {
     expect(renderSubstep(substep, '3')).toBe('### 3.1 First reviewer');
   });
 
-  it('renders substep with agent type', () => {
-    const substep: Substep = { id: '2', description: 'Second reviewer', agentType: 'code-agent' };
-    expect(renderSubstep(substep, '1')).toBe('### 1.2 Second reviewer (code-agent)');
+  it('renders substep without agent type', () => {
+    const substep: Substep = { id: '2', description: 'Second reviewer' };
+    expect(renderSubstep(substep, '1')).toBe('### 1.2 Second reviewer');
   });
 
   it('renders substep with child runbooks', () => {
@@ -120,12 +120,12 @@ describe('renderStep', () => {
       description: 'Dispatch reviewers',
       substeps: [
         { id: '1', description: 'First reviewer' },
-        { id: '2', description: 'Second reviewer', agentType: 'code-agent' },
+        { id: '2', description: 'Second reviewer' },
       ],
     };
     const result = renderStep(step);
     expect(result).toContain('### 3.1 First reviewer');
-    expect(result).toContain('### 3.2 Second reviewer (code-agent)');
+    expect(result).toContain('### 3.2 Second reviewer');
   });
 
   it('renders step with command', () => {
@@ -322,8 +322,8 @@ echo hello
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP
 
-### 1.1 First reviewer (code-review-agent)
-### 1.2 Second reviewer (code-agent)
+### 1.1 First reviewer
+### 1.2 Second reviewer
 
 ## 2. Complete`;
 
@@ -337,9 +337,8 @@ echo hello
     expect(parsed2[0].substeps).toHaveLength(2);
     expect(parsed2[0].substeps?.[0].id).toBe('1');
     expect(parsed2[0].substeps?.[0].description).toBe('First reviewer');
-    expect(parsed2[0].substeps?.[0].agentType).toBe('code-review-agent');
     expect(parsed2[0].substeps?.[1].id).toBe('2');
-    expect(parsed2[0].substeps?.[1].agentType).toBe('code-agent');
+    expect(parsed2[0].substeps?.[1].description).toBe('Second reviewer');
   });
 
   it('round-trips runbook with GOTO substep targets', () => {

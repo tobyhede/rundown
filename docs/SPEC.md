@@ -70,8 +70,8 @@ Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and 
 ### 3.2 Substeps
 
 Nested steps defined by H3 (`###`) headers.
-*   **Identifiers**: `### 1`, `### 1.1` (sequential), or `### Name` (named).
-*   **Agent type**: Optional parenthesized suffix specifying the agent type for delegation: `### 1.2 Description (agent-type)`. The agent type is extracted and set on the substep AST node as `agentType`.
+*   **Identifiers**: `### 1` (bare numeric), `### Name` (bare named), `### 1.1` (qualified numeric), or `### Step.Name` (qualified named). Bare forms are positionally assigned to the preceding H2 step.
+*   **Strict H3 rule**: When a step contains any valid substep, all H3 headers within that step must be valid substep identifiers.
 *   **Aggregation**: Parent step outcome is derived from substeps via transitions (`ALL`/`ANY`).
 
 ### 3.3 Runbook List Shorthand

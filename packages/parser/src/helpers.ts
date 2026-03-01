@@ -55,7 +55,8 @@ export function parseQuotedOrIdentifier(text: string): string {
  *
  * Represents the structured data extracted from substep headers like:
  * - "1.2 Description" (numeric)
- * - "ErrorHandler.Recover Description (agent)" (named with agent type)
+ * - "ErrorHandler.Recover Description" (named)
+ * - "ErrorHandler Handle the error" (bare named)
  */
 export interface ParsedSubstepHeader {
   /** Reference to parent step: "1" or named identifier like "ErrorHandler". Undefined for short form (parent inferred from context). */
@@ -64,8 +65,6 @@ export interface ParsedSubstepHeader {
   id: string;
   /** Human-readable description from the header */
   description: string;
-  /** Optional agent type specified in parentheses at end of header */
-  agentType?: string;
 }
 
 /**
@@ -184,59 +183,15 @@ function isValidSubstepId(s: string): boolean {
 }
 
 /**
- * Parse description and optional agent type from remainder text after a substep ID.
- *
- * Recognizes these patterns:
- * - "Description" → description only
- * - "Description (agent-type)" → description + agent
- * - "(agent-type)" → agent only, empty description
- *
- * Uses lastIndexOf to avoid ReDoS from (.+?)\s+ backtracking.
- *
- * @param remainder - The text after the substep ID (trimmed)
- * @returns Object with description and optional agentType
- */
-function parseDescriptionAndAgent(remainder: string): {
-  description: string;
-  agentType?: string;
-} {
-  if (!remainder) return { description: '' };
-
-  // Check for agent suffix: "description (agent-type)"
-  const lastParenOpen = remainder.lastIndexOf(' (');
-  if (lastParenOpen > 0 && remainder.endsWith(')')) {
-    const possibleAgent = remainder.slice(lastParenOpen + 2, -1).trim();
-    if (possibleAgent) {
-      return {
-        description: remainder.slice(0, lastParenOpen).trim(),
-        agentType: possibleAgent,
-      };
-    }
-    return { description: remainder };
-  }
-
-  if (remainder.startsWith('(') && remainder.endsWith(')')) {
-    // Just agent, no description: "(agent-type)"
-    const agent = remainder.slice(1, -1).trim();
-    if (agent) {
-      return { description: '', agentType: agent };
-    }
-    return { description: remainder };
-  }
-
-  return { description: remainder };
-}
-
-/**
  * Extract substep header from H3 text.
  *
  * Parses substep headers in these formats:
- * - Short form: "1", "2 Description", "3 Review (agent)" (parent inferred from context)
- * - Numeric: "1.2" or "1.2 Description"
- * - Named: "1.Cleanup", "ErrorHandler.Recover" (with optional description)
- * - With agent: "1.2 Description (agent-type)" or "1.2 (agent-type)"
+ * 1. Bare positive integer: "1", "2 Description" (parent inferred from context)
+ * 2. Dot-qualified: "1.2", "ErrorHandler.Recover Description"
+ * 3. Bare named: "ErrorHandler", "Cleanup: Handle it" (parent inferred from context)
  *
- * Description is optional per spec.
+ * Description is optional per spec. Separator characters (`:`, `)`, `—`, `→`, `-`, `.`)
+ * between the identifier and description are stripped.
  *
  * @param text - The raw H3 header text (without the ### prefix)
  * @returns Parsed substep header data, or null if text is not a valid substep header
@@ -245,42 +200,59 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
-  // Handle short form: bare positive integer (e.g., "1", "2 Description", "3 Review (agent)")
   const spaceIdx = trimmed.indexOf(' ');
   const firstToken = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
+
+  // Branch 1: Bare positive integer (e.g., "1", "2 Description", "3) Title")
   if (/^\d+$/.test(firstToken)) {
     const num = parseInt(firstToken, 10);
     if (num > 0) {
-      const remainder = spaceIdx !== -1 ? trimmed.slice(spaceIdx + 1).trim() : '';
-      const { description, agentType } = parseDescriptionAndAgent(remainder);
-      return { id: firstToken, description, agentType };
+      const afterFirstToken = spaceIdx !== -1 ? trimmed.slice(spaceIdx) : '';
+      const description = stripSeparator(afterFirstToken);
+      return { id: firstToken, description };
     }
   }
 
-  // Find the dot separating step reference from substep ID
+  // Branch 2: Dot-qualified (e.g., "1.2", "ErrorHandler.Recover Description")
   const dotIndex = trimmed.indexOf('.');
-  if (dotIndex === -1 || dotIndex === 0) return null;
+  if (dotIndex > 0) {
+    const stepPart = trimmed.slice(0, dotIndex);
+    if (isValidStepRef(stepPart)) {
+      const afterDot = trimmed.slice(dotIndex + 1);
+      if (!afterDot) return null;
 
-  const stepPart = trimmed.slice(0, dotIndex);
-  if (!isValidStepRef(stepPart)) return null;
+      const spaceIndex = afterDot.indexOf(' ');
+      const substepId = spaceIndex === -1 ? afterDot : afterDot.slice(0, spaceIndex);
+      if (!isValidSubstepId(substepId)) return null;
 
-  const afterDot = trimmed.slice(dotIndex + 1);
-  if (!afterDot) return null;
+      const remainder = spaceIndex !== -1 ? afterDot.slice(spaceIndex) : '';
+      const description = stripSeparator(remainder);
 
-  // Find where substep ID ends (first space or end of string)
-  const spaceIndex = afterDot.indexOf(' ');
-  const substepId = spaceIndex === -1 ? afterDot : afterDot.slice(0, spaceIndex);
-  if (!isValidSubstepId(substepId)) return null;
+      return {
+        stepRef: stepPart,
+        id: substepId,
+        description,
+      };
+    }
+  }
 
-  const remainder = spaceIndex !== -1 ? afterDot.slice(spaceIndex + 1).trim() : '';
-  const { description, agentType } = parseDescriptionAndAgent(remainder);
+  // Branch 3: Bare named (e.g., "ErrorHandler", "Cleanup: Handle it")
+  // Strip trailing separator chars from firstToken
+  let end = firstToken.length;
+  while (end > 0 && TRAILING_SEPARATORS.has(firstToken[end - 1])) end--;
+  const strippedName = firstToken.slice(0, end);
 
-  return {
-    stepRef: stepPart,
-    id: substepId,
-    description,
-    agentType,
-  };
+  if (
+    strippedName &&
+    NAMED_IDENTIFIER_PATTERN.test(strippedName) &&
+    !isReservedWord(strippedName)
+  ) {
+    const afterFirstToken = spaceIdx !== -1 ? trimmed.slice(spaceIdx) : '';
+    const description = stripSeparator(afterFirstToken);
+    return { id: strippedName, description };
+  }
+
+  return null;
 }
 
 /**

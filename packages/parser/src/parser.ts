@@ -53,7 +53,6 @@ function extractText(node: PhrasingContent | Heading | Paragraph | ListItem): st
 interface SubstepBuilder {
   id: string;
   description: string;
-  agentType?: string;
   content: string;
   command?: Command;
   promptText: string;
@@ -79,6 +78,7 @@ interface StepBuilder {
   forClause?: ForClause;
   hasSeenForClause: boolean;
   forConditionals?: ParsedConditional[];
+  invalidH3s: Array<{ line: number; text: string }>;
 }
 
 /**
@@ -167,7 +167,6 @@ export function parseRunbookDocument(
       const substep: Substep = {
         id: ps.id,
         description: ps.description,
-        agentType: ps.agentType,
         command: ps.command,
         prompt: promptText.trim() || undefined,
         transitions: transitions ?? undefined,
@@ -221,6 +220,7 @@ export function parseRunbookDocument(
           content: '',
           line: node.position?.start.line,
           hasSeenForClause: false,
+          invalidH3s: [],
         };
       }
     }
@@ -233,13 +233,12 @@ export function parseRunbookDocument(
       }
       finalizePendingSubstep();
 
-      // Mark that parent step has seen content (substeps count as content)
-      currentStep.hasSeenContent = true;
-
       const headingText = extractText(node);
       const parsed = extractSubstepHeader(headingText);
 
       if (parsed) {
+        // Mark that parent step has seen content (substeps count as content)
+        currentStep.hasSeenContent = true;
         if (parsed.stepRef !== undefined && parsed.stepRef !== currentStep.name) {
           throw new RunbookSyntaxError(
             `Substep ${headingText} does not belong to step ${currentStep.name}`,
@@ -255,7 +254,6 @@ export function parseRunbookDocument(
         currentStep.pendingSubstep = {
           id: parsed.id,
           description: parsed.description,
-          agentType: parsed.agentType,
           content: '',
           command: undefined,
           promptText: '',
@@ -265,6 +263,11 @@ export function parseRunbookDocument(
           pendingConditionals: [],
           line: node.position?.start.line,
         };
+      } else {
+        currentStep.invalidH3s.push({
+          line: node.position?.start.line ?? 0,
+          text: headingText,
+        });
       }
     }
 
@@ -562,6 +565,15 @@ function finalizeStep(
     if (forTrans) {
       step.forClause = { ...step.forClause, transitions: forTrans };
     }
+  }
+
+  // Strict H3 validation: if a step has valid substeps, all H3s must be valid substep identifiers
+  if (step.substeps.length > 0 && step.invalidH3s.length > 0) {
+    const lines = step.invalidH3s.map((h) => `line ${String(h.line)}: "${h.text}"`).join(', ');
+    throw new RunbookSyntaxError(
+      `Step "${step.name}" has substeps but also has unrecognized H3 headers (${lines}). ` +
+        `When a step contains substeps, all H3 headers must be valid substep identifiers.`,
+    );
   }
 
   const runbooks = extractRunbookList(step.content);

@@ -54,19 +54,16 @@ export function renderTransitions(transitions: Transitions): string {
 /**
  * Render a Substep to Markdown.
  *
- * Generates an H3 header with the substep ID, description, optional
- * agent type suffix, and runbook references.
+ * Generates an H3 header with the substep ID, description,
+ * and runbook references.
  *
  * @param substep - The Substep to render
  * @param parentStepName - The parent step name (e.g., "1", "ErrorHandler")
  * @returns Markdown H3 header string for the substep
  */
 export function renderSubstep(substep: Substep, parentStepName: string): string {
-  const agentSuffix = substep.agentType ? ` (${substep.agentType})` : '';
   const lines: string[] = [];
-  lines.push(
-    renderHeading(3, `${parentStepName}.${substep.id}`, `${substep.description}${agentSuffix}`),
-  );
+  lines.push(renderHeading(3, `${parentStepName}.${substep.id}`, substep.description));
   if (substep.runbooks?.length) {
     lines.push('');
     for (const runbookPath of substep.runbooks) {

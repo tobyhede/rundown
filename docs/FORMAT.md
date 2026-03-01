@@ -46,16 +46,14 @@ where substeps is:
   substep [ substep ... ]
 
 where substep is:
-  "###" substep_id title [ "(" agent_type ")" ]
+  "###" substep_id [ separator ] [ title ]
     [ transition ... ]
     [ prompt ]
-    [{ code_block  | runbooks }]
-
-where agent_type is:
-  text    -- agent identifier for delegation (e.g., "code-review-agent")
+    [{ code_block | runbooks }]
 
 where substep_id is:
-  positive_integer                              -- short form (parent prefix omitted)
+  positive_integer                              -- bare numeric (parent positionally assigned)
+  | name                                        -- bare named (parent positionally assigned)
   | parent_ref "." ( positive_integer | name )  -- qualified form
 
 where parent_ref is:

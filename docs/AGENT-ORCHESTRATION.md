@@ -119,9 +119,9 @@ The runbook handles flow (check → invoke skill → write); the skill handles c
 
 ---
 
-### 4. Substeps with Agent Types
+### 4. Substeps with Agent Dispatch
 
-A runbook defines substeps, each delegated to a typed subagent. The parent agent orchestrates; subagents execute. Agent types are declared in H3 substep headers.
+A runbook defines substeps, each delegated to a subagent. The parent agent orchestrates; subagents execute. Agent type context injection is driven by runtime hook events, not substep header syntax.
 
 **When to use:** Tasks with distinct subtasks that benefit from specialised agents. Each subagent gets its own context and instructions via context injection.
 
@@ -131,16 +131,16 @@ A runbook defines substeps, each delegated to a typed subagent. The parent agent
 - PASS ALL: CONTINUE
 - FAIL ANY: GOTO 4
 
-### 2.1 Code review (code-review-agent)
+### 2.1 Code review
 Review the implementation for correctness and style.
 
-### 2.2 Test review (test-agent)
+### 2.2 Test review
 Verify test coverage and assertions.
 ```
 
 **Command sequence:**
 ```bash
-# Parent queues substep with agent type
+# Parent queues substep
 rd run --step 2.1
 
 # Subagent binds to pending step
@@ -150,7 +150,7 @@ rd run --agent subagent-abc
 rd pass --agent subagent-abc
 ```
 
-The agent type (`code-review-agent`, `test-agent`) drives context injection — see [Context File Discovery](#context-file-discovery).
+Agent type context injection is driven by runtime hook events — see [Context File Discovery](#context-file-discovery).
 
 **Dispatch frontier and identity:**
 - `run --step` requires a parseable step identifier; when the active step has substeps, step-only dispatch (`N`) is rejected and `N.M` is required.
@@ -312,8 +312,8 @@ When substeps involve agents, transition rules use aggregate conditions:
 - PASS ALL: CONTINUE
 - FAIL ANY: GOTO 4
 
-### 2.1 First reviewer (code-review-agent)
-### 2.2 Second reviewer (code-agent)
+### 2.1 First reviewer
+### 2.2 Second reviewer
 ```
 
 | Condition | Meaning |
