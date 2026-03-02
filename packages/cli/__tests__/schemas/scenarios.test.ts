@@ -179,6 +179,13 @@ describe('getEffectiveResult', () => {
     } as any;
     expect(getEffectiveResult(scenario)).toBe('COMPLETE');
   });
+
+  it('throws when neither result nor expect.result is present', () => {
+    const scenario = { commands: ['rd pass'], expect: { stepsCompleted: 1 } } as any;
+    expect(() => getEffectiveResult(scenario)).toThrow(
+      'Scenario has neither result nor expect.result defined',
+    );
+  });
 });
 
 describe('ScenariosSchema', () => {

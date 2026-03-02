@@ -162,7 +162,7 @@ export function registerScenariosCommand(program: Command): void {
         output.detail(detailData, 'scenario_result');
 
         // Display per-assertion failures in text mode
-        if (!options.json && runResult.assertions) {
+        if (!options.json && runResult.assertions && runResult.assertions.length > 0) {
           output.message('', 'info');
           output.message('Assertions:', 'info');
           for (const assertion of runResult.assertions) {

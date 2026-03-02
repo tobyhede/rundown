@@ -402,8 +402,10 @@ describe('evaluateExpectations', () => {
 
     expect(result.passed).toBe(false);
     expect(result.assertions).toHaveLength(2);
-    expect(result.assertions[0].passed).toBe(true); // completed matches
-    expect(result.assertions[1].passed).toBe(false); // count doesn't match
+    const completedAssertion = result.assertions.find((a) => a.field === 'variables.completed');
+    const countAssertion = result.assertions.find((a) => a.field === 'variables.count');
+    expect(completedAssertion?.passed).toBe(true);
+    expect(countAssertion?.passed).toBe(false);
   });
 
   it('returns empty assertions for empty expect', () => {

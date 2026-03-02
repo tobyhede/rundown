@@ -107,6 +107,7 @@ cases:
       expect(result.stdout).toContain('wrong-expectation');
       expect(result.stdout).toContain('COMPLETE');
       expect(result.stdout).toContain('STOP');
+      expect(result.stdout).toMatch(/NAME\s{2,}FILE\s{2,}EXPECTED/);
     });
 
     it('outputs JSON with --json flag', () => {
@@ -116,7 +117,9 @@ cases:
       const parsed = JSON.parse(result.stdout.trim());
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed).toHaveLength(3);
-      expect(parsed[0].name).toBe('happy-path');
+      expect(parsed.map((item: { name: string }) => item.name)).toEqual(
+        expect.arrayContaining(['happy-path', 'stop-path', 'wrong-expectation']),
+      );
     });
 
     it('shows VALIDATION_ERROR for invalid suite file', async () => {

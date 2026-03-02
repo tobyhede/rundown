@@ -16,14 +16,35 @@ describe('ScenarioSuiteRunResponseSchema', () => {
     actual: 'STOP',
   };
 
-  it('validates a correct suite run response', () => {
+  it('validates a correct suite run response with mixed results', () => {
     const response = {
-      result: true,
+      result: false,
       suite: 'Test Suite',
       total: 2,
       passed: 1,
       failed: 1,
       cases: [validCase, failingCase],
+    };
+
+    const parsed = ScenarioSuiteRunResponseSchema.safeParse(response);
+    expect(parsed.success).toBe(true);
+  });
+
+  it('validates a correct suite run response with all passing', () => {
+    const allPassingCase = {
+      result: true,
+      scenario: 'another-happy',
+      expected: 'COMPLETE',
+      actual: 'COMPLETE',
+    };
+
+    const response = {
+      result: true,
+      suite: 'Test Suite',
+      total: 2,
+      passed: 2,
+      failed: 0,
+      cases: [validCase, allPassingCase],
     };
 
     const parsed = ScenarioSuiteRunResponseSchema.safeParse(response);
@@ -78,6 +99,10 @@ describe('ScenarioSuiteRunResponseSchema', () => {
 
     const parsed = ScenarioSuiteRunResponseSchema.safeParse(response);
     expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      const messages = parsed.error.issues.map((i) => i.message);
+      expect(messages.some((m) => m.includes('passed'))).toBe(true);
+    }
   });
 
   it('rejects when failed count does not match cases with result === false', () => {
@@ -92,5 +117,9 @@ describe('ScenarioSuiteRunResponseSchema', () => {
 
     const parsed = ScenarioSuiteRunResponseSchema.safeParse(response);
     expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      const messages = parsed.error.issues.map((i) => i.message);
+      expect(messages.some((m) => m.includes('failed'))).toBe(true);
+    }
   });
 });

@@ -78,6 +78,22 @@ async function executeSuiteCase(
       };
     }
 
+    // Copy any referenced child runbooks into the isolated workspace
+    const runbookPattern = /(?:^|[\s])([^\s=]+\.runbook\.md)/g;
+    const referenced = new Set<string>();
+    for (const cmd of suiteCase.commands) {
+      for (const match of cmd.matchAll(runbookPattern)) {
+        if (match[1] !== runbookFilename) referenced.add(match[1]);
+      }
+    }
+    for (const ref of referenced) {
+      try {
+        copyFileSync(resolve(suiteDir, ref), join(runbooksDir, ref));
+      } catch {
+        /* non-fatal — command will fail with clear error */
+      }
+    }
+
     if (!quiet) {
       output.message('', 'info');
       output.message(`Case: ${caseName}`, 'dim');
@@ -138,9 +154,9 @@ async function executeSuiteCase(
         const stateContent = readFileSync(latestFile.path, 'utf-8');
         persistedState = JSON.parse(stateContent) as PersistedState;
 
-        if (persistedState.variables?.completed) {
+        if (persistedState.variables?.completed === true) {
           actualResult = 'COMPLETE';
-        } else if (persistedState.variables?.stopped) {
+        } else if (persistedState.variables?.stopped === true) {
           actualResult = 'STOP';
         }
       }
@@ -284,116 +300,121 @@ export function registerScenarioSuiteCommand(program: Command): void {
         options: { all?: boolean; quiet?: boolean; json?: boolean },
       ) => {
         const output = new OutputEmitter({ json: options.json });
-
-        const result = await loadScenarioSuite(suiteFile);
-        if (!result.ok) {
-          output.error(result.error, 'VALIDATION_ERROR');
-          if (result.details) {
-            for (const detail of result.details) {
-              output.message(`  - ${detail}`, 'error');
+        try {
+          const result = await loadScenarioSuite(suiteFile);
+          if (!result.ok) {
+            output.error(result.error, 'VALIDATION_ERROR');
+            if (result.details) {
+              for (const detail of result.details) {
+                output.message(`  - ${detail}`, 'error');
+              }
             }
-          }
-          output.flush();
-          process.exit(1);
-        }
-
-        const suiteDir = dirname(resolve(suiteFile));
-        const runQuiet = (options.quiet ?? false) || !!options.json;
-
-        if (options.all) {
-          // Run all cases
-          const caseResults = [];
-          let passedCount = 0;
-          let failedCount = 0;
-
-          for (const [name, c] of Object.entries(result.suite.cases)) {
-            const caseResult = await executeSuiteCase(name, c, suiteDir, runQuiet, output);
-            caseResults.push(caseResult);
-            if (caseResult.passed) {
-              passedCount++;
-            } else {
-              failedCount++;
-            }
-          }
-
-          const allPassed = failedCount === 0;
-
-          output.detail(
-            {
-              result: allPassed,
-              suite: result.suite.name,
-              total: caseResults.length,
-              passed: passedCount,
-              failed: failedCount,
-              cases: caseResults,
-            },
-            'custom',
-          );
-
-          // Display per-case summary in text mode
-          if (!options.json) {
-            output.message('', 'info');
-            for (const cr of caseResults) {
-              const icon = cr.passed ? '\u2713' : '\u2717';
-              const status = cr.passed ? 'dim' : 'error';
-              output.message(
-                `  ${icon} ${cr.scenario}: expected ${cr.expected}, got ${cr.actual}`,
-                status,
-              );
-            }
-          }
-
-          output.flush();
-
-          if (!allPassed) {
-            process.exit(1);
-          }
-        } else if (caseName) {
-          // Run single case
-          if (!(caseName in result.suite.cases)) {
-            output.error(`Case "${caseName}" not found`, 'SCENARIO_NOT_FOUND', {
-              available: Object.keys(result.suite.cases),
-            });
             output.flush();
             process.exit(1);
           }
 
-          const c = result.suite.cases[caseName];
-          const caseResult = await executeSuiteCase(caseName, c, suiteDir, runQuiet, output);
+          const suiteDir = dirname(resolve(suiteFile));
+          const runQuiet = (options.quiet ?? false) || !!options.json;
 
-          const detailData: Record<string, unknown> = {
-            result: caseResult.passed,
-            scenario: caseResult.scenario,
-            expected: caseResult.expected,
-            actual: caseResult.actual,
-          };
+          if (options.all) {
+            // Run all cases
+            const caseResults = [];
+            let passedCount = 0;
+            let failedCount = 0;
 
-          if (caseResult.assertions) {
-            detailData.assertions = caseResult.assertions;
-          }
-
-          output.detail(detailData, 'custom');
-
-          if (!options.json && caseResult.assertions) {
-            output.message('', 'info');
-            output.message('Assertions:', 'info');
-            for (const assertion of caseResult.assertions) {
-              const icon = assertion.passed ? '\u2713' : '\u2717';
-              const status = assertion.passed ? 'dim' : 'error';
-              output.message(
-                `  ${icon} ${assertion.field}: expected ${JSON.stringify(assertion.expected)}, got ${JSON.stringify(assertion.actual)}`,
-                status,
-              );
+            for (const [name, c] of Object.entries(result.suite.cases)) {
+              const caseResult = await executeSuiteCase(name, c, suiteDir, runQuiet, output);
+              caseResults.push(caseResult);
+              if (caseResult.passed) {
+                passedCount++;
+              } else {
+                failedCount++;
+              }
             }
-          }
 
-          output.flush();
+            const allPassed = failedCount === 0;
 
-          if (!caseResult.passed) {
+            output.detail(
+              {
+                result: allPassed,
+                suite: result.suite.name,
+                total: caseResults.length,
+                passed: passedCount,
+                failed: failedCount,
+                cases: caseResults,
+              },
+              'custom',
+            );
+
+            // Display per-case summary in text mode
+            if (!options.json) {
+              output.message('', 'info');
+              for (const cr of caseResults) {
+                const icon = cr.passed ? '\u2713' : '\u2717';
+                const status = cr.passed ? 'dim' : 'error';
+                output.message(
+                  `  ${icon} ${cr.scenario}: expected ${cr.expected}, got ${cr.actual}`,
+                  status,
+                );
+              }
+            }
+
+            output.flush();
+
+            if (!allPassed) {
+              process.exit(1);
+            }
+          } else if (caseName) {
+            // Run single case
+            if (!(caseName in result.suite.cases)) {
+              output.error(`Case "${caseName}" not found`, 'SCENARIO_NOT_FOUND', {
+                available: Object.keys(result.suite.cases),
+              });
+              output.flush();
+              process.exit(1);
+            }
+
+            const c = result.suite.cases[caseName];
+            const caseResult = await executeSuiteCase(caseName, c, suiteDir, runQuiet, output);
+
+            const detailData: Record<string, unknown> = {
+              result: caseResult.passed,
+              scenario: caseResult.scenario,
+              expected: caseResult.expected,
+              actual: caseResult.actual,
+            };
+
+            if (caseResult.assertions) {
+              detailData.assertions = caseResult.assertions;
+            }
+
+            output.detail(detailData, 'custom');
+
+            if (!options.json && caseResult.assertions && caseResult.assertions.length > 0) {
+              output.message('', 'info');
+              output.message('Assertions:', 'info');
+              for (const assertion of caseResult.assertions) {
+                const icon = assertion.passed ? '\u2713' : '\u2717';
+                const status = assertion.passed ? 'dim' : 'error';
+                output.message(
+                  `  ${icon} ${assertion.field}: expected ${JSON.stringify(assertion.expected)}, got ${JSON.stringify(assertion.actual)}`,
+                  status,
+                );
+              }
+            }
+
+            output.flush();
+
+            if (!caseResult.passed) {
+              process.exit(1);
+            }
+          } else {
+            output.error('Specify a case name or use --all to run all cases', 'VALIDATION_ERROR');
+            output.flush();
             process.exit(1);
           }
-        } else {
-          output.error('Specify a case name or use --all to run all cases', 'VALIDATION_ERROR');
+        } catch (error) {
+          output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
           output.flush();
           process.exit(1);
         }

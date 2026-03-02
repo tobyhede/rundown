@@ -80,11 +80,17 @@ export interface ScenarioRunResult {
  * Subset of RunbookState relevant to assertion evaluation.
  */
 export interface PersistedState {
+  /** Identifier of the current/last active step. */
   step?: string;
+  /** Number of retries performed so far. */
   retryCount?: number;
+  /** Last emitted action metadata. */
   lastAction?: { type: string };
+  /** Last normalized run result value (e.g. 'pass' or 'fail'). */
   lastResult?: string;
+  /** Persisted variables keyed by variable name. */
   variables?: Record<string, boolean | number | string>;
+  /** Persisted step snapshots used for completion assertions. */
   steps?: readonly { status: string }[];
 }
 
@@ -415,9 +421,9 @@ export async function executeScenario(
         const stateContent = readFileSync(latestFile.path, 'utf-8');
         persistedState = JSON.parse(stateContent) as PersistedState;
 
-        if (persistedState.variables?.completed) {
+        if (persistedState.variables?.completed === true) {
           actualResult = 'COMPLETE';
-        } else if (persistedState.variables?.stopped) {
+        } else if (persistedState.variables?.stopped === true) {
           actualResult = 'STOP';
         }
       }

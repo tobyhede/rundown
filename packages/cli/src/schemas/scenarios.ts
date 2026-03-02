@@ -53,6 +53,7 @@ export const ScenarioSchema = z
   })
   .refine((s) => s.result !== undefined || s.expect?.result !== undefined, {
     message: 'Either result or expect.result must be specified',
+    path: ['result'],
   })
   .refine(
     (s) => {
@@ -61,7 +62,10 @@ export const ScenarioSchema = z
       }
       return true;
     },
-    { message: 'result and expect.result must agree when both are specified' },
+    {
+      message: 'result and expect.result must agree when both are specified',
+      path: ['expect', 'result'],
+    },
   );
 
 /**

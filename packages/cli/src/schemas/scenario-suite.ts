@@ -77,8 +77,19 @@ export async function loadScenarioSuite(filePath: string): Promise<ScenarioSuite
   let content: string;
   try {
     content = await readFile(filePath, 'utf-8');
-  } catch {
-    return { ok: false, error: `Suite file not found: ${filePath}` };
+  } catch (err: unknown) {
+    if (
+      err &&
+      typeof err === 'object' &&
+      'code' in err &&
+      (err as NodeJS.ErrnoException).code === 'ENOENT'
+    ) {
+      return { ok: false, error: `Suite file not found: ${filePath}` };
+    }
+    return {
+      ok: false,
+      error: `Failed to read suite file: ${err instanceof Error ? err.message : 'unknown error'}`,
+    };
   }
 
   let parsed: unknown;
