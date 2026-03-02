@@ -1,5 +1,5 @@
 ---
-name: named-substeps
+name: dot-named-substeps
 description: Named substeps using dot-name syntax (1.Prepare, 1.Cleanup)
 tags:
   - substeps
@@ -8,7 +8,7 @@ scenarios:
   completed:
     description: Pass both named substeps to complete
     commands:
-      - rd run --prompted named-substeps.runbook.md
+      - rd run --prompted dot-named-substeps.runbook.md
       - rd pass
       - rd pass
     result: COMPLETE
