@@ -463,6 +463,37 @@ describe('executeScenario', () => {
     expect(rm).toHaveBeenCalled();
   });
 
+  it('uses the most recently modified state file when multiple exist', async () => {
+    (readdirSync as jest.MockedFunction<typeof readdirSync>).mockReturnValue([
+      'wf-old.json',
+      'wf-new.json',
+    ] as any);
+    (readFileSync as jest.MockedFunction<typeof readFileSync>).mockReturnValue(
+      JSON.stringify({ variables: { completed: true } }),
+    );
+    const now = Date.now();
+    (statSync as jest.MockedFunction<typeof statSync>).mockImplementation((p: any) => {
+      const filePath = typeof p === 'string' ? p : p.toString();
+      return {
+        mtimeMs: filePath.includes('wf-new') ? now : now - 10000,
+      } as any;
+    });
+
+    const result = await executeScenario(
+      makeLoadedRunbook() as any,
+      'happy',
+      true,
+      mockOutput,
+      '/cli/dist/cli.js',
+    );
+
+    expect(result.passed).toBe(true);
+    // Verify readFileSync was called with the newer file
+    const readCalls = (readFileSync as jest.MockedFunction<typeof readFileSync>).mock.calls;
+    const lastReadPath = String(readCalls[readCalls.length - 1][0]);
+    expect(lastReadPath).toContain('wf-new.json');
+  });
+
   it('returns passed for STOP scenario when state shows stopped', async () => {
     const loaded = {
       filePath: '/test/patterns/my.runbook.md',
