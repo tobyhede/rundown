@@ -14,7 +14,6 @@ describe('Step-level runbooks', () => {
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps![0].runbooks).toEqual(['task-details.runbook.md']);
-    expect(steps[0].deferred).toBeUndefined();
   });
 
   it('rejects step with both runbooks and substeps', () => {
@@ -67,23 +66,6 @@ describe('parseRunbook with substep runbooks', () => {
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps?.[0].runbooks).toEqual(['review.runbook.md', 'security.runbook.md']);
-    expect(steps[0].deferred).toBeUndefined();
-  });
-
-  it('omits deferred for explicit non-FOR substeps', () => {
-    const markdown = `## 1. Review
-
-### 1.1 Check A
-- PASS: CONTINUE
-- FAIL: STOP
-
-### 1.2 Check B
-- PASS: CONTINUE
-- FAIL: STOP
-`;
-
-    const steps = parseRunbook(markdown);
-    expect(steps[0].deferred).toBeUndefined();
   });
 });
 
@@ -137,17 +119,16 @@ Please look at this example.
     expect(steps[0].prompt).toBeUndefined(); // No prompt text from prompt blocks
   });
 
-  it('treats unrecognized language code blocks as prompt', () => {
+  it('treats other tags as passive prose', () => {
     const markdown = `## 1. Example
 \`\`\`json
 {"key": "value"}
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].command).toEqual({
-      code: `rd prompt '{"key": "value"}'`,
-      lang: 'prompt',
-    });
+    // JSON code blocks are ignored - not valid for execution
+    expect(steps[0].command).toBeUndefined();
+    expect(steps[0].prompt).toBeUndefined();
   });
 
   it('treats prompt code blocks as rd prompt commands', () => {
@@ -808,7 +789,6 @@ echo batch
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].deferred).toBe(true);
   });
 
   describe('FOR clause nested transitions', () => {
@@ -1099,7 +1079,6 @@ Review the tasks carefully.
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
     expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(steps[0].deferred).toBe(true);
     expect(steps[0].substeps).toHaveLength(2);
     expect(steps[0].substeps?.[0]).toMatchObject({
       id: '1',
@@ -1148,7 +1127,6 @@ Review this checklist.
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
     expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(steps[0].deferred).toBe(true);
     expect(steps[0].substeps).toHaveLength(4);
     expect(steps[0].substeps?.map((s) => s.runbooks)).toEqual([
       ['review-technical-accuracy.runbook.md'],

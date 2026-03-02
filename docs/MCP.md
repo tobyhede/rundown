@@ -155,7 +155,7 @@ The server delegates all operations to the CLI with `--json` flag for machine-re
 | `complete` | Force early completion | - | `message` |
 | `stop` | Stop runbook | - | `message` |
 
-> **Note:** The CLI `stash` and `pop` commands are not exposed via MCP. These commands manage local session state which is typically not needed in MCP agent runbook execution.
+> **Note:** The CLI `stash` and `pop` commands are not exposed via MCP. These commands manage local session state which is typically not needed in MCP agent workflows.
 
 ---
 

@@ -9,6 +9,7 @@ const KNOWN_HOOK_EVENTS = [
   'PreToolUse',
   'PostToolUse',
   'PostToolUseFailure',
+  'SubagentStart',
   'SubagentStop',
   'UserPromptSubmit',
   'SlashCommandStart',
@@ -98,13 +99,6 @@ export function validateConfig(config: RundownPluginConfig): void {
         `Unknown hook event: ${hookName}. Must be one of: ${KNOWN_HOOK_EVENTS.join(', ')}`,
       );
     }
-  }
-
-  // Invariant: gates must be a plain object (not a string, number, etc.)
-  // The type cast from JSON.parse is unsound, so validate at runtime
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime guard for external JSON data
-  if (typeof config.gates !== 'object' || config.gates === null || Array.isArray(config.gates)) {
-    throw new Error('Invalid config: gates must be an object');
   }
 
   // Invariant: Gates referenced in hooks must exist in gates config

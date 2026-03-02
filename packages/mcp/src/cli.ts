@@ -67,7 +67,7 @@ function parseJsonOrJsonl(stdout: string): unknown {
   const parsedLines: unknown[] = [];
   for (const line of trimmed.split('\n')) {
     const candidate = line.trim();
-    if (!candidate.startsWith('{')) continue; // Skip non-object lines (only objects carry CLI event data)
+    if (!candidate.startsWith('{')) continue;
     try {
       parsedLines.push(JSON.parse(candidate) as unknown);
     } catch {

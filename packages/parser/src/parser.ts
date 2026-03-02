@@ -298,6 +298,7 @@ export function parseRunbookDocument(
           lang: 'prompt',
         };
       }
+      // Other code blocks (json, etc.) are ignored - not valid in runbooks
 
       if (cmd) {
         if (currentStep.pendingSubstep) {
@@ -600,7 +601,6 @@ function finalizeStep(
     return {
       name: step.name,
       substepsDerivedFromRunbookList: true,
-      deferred: true,
       forClause: step.forClause,
       description: step.description,
       transitions: transitions ?? undefined,
@@ -611,7 +611,6 @@ function finalizeStep(
 
   return {
     name: step.name,
-    deferred: step.forClause ? true : undefined,
     forClause: step.forClause,
     description: step.description,
     command: step.command,

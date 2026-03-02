@@ -1614,11 +1614,11 @@ Parent runbook delegating to child runbooks.
 ```rundown
 ---
 name: runbook-composition
-description: Demonstrates composing multiple child runbooks to verify lint, types, and tests all pass
+description: Demonstrates composing multiple child workflows to verify lint, types, and tests all pass
 
 scenarios:
   completed:
-    description: Tests successful completion when all child runbooks pass
+    description: Tests successful completion when all child workflows pass
     commands:
       - rd run --prompted runbook-composition.runbook.md
       - rd pass
@@ -1627,10 +1627,12 @@ scenarios:
     result: COMPLETE
 
   child-fails:
-    description: Tests failure when a child runbook fails
+    description: Tests failure when a child workflow fails
     commands:
       - rd run --prompted runbook-composition.runbook.md
       - rd fail
+      - rd pass
+      - rd pass
     result: STOP
 tags:
   - composition
@@ -1643,7 +1645,7 @@ tags:
 - tests.runbook.md
 ```
 
-The step-level runbook list above is shorthand for an implicit `1.1` substep. Equivalent explicit form:
+The step-level runbook list above is shorthand for implicit substeps `1.1`, `1.2`, `1.3`. Equivalent explicit form:
 
 ```rundown
 ## 1. Verify

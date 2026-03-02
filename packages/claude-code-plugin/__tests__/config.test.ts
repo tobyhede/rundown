@@ -341,28 +341,6 @@ describe('Config Loading - Additional Edge Cases', () => {
     await expect(loadConfig(testDir)).rejects.toThrow();
   });
 
-  test('rejects non-object gates value', async () => {
-    const configObj = {
-      hooks: {},
-      gates: 'not an object',
-    };
-
-    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
-
-    await expect(loadConfig(testDir)).rejects.toThrow();
-  });
-
-  test('rejects array gates value', async () => {
-    const configObj = {
-      hooks: {},
-      gates: ['not', 'an', 'object'],
-    };
-
-    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configObj));
-
-    await expect(loadConfig(testDir)).rejects.toThrow();
-  });
-
   test('accepts hooks with no gates configured', async () => {
     const configObj = {
       hooks: {

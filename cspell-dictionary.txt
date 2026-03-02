@@ -8,7 +8,10 @@ frontmatter
 substep
 substeps
 preamble
+microstep
 worktree
+workflow
+workflows
 worktrees
 
 # Capitalizations
@@ -126,8 +129,8 @@ unsub
 
 # Project-specific identifiers
 BADACTION
-rdtk
 cipherpowers
+rdtk
 Hede
 myrepo
 myorg

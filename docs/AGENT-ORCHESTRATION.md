@@ -35,7 +35,7 @@ The simplest model. A runbook defines steps executed in order. Each step is eith
 
 No subagents are involved — the main agent works through steps sequentially.
 
-**When to use:** Linear runbook flows, checklists, CI-style pipelines, anything where one agent handles all steps in order.
+**When to use:** Linear workflows, checklists, CI-style pipelines, anything where one agent handles all steps in order.
 
 **Example:**
 ````markdown
@@ -155,7 +155,7 @@ Agent type context injection is driven by runtime hook events — see [Context F
 
 **Dispatch frontier and identity:**
 - `run --step` requires a parseable step identifier; when the active step has substeps, step-only dispatch (`N`) is rejected and `N.M` is required.
-- `run --step` accepts an optional runbook argument. When omitted, child runbook path is inferred only if the targeted substep has exactly one runbook reference.
+- `run --step` accepts an optional runbook argument. When omitted, child runbook path is inferred only if the targeted substep has exactly one workflow.
 - Plugin Step/Task dispatch must include a parseable identifier prefix (for example `1.2 - Review` or `ErrorHandler: Recover`).
 - `run --step` is constrained to the active step frontier.
 - If the active step is in a FOR loop, queueing is constrained to the active iteration frontier.
