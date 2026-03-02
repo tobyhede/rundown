@@ -1,12 +1,12 @@
 ---
-name: static-step-mixed-substeps
+name: mixed-substeps
 description: Demonstrates static steps containing both numbered and named substeps, including dynamic step transitions.
 
 scenarios:
   happy-path:
     description: Test successful execution through all steps
     commands:
-      - rd run --prompted static-step-mixed-substeps.runbook.md
+      - rd run --prompted mixed-substeps.runbook.md
       - rd pass
       - rd pass
       - rd pass
@@ -15,7 +15,7 @@ scenarios:
   cleanup-failure-stops:
     description: Test error in cleanup substep stops runbook
     commands:
-      - rd run --prompted static-step-mixed-substeps.runbook.md
+      - rd run --prompted mixed-substeps.runbook.md
       - rd pass
       - rd fail
     result: STOP
