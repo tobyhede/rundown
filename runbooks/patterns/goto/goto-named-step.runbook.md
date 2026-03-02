@@ -1,14 +1,14 @@
 ---
-name: goto-named
+name: goto-named-step
 description: Demonstrates GOTO patterns involving named steps (Name->Name, Name->Static, Static->Name)
 tags:
-  - navigation
+  - goto
 
 scenarios:
   named-to-named:
     description: Jump from Initialize to Cleanup (Name -> Name)
     commands:
-      - rd run --prompted goto-named.runbook.md
+      - rd run --prompted goto-named-step.runbook.md
       - rd pass
       - rd pass
     result: COMPLETE
@@ -16,7 +16,7 @@ scenarios:
   named-to-static:
     description: Jump from Process to Step 1 (Name -> Static)
     commands:
-      - rd run --prompted goto-named.runbook.md
+      - rd run --prompted goto-named-step.runbook.md
       - rd goto Process
       - rd pass
       - rd pass
@@ -26,7 +26,7 @@ scenarios:
   static-to-named:
     description: Jump from Step 1 to Cleanup (Static -> Name)
     commands:
-      - rd run --prompted goto-named.runbook.md
+      - rd run --prompted goto-named-step.runbook.md
       - rd goto 1
       - rd pass
       - rd pass
