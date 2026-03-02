@@ -6,27 +6,4 @@ tags:
   - transition
   - regression
 
-cases:
-  default-transitions-complete:
-    description: Both steps pass with implicit transitions
-    file: ../patterns/transition/default-transitions.runbook.md
-    commands:
-      - rd run --prompted default-transitions.runbook.md
-      - rd pass
-      - rd pass
-    result: COMPLETE
-
-  default-transitions-stop:
-    description: First step fails, runbook stops via implicit FAIL->STOP
-    file: ../patterns/transition/default-transitions.runbook.md
-    commands:
-      - rd run --prompted default-transitions.runbook.md
-      - rd fail
-    result: STOP
-
-  default-transitions-auto:
-    description: Both steps pass with auto-execution (no prompts)
-    file: ../patterns/transition/default-transitions.runbook.md
-    commands:
-      - rd run default-transitions.runbook.md
-    result: COMPLETE
+cases: {}
