@@ -1,12 +1,12 @@
 ---
-name: substep-runbooks
+name: substep-runbook-list
 description: Demonstrates runbook references within substeps
 
 scenarios:
   basic:
     description: Tests successful execution of child runbooks referenced within substeps
     commands:
-      - rd run --prompted substep-runbooks.runbook.md
+      - rd run --prompted substep-runbook-list.runbook.md
       - rd pass
       - rd pass
     result: COMPLETE
