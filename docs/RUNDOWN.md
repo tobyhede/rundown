@@ -577,7 +577,7 @@ Undefined variables and missing dotted paths are preserved as literal placeholde
 
 Template variables are expanded before parsing and should not be confused with step identifiers:
 - `{{variable}}` - Template variable, expanded before parsing (e.g., `{{environment}}` becomes `production`)
-- Dotted paths are resolved consistently across startup substitution, runtime loop expansion, and workflow path substitution (for example `runbooks/focus-{{context.parent.index}}.runbook.md`)
+- Dotted paths are resolved consistently across startup substitution, runtime loop expansion, and runbook path expansion (for example `runbooks/focus-{{context.parent.index}}.runbook.md`). Runbook file paths use the same template variable expansion rules as step content.
 
 ---
 
@@ -875,8 +875,8 @@ rundown prune --active      # Only active (careful!)
 Dispatch/completion rules:
 - `run --step` requires a parseable step identifier; step-only targets are rejected when the active step has substeps (use `N.M`).
 - Runbook argument is optional: `run --step <id> [runbook]`.
-- If runbook is omitted and target substep has exactly one workflow, the child runbook path is inferred and queued automatically.
-- If runbook is omitted and target substep has multiple workflows, queueing fails with an explicit ambiguity error.
+- If runbook is omitted and target substep has exactly one child runbook, the child runbook path is inferred and queued automatically.
+- If runbook is omitted and target substep has multiple child runbooks, queueing fails with an explicit ambiguity error.
 - Dispatch frontier is the current step only; when FOR is active, frontier is current iteration only.
 - Canonical target identity is `step + substep + iteration`.
 - Expanded path (`STEP.INDEX.SUBSTEP`, e.g. `1.2.1`) is display-only.
@@ -1011,8 +1011,8 @@ rd pass --agent subagent-1    # or: rd fail --agent subagent-1
 
 **Key points:**
 - `--step` must include a parseable step identifier; when substeps exist, use explicit `N.M`
-- Child runbook can be explicit (`rd run --step 2.1 task.runbook.md`) or inferred when the substep has exactly one workflow
-- If a substep has multiple workflows, an explicit runbook argument is required
+- Child runbook can be explicit (`rd run --step 2.1 task.runbook.md`) or inferred when the substep has exactly one child runbook
+- If a substep has multiple child runbooks, an explicit runbook argument is required
 - Subagent uses `--agent` flag on all commands (`run`, `pass`, `fail`)
 - Completions are validated against frame + entry identity; stale completions from prior re-entry are rejected explicitly
 - Valid completions are recorded and drained in deterministic substep order before step-level transition

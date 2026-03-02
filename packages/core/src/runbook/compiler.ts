@@ -485,6 +485,7 @@ function buildSimpleGotoAssign(options: {
     retryCount: options.isGotoToSelf
       ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
       : 0,
+    retryMax: undefined,
     substep: options.resolvedSubstepId,
     ...(options.preserveForContext
       ? {}
@@ -1239,6 +1240,7 @@ function buildGotoTransition(
         retryCount: isGotoToSelf
           ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
           : 0,
+        retryMax: undefined,
         iterationRetryCount: 0,
         substep: resolvedSubstepId,
         ...(!isImplicit
@@ -1498,6 +1500,7 @@ export function compileRunbookToMachine(
               retryCount: isGotoToSelf
                 ? ({ context }: { context: RunbookContext }) => context.retryCount + 1
                 : 0,
+              retryMax: undefined,
               iterationRetryCount: 0,
               substep: ({ event }: { event: RunbookEvent }) =>
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
