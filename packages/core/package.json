@@ -52,7 +52,7 @@
   "devDependencies": {
     "@types/jest": "^29.5.14",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^25.3.0",
+    "@types/node": "^25.3.3",
     "@types/picomatch": "^4.0.2",
     "@types/shell-quote": "^1.7.5",
     "covertable": "^2.5.2",
