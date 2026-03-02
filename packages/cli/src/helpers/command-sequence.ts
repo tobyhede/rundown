@@ -205,7 +205,7 @@ export function parseJsonLines(stdout: string): {
 
   // Try parsing as a single JSON object first (handles pretty-printed output)
   try {
-    const parsed = JSON.parse(trimmed);
+    const parsed: unknown = JSON.parse(trimmed);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       throw new Error('Not a JSON object');
     }

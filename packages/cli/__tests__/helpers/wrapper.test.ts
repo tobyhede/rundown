@@ -1,10 +1,11 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { RundownError, Errors } from '@rundown-org/core';
+import { Errors } from '@rundown-org/core';
 import { RunbookSyntaxError } from '@rundown-org/parser';
 
 const { withErrorHandling } = await import('../../src/helpers/wrapper.js');
 
 describe('withErrorHandling', () => {
+  // eslint-disable-next-line @typescript-eslint/unbound-method
   const originalExit = process.exit;
   let mockExit: jest.Mock;
   let errorSpy: jest.SpiedFunction<typeof console.error>;
@@ -140,6 +141,7 @@ describe('withErrorHandling', () => {
   it('wraps non-Error values as unknown', async () => {
     await withErrorHandling(
       async () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
         throw 'string error';
       },
       { json: true },
