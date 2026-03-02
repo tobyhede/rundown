@@ -661,7 +661,7 @@ rd echo item={{ item }}
     expect(commandStartedEvents[2].command).toContain('item=beta');
   });
 
-  it('rejects descending file source (3 TO 1)', async () => {
+  it('iterates descending file source (3 TO 1) in reverse order', async () => {
     await writeFile(join(workspace.cwd, 'servers.txt'), 'alpha\nbeta\ngamma\ndelta\nepsilon\n');
 
     await writeFile(
@@ -688,10 +688,16 @@ rd echo server={{ server }}
       'run --json --var servers=file:servers.txt descending-file.runbook.md',
       workspace,
     );
-    // Descending windows are not supported for file sources
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr + result.stdout).toContain(
-      'Descending windows are not supported for file sources',
-    );
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    // Should have exactly 3 iterations (positions 3, 2, 1 = gamma, beta, alpha)
+    expect(commandStartedEvents).toHaveLength(3);
+    expect(commandStartedEvents[0].command).toContain('server=gamma');
+    expect(commandStartedEvents[1].command).toContain('server=beta');
+    expect(commandStartedEvents[2].command).toContain('server=alpha');
   });
 });

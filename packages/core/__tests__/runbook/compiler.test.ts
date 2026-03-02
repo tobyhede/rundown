@@ -3937,7 +3937,7 @@ echo "processing"
       actor.stop();
     });
 
-    it('rejects descending file source window (3 TO 1)', () => {
+    it('compiles descending file source window (3 TO 1)', () => {
       const DEFAULT_TRANSITIONS_LOCAL = {
         all: true,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
@@ -3971,21 +3971,25 @@ echo "processing"
         servers: { kind: 'file' as const, path: '/tmp/servers.txt', format: 'text' as const },
       };
 
-      // Descending windows are not supported for file sources.
-      // The error is thrown inside XState's actor initialization (during assign action
-      // resolution in the initial microstep). XState catches it internally and stores
-      // it in the snapshot as status:'error'. Calling .start() with no error observer
-      // would trigger an async re-throw via setTimeout, so we avoid starting and
-      // instead inspect the snapshot directly.
       const machine = compileRunbookToMachine(steps, { sources });
       const actor = createActor(machine);
-      // Do not call actor.start() — it would trigger XState's reportUnhandledError
-      // which uses setTimeout to re-throw, escaping Jest's error boundaries.
-      const snapshot = actor.getSnapshot();
-      expect(snapshot.status).toBe('error');
-      expect((snapshot.error as Error).message).toBe(
-        'Descending windows are not supported for file sources',
-      );
+      actor.start();
+
+      const ctx = actor.getSnapshot().context;
+      const top = ctx.forStack[0];
+
+      expect(top.source).toEqual({
+        kind: 'file',
+        path: '/tmp/servers.txt',
+        format: 'text',
+        snapshot: null,
+      });
+      expect(top.start).toBe(3);
+      expect(top.end).toBe(1);
+      expect(top.iteration).toBe(3);
+      expect(top.currentValue).toBeUndefined();
+
+      actor.stop();
     });
   });
 

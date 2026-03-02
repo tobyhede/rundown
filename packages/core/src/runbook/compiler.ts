@@ -344,9 +344,6 @@ function createForContext(
         break;
       }
       case 'file': {
-        if (forClause.end !== undefined && forClause.start > forClause.end) {
-          throw new Error('Descending windows are not supported for file sources');
-        }
         // FileSnapshot is computed at runtime in the execution layer
         source = {
           kind: 'file',
