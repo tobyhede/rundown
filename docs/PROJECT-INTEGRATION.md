@@ -24,7 +24,7 @@ Subdirectory structure is supported — runbooks are discovered recursively.
 
 ### Version Control
 
-Runbooks and scripts in `.claude/rundown/runbooks/` can be committed to share runbook flows with your team. Runtime state should stay ignored:
+Runbooks and scripts in `.claude/rundown/runbooks/` can be committed to share workflows with your team. Runtime state should stay ignored:
 
 ```gitignore
 # Ignore runtime state, commit runbooks
@@ -71,7 +71,7 @@ rd run rundown:write-plan      # Explicit: from plugin only
 
 ## Recommended Structure
 
-**Principle**: Runbook code blocks should be one-liners that call scripts. This keeps runbooks readable as runbook documentation while scripts handle implementation complexity.
+**Principle**: Runbook code blocks should be one-liners that call scripts. This keeps runbooks readable as workflow documentation while scripts handle implementation complexity.
 
 ```markdown
 ## 1 Fetch Data
@@ -84,9 +84,9 @@ rd run rundown:write-plan      # Explicit: from plugin only
 ```
 
 Benefits:
-- Runbooks read as **runbook documentation** — steps, transitions, and intent
+- Runbooks read as **workflow documentation** — steps, transitions, and intent
 - Scripts are **testable independently** — `bash scripts/fetch-data.sh myrepo`
-- Separation of concerns — change implementation without touching runbook flow
+- Separation of concerns — change implementation without touching workflow
 
 ## Frontmatter
 

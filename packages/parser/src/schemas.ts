@@ -23,8 +23,6 @@ export const MAX_FOR_BOUND = 10_000;
  *
  * Matches strings like `{{VarName}}` where the variable name follows
  * standard identifier rules (letter/underscore start, alphanumeric body).
- * Tolerates optional whitespace after `{{` and before `}}`,
- * matching forms like `{{ VarName }}` or `{{VarName}}`.
  */
 export const TEMPLATE_VAR_PATTERN = /^\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}$/;
 
@@ -140,19 +138,9 @@ export const ActionSchema = z.union([
 export type Action = Readonly<z.output<typeof ActionSchema>>;
 
 /**
- * Zod enum schema representing allowed transition kinds in runbook step definitions.
- *
- * The four valid kinds are:
- * - `'pass'` / `'fail'` — outcome-based transitions
- * - `'yes'` / `'no'` — confirmation-based transitions
+ * Valid transition kinds
  */
 export const TransitionKindSchema = z.enum(['pass', 'fail', 'yes', 'no']);
-
-/**
- * Allowed transition kind strings inferred from {@link TransitionKindSchema}.
- *
- * One of `'pass'`, `'fail'`, `'yes'`, or `'no'`.
- */
 export type TransitionKind = z.output<typeof TransitionKindSchema>;
 
 /**
@@ -192,7 +180,6 @@ export type Transitions = Readonly<z.output<typeof TransitionsSchema>>;
 export const SubstepSchema = z.object({
   id: z.string(),
   description: z.string(),
-  agentType: z.string().optional(),
   runbooks: z.array(z.string()).readonly().optional(),
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
@@ -206,7 +193,6 @@ export const SubstepSchema = z.object({
 export const StepSchema = z.object({
   name: StepNameSchema, // REQUIRED: "1", "ErrorHandler"
   substepsDerivedFromRunbookList: z.literal(true).optional(),
-  deferred: z.boolean().optional(),
   forClause: ForClauseSchema.optional(),
   description: z.string(),
   command: CommandSchema.optional(),

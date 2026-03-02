@@ -52,14 +52,13 @@ function isLastAction(value: unknown): value is LastAction {
       if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
         return false;
       }
-      if ('at' in value && value.at !== undefined) {
-        if (typeof value.at === 'number') {
-          // numeric iteration index - ok
-        } else if (typeof value.at === 'string') {
-          if (!/^\{\{[^}]+\}\}$/.test(value.at)) return false;
-        } else {
-          return false;
-        }
+      if (
+        'at' in value &&
+        value.at !== undefined &&
+        typeof value.at !== 'number' &&
+        typeof value.at !== 'string'
+      ) {
+        return false;
       }
       return true;
     default:
@@ -89,9 +88,8 @@ export function extractLastAction(snapshot: unknown): LastAction | undefined {
  */
 export function extractRetryMax(snapshot: unknown): number {
   const ctx = narrowSnapshotContext(snapshot);
-  if (ctx && 'retryMax' in ctx) {
-    const raw = Number(ctx.retryMax);
-    return Number.isFinite(raw) ? raw : 0;
+  if (ctx && 'retryMax' in ctx && typeof ctx.retryMax === 'number') {
+    return ctx.retryMax;
   }
   return 0;
 }
@@ -107,9 +105,8 @@ export function extractRetryMax(snapshot: unknown): number {
  */
 export function extractRetryDisplayCount(snapshot: unknown, retryCount: number): number {
   const ctx = narrowSnapshotContext(snapshot);
-  if (ctx && 'iterationRetryCount' in ctx) {
-    const raw = Number(ctx.iterationRetryCount);
-    const iterationRetryCount = Number.isFinite(raw) ? raw : 0;
+  if (ctx && 'iterationRetryCount' in ctx && typeof ctx.iterationRetryCount === 'number') {
+    const iterationRetryCount = ctx.iterationRetryCount;
     if (iterationRetryCount > 0) return iterationRetryCount;
   }
   return retryCount;

@@ -62,8 +62,6 @@ export interface Substep {
   readonly id: string;
   /** Human-readable description from the substep header */
   readonly description: string;
-  /** Agent type, e.g., "code-review-agent" from "(code-review-agent)" */
-  readonly agentType?: string;
   /** Executable command from code block */
   readonly command?: Command;
   /** Single consolidated prompt text */
@@ -88,16 +86,6 @@ export interface Step {
   readonly name: string;
   /** Parser canonicalization marker for step-level runbook-list shorthand. */
   readonly substepsDerivedFromRunbookList?: true;
-  /**
-   * Whether substep outcomes are deferred to parent aggregation.
-   *
-   * When `true`, substeps default to CONTINUE on both pass and fail, allowing
-   * outcomes to bubble to the parent state for aggregation (PASS ALL / FAIL ANY).
-   * When `false` or absent, substeps default to STOP on fail (immediate semantics).
-   *
-   * Set by the parser for FOR steps and runbook-list shorthand steps.
-   */
-  readonly deferred?: boolean;
   /** FOR loop clause defining iteration range */
   readonly forClause?: ForClause;
   /** Human-readable description from the step header */

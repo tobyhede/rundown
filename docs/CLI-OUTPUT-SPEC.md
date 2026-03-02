@@ -487,7 +487,7 @@ Pruned 2 stale state files.
 
 ## check
 
-Check uses `valid`/`errors`/`stats` fields (validation, not runbook execution).
+Check uses `valid`/`errors`/`stats` fields (validation, not workflow).
 No `result` field - the `valid` field indicates success.
 
 ### `rd check <file>` (valid)
@@ -605,7 +605,7 @@ Available: success, failure
 
 ### `rd scenario run <file> <name>`
 
-Uses `passed` to indicate scenario outcome (not `result` - this is scenario verification, not runbook execution).
+Uses `passed` to indicate scenario outcome (not `result` - this is scenario verification, not workflow).
 
 **Text:**
 ```text

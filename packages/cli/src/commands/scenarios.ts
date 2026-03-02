@@ -7,7 +7,7 @@ import {
   buildScenarioListRows,
   buildScenarioDetail,
   executeScenario,
-} from '../helpers/scenario-runbook.js';
+} from '../helpers/scenario-workflow.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

@@ -14,7 +14,6 @@ describe('Step-level runbooks', () => {
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps![0].runbooks).toEqual(['task-details.runbook.md']);
-    expect(steps[0].deferred).toBeUndefined();
   });
 
   it('rejects step with both runbooks and substeps', () => {
@@ -67,23 +66,6 @@ describe('parseRunbook with substep runbooks', () => {
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps?.[0].runbooks).toEqual(['review.runbook.md', 'security.runbook.md']);
-    expect(steps[0].deferred).toBeUndefined();
-  });
-
-  it('omits deferred for explicit non-FOR substeps', () => {
-    const markdown = `## 1. Review
-
-### 1.1 Check A
-- PASS: CONTINUE
-- FAIL: STOP
-
-### 1.2 Check B
-- PASS: CONTINUE
-- FAIL: STOP
-`;
-
-    const steps = parseRunbook(markdown);
-    expect(steps[0].deferred).toBeUndefined();
   });
 });
 
@@ -137,17 +119,16 @@ Please look at this example.
     expect(steps[0].prompt).toBeUndefined(); // No prompt text from prompt blocks
   });
 
-  it('treats unrecognized language code blocks as prompt', () => {
+  it('treats other tags as passive prose', () => {
     const markdown = `## 1. Example
 \`\`\`json
 {"key": "value"}
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].command).toEqual({
-      code: `rd prompt '{"key": "value"}'`,
-      lang: 'prompt',
-    });
+    // JSON code blocks are ignored - not valid for execution
+    expect(steps[0].command).toBeUndefined();
+    expect(steps[0].prompt).toBeUndefined();
   });
 
   it('treats prompt code blocks as rd prompt commands', () => {
@@ -808,7 +789,6 @@ echo batch
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
     expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].deferred).toBe(true);
   });
 
   describe('FOR clause nested transitions', () => {
@@ -1099,7 +1079,6 @@ Review the tasks carefully.
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
     expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(steps[0].deferred).toBe(true);
     expect(steps[0].substeps).toHaveLength(2);
     expect(steps[0].substeps?.[0]).toMatchObject({
       id: '1',
@@ -1148,7 +1127,6 @@ Review this checklist.
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
     expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(steps[0].deferred).toBe(true);
     expect(steps[0].substeps).toHaveLength(4);
     expect(steps[0].substeps?.map((s) => s.runbooks)).toEqual([
       ['review-technical-accuracy.runbook.md'],
@@ -1623,10 +1601,10 @@ Do iteration.
 
   it('H3 header with unparsable format is ignored when only content', () => {
     // H3 that doesn't match substep pattern — hasSeenContent becomes true
-    // but no substep is created
+    // but no substep is created (use @-prefixed text which is not a valid identifier)
     const md = `## 1 Step
 
-### Random notes
+### @random notes
 `;
     const steps = parseRunbook(md);
     expect(steps[0].substeps).toBeUndefined();
@@ -1720,5 +1698,92 @@ Do something.
     expect(steps).toHaveLength(1);
     expect(steps[0].name).toBe('1');
     expect(steps[0].description).toBe('Step 1');
+  });
+});
+
+describe('strict H3 validation', () => {
+  it('throws when unrecognized H3 appears after valid substep', () => {
+    const md = `## 1. Setup
+
+### 1.1 First substep
+
+### @invalid heading
+`;
+    expect(() => parseRunbook(md)).toThrow(/unrecognized H3 headers/);
+  });
+
+  it('throws when unrecognized H3 appears before valid substep', () => {
+    const md = `## 1. Setup
+
+### @invalid heading
+
+### 1.1 First substep
+`;
+    expect(() => parseRunbook(md)).toThrow(/unrecognized H3 headers/);
+  });
+
+  it('allows unrecognized H3 in step with no valid substeps', () => {
+    const md = `## 1. Setup
+
+### @invalid heading
+
+Some content.
+`;
+    expect(() => parseRunbook(md)).not.toThrow();
+  });
+
+  it('recognizes bare named substep (not treated as unrecognized)', () => {
+    const md = `## 1. Setup
+
+### Cleanup
+
+Some content.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps?.[0].id).toBe('Cleanup');
+  });
+});
+
+describe('bare named substep parsing', () => {
+  it('parses bare named substep with id only', () => {
+    const md = `## 1. Setup
+
+### ErrorHandler
+
+Handle errors.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps?.[0].id).toBe('ErrorHandler');
+  });
+
+  it('parses mixed bare numeric and bare named substeps', () => {
+    const md = `## 1. Setup
+
+### 1
+
+First task.
+
+### Cleanup
+
+Clean up.
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(2);
+    expect(steps[0].substeps?.[0].id).toBe('1');
+    expect(steps[0].substeps?.[1].id).toBe('Cleanup');
+  });
+
+  it('bare named substep has no stepRef (positional assignment)', () => {
+    const md = `## 1. Setup
+
+### ErrorHandler
+`;
+    const steps = parseRunbook(md);
+    // Bare named substeps don't have stepRef in the parsed header
+    // (they are positionally assigned to parent H2)
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps?.[0].id).toBe('ErrorHandler');
   });
 });

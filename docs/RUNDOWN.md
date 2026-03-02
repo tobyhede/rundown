@@ -251,37 +251,6 @@ Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `
 - review-structural-integrity.runbook.md
 ````
 
-**Deferred defaults (no new keyword):**
-
-Rundown infers `deferred` internally for:
-- `FOR` steps
-- Step-level runbook-list shorthand
-
-Immediate by default:
-- Explicit H3 substeps without `FOR`
-
-When parent transitions are omitted:
-- Deferred parent: default aggregation is `PASS ALL: CONTINUE` and `FAIL ANY: STOP`
-- Immediate parent: keeps non-deferred pass-through semantics
-
-Example shorthand (deferred):
-
-````markdown
-## 1. Review
-- review-pass.runbook.md
-- review-fail.runbook.md
-````
-
-Example explicit substeps (immediate):
-
-````markdown
-## 1. Review
-### 1.1
-- review-pass.runbook.md
-### 1.2
-- review-fail.runbook.md
-````
-
 See [SPEC.md Iteration (FOR)](./SPEC.md#5-iteration-for) for the full grammar and all clause variants.
 
 **FOR clause variants:**
@@ -608,7 +577,7 @@ Undefined variables and missing dotted paths are preserved as literal placeholde
 
 Template variables are expanded before parsing and should not be confused with step identifiers:
 - `{{variable}}` - Template variable, expanded before parsing (e.g., `{{environment}}` becomes `production`)
-- Dotted paths are resolved consistently across startup substitution, runtime loop expansion, and runbook path substitution (for example `runbooks/focus-{{context.parent.index}}.runbook.md`)
+- Dotted paths are resolved consistently across startup substitution, runtime loop expansion, and runbook path expansion (for example `runbooks/focus-{{context.parent.index}}.runbook.md`). Runbook file paths use the same template variable expansion rules as step content.
 
 ---
 
@@ -714,7 +683,7 @@ rundown complete --agent myAgent            # Complete runbook in agent-specific
 
 **When to use:**
 - Early exit when remaining steps are unnecessary
-- Agent-driven runbook flows requiring explicit completion
+- Agent-driven workflows requiring explicit completion
 - Graceful exit from steps without explicit completion transitions
 
 **Comparison with `stop`:**
@@ -779,7 +748,7 @@ rundown goto 3.1     # Jump to substep 3.1
 
 | Target | Valid From | Description |
 |--------|------------|-------------|
-| `GOTO N` | Any step | Jump to step N (if FOR step, defaults to AT range start) |
+| `GOTO N` | Any step | Jump to step N (if FOR step, implies AT 1) |
 | `GOTO N.M` | Any step | Jump to substep M of step N |
 | `GOTO Name` | Any step | Jump to named step |
 | `GOTO Name.M` | Any step | Jump to substep M of named step |
@@ -787,7 +756,7 @@ rundown goto 3.1     # Jump to substep 3.1
 | `GOTO N.M AT I` | Any step | Jump to substep M of FOR step N at iteration I |
 | `GOTO Name AT I` | Any step | Enter named FOR step at iteration I |
 
-The `AT` qualifier is only valid when the target is a step with a FOR annotation. If `AT` is omitted for a FOR step, it defaults to the FOR range's start value (e.g. iteration 1 for `FOR 1 TO 5`, iteration 5 for `FOR 5 TO 10`). See [SPEC.md GOTO](./SPEC.md#goto) for full details.
+The `AT` qualifier is only valid when the target is a step with a FOR annotation. If `AT` is omitted for a FOR step, it defaults to iteration 1 (restart from beginning). See [SPEC.md GOTO](./SPEC.md#goto) for full details.
 
 ### Status Commands
 
@@ -906,8 +875,8 @@ rundown prune --active      # Only active (careful!)
 Dispatch/completion rules:
 - `run --step` requires a parseable step identifier; step-only targets are rejected when the active step has substeps (use `N.M`).
 - Runbook argument is optional: `run --step <id> [runbook]`.
-- If runbook is omitted and target substep has exactly one runbook reference, the child runbook path is inferred and queued automatically.
-- If runbook is omitted and target substep has multiple runbook references, queueing fails with an explicit ambiguity error.
+- If runbook is omitted and target substep has exactly one child runbook, the child runbook path is inferred and queued automatically.
+- If runbook is omitted and target substep has multiple child runbooks, queueing fails with an explicit ambiguity error.
 - Dispatch frontier is the current step only; when FOR is active, frontier is current iteration only.
 - Canonical target identity is `step + substep + iteration`.
 - Expanded path (`STEP.INDEX.SUBSTEP`, e.g. `1.2.1`) is display-only.
@@ -1042,8 +1011,8 @@ rd pass --agent subagent-1    # or: rd fail --agent subagent-1
 
 **Key points:**
 - `--step` must include a parseable step identifier; when substeps exist, use explicit `N.M`
-- Child runbook can be explicit (`rd run --step 2.1 task.runbook.md`) or inferred when the substep has exactly one runbook reference
-- If a substep has multiple runbook references, an explicit runbook argument is required
+- Child runbook can be explicit (`rd run --step 2.1 task.runbook.md`) or inferred when the substep has exactly one child runbook
+- If a substep has multiple child runbooks, an explicit runbook argument is required
 - Subagent uses `--agent` flag on all commands (`run`, `pass`, `fail`)
 - Completions are validated against frame + entry identity; stale completions from prior re-entry are rejected explicitly
 - Valid completions are recorded and drained in deterministic substep order before step-level transition
@@ -1190,7 +1159,6 @@ JSON output compatibility:
 | "Invalid step target" | Bad goto format | Use "N" or "N.M" |
 | "FOR loop references undefined data source" | Sourced FOR clause without matching source | Define source in config.yaml or --var-file |
 | "File drift detected" | Data file changed during iteration | Ensure file stability or restart runbook |
-
 
 ### State Recovery
 
