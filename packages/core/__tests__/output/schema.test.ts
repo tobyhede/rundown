@@ -14,8 +14,8 @@ describe('isActionResponse type guard', () => {
         result: true,
         action: 'CONTINUE',
         command: 'pass',
-        from: { current: '1', total: 5 },
-        to: { current: '2', total: 5 },
+        from: '1',
+        at: '2',
       };
 
       expect(isActionResponse(response)).toBe(true);
@@ -26,7 +26,7 @@ describe('isActionResponse type guard', () => {
         result: false,
         action: 'RETRY',
         command: 'fail',
-        from: { current: '1', total: 5 },
+        from: '1',
       };
 
       expect(isActionResponse(response)).toBe(true);

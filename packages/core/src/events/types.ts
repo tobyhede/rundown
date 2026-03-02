@@ -1,4 +1,5 @@
 import type { StepPosition } from '../cli/types.js';
+import type { ActionType } from '../runbook/transition-kernel.js';
 
 // Re-export StepPosition for backwards compatibility and event payload typing
 export type { StepPosition };
@@ -75,12 +76,19 @@ export interface CommandCompletedPayload {
 }
 
 export interface StepTransitionedPayload {
-  readonly action: string;
-  readonly from: StepPosition;
-  readonly to: StepPosition;
-  /** Whether the step passed (true = PASS, false = FAIL) */
-  readonly result: boolean;
+  readonly action: ActionType;
+  readonly from: string;
+  readonly at: string;
+  readonly result: 'PASS' | 'FAIL';
   readonly command?: string;
+  /** Current retry attempt (1-based). Only present for RETRY actions. */
+  readonly retryAttempt?: number;
+  /** Maximum retry attempts. Only present for RETRY actions. */
+  readonly retryMax?: number;
+  /** Current FOR loop iteration index (1-based). */
+  readonly forIndex?: number;
+  /** FOR loop upper bound (inclusive). Undefined for open-ended sources. */
+  readonly forEnd?: number;
 }
 
 export interface PolicyDeniedPayload {

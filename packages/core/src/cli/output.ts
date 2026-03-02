@@ -45,14 +45,6 @@ export function formatStepNumber(pos: StepPosition): string {
   return derivePositionAt(pos);
 }
 
-function formatForScope(pos: StepPosition | undefined): string | undefined {
-  if (!pos) return undefined;
-  if (!pos.for) return undefined;
-  return pos.for.end !== undefined
-    ? `${String(pos.for.index)}/${String(pos.for.end)}`
-    : `${String(pos.for.index)}/?`;
-}
-
 /**
  * Print separator line to stdout.
  *
@@ -71,11 +63,10 @@ export function printSeparator(writer: OutputWriter = getWriter()): void {
  * Includes a leading blank line for visual separation from command output.
  * The separator is dimmed for visual distinction from content.
  *
- * @param pos - The current step position to display in the separator
+ * @param stepNum - The step number string to display in the separator (e.g., "1.2")
  * @param writer - OutputWriter to use (defaults to global writer)
  */
-export function printStepSeparator(pos: StepPosition, writer: OutputWriter = getWriter()): void {
-  const stepNum = formatStepNumber(pos);
+export function printStepSeparator(stepNum: string, writer: OutputWriter = getWriter()): void {
   const prefix = `${SEPARATOR_CHAR}${SEPARATOR_CHAR}${SEPARATOR_CHAR} ${stepNum} `;
   const remainingWidth = Math.max(0, SEPARATOR_WIDTH - prefix.length);
   const suffix = SEPARATOR_CHAR.repeat(remainingWidth);
@@ -111,7 +102,7 @@ export function printMetadata(meta: RunbookMetadata, writer: OutputWriter = getW
 export function printActionBlock(data: ActionBlockData, writer: OutputWriter = getWriter()): void {
   writer.writeLine(`Action:   ${info(data.action)}`);
   if (data.from) {
-    writer.writeLine(`From:     ${formatStepNumber(data.from)}`);
+    writer.writeLine(`From:     ${data.from}`);
   }
   if (data.command) {
     writer.writeLine(`Command:  ${data.command}`);
@@ -119,12 +110,15 @@ export function printActionBlock(data: ActionBlockData, writer: OutputWriter = g
   if (data.result !== undefined) {
     writer.writeLine(`Result:   ${colorizeResult(data.result)}`);
   }
-  const forScope = formatForScope(data.at ?? data.from);
-  if (forScope) {
-    writer.writeLine(`For:      ${info(forScope)}`);
+  if (data.forIndex !== undefined) {
+    const scope =
+      data.forEnd !== undefined
+        ? `${String(data.forIndex)}/${String(data.forEnd)}`
+        : `${String(data.forIndex)}/?`;
+    writer.writeLine(`For:      ${info(scope)}`);
   }
   if (data.at) {
-    writer.writeLine(`At:       ${info(formatStepNumber(data.at))}`);
+    writer.writeLine(`At:       ${info(data.at)}`);
   }
 }
 

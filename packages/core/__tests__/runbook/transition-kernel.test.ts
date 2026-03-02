@@ -5,6 +5,7 @@ import {
   extractRetryDisplayCount,
   extractLastMessage,
   formatActionForDisplay,
+  formatTransitionAction,
   parseActionType,
   deriveTransitionMessage,
 } from '../../src/runbook/transition-kernel.js';
@@ -404,6 +405,48 @@ describe('transition-kernel', () => {
       const action: LastAction = { type: 'BREAK' };
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('BREAK');
+    });
+  });
+
+  describe('formatTransitionAction', () => {
+    it('returns CONTINUE for CONTINUE action', () => {
+      expect(formatTransitionAction('CONTINUE')).toBe('CONTINUE');
+    });
+
+    it('returns COMPLETE for COMPLETE action', () => {
+      expect(formatTransitionAction('COMPLETE')).toBe('COMPLETE');
+    });
+
+    it('returns STOP for STOP action', () => {
+      expect(formatTransitionAction('STOP')).toBe('STOP');
+    });
+
+    it('returns NEXT for NEXT action', () => {
+      expect(formatTransitionAction('NEXT')).toBe('NEXT');
+    });
+
+    it('returns BREAK for BREAK action', () => {
+      expect(formatTransitionAction('BREAK')).toBe('BREAK');
+    });
+
+    it('formats RETRY with attempt and max', () => {
+      expect(formatTransitionAction('RETRY', undefined, 2, 3)).toBe('RETRY (2/3)');
+    });
+
+    it('formats RETRY without attempt/max', () => {
+      expect(formatTransitionAction('RETRY')).toBe('RETRY');
+    });
+
+    it('formats GOTO with destination', () => {
+      expect(formatTransitionAction('GOTO', '5')).toBe('GOTO 5');
+    });
+
+    it('formats GOTO without destination', () => {
+      expect(formatTransitionAction('GOTO')).toBe('GOTO');
+    });
+
+    it('formats GOTO with forIndex', () => {
+      expect(formatTransitionAction('GOTO', '2', undefined, undefined, 3)).toBe('GOTO 2 AT 3');
     });
   });
 

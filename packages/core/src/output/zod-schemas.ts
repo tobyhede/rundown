@@ -197,16 +197,18 @@ export const ErrorResponseSchema = z
  */
 export const ActionResponseSchema = z
   .object({
-    /** Whether the action succeeded */
-    result: z.boolean().describe('Whether the action succeeded'),
+    /** Whether the operation succeeded */
+    result: z.boolean().describe('Whether the operation succeeded'),
+    /** Step outcome (PASS or FAIL) */
+    stepResult: z.enum(['PASS', 'FAIL']).optional().describe('Step outcome (PASS or FAIL)'),
     /** The action that was performed (e.g., "CONTINUE", "GOTO 3", "RETRY") */
     action: z.string().describe('Type of action performed'),
     /** The command that was executed */
     command: z.string().optional().describe('Command executed for this action'),
-    /** Position before the action */
-    from: PositionSchema.optional().describe('Starting position before action'),
-    /** Position after the action */
-    to: PositionSchema.optional().describe('Position after action execution'),
+    /** Step position before the transition (qualified ID) */
+    from: z.string().optional().describe('Step position before the transition (qualified ID)'),
+    /** Step position after the transition (qualified ID) */
+    at: z.string().optional().describe('Step position after the transition (qualified ID)'),
     /** Whether this resulted in runbook completion */
     complete: z.boolean().optional().describe('Whether the runbook completed'),
     /** Whether this resulted in runbook stopping */
@@ -295,8 +297,8 @@ export const StatusResponseSchema = z
       .object({
         /** The action that was performed */
         action: z.string().describe('Last action performed'),
-        /** The result of the action */
-        result: z.boolean().optional().describe('Result of the last action'),
+        /** Step outcome of the last action */
+        result: z.enum(['PASS', 'FAIL']).optional().describe('Step outcome of the last action'),
       })
       .optional()
       .describe('Last action information'),

@@ -51,11 +51,15 @@ export interface ActionBlockData {
   /** The action being taken (e.g., "START", "CONTINUE", "GOTO 2", "COMPLETE", "STOP", "RETRY (1/3)") */
   action: string;
   /** The step that was just evaluated (where we transitioned from) */
-  from?: StepPosition;
-  /** Whether the action succeeded (true = PASS, false = FAIL) */
-  result?: boolean;
+  from?: string;
+  /** Step outcome (PASS or FAIL) */
+  result?: 'PASS' | 'FAIL';
   /** The command that was executed (display-friendly, with rd echo wrapper stripped) */
   command?: string;
-  /** The current step position after the transition (displayed as "At: n/N") */
-  at?: StepPosition;
+  /** The current step position after the transition */
+  at?: string;
+  /** Current FOR loop iteration index (1-based). */
+  forIndex?: number;
+  /** FOR loop upper bound (inclusive). */
+  forEnd?: number;
 }

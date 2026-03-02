@@ -317,8 +317,8 @@ describe('Template Variables Integration', () => {
       const output = JSON.parse(lines[lines.length - 1]);
       expect(output.result).toBe(true);
       expect(output.action).toBe('CONTINUE');
-      expect(output.from.current).toBe('1');
-      expect(output.to.current).toBe('2');
+      expect(output.from).toBe('1');
+      expect(output.at).toBe('2');
     });
 
     it('should use stored runbookSrc in fail command', async () => {
@@ -349,10 +349,10 @@ describe('Template Variables Integration', () => {
         .split('\n')
         .filter((line) => line.trim());
       const output = JSON.parse(lines[lines.length - 1]);
-      expect(output.result).toBe(false);
+      expect(output.result).toBe(true);
       expect(output.action).toContain('RETRY');
-      expect(output.from.current).toBe('1');
-      expect(output.to.current).toBe('1');
+      expect(output.from).toBe('1');
+      expect(output.at).toBe('1');
     });
 
     it('should use stored runbookSrc in goto command', async () => {
@@ -380,8 +380,8 @@ describe('Template Variables Integration', () => {
       const output = JSON.parse(lines[lines.length - 1]);
       expect(output.result).toBe(true);
       expect(output.action).toContain('GOTO');
-      expect(output.from.current).toBe('1');
-      expect(output.to.current).toBe('2');
+      expect(output.from).toBe('1');
+      expect(output.at).toBe('2');
     });
 
     it('should use stored runbookSrc in complete command', async () => {

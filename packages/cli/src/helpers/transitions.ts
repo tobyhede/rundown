@@ -14,6 +14,7 @@ import {
   SessionService,
   ExecutionLifecycleService,
   extractLastAction,
+  formatTransitionAction,
   parseActionType,
   type ActionType,
   buildCompletionKey,
@@ -339,10 +340,19 @@ export async function executeTransition(
   const commandSink: TransitionEventSink = {
     onStepTransitioned: (payload: StepTransitionedPayload) => {
       output.action({
-        action: payload.action,
+        action: formatTransitionAction(
+          payload.action,
+          payload.at,
+          payload.retryAttempt,
+          payload.retryMax,
+          payload.forIndex,
+        ),
         from: payload.from,
-        at: payload.to,
+        at: payload.at,
         result: payload.result,
+        ...(payload.forIndex !== undefined
+          ? { forIndex: payload.forIndex, forEnd: payload.forEnd }
+          : {}),
         ...(payload.command ? { command: payload.command } : {}),
       });
     },

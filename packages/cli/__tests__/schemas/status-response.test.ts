@@ -12,9 +12,9 @@ import { StatusResponseSchema } from '../../src/schemas/output-schemas.js';
 
 describe('StatusResponseSchema', () => {
   describe('lastAction.result type', () => {
-    it('accepts boolean result matching ActionBlockData.result type', () => {
-      // ActionBlockData.result in packages/core/src/cli/types.ts is boolean.
-      // The schema must accept boolean values for lastAction.result.
+    it('accepts PASS result matching ActionBlockData.result type', () => {
+      // ActionBlockData.result in packages/core/src/cli/types.ts is 'PASS' | 'FAIL'.
+      // The schema must accept enum string values for lastAction.result.
       const statusResponse = {
         active: true,
         stashed: false,
@@ -29,7 +29,7 @@ describe('StatusResponseSchema', () => {
         },
         lastAction: {
           action: 'pass',
-          result: true, // boolean, as defined in ActionBlockData
+          result: 'PASS', // enum string, as defined in ActionBlockData
         },
       };
 
@@ -38,13 +38,13 @@ describe('StatusResponseSchema', () => {
       expect(parseResult.success).toBe(true);
     });
 
-    it('accepts false boolean result for failed actions', () => {
+    it('accepts FAIL result for failed actions', () => {
       const statusResponse = {
         active: true,
         stashed: false,
         lastAction: {
           action: 'fail',
-          result: false, // boolean false for failed action
+          result: 'FAIL', // enum string for failed action
         },
       };
 

@@ -75,7 +75,7 @@ describe('JSON lastAction.result semantics', () => {
     await workspace.cleanup();
   });
 
-  it('reports lastAction.result: true after successful pass', async () => {
+  it('reports lastAction.result PASS after successful pass', async () => {
     runCli('run --prompted runbooks/simple.runbook.md', workspace);
     runCli('pass', workspace); // Triggers CONTINUE (success)
 
@@ -83,11 +83,11 @@ describe('JSON lastAction.result semantics', () => {
     const output = JSON.parse(result.stdout);
 
     expect(output.lastAction).toBeDefined();
-    expect(output.lastAction.result).toBe(true);
+    expect(output.lastAction.result).toBe('PASS');
     expect(output.lastAction.action).toBe('CONTINUE');
   });
 
-  it('reports lastAction.result: false after fail triggers RETRY', async () => {
+  it('reports lastAction.result FAIL after fail triggers RETRY', async () => {
     runCli('run --prompted runbooks/retry.runbook.md', workspace);
     runCli('fail', workspace); // Triggers RETRY (failure)
 
@@ -95,11 +95,11 @@ describe('JSON lastAction.result semantics', () => {
     const output = JSON.parse(result.stdout);
 
     expect(output.lastAction).toBeDefined();
-    expect(output.lastAction.result).toBe(false);
+    expect(output.lastAction.result).toBe('FAIL');
     expect(output.lastAction.action).toMatch(/^RETRY/);
   });
 
-  it('reports lastAction.result: true after pass triggers GOTO', async () => {
+  it('reports lastAction.result PASS after pass triggers GOTO', async () => {
     runCli('run --prompted runbooks/goto.runbook.md', workspace);
     runCli('pass', workspace); // Triggers GOTO 3 (success)
 
@@ -107,11 +107,11 @@ describe('JSON lastAction.result semantics', () => {
     const output = JSON.parse(result.stdout);
 
     expect(output.lastAction).toBeDefined();
-    expect(output.lastAction.result).toBe(true);
+    expect(output.lastAction.result).toBe('PASS');
     expect(output.lastAction.action).toMatch(/^GOTO/);
   });
 
-  it('reports lastAction.result: false after fail triggers GOTO', async () => {
+  it('reports lastAction.result FAIL after fail triggers GOTO', async () => {
     runCli('run --prompted runbooks/fail-goto.runbook.md', workspace);
     runCli('fail', workspace); // Triggers GOTO 3 (failure)
 
@@ -119,7 +119,7 @@ describe('JSON lastAction.result semantics', () => {
     const output = JSON.parse(result.stdout);
 
     expect(output.lastAction).toBeDefined();
-    expect(output.lastAction.result).toBe(false);
+    expect(output.lastAction.result).toBe('FAIL');
     expect(output.lastAction.action).toMatch(/^GOTO/);
   });
 });

@@ -157,6 +157,40 @@ export function formatActionForDisplay(
 }
 
 /**
+ * Format a transition event payload's action for display.
+ *
+ * Reconstructs the human-readable action string from the canonical
+ * ActionType and structured metadata fields.
+ *
+ * @param action - Canonical action type
+ * @param at - Destination step ID (used for GOTO display)
+ * @param retryAttempt - Current retry attempt (for RETRY display)
+ * @param retryMax - Maximum retries (for RETRY display)
+ * @param forIndex - FOR loop iteration (for GOTO AT display)
+ * @returns Human-readable action string
+ */
+export function formatTransitionAction(
+  action: ActionType,
+  at?: string,
+  retryAttempt?: number,
+  retryMax?: number,
+  forIndex?: number,
+): string {
+  switch (action) {
+    case 'RETRY':
+      return retryAttempt !== undefined && retryMax !== undefined
+        ? `RETRY (${String(retryAttempt)}/${String(retryMax)})`
+        : 'RETRY';
+    case 'GOTO': {
+      const base = at ? `GOTO ${at}` : 'GOTO';
+      return forIndex !== undefined ? `${base} AT ${String(forIndex)}` : base;
+    }
+    default:
+      return action;
+  }
+}
+
+/**
  * Derive action type from structured LastAction.
  *
  * @param lastAction - The structured action to classify, or undefined for default CONTINUE

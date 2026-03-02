@@ -13,6 +13,7 @@ import {
 import type { RunbookMetadata, ActionBlockData } from '../../cli/types.js';
 import type { Step, Substep } from '../../runbook/types.js';
 import { getWriter } from '../../cli/context.js';
+import { formatTransitionAction } from '../../runbook/transition-kernel.js';
 
 /**
  * Renders runbook events to terminal output via existing print functions.
@@ -143,15 +144,24 @@ export class CLISubscriber {
     const { payload } = event;
 
     // Print step separator before action block (matches fallback path)
-    printStepSeparator(payload.to, this.writer);
+    printStepSeparator(payload.at, this.writer);
 
     // Print action block with transition details
     const action: ActionBlockData = {
-      action: payload.action,
+      action: formatTransitionAction(
+        payload.action,
+        payload.at,
+        payload.retryAttempt,
+        payload.retryMax,
+        payload.forIndex,
+      ),
       from: payload.from,
       result: payload.result,
       command: payload.command,
-      at: payload.to,
+      at: payload.at,
+      ...(payload.forIndex !== undefined
+        ? { forIndex: payload.forIndex, forEnd: payload.forEnd }
+        : {}),
     };
     printActionBlock(action, this.writer);
   }
