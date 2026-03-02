@@ -1,13 +1,13 @@
 ---
-name: FOR Loop Variables
+name: for-variable-expansion
 description: FOR loop variable expansion in step descriptions and commands.
 tags:
-  - for-loop
+  - for-loops
 scenarios:
   expanded:
     description: FOR loop variables expand across iterations
     commands:
-      - rd run for-loop-vars.runbook.md
+      - rd run for-variable-expansion.runbook.md
     result: COMPLETE
 ---
 
