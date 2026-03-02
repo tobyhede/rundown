@@ -37,7 +37,9 @@ export {
   CheckValidationErrorSchema,
   RunbookStatsSchema,
   // Scenario schemas
-  ScenarioAssertionResultSchema,
+  StepAssertionInputSchema,
+  CapturedTransitionSchema,
+  ScenarioStepAssertionResultSchema,
   ScenarioEntrySchema,
   ScenarioDetailSchema,
   ScenarioListSchema,

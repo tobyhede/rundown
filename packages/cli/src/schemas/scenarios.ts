@@ -1,28 +1,30 @@
 import { z } from 'zod';
 
 /**
+ * Schema for a single step transition assertion.
+ *
+ * All fields are optional — only specified fields are matched against
+ * the transition event. String/number union on `at`/`from` handles
+ * YAML's tendency to parse `1.10` as a float.
+ */
+export const StepAssertionSchema = z.object({
+  at: z.union([z.string(), z.number()]).transform(String).optional(),
+  from: z.union([z.string(), z.number()]).transform(String).optional(),
+  action: z.enum(['CONTINUE', 'GOTO', 'STOP', 'COMPLETE', 'RETRY', 'BREAK', 'NEXT']).optional(),
+  result: z.enum(['PASS', 'FAIL']).optional(),
+  command: z.string().optional(),
+});
+
+export type StepAssertion = z.infer<typeof StepAssertionSchema>;
+
+/**
  * Schema for rich assertions on scenario execution state.
  *
- * All fields are optional — only specified fields are asserted.
- * This allows incremental adoption alongside the existing `result` field.
+ * All fields are optional — only specified fields are matched.
  */
 export const ScenarioExpectSchema = z.object({
-  /** Expected terminal result */
   result: z.enum(['COMPLETE', 'STOP']).optional(),
-  /** Expected final step identifier */
-  finalStep: z.string().optional(),
-  /** Expected number of completed steps */
-  stepsCompleted: z.number().int().nonnegative().optional(),
-  /** Expected last action type */
-  lastAction: z
-    .enum(['START', 'CONTINUE', 'GOTO', 'COMPLETE', 'STOP', 'RETRY', 'NEXT', 'BREAK'])
-    .optional(),
-  /** Expected last result */
-  lastResult: z.enum(['pass', 'fail']).optional(),
-  /** Expected retry count */
-  retryCount: z.number().int().nonnegative().optional(),
-  /** Expected variable values (subset match) */
-  variables: z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])).optional(),
+  steps: z.array(StepAssertionSchema).optional(),
 });
 
 /**
@@ -89,14 +91,17 @@ export type ScenarioExpect = z.infer<typeof ScenarioExpectSchema>;
  * The refinement on ScenarioSchema guarantees at least one is set for validated
  * scenarios, but this function performs a runtime check for safety.
  *
- * @param scenario - A validated scenario
+ * @param scenario - A validated scenario or structural type with result/expect.result
  * @returns The effective terminal result ('COMPLETE' or 'STOP')
  * @throws {Error} When neither `scenario.result` nor `scenario.expect?.result` is defined
  */
-export function getEffectiveResult(scenario: Scenario): 'COMPLETE' | 'STOP' {
+export function getEffectiveResult(scenario: {
+  result?: 'COMPLETE' | 'STOP';
+  expect?: { result?: 'COMPLETE' | 'STOP' };
+}): 'COMPLETE' | 'STOP' {
   const result = scenario.result ?? scenario.expect?.result;
   if (result === undefined) {
-    throw new Error('Scenario has neither result nor expect.result defined');
+    throw new Error('Neither result nor expect.result is defined');
   }
   return result;
 }

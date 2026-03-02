@@ -113,13 +113,17 @@ export {
 
 // Scenario schemas
 export {
-  ScenarioAssertionResultSchema,
+  StepAssertionInputSchema,
+  CapturedTransitionSchema,
+  ScenarioStepAssertionResultSchema,
   ScenarioEntrySchema,
   ScenarioDetailSchema,
   ScenarioListSchema,
   ScenarioRunResponseSchema,
   ScenarioErrorResponseSchema,
-  type ScenarioAssertionResult,
+  type StepAssertionInput,
+  type CapturedTransition,
+  type ScenarioStepAssertionResult,
   type ScenarioEntry,
   type ScenarioDetail,
   type ScenarioRunResponse,

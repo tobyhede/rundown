@@ -465,20 +465,54 @@ export const ScenarioListSchema = z
   .describe('List of scenarios in a runbook');
 
 /**
- * Scenario assertion result for rich expectation evaluation.
+ * Schema for a single step transition assertion as specified in the scenario.
  */
-export const ScenarioAssertionResultSchema = z
+export const StepAssertionInputSchema = z
   .object({
-    /** Assertion field name */
-    field: z.string().describe('Assertion field name'),
-    /** Expected value */
-    expected: z.unknown().describe('Expected value'),
-    /** Actual value observed */
-    actual: z.unknown().describe('Actual value observed'),
-    /** Whether the assertion passed */
-    passed: z.boolean().describe('Whether the assertion passed'),
+    /** Current step position */
+    at: z.string().optional().describe('Current step position'),
+    /** Previous step position */
+    from: z.string().optional().describe('Previous step position'),
+    /** Transition action */
+    action: z.string().optional().describe('Transition action type'),
+    /** Step result */
+    result: z.enum(['PASS', 'FAIL']).optional().describe('Step result'),
+    /** Command executed */
+    command: z.string().optional().describe('Command executed'),
   })
-  .describe('Individual assertion result from scenario execution');
+  .describe('Step transition assertion from scenario definition');
+
+/**
+ * Schema for a captured step transition event from JSON output.
+ */
+export const CapturedTransitionSchema = z
+  .object({
+    /** Transition action */
+    action: z.string().optional().describe('Transition action type'),
+    /** Previous step position */
+    from: z.string().optional().describe('Previous step position'),
+    /** Current step position */
+    at: z.string().optional().describe('Current step position'),
+    /** Step result */
+    result: z.enum(['PASS', 'FAIL']).optional().describe('Step result'),
+    /** Command executed */
+    command: z.string().optional().describe('Command executed'),
+  })
+  .describe('Captured step transition from execution');
+
+/**
+ * Step assertion result from matching against the event stream.
+ */
+export const ScenarioStepAssertionResultSchema = z
+  .object({
+    /** The assertion that was evaluated */
+    assertion: StepAssertionInputSchema.describe('The assertion that was evaluated'),
+    /** Whether a matching event was found */
+    matched: z.boolean().describe('Whether a matching event was found'),
+    /** The event that matched (if any) */
+    matchedEvent: CapturedTransitionSchema.optional().describe('The event that matched'),
+  })
+  .describe('Result of matching a step assertion against the event stream');
 
 /**
  * Scenario run result.
@@ -495,11 +529,11 @@ export const ScenarioRunResponseSchema = z
     actual: z.string().describe('Actual outcome'),
     /** Detailed message */
     message: z.string().optional().describe('Additional status message'),
-    /** Per-field assertion results (present when expect block is used) */
-    assertions: z
-      .array(ScenarioAssertionResultSchema)
+    /** Per-step assertion results (present when expect.steps block is used) */
+    stepAssertions: z
+      .array(ScenarioStepAssertionResultSchema)
       .optional()
-      .describe('Per-field assertion results'),
+      .describe('Per-step assertion results'),
   })
   .describe('Response from scenario run command');
 
@@ -864,8 +898,14 @@ export type ScenarioEntry = z.infer<typeof ScenarioEntrySchema>;
 /** Scenario detail */
 export type ScenarioDetail = z.infer<typeof ScenarioDetailSchema>;
 
-/** Scenario assertion result */
-export type ScenarioAssertionResult = z.infer<typeof ScenarioAssertionResultSchema>;
+/** Step assertion input */
+export type StepAssertionInput = z.infer<typeof StepAssertionInputSchema>;
+
+/** Captured transition */
+export type CapturedTransition = z.infer<typeof CapturedTransitionSchema>;
+
+/** Step assertion result */
+export type ScenarioStepAssertionResult = z.infer<typeof ScenarioStepAssertionResultSchema>;
 
 /** Scenario run response */
 export type ScenarioRunResponse = z.infer<typeof ScenarioRunResponseSchema>;

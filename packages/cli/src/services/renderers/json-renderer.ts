@@ -143,6 +143,7 @@ export class JSONRenderer implements OutputRenderer {
       case 'complete':
         this.output.result = true;
         this.output.action = 'complete';
+        this.output.complete = true;
         if (event.message) {
           this.output.message = event.message;
         }
@@ -153,6 +154,7 @@ export class JSONRenderer implements OutputRenderer {
       case 'stopped':
         this.output.result = false;
         this.output.action = 'stop';
+        this.output.stopped = true;
         if (event.message) {
           this.output.message = event.message;
         }

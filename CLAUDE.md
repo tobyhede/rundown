@@ -5,7 +5,7 @@ Rundown is a format for defining executable runbooks using Markdown.
 ## Packages
 
 - `@rundown-org/parser` - Markdown runbook parser
-- `@rundown-org/core` - Runbook state management and XState compilation
+- `@rundown-org/core` - Core runbook state management and execution
 - `@rundown-org/cli` - Command-line interface (`rundown`, `rd`)
 - `@rundown-org/mcp` - MCP server for AI agent integration
 - `@rundown-org/claude-code-plugin` - Claude Code plugin for runbook orchestration
@@ -19,13 +19,14 @@ npm install -g @rundown-org/cli
 ## Commands
 
 ```bash
-rundown run <file>       # Run a runbook
-rundown run <file> --json # Output execution events as JSON
-rundown run <file> --var key=value  # Set template variable (repeatable)
-rundown run <file> --var-file path  # Load variables from YAML file
+rundown run [file]       # Run a runbook
+rundown run [file] --json # Output execution events as JSON
+rundown run [file] --var key=value  # Set template variable (repeatable)
+rundown run [file] --var-file path  # Load variables from YAML file
+rundown run [file] --prompted  # Show commands without auto-executing
 rundown pass             # Mark current step as passed (aliases: yes, ok)
 rundown fail             # Mark current step as failed (alias: no)
-rundown goto <n>         # Jump to specific step number
+rundown goto <step>      # Jump to step (e.g., '3', '3.1' for substep)
 rundown status           # Show current state
 rundown stop [message]   # Abort runbook with optional message
 rundown complete [message] # Force early completion (runbooks auto-complete on final step)
@@ -33,15 +34,23 @@ rundown stash            # Pause enforcement (stash active runbook)
 rundown pop              # Resume enforcement (restore stashed runbook)
 rundown ls               # List active runbooks
 rundown ls --all         # List available runbook files
+rundown ls --all --tags <tags>  # Filter by comma-separated tags
 rundown check <file>     # Check runbook for errors
 rundown echo             # Test helper: echo with configurable result
-rundown prune            # Remove stale runbook state files
+rundown prune            # Remove runbook state (default: completed)
+rundown prune --dry-run  # Show what would be removed without deleting
+rundown prune --active   # Prune active runbook state
+rundown prune --inactive # Prune inactive runbook state
+rundown prune --all      # Prune all runbook state
 rundown scenario ls <file>           # List scenarios in a runbook
 rundown scenario show <file> <name>  # Show scenario details
 rundown scenario run <file> <name>   # Run a scenario
+rundown scenario run <file> <name> -q  # Run scenario (suppress output)
 rundown prompt <content> # Output content in markdown fences
 rundown delegate <runbook> --step <id>  # Delegate substep to child runbook
+rundown delegate <runbook> --step <id> --var key=value  # With variables
 rundown claim <token>                   # Claim a delegation token and launch child
+rundown claim <token> --var key=value   # Claim with variables
 rundown abort <token>                   # Cancel a delegation token (--force for claimed)
 ```
 
@@ -69,8 +78,12 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `WorkPath` | `.work` | Default artifact directory |
 | `Step` | `3.1` | Current qualified step identifier |
 | `Index` | `3` | Current loop iteration number (inside FOR) |
+| `context.current.step` | `3` | Current step number |
+| `context.current.substep` | `1` | Current substep number (when in substep) |
+| `context.current.index` | `3` | Current loop iteration (inside FOR) |
+| `context.current.at` | `3.1[3]` | Full execution position |
 
-Built-in variables use PascalCase. The date/time variables (`Date`, `DateTime`, `Year`, `Month`, `Day`) and `WorkPath` are static run-time variables set once per execution and can be overridden via `--var`. The `Step` variable (and `Index` during FOR loops) are dynamic per-step variables that reflect the current execution position and cannot be overridden via `--var`.
+Built-in variables use PascalCase. Lowercase aliases `step` and `index` are also available. The date/time variables (`Date`, `DateTime`, `Year`, `Month`, `Day`) and `WorkPath` are static run-time variables set once per execution and can be overridden via `--var`. The `Step` variable (and `Index` during FOR loops), `context.current.*` variables, and their lowercase aliases are dynamic per-step variables that reflect the current execution position and cannot be overridden via `--var`. The variable name `context` is reserved and cannot be used as a user variable name.
 
 **CLI Example:**
 ```bash
@@ -119,7 +132,7 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 
 ## Schema Output
 
-The `--schema` flag outputs the JSON Schema for any command's `--json` output:
+The `--schema` flag outputs the JSON Schema for a command's `--json` output (supported by most commands):
 
 ```bash
 rd status --schema           # Status response schema
@@ -179,18 +192,19 @@ Output shows NAME, SOURCE, DESCRIPTION, and TAGS columns. The SOURCE column indi
 These options are registered at the program level and can be used with any subcommand:
 
 ```bash
-rundown run <file> --allow-run git,npm    # Allow specific commands
-rundown run <file> --allow-read /path     # Allow reading specific paths
-rundown run <file> --allow-write /path    # Allow writing to specific paths
-rundown run <file> --allow-env VAR        # Allow specific environment variables
-rundown run <file> --allow-all            # Bypass policy (trust mode)
-rundown run <file> --deny-all             # Block all commands
-rundown run <file> -y                     # Auto-approve prompts
-rundown run <file> --non-interactive      # CI mode (auto-deny)
-rundown run <file> --policy ./policy.yaml # Custom policy file
-rundown run <file> --sandbox              # Enable OS-level sandbox (default)
-rundown run <file> --no-sandbox           # Disable sandbox (trust mode)
-rundown run <file> --sandbox-strict       # Fail if sandbox unavailable
+rundown run [file] --allow-run git,npm    # Allow specific commands
+rundown run [file] --allow-read /path     # Allow reading specific paths
+rundown run [file] --allow-write /path    # Allow writing to specific paths
+rundown run [file] --allow-env VAR        # Allow specific environment variables
+rundown run [file] --allow-all            # Bypass policy (trust mode)
+rundown run [file] --deny-all             # Block all commands
+rundown run [file] -y                     # Skip confirmation prompts
+rundown run [file] --non-interactive      # CI mode (auto-deny)
+rundown run [file] --no-color             # Disable colored output
+rundown run [file] --policy ./policy.yaml # Custom policy file
+rundown run [file] --sandbox              # Enable OS-level sandbox (default)
+rundown run [file] --no-sandbox           # Disable sandbox (trust mode)
+rundown run [file] --sandbox-strict       # Fail if sandbox unavailable
 ```
 
 ## Policy Configuration
@@ -203,6 +217,8 @@ See [docs/SECURITY.md](docs/SECURITY.md) for full security policy documentation.
 
 - `RUNDOWN_LOG=0` - Disable logging (enabled by default)
 - `RUNDOWN_LOG_LEVEL=debug|info|warn|error` - Set log verbosity (default: info)
+- `NO_COLOR=1` - Disable colored output (standard convention)
+- `FORCE_COLOR=1` - Force colored output even in non-TTY environments
 
 ## Development Commands
 
@@ -212,7 +228,10 @@ npm test              # Fast: unit tests, all packages in parallel
 npm run test:unit     # Same as npm test
 npm run test:integration  # Integration tests in parallel
 npm run test:all      # Full suite: unit → integration → property → perf
-npm run lint          # Lint all packages
+npm run test:coverage # Test coverage across all packages
+npm run lint          # Lint all packages (biome + eslint)
+npm run lint:fast     # Fast lint (biome only)
+npm run lint:typed    # Typed lint (eslint only)
 npm run lint:fix      # Auto-fix lint issues
 npm run format        # Format all packages
 npm run format:check  # Check formatting
@@ -317,3 +336,4 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
 - [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
 - [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
+- [docs/TEST-RUNBOOK-STANDARD.md](docs/TEST-RUNBOOK-STANDARD.md) - Declarative test runbook standard

@@ -73,8 +73,6 @@ cases:
       - rd pass
     expect:
       result: COMPLETE
-      finalStep: "2"
-      stepsCompleted: 2
 `;
 
   beforeEach(async () => {
@@ -180,7 +178,6 @@ cases:
       const parsed = JSON.parse(result.stdout.trim());
       expect(parsed.expect).toBeDefined();
       expect(parsed.expect.result).toBe('COMPLETE');
-      expect(parsed.expect.finalStep).toBe('2');
     });
 
     it('shows SCENARIO_NOT_FOUND for non-existent case', () => {

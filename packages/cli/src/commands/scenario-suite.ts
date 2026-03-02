@@ -8,38 +8,26 @@
  */
 
 import type { Command } from 'commander';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rm } from 'node:fs/promises';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { execFileSync, execSync } from 'node:child_process';
-import { parse as shellParse } from 'shell-quote';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadScenarioSuite, type ScenarioSuiteCase } from '../schemas/scenario-suite.js';
-import type { AssertionResult, PersistedState } from '../helpers/scenario-workflow.js';
-import { evaluateExpectations } from '../helpers/scenario-workflow.js';
+import {
+  executeCommandSequence,
+  matchStepAssertions,
+  formatStepAssertionDescription,
+  type StepAssertionResult,
+} from '../helpers/command-sequence.js';
+import { getEffectiveResult } from '../schemas/scenarios.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /** Path to the CLI executable */
 const CLI_PATH = join(__dirname, '..', 'cli.js');
-
-/**
- * Get effective result for a suite case, preferring `result` over `expect.result`.
- *
- * @param c - A validated suite case
- * @returns The effective terminal result ('COMPLETE' or 'STOP')
- * @throws {Error} When neither `result` nor `expect.result` is defined
- */
-function getCaseEffectiveResult(c: ScenarioSuiteCase): 'COMPLETE' | 'STOP' {
-  const result = c.result ?? c.expect?.result;
-  if (result === undefined) {
-    throw new Error('Suite case has neither result nor expect.result defined');
-  }
-  return result;
-}
 
 /**
  * Execute a single suite case in an isolated temp workspace.
@@ -55,20 +43,23 @@ async function executeSuiteCase(
   scenario: string;
   expected: string;
   actual: string;
-  assertions?: AssertionResult[];
+  stepAssertions?: StepAssertionResult[];
 }> {
-  const effectiveResult = getCaseEffectiveResult(suiteCase);
+  const effectiveResult = getEffectiveResult(suiteCase);
   const runbookPath = resolve(suiteDir, suiteCase.file);
-  const runbookFilename = basename(runbookPath);
-
   const tmpDir = mkdtempSync(join(tmpdir(), 'rd-suite-'));
 
   try {
     const runbooksDir = join(tmpDir, '.claude', 'rundown', 'runbooks');
     mkdirSync(runbooksDir, { recursive: true });
 
+    // Path-preserving copy: preserve subdirectory structure for suite cases
+    const relPath = suiteCase.file; // e.g., "transitions/default-implicit.runbook.md"
+    const destPath = join(runbooksDir, relPath);
+    mkdirSync(dirname(destPath), { recursive: true });
+
     try {
-      copyFileSync(runbookPath, join(runbooksDir, runbookFilename));
+      copyFileSync(runbookPath, destPath);
     } catch {
       return {
         passed: false,
@@ -83,7 +74,7 @@ async function executeSuiteCase(
     const referenced = new Set<string>();
     for (const cmd of suiteCase.commands) {
       for (const match of cmd.matchAll(runbookPattern)) {
-        if (match[1] !== runbookFilename) referenced.add(match[1]);
+        if (match[1] !== suiteCase.file) referenced.add(match[1]);
       }
     }
     for (const ref of referenced) {
@@ -101,87 +92,35 @@ async function executeSuiteCase(
       output.message('', 'info');
     }
 
-    for (const cmd of suiteCase.commands) {
-      if (!quiet) {
-        output.message(`$ ${cmd}`, 'info');
-      }
+    const seqResult = await executeCommandSequence({
+      commands: suiteCase.commands,
+      cwd: tmpDir,
+      cliPath: CLI_PATH,
+      quiet,
+      onCommandStart: quiet
+        ? undefined
+        : (cmd) => {
+            output.message(`$ ${cmd}`, 'info');
+          },
+    });
 
-      const rdMatch = /^rd\s+(.*)$/.exec(cmd);
-      try {
-        if (rdMatch) {
-          const parsed = shellParse(rdMatch[1]);
-          const hasOperators = parsed.some((entry) => typeof entry !== 'string');
-          if (hasOperators) {
-            throw new Error(
-              `Unsupported shell operators in suite command: ${cmd}. ` +
-                'Split into separate commands instead of using &&, ||, |, etc.',
-            );
-          }
-          const args = parsed as string[];
-          execFileSync('node', [CLI_PATH, ...args], {
-            cwd: tmpDir,
-            encoding: 'utf-8',
-            stdio: quiet ? 'pipe' : 'inherit',
-            env: { ...process.env, RUNDOWN_LOG: '0' },
-          });
-        } else {
-          execSync(cmd, {
-            cwd: tmpDir,
-            encoding: 'utf-8',
-            stdio: quiet ? 'pipe' : 'inherit',
-            env: { ...process.env, RUNDOWN_LOG: '0' },
-          });
-        }
-      } catch (err: unknown) {
-        if (err instanceof Error && !('status' in err)) {
-          throw err;
-        }
-      }
+    const actualResult = seqResult.terminalResult;
+
+    let stepAssertions: StepAssertionResult[] | undefined;
+    if (suiteCase.expect?.steps) {
+      stepAssertions = matchStepAssertions(suiteCase.expect.steps, seqResult.transitions);
     }
 
-    // Read final state
-    const runsDir = join(tmpDir, '.claude', 'rundown', 'runs');
-    let actualResult = 'UNKNOWN';
-    let persistedState: PersistedState = {};
+    const resultPassed = actualResult === effectiveResult;
+    const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
 
-    try {
-      const stateFiles = readdirSync(runsDir).filter((f) => f.endsWith('.json'));
-      if (stateFiles.length > 0) {
-        const latestFile = stateFiles
-          .map((f) => ({ name: f, path: join(runsDir, f) }))
-          .sort((a, b) => statSync(b.path).mtimeMs - statSync(a.path).mtimeMs)[0];
-
-        const stateContent = readFileSync(latestFile.path, 'utf-8');
-        persistedState = JSON.parse(stateContent) as PersistedState;
-
-        if (persistedState.variables?.completed === true) {
-          actualResult = 'COMPLETE';
-        } else if (persistedState.variables?.stopped === true) {
-          actualResult = 'STOP';
-        }
-      }
-    } catch {
-      // State file may not exist
-    }
-
-    // Evaluate rich assertions if expect block is present
-    let assertions: AssertionResult[] | undefined;
-    if (suiteCase.expect) {
-      const expectResult = evaluateExpectations(persistedState, suiteCase.expect);
-      assertions = expectResult.assertions;
-      const resultPassed = actualResult === effectiveResult;
-      const allPassed = resultPassed && expectResult.passed;
-      return {
-        passed: allPassed,
-        scenario: caseName,
-        expected: effectiveResult,
-        actual: actualResult,
-        assertions,
-      };
-    }
-
-    const passed = actualResult === effectiveResult;
-    return { passed, scenario: caseName, expected: effectiveResult, actual: actualResult };
+    return {
+      passed: resultPassed && assertionsPassed,
+      scenario: caseName,
+      expected: effectiveResult,
+      actual: actualResult,
+      stepAssertions,
+    };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }
@@ -220,7 +159,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
         const rows = Object.entries(result.suite.cases).map(([name, c]) => ({
           name,
           file: c.file,
-          expected: getCaseEffectiveResult(c),
+          expected: getEffectiveResult(c),
           description: c.description ?? '',
           tags: c.tags?.join(', ') ?? '',
         }));
@@ -268,7 +207,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
           name: caseName,
           file: c.file,
           description: c.description,
-          expected: getCaseEffectiveResult(c),
+          expected: getEffectiveResult(c),
           commands: c.commands,
           tags: c.tags,
         };
@@ -384,22 +323,23 @@ export function registerScenarioSuiteCommand(program: Command): void {
               actual: caseResult.actual,
             };
 
-            if (caseResult.assertions) {
-              detailData.assertions = caseResult.assertions;
+            if (caseResult.stepAssertions) {
+              detailData.stepAssertions = caseResult.stepAssertions;
             }
 
             output.detail(detailData, 'custom');
 
-            if (!options.json && caseResult.assertions && caseResult.assertions.length > 0) {
+            if (
+              !options.json &&
+              caseResult.stepAssertions &&
+              caseResult.stepAssertions.length > 0
+            ) {
               output.message('', 'info');
-              output.message('Assertions:', 'info');
-              for (const assertion of caseResult.assertions) {
-                const icon = assertion.passed ? '\u2713' : '\u2717';
-                const status = assertion.passed ? 'dim' : 'error';
-                output.message(
-                  `  ${icon} ${assertion.field}: expected ${JSON.stringify(assertion.expected)}, got ${JSON.stringify(assertion.actual)}`,
-                  status,
-                );
+              output.message('Step Assertions:', 'info');
+              for (const sa of caseResult.stepAssertions) {
+                const icon = sa.matched ? '\u2713' : '\u2717';
+                const status = sa.matched ? 'dim' : 'error';
+                output.message(`  ${icon} ${formatStepAssertionDescription(sa)}`, status);
               }
             }
 

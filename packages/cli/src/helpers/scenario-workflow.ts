@@ -8,11 +8,9 @@
  */
 
 import { readFile, rm } from 'node:fs/promises';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync, execSync } from 'node:child_process';
-import { parse as shellParse } from 'shell-quote';
 import {
   parseScenarios,
   getEffectiveResult,
@@ -23,20 +21,11 @@ import {
 import { resolveRunbookFile } from './resolve-runbook.js';
 import { extractRawFrontmatter } from './extract-raw-frontmatter.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
-
-/**
- * Result of evaluating a single assertion field.
- */
-export interface AssertionResult {
-  /** The field that was asserted */
-  field: string;
-  /** The expected value */
-  expected: unknown;
-  /** The actual value observed */
-  actual: unknown;
-  /** Whether the assertion passed */
-  passed: boolean;
-}
+import {
+  executeCommandSequence,
+  matchStepAssertions,
+  type StepAssertionResult,
+} from './command-sequence.js';
 
 /**
  * A loaded runbook with its scenarios.
@@ -71,106 +60,8 @@ export interface ScenarioRunResult {
   expected: string;
   /** Actual final state observed after execution. */
   actual: string;
-  /** Per-field assertion results (present when expect block is used). */
-  assertions?: AssertionResult[];
-}
-
-/**
- * Shape of persisted state read from state files.
- * Subset of RunbookState relevant to assertion evaluation.
- */
-export interface PersistedState {
-  /** Identifier of the current/last active step. */
-  step?: string;
-  /** Number of retries performed so far. */
-  retryCount?: number;
-  /** Last emitted action metadata. */
-  lastAction?: { type: string };
-  /** Last normalized run result value (e.g. 'pass' or 'fail'). */
-  lastResult?: string;
-  /** Persisted variables keyed by variable name. */
-  variables?: Record<string, boolean | number | string>;
-  /** Persisted step snapshots used for completion assertions. */
-  steps?: readonly { status: string }[];
-}
-
-/**
- * Evaluate rich expectations against persisted state.
- *
- * Checks each field specified in the `expect` block against the corresponding
- * field in the persisted state. Only specified fields are asserted.
- *
- * @param state - The persisted runbook state
- * @param expect - The expect block from the scenario
- * @returns Object with overall passed status and per-field assertion results
- */
-export function evaluateExpectations(
-  state: PersistedState,
-  expect: ScenarioExpect,
-): { passed: boolean; assertions: AssertionResult[] } {
-  const assertions: AssertionResult[] = [];
-
-  if (expect.finalStep !== undefined) {
-    assertions.push({
-      field: 'finalStep',
-      expected: expect.finalStep,
-      actual: state.step,
-      passed: state.step === expect.finalStep,
-    });
-  }
-
-  if (expect.stepsCompleted !== undefined) {
-    const completed = state.steps?.filter((s) => s.status === 'complete').length ?? 0;
-    assertions.push({
-      field: 'stepsCompleted',
-      expected: expect.stepsCompleted,
-      actual: completed,
-      passed: completed === expect.stepsCompleted,
-    });
-  }
-
-  if (expect.lastAction !== undefined) {
-    const actual = state.lastAction?.type;
-    assertions.push({
-      field: 'lastAction',
-      expected: expect.lastAction,
-      actual,
-      passed: actual === expect.lastAction,
-    });
-  }
-
-  if (expect.lastResult !== undefined) {
-    assertions.push({
-      field: 'lastResult',
-      expected: expect.lastResult,
-      actual: state.lastResult,
-      passed: state.lastResult === expect.lastResult,
-    });
-  }
-
-  if (expect.retryCount !== undefined) {
-    assertions.push({
-      field: 'retryCount',
-      expected: expect.retryCount,
-      actual: state.retryCount,
-      passed: state.retryCount === expect.retryCount,
-    });
-  }
-
-  if (expect.variables !== undefined) {
-    for (const [key, expectedValue] of Object.entries(expect.variables)) {
-      const actualValue = state.variables?.[key];
-      assertions.push({
-        field: `variables.${key}`,
-        expected: expectedValue,
-        actual: actualValue,
-        passed: actualValue === expectedValue,
-      });
-    }
-  }
-
-  const passed = assertions.every((a) => a.passed);
-  return { passed, assertions };
+  /** Per-step assertion results (present when expect.steps block is used). */
+  stepAssertions?: StepAssertionResult[];
 }
 
 /**
@@ -295,9 +186,10 @@ export function extractReferencedRunbooks(scenario: Scenario): string[] {
 /**
  * Execute a scenario in an isolated temp workspace and evaluate the result.
  *
- * Creates a temp directory, copies runbook files, executes commands, reads
- * final state, and compares against expected result. When an `expect` block
- * is present, evaluates rich assertions against the persisted state.
+ * Creates a temp directory, copies runbook files, executes commands via
+ * executeCommandSequence, and compares against expected result. When an
+ * `expect.steps` block is present, evaluates step assertions against the
+ * captured transition stream.
  *
  * @param loadedRunbook - The loaded runbook with scenario definitions
  * @param scenarioName - Name of the scenario to execute
@@ -347,8 +239,7 @@ export async function executeScenario(
       }
     }
 
-    // Execute commands in sequence
-    // Print scenario header (verbose mode only)
+    // Verbose display — print scenario header only
     if (!quiet) {
       output.message('', 'info');
       output.message(`Scenario:  ${scenarioName}`, 'dim');
@@ -356,103 +247,44 @@ export async function executeScenario(
       output.message('', 'info');
     }
 
-    for (const cmd of scenario.commands) {
-      if (!quiet) {
-        output.message('', 'info');
-        output.message('\u2501'.repeat(50), 'dim');
-        output.message(`$ ${cmd}`, 'info');
-        output.message('', 'info');
-      }
+    // Execute all commands, tee child output, and capture JSON stdout
+    const seqResult = await executeCommandSequence({
+      commands: scenario.commands,
+      cwd: tmpDir,
+      cliPath,
+      quiet,
+      onCommandStart: quiet
+        ? undefined
+        : (cmd) => {
+            output.message('', 'info');
+            output.message('\u2501'.repeat(50), 'dim');
+            output.message(`$ ${cmd}`, 'info');
+            output.message('', 'info');
+          },
+    });
 
-      // Route 'rd' commands through execFileSync to avoid shell injection
-      const rdMatch = /^rd\s+(.*)$/.exec(cmd);
-      try {
-        if (rdMatch) {
-          const parsed = shellParse(rdMatch[1]);
-          const hasOperators = parsed.some((entry) => typeof entry !== 'string');
-          if (hasOperators) {
-            throw new Error(
-              `Unsupported shell operators in scenario command: ${cmd}. ` +
-                'Split into separate commands instead of using &&, ||, |, etc.',
-            );
-          }
-          const args = parsed as string[];
-          execFileSync('node', [cliPath, ...args], {
-            cwd: tmpDir,
-            encoding: 'utf-8',
-            stdio: quiet ? 'pipe' : 'inherit',
-            env: { ...process.env, RUNDOWN_LOG: '0' },
-          });
-        } else {
-          // Non-rd commands are author-defined scenario commands — inherently trusted
-          execSync(cmd, {
-            cwd: tmpDir,
-            encoding: 'utf-8',
-            stdio: quiet ? 'pipe' : 'inherit',
-            env: { ...process.env, RUNDOWN_LOG: '0' },
-          });
-        }
-      } catch (err: unknown) {
-        // Re-throw non-exec errors (e.g. unsupported shell operators)
-        if (err instanceof Error && !('status' in err)) {
-          throw err;
-        }
-        // Non-zero exit codes are expected for STOP/FAIL scenarios — continue
-      }
+    const actualResult = seqResult.terminalResult;
+
+    // Evaluate step assertions if present
+    let stepAssertions: StepAssertionResult[] | undefined;
+    if (scenario.expect?.steps) {
+      stepAssertions = matchStepAssertions(scenario.expect.steps, seqResult.transitions);
     }
+
+    const resultPassed = actualResult === effectiveResult;
+    const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
 
     if (!quiet) {
       output.message('', 'info');
     }
 
-    // Check final state
-    const runsDir = join(tmpDir, '.claude', 'rundown', 'runs');
-    let actualResult = 'UNKNOWN';
-    let persistedState: PersistedState = {};
-
-    try {
-      const stateFiles = readdirSync(runsDir).filter((f) => f.endsWith('.json'));
-      if (stateFiles.length > 0) {
-        // Get most recently modified state file
-        const latestFile = stateFiles
-          .map((f) => ({ name: f, path: join(runsDir, f) }))
-          .sort((a, b) => statSync(b.path).mtimeMs - statSync(a.path).mtimeMs)[0];
-
-        const stateContent = readFileSync(latestFile.path, 'utf-8');
-        persistedState = JSON.parse(stateContent) as PersistedState;
-
-        if (persistedState.variables?.completed === true) {
-          actualResult = 'COMPLETE';
-        } else if (persistedState.variables?.stopped === true) {
-          actualResult = 'STOP';
-        }
-      }
-    } catch {
-      // State file may not exist
-    }
-
-    // Evaluate rich assertions if expect block is present
-    let assertions: AssertionResult[] | undefined;
-    if (scenario.expect) {
-      const expectResult = evaluateExpectations(persistedState, scenario.expect);
-      assertions = expectResult.assertions;
-
-      // Check result assertion from expect block (or top-level result)
-      const resultPassed = actualResult === effectiveResult;
-
-      // Overall pass requires both result match and all assertions pass
-      const allPassed = resultPassed && expectResult.passed;
-      return {
-        passed: allPassed,
-        scenario: scenarioName,
-        expected: effectiveResult,
-        actual: actualResult,
-        assertions,
-      };
-    }
-
-    const passed = actualResult === effectiveResult;
-    return { passed, scenario: scenarioName, expected: effectiveResult, actual: actualResult };
+    return {
+      passed: resultPassed && assertionsPassed,
+      scenario: scenarioName,
+      expected: effectiveResult,
+      actual: actualResult,
+      stepAssertions,
+    };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }
