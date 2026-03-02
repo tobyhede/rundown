@@ -7,7 +7,12 @@ import {
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractRawFrontmatter } from '../../src/helpers/extract-raw-frontmatter.js';
-import { parseScenarios, type Scenario, type Scenarios } from '../../src/schemas/scenarios.js';
+import {
+  parseScenarios,
+  getEffectiveResult,
+  type Scenario,
+  type Scenarios,
+} from '../../src/schemas/scenarios.js';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -165,13 +170,16 @@ async function executeScenario(
 ): Promise<void> {
   copyPatternWithDependencies(filename, scenario, workspace);
 
+  const expectedResult = getEffectiveResult(scenario);
+
   for (let i = 0; i < scenario.commands.length; i++) {
     const cmd = scenario.commands[i];
     const isLastCommand = i === scenario.commands.length - 1;
     const args = cmd.replace(/^rd\s+/, '');
     const result = runCli(args, workspace);
 
-    const allowNonZero = isLastCommand && scenario.result === 'STOP';
+    const isAgentFail = /^rd\s+fail\b/.test(cmd) && cmd.includes('--agent');
+    const allowNonZero = (isLastCommand && expectedResult === 'STOP') || isAgentFail;
 
     if (!allowNonZero && result.exitCode !== 0) {
       throw new Error(
@@ -195,7 +203,7 @@ async function executeScenario(
 
   const state = matchingStates.find((s) => {
     const variables = s.variables as Record<string, unknown> | undefined;
-    if (scenario.result === 'COMPLETE') {
+    if (expectedResult === 'COMPLETE') {
       return variables?.completed === true;
     } else {
       return variables?.stopped === true;
@@ -211,13 +219,13 @@ async function executeScenario(
       })
       .join('; ');
     throw new Error(
-      `No state with expected result ${scenario.result} found for runbook ${filename}. Found states: [${statesSummary}]`,
+      `No state with expected result ${expectedResult} found for runbook ${filename}. Found states: [${statesSummary}]`,
     );
   }
 
   const variables = state.variables as Record<string, unknown> | undefined;
 
-  if (scenario.result === 'COMPLETE') {
+  if (expectedResult === 'COMPLETE') {
     expect(variables?.completed).toBe(true);
   } else {
     expect(variables?.stopped).toBe(true);

@@ -92,7 +92,20 @@ export function registerScenariosCommand(program: Command): void {
           process.exit(1);
         }
 
-        output.detail(detail, 'scenario');
+        // Build detail data for output, including expect block when present
+        const detailData: Record<string, unknown> = {
+          name: detail.name,
+          description: detail.description,
+          expected: detail.expected,
+          commands: detail.commands,
+          tags: detail.tags,
+        };
+
+        if (detail.expect) {
+          detailData.expect = detail.expect;
+        }
+
+        output.detail(detailData, 'scenario');
         output.flush();
       } catch (error) {
         output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
@@ -134,15 +147,34 @@ export function registerScenariosCommand(program: Command): void {
           CLI_PATH,
         );
 
-        output.detail(
-          {
-            result: runResult.passed,
-            scenario: runResult.scenario,
-            expected: runResult.expected,
-            actual: runResult.actual,
-          },
-          'scenario_result',
-        );
+        // Build output data including assertions if present
+        const detailData: Record<string, unknown> = {
+          result: runResult.passed,
+          scenario: runResult.scenario,
+          expected: runResult.expected,
+          actual: runResult.actual,
+        };
+
+        if (runResult.assertions) {
+          detailData.assertions = runResult.assertions;
+        }
+
+        output.detail(detailData, 'scenario_result');
+
+        // Display per-assertion failures in text mode
+        if (!options.json && runResult.assertions && runResult.assertions.length > 0) {
+          output.message('', 'info');
+          output.message('Assertions:', 'info');
+          for (const assertion of runResult.assertions) {
+            const icon = assertion.passed ? '\u2713' : '\u2717';
+            const status = assertion.passed ? 'dim' : 'error';
+            output.message(
+              `  ${icon} ${assertion.field}: expected ${JSON.stringify(assertion.expected)}, got ${JSON.stringify(assertion.actual)}`,
+              status,
+            );
+          }
+        }
+
         output.flush();
 
         if (!runResult.passed) {

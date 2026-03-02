@@ -45,11 +45,17 @@ export {
   RunbookStatsSchema,
   CheckResponseSchema,
   // Scenario schemas
+  ScenarioAssertionResultSchema,
   ScenarioEntrySchema,
   ScenarioDetailSchema,
   ScenarioListSchema,
   ScenarioRunResponseSchema,
   ScenarioErrorResponseSchema,
+  // Suite schemas
+  ScenarioSuiteCaseEntrySchema,
+  ScenarioSuiteListSchema,
+  ScenarioSuiteCaseDetailSchema,
+  ScenarioSuiteRunResponseSchema,
   // Echo schema
   EchoResponseSchema,
   // Prune schema (same format as ls output)
@@ -79,9 +85,13 @@ export {
   type CheckValidationWarning,
   type RunbookStats,
   type CheckResponse,
+  type ScenarioAssertionResult,
   type ScenarioEntry,
   type ScenarioDetail,
   type ScenarioRunResponse,
+  type ScenarioSuiteCaseEntry,
+  type ScenarioSuiteCaseDetail,
+  type ScenarioSuiteRunResponse,
   type EchoResponse,
   type PruneResponse,
   type StashResponse,
