@@ -1,14 +1,14 @@
 ---
-name: complex-transitions
+name: mixed-modifiers
 description: Demonstrates complex transition conditions with ALL/ANY modifiers
 tags:
-  - transition
+  - transitions
 
 scenarios:
   completed:
     description: All steps pass through to completion
     commands:
-      - rd run --prompted complex-transitions.runbook.md
+      - rd run --prompted mixed-modifiers.runbook.md
       - rd pass
       - rd pass
       - rd pass
@@ -17,7 +17,7 @@ scenarios:
   auto-execution:
     description: Step 1 passes, step 2 passes and GOTOs to step 4, which completes
     commands:
-      - rd run complex-transitions.runbook.md
+      - rd run mixed-modifiers.runbook.md
     result: COMPLETE
 ---
 

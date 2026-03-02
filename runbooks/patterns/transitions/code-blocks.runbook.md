@@ -2,7 +2,7 @@
 name: code-blocks
 description: Demonstrates various code block patterns in runbooks
 tags:
-  - tests
+  - transitions
 
 scenarios:
   completed:

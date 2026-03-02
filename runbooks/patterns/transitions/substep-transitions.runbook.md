@@ -32,7 +32,7 @@ scenarios:
       - rd pass
     result: COMPLETE
 tags:
-  - transition
+  - transitions
   - substeps
 ---
 

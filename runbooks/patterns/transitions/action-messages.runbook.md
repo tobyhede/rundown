@@ -1,15 +1,16 @@
 ---
 name: action-messages
 description: Demonstrates STOP and COMPLETE with message parameters
+tags:
+  - transitions
 
 scenarios:
   complete-with-message:
+    description: Step passes, COMPLETE fires with message
     commands:
       - rd run --prompted action-messages.runbook.md
       - rd pass
     result: COMPLETE
-tags:
-  - tests
 ---
 
 # Action Messages
