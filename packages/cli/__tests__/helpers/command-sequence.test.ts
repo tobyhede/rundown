@@ -3,6 +3,8 @@ import {
   parseJsonLines,
   matchStepAssertions,
   formatStepAssertionDescription,
+  substituteTokens,
+  injectJsonFlag,
 } from '../../src/helpers/command-sequence.js';
 
 describe('parseJsonLines', () => {
@@ -92,6 +94,16 @@ describe('parseJsonLines', () => {
     const stdout = JSON.stringify({ action: 'stop', result: false, stopped: true }, null, 2);
     const result = parseJsonLines(stdout);
     expect(result.terminal).toBe('STOP');
+  });
+
+  it('falls through to line-by-line parsing when input is a JSON array', () => {
+    const stdout =
+      '[{"type":"step_transitioned","action":"CONTINUE","from":"1","at":"2","result":"PASS"}]\n';
+    const result = parseJsonLines(stdout);
+    // Array is not a valid single JSON object, so line-by-line parsing runs.
+    // The array line parses as JSON but is an array, not an object with type/complete/stopped fields.
+    expect(result.transitions).toHaveLength(0);
+    expect(result.terminal).toBeNull();
   });
 });
 
@@ -191,5 +203,49 @@ describe('formatStepAssertionDescription', () => {
       matched: true,
     });
     expect(result).toBe('step (empty assertion): matched');
+  });
+});
+
+describe('injectJsonFlag', () => {
+  it('appends --json when not present', () => {
+    expect(injectJsonFlag(['run', 'test.md'])).toEqual(['run', 'test.md', '--json']);
+  });
+
+  it('returns original array when --json already present', () => {
+    const args = ['run', 'test.md', '--json'];
+    expect(injectJsonFlag(args)).toBe(args);
+  });
+
+  it('works with various arg combinations', () => {
+    expect(injectJsonFlag(['pass'])).toEqual(['pass', '--json']);
+    expect(injectJsonFlag(['run', '--var', 'x=1'])).toEqual(['run', '--var', 'x=1', '--json']);
+  });
+});
+
+describe('substituteTokens', () => {
+  it('${TOKEN} maps to first captured token', () => {
+    expect(substituteTokens('rd claim ${TOKEN}', ['abc123'])).toBe('rd claim abc123');
+  });
+
+  it('${TOKEN_2} maps to second captured token', () => {
+    expect(substituteTokens('rd claim ${TOKEN_2}', ['first', 'second'])).toBe('rd claim second');
+  });
+
+  it('handles multiple placeholders in one command', () => {
+    expect(substituteTokens('${TOKEN} and ${TOKEN_2}', ['a', 'b'])).toBe('a and b');
+  });
+
+  it('throws for uncaptured token reference', () => {
+    expect(() => substituteTokens('rd claim ${TOKEN_3}', ['only-one'])).toThrow(
+      /references uncaptured token/,
+    );
+  });
+
+  it('${TOKEN_0} is not matched (literal passthrough)', () => {
+    expect(substituteTokens('rd claim ${TOKEN_0}', ['abc'])).toBe('rd claim ${TOKEN_0}');
+  });
+
+  it('returns original string unchanged when no placeholders', () => {
+    expect(substituteTokens('rd pass', [])).toBe('rd pass');
   });
 });

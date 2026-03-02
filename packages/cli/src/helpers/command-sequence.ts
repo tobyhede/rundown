@@ -60,7 +60,7 @@ export interface CommandSequenceOptions {
  * @param args - The argument array to inject into
  * @returns New array with `--json` appended, or original if already present
  */
-function injectJsonFlag(args: string[]): string[] {
+export function injectJsonFlag(args: string[]): string[] {
   if (args.includes('--json')) return args;
   return [...args, '--json'];
 }
@@ -75,16 +75,19 @@ function injectJsonFlag(args: string[]): string[] {
  * @returns The command string with placeholders replaced by actual tokens
  * @throws {Error} When a placeholder references a token that hasn't been captured yet
  */
-function substituteTokens(cmd: string, tokens: string[]): string {
-  return cmd.replace(/\$\{TOKEN(?:_(\d+))?\}/g, (match: string, indexStr: string | undefined) => {
-    const idx = indexStr ? parseInt(indexStr, 10) - 1 : 0; // ${TOKEN} = index 0, ${TOKEN_2} = index 1
-    if (idx < 0 || idx >= tokens.length) {
-      throw new Error(
-        `Token placeholder ${match} references uncaptured token (have ${String(tokens.length)} tokens)`,
-      );
-    }
-    return tokens[idx];
-  });
+export function substituteTokens(cmd: string, tokens: string[]): string {
+  return cmd.replace(
+    /\$\{TOKEN(?:_([1-9]\d*))?\}/g,
+    (match: string, indexStr: string | undefined) => {
+      const idx = indexStr ? parseInt(indexStr, 10) - 1 : 0; // ${TOKEN} = index 0, ${TOKEN_2} = index 1
+      if (idx < 0 || idx >= tokens.length) {
+        throw new Error(
+          `Token placeholder ${match} references uncaptured token (have ${String(tokens.length)} tokens)`,
+        );
+      }
+      return tokens[idx];
+    },
+  );
 }
 
 /**
@@ -202,7 +205,11 @@ export function parseJsonLines(stdout: string): {
 
   // Try parsing as a single JSON object first (handles pretty-printed output)
   try {
-    const obj = JSON.parse(trimmed) as Record<string, unknown>;
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new Error('Not a JSON object');
+    }
+    const obj = parsed as Record<string, unknown>;
     terminal = processJsonObject(obj, transitions);
     return { transitions, terminal };
   } catch {
@@ -335,25 +342,25 @@ export async function executeCommandSequence(
 
     if (rdMatch) {
       // rd command — parse args and inject --json
-      const parsed = shellParse(rdMatch[1]);
-      const hasOperators = parsed.some((entry) => typeof entry !== 'string');
+      const shellArgs = shellParse(rdMatch[1]);
+      const hasOperators = shellArgs.some((entry) => typeof entry !== 'string');
       if (hasOperators) {
         throw new Error(
           `Unsupported shell operators in scenario command: ${cmd}. ` +
             'Split into separate commands instead of using &&, ||, |, etc.',
         );
       }
-      const args = injectJsonFlag(parsed as string[]);
+      const args = injectJsonFlag(shellArgs as string[]);
       const result = await runCommandWithTee({ kind: 'rd', args }, { cwd, quiet, cliPath });
       stdout = result.stdout;
 
       // Parse JSON output to extract transitions and terminal state
-      const parsed2 = parseJsonLines(stdout);
-      for (const t of parsed2.transitions) {
+      const jsonResult = parseJsonLines(stdout);
+      for (const t of jsonResult.transitions) {
         transitions.push(t);
       }
-      if (parsed2.terminal !== null) {
-        terminalResult = parsed2.terminal;
+      if (jsonResult.terminal !== null) {
+        terminalResult = jsonResult.terminal;
       }
     } else {
       // Shell command — execute directly
