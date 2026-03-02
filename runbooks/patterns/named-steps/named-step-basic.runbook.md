@@ -1,23 +1,23 @@
 ---
-name: named-steps
+name: named-step-basic
 description: Demonstrates mixing numbered and named steps with GOTO error handling
+tags:
+  - named-steps
 
 scenarios:
   completed:
     description: Main runbook passes, completes successfully
     commands:
-      - rd run --prompted named-steps.runbook.md
+      - rd run --prompted named-step-basic.runbook.md
       - rd pass
     result: COMPLETE
   recovered:
     description: Main runbook fails, ErrorHandler recovers
     commands:
-      - rd run --prompted named-steps.runbook.md
+      - rd run --prompted named-step-basic.runbook.md
       - rd fail
       - rd pass
     result: STOP
-tags:
-  - named
 ---
 
 # Named Steps Example

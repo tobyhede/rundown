@@ -1,8 +1,8 @@
 ---
-name: mixed-named-static
+name: mixed-static-named
 description: Demonstrates mixing numbered static steps with named dynamic steps, showing error handling and routing patterns.
 tags:
-  - named
+  - named-steps
   - mixed
 ---
 

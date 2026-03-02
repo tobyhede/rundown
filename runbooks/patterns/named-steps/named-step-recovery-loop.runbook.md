@@ -1,12 +1,16 @@
 ---
-name: mixed-static-named-error
+name: named-step-recovery-loop
 description: Demonstrates static steps with a named error handler step that redirects failures to central error handling
+tags:
+  - named-steps
+  - mixed
+  - error-handling
 
 scenarios:
   success-path:
     description: Tests successful completion through all steps
     commands:
-      - rd run --prompted mixed-static-named-error.runbook.md
+      - rd run --prompted named-step-recovery-loop.runbook.md
       - rd pass
       - rd pass
       - rd pass
@@ -15,7 +19,7 @@ scenarios:
   error-recovery:
     description: Tests error handling and recovery by going back to setup
     commands:
-      - rd run --prompted mixed-static-named-error.runbook.md
+      - rd run --prompted named-step-recovery-loop.runbook.md
       - rd pass
       - rd fail
       - rd pass
@@ -27,15 +31,11 @@ scenarios:
   unrecoverable-error:
     description: Tests unrecoverable error that stops the runbook
     commands:
-      - rd run --prompted mixed-static-named-error.runbook.md
+      - rd run --prompted named-step-recovery-loop.runbook.md
       - rd pass
       - rd fail
       - rd fail
     result: STOP
-tags:
-  - named
-  - mixed
-  - error-handling
 ---
 
 # Mixed Static And Named With Error Handler

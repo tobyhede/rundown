@@ -12,7 +12,7 @@ scenarios:
       - rd pass
     result: COMPLETE
 tags:
-  - named
+  - named-steps
   - substeps
 ---
 

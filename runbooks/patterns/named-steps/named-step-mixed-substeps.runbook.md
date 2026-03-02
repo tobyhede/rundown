@@ -17,7 +17,7 @@ scenarios:
       - rd fail
     result: STOP
 tags:
-  - named
+  - named-steps
   - substeps
   - mixed
 ---

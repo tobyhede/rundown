@@ -1,24 +1,24 @@
 ---
-name: named-step-static-substeps
+name: named-step-with-substeps
 description: Demonstrates named steps containing static numbered substeps (ErrorHandler.1, ErrorHandler.2, ErrorHandler.3).
+tags:
+  - named-steps
+  - substeps
 
 scenarios:
   success-completes:
     description: Setup passes, runbook completes (skips ErrorHandler)
     commands:
-      - rd run --prompted named-step-static-substeps.runbook.md
+      - rd run --prompted named-step-with-substeps.runbook.md
       - rd pass
     result: COMPLETE
   error-handler-failure-at-prepare:
     description: Tests error handler failing at first prepare step and stopping runbook
     commands:
-      - rd run --prompted named-step-static-substeps.runbook.md
+      - rd run --prompted named-step-with-substeps.runbook.md
       - rd fail
       - rd fail
     result: STOP
-tags:
-  - named
-  - substeps
 ---
 
 # Named Step With Static Substeps
