@@ -1,17 +1,17 @@
 ---
-name: prompted-steps
-description: Steps with explicit and implicit prompt definitions
+name: explicit-prompt
+description: Steps with explicit Prompt prefix
+tags:
+  - prompts
 
 scenarios:
   completed:
     description: All steps pass successfully
     commands:
-      - rd run --prompted prompted-steps.runbook.md
+      - rd run --prompted explicit-prompt.runbook.md
       - rd pass
       - rd pass
     result: COMPLETE
-tags:
-  - prompts
 ---
 
 ## 1. Step with prompt

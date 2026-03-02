@@ -1,20 +1,20 @@
 ---
-name: mixed-prompts
+name: mixed-prompt-content
 description: Step with both explicit Prompt and implicit instruction list
+tags:
+  - prompts
+  - mixed
 
 scenarios:
   completed:
     description: All prompt types pass successfully
     commands:
-      - rd run --prompted mixed-prompts.runbook.md
+      - rd run --prompted mixed-prompt-content.runbook.md
       - rd pass
       - rd pass
       - rd pass
       - rd pass
     result: COMPLETE
-tags:
-  - prompts
-  - mixed
 ---
 
 # Mixed Prompt Types
