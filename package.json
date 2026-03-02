@@ -60,14 +60,14 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.4",
     "@changesets/cli": "^2.29.8",
-    "@stryker-mutator/core": "^9.5.1",
-    "@stryker-mutator/jest-runner": "^9.5.1",
-    "@stryker-mutator/typescript-checker": "^9.5.1",
+    "@stryker-mutator/core": "^9.6.0",
+    "@stryker-mutator/jest-runner": "^9.6.0",
+    "@stryker-mutator/typescript-checker": "^9.6.0",
     "cspell": "^9.7.0",
     "eslint": "^10.0.2",
-    "globals": "^17.3.0",
+    "globals": "^17.4.0",
     "husky": "^9.1.7",
-    "lint-staged": "^16.2.7",
+    "lint-staged": "^16.3.1",
     "npm-run-all2": "^8.0.4",
     "typescript-eslint": "^8.56.1"
   }
