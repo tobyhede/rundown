@@ -15,6 +15,7 @@ export const StepAssertionSchema = z.object({
   command: z.string().optional(),
 });
 
+/** A parsed step assertion used to match against captured transition events. */
 export type StepAssertion = z.infer<typeof StepAssertionSchema>;
 
 /**

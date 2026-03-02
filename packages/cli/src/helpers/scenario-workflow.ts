@@ -197,6 +197,8 @@ export function extractReferencedRunbooks(scenario: Scenario): string[] {
  * @param output - OutputEmitter for progress output
  * @param cliPath - Path to the CLI entry point
  * @returns ScenarioRunResult with pass/fail evaluation
+ * @throws {Error} When a command fails with a non-zero exit code and no terminal result is parsed
+ * @throws {Error} When the temp workspace cannot be created or cleaned up
  */
 export async function executeScenario(
   loadedRunbook: LoadedRunbook,

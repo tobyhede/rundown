@@ -97,7 +97,19 @@ interface OrchestrateTransitionArgs {
   command?: string;
 }
 
-/** Result of orchestrating a single step transition. */
+/**
+ * Result of orchestrating a single step transition.
+ *
+ * Discriminated union on `status`:
+ * - `continue` — The runbook is still active; `state` holds the updated runbook state.
+ * - `done` — The runbook completed successfully; `message` is the completion message.
+ * - `stopped` — The runbook was stopped (failure); `message` is the stop reason.
+ *
+ * Common fields across all variants:
+ * - `action` — The transition action type (e.g. "CONTINUE", "GOTO", "STOP").
+ * - `from` — Qualified step position before the transition.
+ * - `at` — Qualified step position after the transition.
+ */
 export type OrchestrateTransitionResult =
   | { status: 'continue'; state: RunbookState; action: string; from: string; at: string }
   | { status: 'done'; action: string; from: string; at: string; message?: string }

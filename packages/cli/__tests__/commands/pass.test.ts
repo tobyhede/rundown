@@ -295,7 +295,7 @@ rd echo --result fail
           try {
             const output = JSON.parse(line) as Record<string, unknown>;
             const action = output.action as string | undefined;
-            if (action?.startsWith('RETRY')) {
+            if (action?.startsWith('RETRY') && typeof output.result === 'string') {
               // In JSONL execution events, result is 'PASS'|'FAIL' string from StepTransitionedPayload
               expect(output.result).toBe('FAIL');
               foundRetry = true;

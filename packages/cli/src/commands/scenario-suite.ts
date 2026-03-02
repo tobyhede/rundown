@@ -8,7 +8,7 @@
  */
 
 import type { Command } from 'commander';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rm } from 'node:fs/promises';
 import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
@@ -28,6 +28,22 @@ const __dirname = dirname(__filename);
 
 /** Path to the CLI executable */
 const CLI_PATH = join(__dirname, '..', 'cli.js');
+
+/**
+ * Validate that a relative path does not escape its parent directory.
+ *
+ * @param relPath - The relative path to validate
+ * @throws {Error} When the path is absolute or contains traversal segments
+ */
+function validateRelativePath(relPath: string): void {
+  if (isAbsolute(relPath)) {
+    throw new Error(`Absolute paths are not allowed in suite case files: ${relPath}`);
+  }
+  const normalized = normalize(relPath);
+  if (normalized.startsWith('..')) {
+    throw new Error(`Path traversal is not allowed in suite case files: ${relPath}`);
+  }
+}
 
 /**
  * Execute a single suite case in an isolated temp workspace.
@@ -55,6 +71,7 @@ async function executeSuiteCase(
 
     // Path-preserving copy: preserve subdirectory structure for suite cases
     const relPath = suiteCase.file; // e.g., "transitions/default-implicit.runbook.md"
+    validateRelativePath(relPath);
     const destPath = join(runbooksDir, relPath);
     mkdirSync(dirname(destPath), { recursive: true });
 
@@ -79,7 +96,10 @@ async function executeSuiteCase(
     }
     for (const ref of referenced) {
       try {
-        copyFileSync(resolve(suiteDir, ref), join(runbooksDir, ref));
+        validateRelativePath(ref);
+        const dest = join(runbooksDir, ref);
+        mkdirSync(dirname(dest), { recursive: true });
+        copyFileSync(resolve(suiteDir, ref), dest);
       } catch {
         /* non-fatal — command will fail with clear error */
       }

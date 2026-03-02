@@ -13,10 +13,15 @@ import type { StepAssertion } from '../schemas/scenarios.js';
 
 /** A captured step transition from JSON output. */
 export interface CapturedTransition {
+  /** Transition type (e.g. "CONTINUE", "GOTO", "RETRY", "STOP", "COMPLETE"). */
   action?: string;
+  /** Qualified step position before the transition (e.g. "1", "1.2"). */
   from?: string;
+  /** Qualified step position after the transition. */
   at?: string;
+  /** Step outcome that triggered the transition. */
   result?: 'PASS' | 'FAIL';
+  /** The CLI command string that triggered this transition, if any. */
   command?: string;
 }
 
@@ -361,6 +366,11 @@ export async function executeCommandSequence(
       }
       if (jsonResult.terminal !== null) {
         terminalResult = jsonResult.terminal;
+      }
+
+      // If the command failed and no terminal result was parsed, propagate the failure
+      if (result.exitCode !== 0 && jsonResult.terminal === null) {
+        throw new Error(`Command failed with exit code ${String(result.exitCode)}: ${cmd}`);
       }
     } else {
       // Shell command — execute directly

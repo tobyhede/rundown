@@ -20,7 +20,7 @@ This document defines the conventions for authoring test runbooks and scenarios.
 
 ## Directory Structure
 
-```
+```text
 runbooks/patterns/
   transitions/       # PASS/FAIL, CONTINUE/STOP/COMPLETE, defaults, ALL/ANY
   retries/           # RETRY N, exhaustion actions, counter reset
@@ -40,13 +40,13 @@ Each directory groups runbooks by the Rundown feature they exercise. Directories
 
 Filenames are descriptive of the feature and behavior, using kebab-case:
 
-```
+```text
 <feature>-<behavior>.runbook.md
 ```
 
 Examples:
 
-```
+```text
 for-break-on-fail.runbook.md
 retry-exhaustion-goto.runbook.md
 goto-named-step.runbook.md
@@ -173,7 +173,8 @@ auto-execution:
   description: Code block determines pass/fail automatically
   commands:
     - rd run for-break-on-fail.runbook.md
-  result: STOP
+  expect:
+    result: STOP
 ```
 
 ## Assertion Model
@@ -203,7 +204,7 @@ In the Rundown syntax, `PASS: CONTINUE` on a substep inside a FOR loop means "co
 
 Example transition stream for a 3-iteration FOR loop where all pass:
 
-```
+```json
 { at: 1.1.1, action: NEXT, result: PASS }    # iteration 1 -> 2
 { at: 1.2.1, action: NEXT, result: PASS }    # iteration 2 -> 3
 { at: 1.3.1, action: COMPLETE, result: PASS } # iteration 3 -> parent resolves
