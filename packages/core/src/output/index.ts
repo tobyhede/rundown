@@ -170,6 +170,14 @@ export {
   type AbortResponse,
 } from './schema.js';
 
+// Delegate/Claim schemas
+export {
+  DelegateResponseSchema,
+  ClaimResponseSchema,
+  type DelegateResponse,
+  type ClaimResponse,
+} from './schema.js';
+
 // Union types
 export type { CLIResponse, CLIListResponse } from './schema.js';
 

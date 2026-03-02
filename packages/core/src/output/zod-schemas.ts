@@ -752,6 +752,59 @@ export const ScenarioSuiteRunResponseSchema = z
   .describe('Aggregate response from running a scenario suite');
 
 // ============================================================================
+// Delegate Command Schema
+// ============================================================================
+
+/**
+ * Delegate response schema.
+ *
+ * Output from `rd delegate <runbook> --step <id>` command.
+ */
+export const DelegateResponseSchema = z
+  .object({
+    /** Action performed */
+    action: z.literal('delegated').describe('Action type'),
+    /** Step or substep ID that was delegated */
+    step: z.string().describe('Step or substep ID delegated'),
+    /** Child runbook name or path */
+    runbook: z.string().describe('Child runbook name or path'),
+    /** Full delegation token */
+    token: z.string().describe('Delegation token'),
+    /** Hash of the delegation token */
+    token_hash: z.string().describe('Token hash'),
+    /** Parent run ID */
+    parent_run_id: z.string().describe('Parent run ID'),
+    /** Claim marker for environment variable usage */
+    claim_marker: z.string().describe('Claim marker (RD_CLAIM_TOKEN=<token>)'),
+  })
+  .describe('Response from the delegate command');
+
+// ============================================================================
+// Claim Command Schema
+// ============================================================================
+
+/**
+ * Claim response schema.
+ *
+ * Output from `rd claim <token>` command. The claim command launches a child
+ * runbook, so the response extends the execution summary with claim-specific fields.
+ */
+export const ClaimResponseSchema = ExecutionSummarySchema.extend({
+  /** Action performed */
+  action: z.literal('claimed').describe('Action type'),
+  /** Truncated delegation token */
+  token: z.string().describe('Truncated delegation token'),
+  /** Child run ID */
+  run_id: z.string().describe('Child run ID'),
+  /** Child runbook path */
+  runbook: z.string().describe('Child runbook path'),
+  /** Parent run ID */
+  parent_run_id: z.string().describe('Parent run ID'),
+  /** Parent step identifier */
+  parent_step: z.string().describe('Parent step identifier'),
+}).describe('Response from the claim command');
+
+// ============================================================================
 // Derived TypeScript Types
 // ============================================================================
 
@@ -845,6 +898,12 @@ export type RunCommandResponse = z.infer<typeof RunCommandResponseSchema>;
 /** Abort response */
 export type AbortResponse = z.infer<typeof AbortResponseSchema>;
 
+/** Delegate response */
+export type DelegateResponse = z.infer<typeof DelegateResponseSchema>;
+
+/** Claim response */
+export type ClaimResponse = z.infer<typeof ClaimResponseSchema>;
+
 /** Union of all CLI responses */
 export type CLIResponse =
   | ActionResponse
@@ -856,7 +915,9 @@ export type CLIResponse =
   | StashResponse
   | PopResponse
   | EchoResponse
-  | AbortResponse;
+  | AbortResponse
+  | DelegateResponse
+  | ClaimResponse;
 
 /** Union of list outputs */
 export type CLIListResponse =

@@ -68,6 +68,9 @@ export {
   RunCommandResponseSchema,
   // Abort schema
   AbortResponseSchema,
+  // Delegate/Claim schemas
+  DelegateResponseSchema,
+  ClaimResponseSchema,
   // Derived TypeScript types
   type Position,
   type RunbookContext,
@@ -99,6 +102,8 @@ export {
   type ExecutionSummary,
   type RunCommandResponse,
   type AbortResponse,
+  type DelegateResponse,
+  type ClaimResponse,
   type CLIResponse,
   type CLIListResponse,
 } from './zod-schemas.js';
