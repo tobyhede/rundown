@@ -2,7 +2,7 @@
 name: Deploy Service
 description: Safe deployment process with health checks and rollback capability.
 tags:
-  - featured
+  - examples
 scenarios:
   completed:
     description: Deployment with automatic command execution

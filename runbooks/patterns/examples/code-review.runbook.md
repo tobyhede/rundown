@@ -2,7 +2,7 @@
 name: Code Review
 description: Systematic code review process ensuring quality and standards
 tags:
-  - featured
+  - examples
   - process
 scenarios:
   approved:

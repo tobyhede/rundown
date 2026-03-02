@@ -2,7 +2,7 @@
 name: Lint-Test-Commit
 description: Lint Test and Fix in a loop until `PASS`, then commit.
 tags:
-  - featured
+  - examples
 scenarios:
   completed:
     description: Lint, Test, & Commit

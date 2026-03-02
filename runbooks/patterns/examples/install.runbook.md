@@ -2,7 +2,7 @@
 name: Rundown CLI Installation
 description: Install Rundown CLI and create your first runbook
 tags:
-  - featured
+  - examples
   - installation
 scenarios:
   full-install:
