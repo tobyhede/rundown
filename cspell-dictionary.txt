@@ -5,10 +5,12 @@ runbook
 runbooks
 rundown
 frontmatter
+promptable
 substep
 substeps
 preamble
 microstep
+workpath
 worktree
 workflow
 workflows
