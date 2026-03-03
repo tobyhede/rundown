@@ -183,6 +183,49 @@ Task uses {{ myVar }}.
     expect(output.code).toBeDefined();
   });
 
+  it('rejects ${TOKEN_0} in scenario command sequence', async () => {
+    // Write a runbook whose scenario uses the invalid ${TOKEN_0} placeholder
+    const content = [
+      '---',
+      'scenarios:',
+      '  bad-token:',
+      '    description: TOKEN_0 is invalid (1-based indexing)',
+      '    result: STOP',
+      '    commands:',
+      '      - rd run --prompted bad-token.runbook.md',
+      '      - rd delegate child.runbook.md --step 1.1',
+      '      - rd claim ${TOKEN_0}',
+      '---',
+      '',
+      '## 1. Parent',
+      '- PASS ALL: COMPLETE',
+      '- FAIL ANY: STOP',
+      '',
+      '### 1.1 Delegated step',
+      'Do work.',
+      '',
+      '## 2. Done',
+      '- PASS: COMPLETE',
+      '',
+      'Finished.',
+    ].join('\n');
+    await writeFile(
+      join(workspace.cwd, '.claude', 'rundown', 'runbooks', 'bad-token.runbook.md'),
+      content,
+    );
+
+    // Child runbook for the delegation
+    const childContent = '## 1. Execute\n- PASS: COMPLETE\n\nRun task.\n';
+    await writeFile(
+      join(workspace.cwd, '.claude', 'rundown', 'runbooks', 'child.runbook.md'),
+      childContent,
+    );
+
+    const result = runCli('scenario run bad-token.runbook.md bad-token -q', workspace);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toMatch(/TOKEN_0|references uncaptured token/);
+  });
+
   describe('auto-propagation on claim', () => {
     /** Helper: write a child runbook that auto-completes (no prompting needed). */
     async function writeAutoCompleteChildRunbook(): Promise<void> {
