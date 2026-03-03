@@ -1,46 +1,34 @@
 ---
 name: delegate-hierarchy
-description: Grandparent to parent to child delegation chain
+description: Sequential multi-delegation with two substeps
 tags:
   - delegation
 
 scenarios:
-  completed:
-    description: Pass all three levels of delegation
+  all-pass:
+    description: Both substeps delegated and claimed successfully
     commands:
-      - rd run --prompted delegate-hierarchy.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd run delegate-hierarchy.runbook.md
+      - rd delegate delegation-child-pass.runbook.md --step 1.1
+      - rd claim ${TOKEN}
+      - rd delegate delegation-child-pass.runbook.md --step 1.2
+      - rd claim ${TOKEN_2}
     result: COMPLETE
 ---
 
 # Delegation Hierarchy
 
-Grandparent to parent to child delegation chain.
+Sequential multi-delegation — two substeps each delegated and claimed independently.
 
-## 1. Level 1 (grandparent)
+## 1. Multi-delegation
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS ALL: COMPLETE
+- FAIL ANY: STOP
 
-```bash
-rd echo "level 1"
-```
+### 1.1 First child task
 
-## 2. Level 2 (parent)
+Delegated to a child runbook via `rd delegate`.
 
-- PASS: CONTINUE
-- FAIL: STOP
+### 1.2 Second child task
 
-```bash
-rd echo "level 2"
-```
-
-## 3. Level 3 (child completes)
-
-- PASS: COMPLETE
-
-```bash
-rd echo "level 3"
-```
+Delegated to a child runbook via `rd delegate`.

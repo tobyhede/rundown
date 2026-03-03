@@ -1,37 +1,28 @@
 ---
 name: delegate-basic
-description: Basic delegation pattern with prepare and execute steps
+description: Basic delegation pattern — substep delegated to child runbook
 tags:
   - delegation
 
 scenarios:
   completed:
-    description: Pass both delegation steps
+    description: Delegate substep to child, child auto-completes
     commands:
-      - rd run --prompted delegate-basic.runbook.md
-      - rd pass
-      - rd pass
+      - rd run delegate-basic.runbook.md
+      - rd delegate delegation-child-pass.runbook.md --step 1.1
+      - rd claim ${TOKEN}
     result: COMPLETE
 ---
 
 # Basic Delegation
 
-Basic delegation pattern with prepare and execute steps.
+Delegate a substep to a child runbook that auto-completes.
 
-## 1. Prepare delegation
+## 1. Delegated work
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS ALL: COMPLETE
+- FAIL ANY: STOP
 
-```bash
-rd echo "prepare delegation"
-```
+### 1.1 Child task
 
-## 2. Execute delegated work
-
-- PASS: COMPLETE
-- FAIL: STOP
-
-```bash
-rd echo "delegated work done"
-```
+Delegated to a child runbook via `rd delegate`.

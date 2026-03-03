@@ -111,11 +111,30 @@ cases:
 
   # delegation/
   delegate-basic-completed:
-    description: Pass both delegation steps
+    description: Delegate substep to child, child auto-completes
     file: patterns/delegation/delegate-basic.runbook.md
     commands:
-      - rd run --prompted delegate-basic.runbook.md
-      - rd pass
+      - rd run delegate-basic.runbook.md
+      - rd delegate patterns/delegation/delegation-child-pass.runbook.md --step 1.1
+      - rd claim ${TOKEN}
+    result: COMPLETE
+
+  delegate-failure-child-fails:
+    description: Child fails, failure propagates STOP to parent
+    file: patterns/delegation/delegate-failure.runbook.md
+    commands:
+      - rd run delegate-failure.runbook.md
+      - rd delegate patterns/delegation/delegation-child-fail.runbook.md --step 1.1
+      - rd claim ${TOKEN}
+    result: STOP
+
+  delegate-abort-pending:
+    description: Create delegation then abort before claim
+    file: patterns/delegation/delegate-abort.runbook.md
+    commands:
+      - rd run --prompted delegate-abort.runbook.md
+      - rd delegate patterns/delegation/delegation-child-pass.runbook.md --step 1.1
+      - rd abort ${TOKEN}
       - rd pass
     result: COMPLETE
 

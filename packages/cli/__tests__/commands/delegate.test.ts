@@ -95,7 +95,7 @@ describe('delegate command', () => {
       expect(delegations?.[0]?.state).toBe('pending');
     });
 
-    it('JSON output has snake_case keys and claim_marker', async () => {
+    it('JSON output has snake_case keys', async () => {
       await setupDelegation();
 
       const result = runCli(
@@ -109,7 +109,6 @@ describe('delegate command', () => {
       expect(output.token).toBeDefined();
       expect(output.token_hash).toBeDefined();
       expect(output.parent_run_id).toBeDefined();
-      expect(output.claim_marker).toMatch(/^RD_CLAIM_TOKEN=rdtk_/);
     });
   });
 

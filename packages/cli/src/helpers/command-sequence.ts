@@ -41,7 +41,7 @@ export interface CommandSequenceResult {
   terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN';
   /** All captured step transitions */
   transitions: CapturedTransition[];
-  /** Tokens captured from RD_CLAIM_TOKEN= markers */
+  /** Tokens captured from delegate JSON responses */
   capturedTokens: string[];
 }
 
@@ -57,6 +57,8 @@ export interface CommandSequenceOptions {
   quiet: boolean;
   /** Optional callback before each command executes */
   onCommandStart?: (command: string) => void;
+  /** Optional environment variables merged into spawn env (overrides process.env) */
+  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -101,22 +103,23 @@ export function substituteTokens(cmd: string, tokens: string[]): string {
  */
 async function runCommandWithTee(
   command: { kind: 'rd'; args: string[] } | { kind: 'shell'; cmd: string },
-  options: { cwd: string; quiet: boolean; cliPath: string },
+  options: { cwd: string; quiet: boolean; cliPath: string; env?: Record<string, string | undefined> },
 ): Promise<{ stdout: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
+    const spawnEnv = { ...process.env, RUNDOWN_LOG: '0', ...(options.env ?? {}) };
 
     if (command.kind === 'rd') {
       child = spawn('node', [options.cliPath, ...command.args], {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: options.cwd,
-        env: { ...process.env, RUNDOWN_LOG: '0' },
+        env: spawnEnv,
       });
     } else {
       child = spawn(process.env.SHELL ?? '/bin/sh', ['-lc', command.cmd], {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: options.cwd,
-        env: { ...process.env, RUNDOWN_LOG: '0' },
+        env: spawnEnv,
       });
     }
 
@@ -155,6 +158,7 @@ async function runCommandWithTee(
 function processJsonObject(
   obj: Record<string, unknown>,
   transitions: CapturedTransition[],
+  tokens: string[],
 ): 'COMPLETE' | 'STOP' | null {
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
@@ -179,6 +183,11 @@ function processJsonObject(
     if (obj.stopped === true) terminal = 'STOP';
   }
 
+  // Extract delegation token from delegate response
+  if (obj.action === 'delegated' && typeof obj.token === 'string') {
+    tokens.push(obj.token);
+  }
+
   return terminal;
 }
 
@@ -198,11 +207,13 @@ function processJsonObject(
 export function parseJsonLines(stdout: string): {
   transitions: CapturedTransition[];
   terminal: 'COMPLETE' | 'STOP' | null;
+  tokens: string[];
 } {
   const trimmed = stdout.trim();
-  if (!trimmed) return { transitions: [], terminal: null };
+  if (!trimmed) return { transitions: [], terminal: null, tokens: [] };
 
   const transitions: CapturedTransition[] = [];
+  const tokens: string[] = [];
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
   // Try parsing as a single JSON object first (handles pretty-printed output)
@@ -212,8 +223,8 @@ export function parseJsonLines(stdout: string): {
       throw new Error('Not a JSON object');
     }
     const obj = parsed as Record<string, unknown>;
-    terminal = processJsonObject(obj, transitions);
-    return { transitions, terminal };
+    terminal = processJsonObject(obj, transitions, tokens);
+    return { transitions, terminal, tokens };
   } catch {
     // Not a single JSON object — fall through to line-by-line parsing
   }
@@ -228,13 +239,13 @@ export function parseJsonLines(stdout: string): {
       continue; // Non-JSON line — skip
     }
 
-    const detected = processJsonObject(obj, transitions);
+    const detected = processJsonObject(obj, transitions, tokens);
     if (detected !== null) {
       terminal = detected;
     }
   }
 
-  return { transitions, terminal };
+  return { transitions, terminal, tokens };
 }
 
 /**
@@ -315,8 +326,8 @@ export function formatStepAssertionDescription(sa: StepAssertionResult): string 
  *
  * Handles `rd` commands (routed through the CLI with `--json`) and generic
  * shell commands. Token placeholders (`${TOKEN}`, `${TOKEN_2}`, etc.) are
- * substituted with previously captured `RD_CLAIM_TOKEN=` values before each
- * command runs.
+ * substituted with previously captured delegation tokens before each
+ * command runs. Tokens are extracted from parsed JSON `delegate` responses.
  *
  * @param options - Execution options including commands, working directory, CLI path, and quiet flag
  * @returns Promise resolving to the terminal result, all transitions, and captured tokens
@@ -330,7 +341,7 @@ export async function executeCommandSequence(
   const transitions: CapturedTransition[] = [];
   let terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
 
-  const { commands, cwd, cliPath, quiet } = options;
+  const { commands, cwd, cliPath, quiet, env } = options;
 
   for (const rawCmd of commands) {
     // Token substitution — replace ${TOKEN}, ${TOKEN_2}, etc. with captured values
@@ -353,13 +364,16 @@ export async function executeCommandSequence(
         );
       }
       const args = injectJsonFlag(shellArgs as string[]);
-      const result = await runCommandWithTee({ kind: 'rd', args }, { cwd, quiet, cliPath });
+      const result = await runCommandWithTee({ kind: 'rd', args }, { cwd, quiet, cliPath, env });
       stdout = result.stdout;
 
-      // Parse JSON output to extract transitions and terminal state
+      // Parse JSON output to extract transitions, terminal state, and tokens
       const jsonResult = parseJsonLines(stdout);
       for (const t of jsonResult.transitions) {
         transitions.push(t);
+      }
+      for (const tok of jsonResult.tokens) {
+        capturedTokens.push(tok);
       }
       if (jsonResult.terminal !== null) {
         terminalResult = jsonResult.terminal;
@@ -371,15 +385,10 @@ export async function executeCommandSequence(
       }
     } else {
       // Shell command — execute directly
-      const result = await runCommandWithTee({ kind: 'shell', cmd }, { cwd, quiet, cliPath });
+      const result = await runCommandWithTee({ kind: 'shell', cmd }, { cwd, quiet, cliPath, env });
       stdout = result.stdout;
     }
 
-    // Scan all command stdout for token markers
-    const tokenPattern = /RD_CLAIM_TOKEN=(\S+)/g;
-    for (const match of stdout.matchAll(tokenPattern)) {
-      capturedTokens.push(match[1]);
-    }
   }
 
   return { terminalResult, transitions, capturedTokens };

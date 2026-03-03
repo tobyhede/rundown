@@ -111,7 +111,6 @@ export function registerDelegateCommand(program: Command): void {
                 token: result.token,
                 token_hash: result.tokenHash,
                 parent_run_id: state.id,
-                claim_marker: `RD_CLAIM_TOKEN=${result.token}`,
               });
             } else {
               output.message(`DELEGATED  step ${options.step} -> ${runbook}`);

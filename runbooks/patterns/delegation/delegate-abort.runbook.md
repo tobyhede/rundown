@@ -5,32 +5,25 @@ tags:
   - delegation
 
 scenarios:
-  completed:
-    description: Create token then cancel delegation
+  abort-pending:
+    description: Create delegation then abort before claim
     commands:
       - rd run --prompted delegate-abort.runbook.md
-      - rd pass
+      - rd delegate delegation-child-pass.runbook.md --step 1.1
+      - rd abort ${TOKEN}
       - rd pass
     result: COMPLETE
 ---
 
 # Delegation Abort
 
-Create a delegation token then cancel it.
+Create a delegation token then cancel it before claiming.
 
-## 1. Create delegation token
+## 1. Delegated work
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS ALL: COMPLETE
+- FAIL ANY: STOP
 
-```bash
-rd echo "create token"
-```
+### 1.1 Child task
 
-## 2. Cancel delegation
-
-- PASS: COMPLETE "Delegation cancelled"
-
-```bash
-rd echo "abort token"
-```
+Delegated to a child runbook via `rd delegate`, then aborted.
