@@ -39,6 +39,7 @@ rundown check <file>     # Check runbook for errors
 rundown echo             # Test helper: echo with configurable result
 rundown prune            # Remove runbook state (default: completed)
 rundown prune --dry-run  # Show what would be removed without deleting
+rundown prune --completed # Prune completed runbook state
 rundown prune --active   # Prune active runbook state
 rundown prune --inactive # Prune inactive runbook state
 rundown prune --all      # Prune all runbook state
@@ -47,6 +48,9 @@ rundown scenario show <file> <name>  # Show scenario details
 rundown scenario run <file> <name>   # Run a scenario
 rundown scenario run <file> <name> -q  # Run scenario (suppress output)
 rundown prompt <content> # Output content in markdown fences
+rundown scenario-suite ls <suite-file>           # List cases in a scenario suite
+rundown scenario-suite show <suite-file> <case>  # Show case details
+rundown scenario-suite run <suite-file> [case]   # Run a case (or all with --all)
 rundown delegate <runbook> --step <id>  # Delegate substep to child runbook
 rundown delegate <runbook> --step <id> --var key=value  # With variables
 rundown claim <token>                   # Claim a delegation token and launch child
