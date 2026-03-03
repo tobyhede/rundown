@@ -9,7 +9,7 @@ cases:
   # transitions/
   default-implicit-completed:
     description: Both steps pass with implicit transitions
-    file: ../patterns/transitions/default-implicit.runbook.md
+    file: patterns/transitions/default-implicit.runbook.md
     commands:
       - rd run --prompted default-implicit.runbook.md
       - rd pass
@@ -18,7 +18,7 @@ cases:
 
   pass-stop-stopped:
     description: PASS STOP halts the runbook
-    file: ../patterns/transitions/pass-stop.runbook.md
+    file: patterns/transitions/pass-stop.runbook.md
     commands:
       - rd run --prompted pass-stop.runbook.md
       - rd pass
@@ -26,7 +26,7 @@ cases:
 
   fail-continue-completed:
     description: FAIL CONTINUE proceeds to next step
-    file: ../patterns/transitions/fail-continue.runbook.md
+    file: patterns/transitions/fail-continue.runbook.md
     commands:
       - rd run --prompted fail-continue.runbook.md
       - rd fail
@@ -36,7 +36,7 @@ cases:
   # retries/
   retry-success-after-retry:
     description: Fails first, succeeds on retry
-    file: ../patterns/retries/retry-success.runbook.md
+    file: patterns/retries/retry-success.runbook.md
     commands:
       - rd run --prompted retry-success.runbook.md
       - rd fail
@@ -45,7 +45,7 @@ cases:
 
   retry-exhaustion-stop:
     description: Exhaustion with STOP halts the runbook
-    file: ../patterns/retries/retry-exhaustion-stop.runbook.md
+    file: patterns/retries/retry-exhaustion-stop.runbook.md
     commands:
       - rd run --prompted retry-exhaustion-stop.runbook.md
       - rd fail
@@ -55,7 +55,7 @@ cases:
   # goto/
   goto-step-completed:
     description: Jump from step 1 to step 3
-    file: ../patterns/goto/goto-step.runbook.md
+    file: patterns/goto/goto-step.runbook.md
     commands:
       - rd run --prompted goto-step.runbook.md
       - rd pass
@@ -64,7 +64,7 @@ cases:
 
   goto-from-fail-recovered:
     description: Fail triggers GOTO to recovery
-    file: ../patterns/goto/goto-from-fail.runbook.md
+    file: patterns/goto/goto-from-fail.runbook.md
     commands:
       - rd run --prompted goto-from-fail.runbook.md
       - rd fail
@@ -74,7 +74,7 @@ cases:
   # named-steps/
   named-step-basic-completed:
     description: Named step passes and completes
-    file: ../patterns/named-steps/named-step-basic.runbook.md
+    file: patterns/named-steps/named-step-basic.runbook.md
     commands:
       - rd run --prompted named-step-basic.runbook.md
       - rd pass
@@ -83,7 +83,7 @@ cases:
   # substeps/
   mixed-substeps-happy-path:
     description: All substeps pass through
-    file: ../patterns/substeps/mixed-substeps.runbook.md
+    file: patterns/substeps/mixed-substeps.runbook.md
     commands:
       - rd run --prompted mixed-substeps.runbook.md
       - rd pass
@@ -94,7 +94,7 @@ cases:
   # for-loops/
   for-range-to-completed:
     description: FOR loop iterates five times and completes
-    file: ../patterns/for-loops/for-range-to.runbook.md
+    file: patterns/for-loops/for-range-to.runbook.md
     commands:
       - rd run for-range-to.runbook.md
     result: COMPLETE
@@ -102,7 +102,7 @@ cases:
   # prompts/
   implicit-prompt-completed:
     description: Pass both implicit prompt steps
-    file: ../patterns/prompts/implicit-prompt.runbook.md
+    file: patterns/prompts/implicit-prompt.runbook.md
     commands:
       - rd run --prompted implicit-prompt.runbook.md
       - rd pass
@@ -112,7 +112,7 @@ cases:
   # delegation/
   delegate-basic-completed:
     description: Pass both delegation steps
-    file: ../patterns/delegation/delegate-basic.runbook.md
+    file: patterns/delegation/delegate-basic.runbook.md
     commands:
       - rd run --prompted delegate-basic.runbook.md
       - rd pass
@@ -122,7 +122,7 @@ cases:
   # composition/
   step-runbook-list-completed:
     description: All child workflows pass
-    file: ../patterns/composition/step-runbook-list.runbook.md
+    file: patterns/composition/step-runbook-list.runbook.md
     commands:
       - rd run --prompted step-runbook-list.runbook.md
       - rd pass
