@@ -24,6 +24,8 @@ describe('Sandbox Index', () => {
     readOnlyPaths: ['/test/read'],
     readWritePaths: ['/test/write'],
     denyPaths: ['/test/deny'],
+    denyPatterns: [],
+    env: {},
     allowUnsandboxed: false,
   };
 

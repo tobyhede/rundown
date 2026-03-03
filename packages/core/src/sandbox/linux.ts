@@ -274,6 +274,6 @@ export class LandlockSandbox implements SandboxImplementation {
 
 function buildEnhancedPathFromEnv(cwd: string, env: Record<string, string>): string {
   const binPath = join(cwd, 'node_modules', '.bin');
-  const existingPath = env.PATH ?? env.Path ?? '';
+  const existingPath = env.PATH || env.Path || '';
   return existingPath ? `${binPath}:${existingPath}` : binPath;
 }

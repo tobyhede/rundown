@@ -1358,7 +1358,7 @@ export function compileRunbookToMachine(
     if (step.substeps && step.substeps.length > 0) {
       step.substeps.forEach((substep) => {
         const hasRunbooks = !!(substep.runbooks && substep.runbooks.length > 0);
-        const hasParentAggregation = !!(step.transitions || step.forClause);
+        const hasParentAggregation = !!(step.transitions ?? step.forClause);
         const inferredTransitions = hasRunbooks
           ? DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS
           : hasParentAggregation
