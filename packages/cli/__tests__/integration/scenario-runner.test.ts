@@ -4,7 +4,7 @@ import {
   getAllStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname, basename, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractRawFrontmatter } from '../../src/helpers/extract-raw-frontmatter.js';
 import {
@@ -183,7 +183,7 @@ async function executeScenario(
     cliPath,
     quiet: true,
     env: {
-      PATH: `${binPath}:${process.env.PATH ?? ''}`,
+      PATH: `${binPath}${delimiter}${process.env.PATH ?? ''}`,
       CLAUDE_PLUGIN_ROOT: pluginDir,
       NO_COLOR: '1',
       FORCE_COLOR: undefined,

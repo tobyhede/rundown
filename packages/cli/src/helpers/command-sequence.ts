@@ -107,7 +107,7 @@ async function runCommandWithTee(
 ): Promise<{ stdout: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
-    const spawnEnv = { ...process.env, RUNDOWN_LOG: '0', ...(options.env ?? {}) };
+    const spawnEnv = { ...process.env, ...(options.env ?? {}), RUNDOWN_LOG: '0' };
 
     if (command.kind === 'rd') {
       child = spawn('node', [options.cliPath, ...command.args], {
@@ -387,6 +387,9 @@ export async function executeCommandSequence(
       // Shell command — execute directly
       const result = await runCommandWithTee({ kind: 'shell', cmd }, { cwd, quiet, cliPath, env });
       stdout = result.stdout;
+      if (result.exitCode !== 0) {
+        throw new Error(`Shell command failed with exit code ${String(result.exitCode)}: ${cmd}`);
+      }
     }
 
   }

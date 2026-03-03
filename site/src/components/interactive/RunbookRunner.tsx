@@ -6,6 +6,7 @@ import * as fitPkg from '@xterm/addon-fit';
 // @ts-ignore
 const FitAddon = fitPkg.FitAddon || fitPkg.default?.FitAddon;
 import '@xterm/xterm/css/xterm.css';
+import stripAnsi from 'strip-ansi';
 import {
   getWebContainer,
   setupRundown,
@@ -57,7 +58,6 @@ function parseRdArgs(cmd: string): string[] {
   return parts[0] === 'rd' ? parts.slice(1) : parts;
 }
 
-import stripAnsi from 'strip-ansi';
 
 export function RunbookRunner({
   runbookPath,
