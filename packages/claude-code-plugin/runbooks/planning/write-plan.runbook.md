@@ -10,7 +10,6 @@ vars:
 
 Write a detailed implementation plan for a feature or task.
 
-
 ## 1. Check if the Writing Plans Skill has been invoked
 
 - NO: GOTO InvokeSkill
@@ -21,9 +20,7 @@ Use the Writing Plans Skill.
 
 Path: `{{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.md`
 
-
 ---
-
 
 ## InvokeSkill Invoke the Writing Plans Skill
 

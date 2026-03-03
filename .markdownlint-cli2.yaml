@@ -1,0 +1,9 @@
+config:
+  MD013: true         # Line length - enforced, prose wrapped at 80 chars
+  MD026: true         # Trailing punctuation - enforced
+  MD041:
+    front_matter_title: "^\\s*name\\s*[:=]"  # Accept name: in frontmatter
+
+ignores:
+  - "packages/parser/fixtures/**"     # Intentionally malformed conformance tests
+  - "packages/cli/__tests__/fixtures/**"  # Test fixtures

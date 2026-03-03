@@ -1,32 +1,131 @@
 version: 1
-name: Pattern transition scenarios
-description: Cross-runbook regression suite for transition pattern runbooks
+name: Pattern regression scenarios
+description: Cross-directory regression suite for pattern runbooks
 tags:
   - patterns
-  - transition
   - regression
 
 cases:
-  default-transitions-complete:
+  # transitions/
+  default-implicit-completed:
     description: Both steps pass with implicit transitions
-    file: ../patterns/transition/default-transitions.runbook.md
+    file: ../patterns/transitions/default-implicit.runbook.md
     commands:
-      - rd run --prompted default-transitions.runbook.md
+      - rd run --prompted default-implicit.runbook.md
       - rd pass
       - rd pass
     result: COMPLETE
 
-  default-transitions-stop:
-    description: First step fails, runbook stops via implicit FAIL->STOP
-    file: ../patterns/transition/default-transitions.runbook.md
+  pass-stop-stopped:
+    description: PASS STOP halts the runbook
+    file: ../patterns/transitions/pass-stop.runbook.md
     commands:
-      - rd run --prompted default-transitions.runbook.md
+      - rd run --prompted pass-stop.runbook.md
+      - rd pass
+    result: STOP
+
+  fail-continue-completed:
+    description: FAIL CONTINUE proceeds to next step
+    file: ../patterns/transitions/fail-continue.runbook.md
+    commands:
+      - rd run --prompted fail-continue.runbook.md
+      - rd fail
+      - rd pass
+    result: COMPLETE
+
+  # retries/
+  retry-success-after-retry:
+    description: Fails first, succeeds on retry
+    file: ../patterns/retries/retry-success.runbook.md
+    commands:
+      - rd run --prompted retry-success.runbook.md
+      - rd fail
+      - rd pass
+    result: COMPLETE
+
+  retry-exhaustion-stop:
+    description: Exhaustion with STOP halts the runbook
+    file: ../patterns/retries/retry-exhaustion-stop.runbook.md
+    commands:
+      - rd run --prompted retry-exhaustion-stop.runbook.md
+      - rd fail
       - rd fail
     result: STOP
 
-  default-transitions-auto:
-    description: Both steps pass with auto-execution (no prompts)
-    file: ../patterns/transition/default-transitions.runbook.md
+  # goto/
+  goto-step-completed:
+    description: Jump from step 1 to step 3
+    file: ../patterns/goto/goto-step.runbook.md
     commands:
-      - rd run default-transitions.runbook.md
+      - rd run --prompted goto-step.runbook.md
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
+  goto-from-fail-recovered:
+    description: Fail triggers GOTO to recovery
+    file: ../patterns/goto/goto-from-fail.runbook.md
+    commands:
+      - rd run --prompted goto-from-fail.runbook.md
+      - rd fail
+      - rd pass
+    result: COMPLETE
+
+  # named-steps/
+  named-step-basic-completed:
+    description: Named step passes and completes
+    file: ../patterns/named-steps/named-step-basic.runbook.md
+    commands:
+      - rd run --prompted named-step-basic.runbook.md
+      - rd pass
+    result: COMPLETE
+
+  # substeps/
+  mixed-substeps-happy-path:
+    description: All substeps pass through
+    file: ../patterns/substeps/mixed-substeps.runbook.md
+    commands:
+      - rd run --prompted mixed-substeps.runbook.md
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
+  # for-loops/
+  for-range-to-completed:
+    description: FOR loop iterates five times and completes
+    file: ../patterns/for-loops/for-range-to.runbook.md
+    commands:
+      - rd run for-range-to.runbook.md
+    result: COMPLETE
+
+  # prompts/
+  implicit-prompt-completed:
+    description: Pass both implicit prompt steps
+    file: ../patterns/prompts/implicit-prompt.runbook.md
+    commands:
+      - rd run --prompted implicit-prompt.runbook.md
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
+  # delegation/
+  delegate-basic-completed:
+    description: Pass both delegation steps
+    file: ../patterns/delegation/delegate-basic.runbook.md
+    commands:
+      - rd run --prompted delegate-basic.runbook.md
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
+  # composition/
+  step-runbook-list-completed:
+    description: All child workflows pass
+    file: ../patterns/composition/step-runbook-list.runbook.md
+    commands:
+      - rd run --prompted step-runbook-list.runbook.md
+      - rd pass
+      - rd pass
+      - rd pass
     result: COMPLETE

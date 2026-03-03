@@ -25,7 +25,11 @@ describe('integration: GOTO patterns', () => {
     // Ensure target directory exists
     mkdirSync(targetDir, { recursive: true });
 
-    const patterns = ['navigation/goto-static.runbook.md', 'navigation/goto-named.runbook.md'];
+    const patterns = [
+      'goto/goto-step.runbook.md',
+      'goto/goto-substep.runbook.md',
+      'goto/goto-named-step.runbook.md',
+    ];
 
     for (const pattern of patterns) {
       const src = join(patternsDir, pattern);
@@ -41,7 +45,7 @@ describe('integration: GOTO patterns', () => {
 
   describe('GOTO N (step jump)', () => {
     it('jumps from step 1 to step 3, skipping step 2', async () => {
-      const start = runCli('run --prompted goto-static.runbook.md', workspace);
+      const start = runCli('run --prompted goto-step.runbook.md', workspace);
 
       expect(start.exitCode).toBe(0);
 
@@ -66,33 +70,29 @@ describe('integration: GOTO patterns', () => {
   });
 
   describe('GOTO N.M (substep jump)', () => {
-    it('jumps from 4.1 to 4.3, skipping 4.2', async () => {
-      const start = runCli('run --prompted goto-static.runbook.md', workspace);
+    it('jumps from 1.1 to 1.3, skipping 1.2', async () => {
+      const start = runCli('run --prompted goto-substep.runbook.md', workspace);
 
       expect(start.exitCode).toBe(0);
 
-      runCli('goto 4', workspace);
-
-      // Substep 4.1 passes → GOTO 4.3
+      // Substep 1.1 passes → GOTO 1.3
 
       const result1 = runCli('pass', workspace);
 
-      expect(result1.stdout).toContain('GOTO 4.3');
+      expect(result1.stdout).toContain('GOTO 1.3');
 
       expect(result1.stdout).toContain('At:');
-      expect(result1.stdout).toContain('4.3');
+      expect(result1.stdout).toContain('1.3');
 
       // State stores step and substep separately
 
       const state = await getActiveState(workspace);
 
-      expect(state?.step).toBe('4');
+      expect(state?.step).toBe('1');
 
       expect(state?.substep).toBe('3');
 
-      // Complete from 4.3
-
-      // Complete from step 3
+      // Complete from 1.3
 
       const result2 = runCli('pass', workspace);
 
@@ -102,7 +102,7 @@ describe('integration: GOTO patterns', () => {
 
   describe('GOTO named (named step jump)', () => {
     it('jumps to named steps (Initialize → Cleanup)', async () => {
-      const start = runCli('run --prompted goto-named.runbook.md', workspace);
+      const start = runCli('run --prompted goto-named-step.runbook.md', workspace);
 
       expect(start.exitCode).toBe(0);
 
@@ -122,7 +122,7 @@ describe('integration: GOTO patterns', () => {
     });
 
     it('jumps from named to static (Process → 1)', async () => {
-      const start = runCli('run --prompted goto-named.runbook.md', workspace);
+      const start = runCli('run --prompted goto-named-step.runbook.md', workspace);
 
       expect(start.exitCode).toBe(0);
 

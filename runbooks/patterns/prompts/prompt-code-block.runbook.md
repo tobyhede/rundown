@@ -19,6 +19,7 @@ Demonstrates using the `prompt` info string to create instructional code blocks
 that are output but never executed.
 
 ## 1. JSON Configuration
+
 - PASS: CONTINUE
 
 Display configuration template for user reference.
@@ -31,6 +32,7 @@ Display configuration template for user reference.
 ```
 
 ## 2. Bash Example
+
 - PASS: COMPLETE
 
 Show a bash command without executing it.

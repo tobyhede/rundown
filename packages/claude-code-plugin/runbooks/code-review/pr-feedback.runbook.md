@@ -16,6 +16,7 @@ Process feedback received on a pull request and make necessary changes.
 **DONE WHEN:** All feedback addressed and changes committed.
 
 ## 1 Review Feedback
+
 - PASS: CONTINUE
 - FAIL: STOP "No feedback to process."
 
@@ -26,12 +27,14 @@ rd echo gh pr view --comments
 ```
 
 ## 2 Make Changes
+
 - PASS: CONTINUE
 - FAIL: RETRY 3
 
 Make the necessary code changes to address feedback.
 
 ## 3 Verify Changes
+
 - PASS: CONTINUE
 - FAIL: GOTO 2
 

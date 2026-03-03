@@ -28,16 +28,16 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 
 | Directory | Description |
 |-----------|-------------|
-| `sequential/` | Linear runbooks with numbered steps |
-| `named/` | Steps identified by name instead of number |
-| `substeps/` | Nested steps within parent steps |
-| `navigation/` | GOTO patterns for jumping between steps |
-| `transition/` | PASS/FAIL logic and state transitions |
+| `transitions/` | PASS/FAIL logic, state transitions, and code execution |
 | `retries/` | Retry logic and exhaustion handling |
+| `goto/` | GOTO patterns for jumping between steps |
+| `examples/` | Real-world use cases |
+| `for-loops/` | FOR loop iteration patterns |
+| `substeps/` | Nested steps within parent steps |
+| `named-steps/` | Steps identified by name instead of number |
 | `prompts/` | User prompts and input handling |
 | `composition/` | Parent runbooks, agents, and delegation |
-| `tests/` | Core functionality and edge case verification |
-| `featured/` | Real-world use cases |
+| `delegation/` | Delegate/claim patterns for child runbooks |
 
 ## Creating New Patterns
 

@@ -100,8 +100,20 @@ async function executeSuiteCase(
         const dest = join(runbooksDir, ref);
         mkdirSync(dirname(dest), { recursive: true });
         copyFileSync(resolve(suiteDir, ref), dest);
-      } catch {
-        /* non-fatal — command will fail with clear error */
+      } catch (err: unknown) {
+        if (
+          err instanceof Error &&
+          'code' in err &&
+          (err as NodeJS.ErrnoException).code === 'ENOENT'
+        ) {
+          return {
+            passed: false,
+            scenario: caseName,
+            expected: effectiveResult,
+            actual: `CHILD_RUNBOOK_NOT_FOUND: ${ref}`,
+          };
+        }
+        throw err;
       }
     }
 
