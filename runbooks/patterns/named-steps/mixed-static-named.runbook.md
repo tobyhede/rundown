@@ -4,6 +4,26 @@ description: Demonstrates mixing numbered static steps with named dynamic steps,
 tags:
   - named-steps
   - mixed
+
+scenarios:
+  completed:
+    description: All steps pass, completing normally
+    commands:
+      - rd run --prompted mixed-static-named.runbook.md
+      - rd pass
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
+  error-handled:
+    description: Step 3 fails, GOTOs to ErrorHandler which stops
+    commands:
+      - rd run --prompted mixed-static-named.runbook.md
+      - rd pass
+      - rd pass
+      - rd fail
+      - rd pass
+    result: STOP
 ---
 
 # Mixed Named and Static Steps
