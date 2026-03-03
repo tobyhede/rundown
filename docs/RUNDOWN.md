@@ -35,7 +35,7 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
   - [Maintenance](#maintenance)
   - [Delegation Commands](#delegation-commands)
 - [Common Tasks](#common-tasks)
-- [Subagent Dispatch Patterns](#subagent-dispatch-patterns)
+- [Delegation Patterns](#delegation-patterns)
   - [Pattern 1: Orchestrator Control](#pattern-1-orchestrator-control)
   - [Pattern 2: Agent-Controlled Branching](#pattern-2-agent-controlled-branching)
 - [Output Format](#output-format)
@@ -378,7 +378,7 @@ Handle {{item}} (iteration {{Index}}).
 | Path | Purpose |
 |------|---------|
 | `.claude/rundown/runs/` | Runbook state files (`wf-YYYY-MM-DD-xxxxx.json`) |
-| `.claude/rundown/session.json` | Active runbook tracking, stash, agent stacks |
+| `.claude/rundown/session.json` | Active runbook tracking and stash state |
 | `.claude/rundown/runbooks/` | Runbook source files (discovered for `rundown ls --all`) |
 
 ### Session Structure
@@ -948,7 +948,7 @@ rundown prune --all
 
 ---
 
-## Subagent Dispatch Patterns
+## Delegation Patterns
 
 > **See also:** [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) for the five orchestration models, agent type conventions, and guidance on choosing a model.
 
