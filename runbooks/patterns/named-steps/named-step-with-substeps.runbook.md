@@ -1,6 +1,6 @@
 ---
 name: named-step-with-substeps
-description: Demonstrates named steps containing static numbered substeps (ErrorHandler.1, ErrorHandler.2, ErrorHandler.3).
+description: Named steps with static numbered substeps
 tags:
   - named-steps
   - substeps
@@ -13,7 +13,7 @@ scenarios:
       - rd pass
     result: COMPLETE
   error-handler-failure-at-prepare:
-    description: Tests error handler failing at first prepare step and stopping runbook
+    description: Error handler fails at prepare, runbook stops
     commands:
       - rd run --prompted named-step-with-substeps.runbook.md
       - rd fail
@@ -26,6 +26,7 @@ scenarios:
 Demonstrates named steps containing numbered substeps.
 
 ## 1. Setup
+
 - PASS: CONTINUE
 - FAIL: GOTO ErrorHandler
 
@@ -35,10 +36,10 @@ Initial setup step.
 rd echo "initial setup"
 ```
 
-
 ## ErrorHandler
 
 ### ErrorHandler.1 Prepare
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -48,8 +49,8 @@ Prepare for error handling.
 rd echo "prepare error handling"
 ```
 
-
 ### ErrorHandler.2 Execute
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -59,8 +60,8 @@ Execute error recovery.
 rd echo "execute recovery"
 ```
 
-
 ### ErrorHandler.3 Verify
+
 - PASS: GOTO 1
 - FAIL: STOP
 
@@ -69,4 +70,3 @@ Verify recovery succeeded.
 ```bash
 rd echo "verify recovery"
 ```
-

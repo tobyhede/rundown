@@ -14,9 +14,12 @@ scenarios:
 # FOR Loop Variables
 
 ## 1. Process items
+
 - FOR item IN 1 TO 3
 - PASS ALL: CONTINUE
+
 ### 1.1 Handle item {{item}} index {{Index}}
+
 ```bash
 rd echo item={{item}} index={{Index}}
 ```

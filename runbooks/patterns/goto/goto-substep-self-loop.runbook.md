@@ -30,4 +30,5 @@ GOTO to the same substep creates a retry loop until pass completes it.
 ## 1. Test step
 
 ### 1.1 First substep
+
 - FAIL: GOTO 1.1

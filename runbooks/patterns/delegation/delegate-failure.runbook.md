@@ -24,6 +24,7 @@ scenarios:
 Child failure propagates STOP to the parent.
 
 ## 1. Delegate work
+
 - PASS: COMPLETE
 - FAIL: STOP "Child failed"
 

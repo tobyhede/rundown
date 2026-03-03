@@ -5,14 +5,41 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  quality-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Spell check
+        run: npm run spellcheck
+
+      - name: Fast lint (Biome)
+        run: npm run lint:fast
+
+  setup-build:
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        node-version: [20, 22]
+        node-version: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}
 
     steps:
       - uses: actions/checkout@v6
@@ -29,22 +56,78 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Format check
-        run: npm run format:check
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-node${{ matrix.node-version }}
+          path: |
+            packages/parser/dist/
+            packages/core/dist/
+            packages/cli/dist/
+            packages/claude-code-plugin/dist/
+            packages/mcp/dist/
+          retention-days: 1
 
-      - name: Spell check
-        run: npm run spellcheck
+  lint-typed:
+    runs-on: ubuntu-latest
+    needs: setup-build
 
-      - name: Fast lint (Biome)
-        run: npm run lint:fast
+    strategy:
+      matrix:
+        node-version: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts-node${{ matrix.node-version }}
+          path: packages
 
       - name: Type-checked lint (ESLint)
         run: npm run lint:typed
+
+  test:
+    runs-on: ubuntu-latest
+    needs: setup-build
+
+    strategy:
+      matrix:
+        node-version: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts-node${{ matrix.node-version }}
+          path: packages
 
       - name: Test with coverage
         run: npm run test:coverage
 
       - name: Upload coverage to Codecov
+        if: matrix.node-version == 22
         uses: codecov/codecov-action@v5
         with:
           files: ./packages/parser/coverage/lcov.info,./packages/core/coverage/lcov.info,./packages/cli/coverage/lcov.info,./packages/claude-code-plugin/coverage/lcov.info
@@ -52,7 +135,7 @@ jobs:
 
   playwright:
     runs-on: ubuntu-latest
-    needs: build
+    needs: setup-build
     steps:
       - uses: actions/checkout@v6
 
@@ -64,8 +147,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts-node22
+          path: packages
 
       - name: Install Playwright Chromium
         run: npx playwright install chromium --with-deps
@@ -82,7 +168,7 @@ jobs:
 
   # Trigger turboshovel tests after successful CI on main
   notify-dependents:
-    needs: build
+    needs: [quality-checks, lint-typed, test, playwright]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:

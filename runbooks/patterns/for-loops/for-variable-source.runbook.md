@@ -14,9 +14,12 @@ scenarios:
 # FOR Variable Source
 
 ## 1. Process items
+
 - FOR item IN {{ items }}
 - PASS ALL: COMPLETE
+
 ### 1.1 Handle {{item}}
+
 ```bash
 rd echo "item={{item}}"
 ```

@@ -302,3 +302,18 @@ STOP and COMPLETE accept optional messages. Include a message only when it provi
 | other / none           | Output only  |
 
 Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
+
+---
+
+## Formatting Notes
+
+Runbook files follow standard markdown formatting conventions:
+
+- **Blank lines around headings** (MD022) — headings should be surrounded by blank lines
+- **Blank lines around lists** (MD032) — transition bullet lists should be surrounded by blank lines
+- **Blank lines around fenced code blocks** (MD031) — code blocks should be surrounded by blank lines
+- **No multiple consecutive blank lines** (MD012)
+
+These rules are enforced by markdownlint. See `.markdownlint-cli2.yaml` for configuration.
+
+Note: All frontmatter fields (`name`, `description`, `version`, `author`, `tags`, `vars`) are optional per the schema. Preamble text between the H1 title and first H2 step is also optional.

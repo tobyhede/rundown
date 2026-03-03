@@ -1,6 +1,6 @@
 ---
 name: named-step-mixed-substeps
-description: Demonstrates named steps with both numbered substeps (ErrorHandler.1) and named substeps (ErrorHandler.Cleanup).
+description: Named steps with numbered and named substeps
 
 scenarios:
   success-completes:
@@ -10,7 +10,7 @@ scenarios:
       - rd pass
     result: COMPLETE
   error-handler-failure:
-    description: Tests error handler preparation step failing and stopping runbook
+    description: Error handler prepare fails, runbook stops
     commands:
       - rd run --prompted named-step-mixed-substeps.runbook.md
       - rd fail
@@ -27,6 +27,7 @@ tags:
 Demonstrates named steps with both static and named substeps.
 
 ## 1. Setup
+
 - PASS: CONTINUE
 - FAIL: GOTO ErrorHandler
 
@@ -36,10 +37,10 @@ Initial setup.
 rd echo "initial setup"
 ```
 
-
 ## ErrorHandler
 
 ### ErrorHandler.1 Prepare
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -49,8 +50,8 @@ Prepare for error handling.
 rd echo "prepare error handling"
 ```
 
-
 ### ErrorHandler.Cleanup
+
 - PASS: GOTO 1
 - FAIL: STOP
 
@@ -59,4 +60,3 @@ Named cleanup substep.
 ```bash
 rd echo "cleanup after error"
 ```
-

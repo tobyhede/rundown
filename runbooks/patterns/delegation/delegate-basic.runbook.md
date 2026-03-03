@@ -19,6 +19,7 @@ scenarios:
 Basic delegation pattern with prepare and execute steps.
 
 ## 1. Prepare delegation
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -27,6 +28,7 @@ rd echo "prepare delegation"
 ```
 
 ## 2. Execute delegated work
+
 - PASS: COMPLETE
 - FAIL: STOP
 

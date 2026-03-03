@@ -19,6 +19,7 @@ scenarios:
 Create a delegation token then cancel it.
 
 ## 1. Create delegation token
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -27,6 +28,7 @@ rd echo "create token"
 ```
 
 ## 2. Cancel delegation
+
 - PASS: COMPLETE "Delegation cancelled"
 
 ```bash

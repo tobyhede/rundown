@@ -1,6 +1,6 @@
 ---
 name: for-default-transitions
-description: FOR loop substeps relying on default transitions (PASS CONTINUE, FAIL STOP).
+description: FOR loop substeps with default transitions
 tags:
   - for-loops
 scenarios:
@@ -14,8 +14,10 @@ scenarios:
 # FOR Default Transitions
 
 ## 1. Process items
+
 - FOR item IN 1 TO 2
 - PASS ALL: COMPLETE
+
 ### 1.1 Handle {{item}}
 
 ```bash

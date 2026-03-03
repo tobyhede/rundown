@@ -1,12 +1,12 @@
 ---
 name: retry-exhaustion-complete
-description: Tests that RETRY exhaustion with COMPLETE finishes the runbook successfully
+description: RETRY exhaustion with COMPLETE finishes the runbook
 tags:
   - retries
 
 scenarios:
   exhausted:
-    description: Fails four times, exhausts retry, runbook completes via exhaustion
+    description: Exhausts retry, runbook completes
     commands:
       - rd run --prompted retry-exhaustion-complete.runbook.md
       - rd fail
@@ -22,7 +22,7 @@ scenarios:
       - rd pass
     result: COMPLETE
   auto-execution:
-    description: Code block auto-executes - fails four times, completes via exhaustion
+    description: Auto-execute fails four times, completes via exhaustion
     commands:
       - rd run retry-exhaustion-complete.runbook.md
     result: COMPLETE
@@ -33,6 +33,7 @@ scenarios:
 Tests that RETRY exhaustion with COMPLETE finishes the runbook successfully.
 
 ## 1. Acceptable-failure step
+
 - PASS: CONTINUE
 - FAIL: RETRY 3 COMPLETE "Max retries reached, completing anyway"
 
@@ -43,6 +44,7 @@ rd echo --result fail --result fail --result fail --result fail
 ```
 
 ## 2. Finish
+
 - PASS: COMPLETE
 
 Final step reached when step 1 passes.

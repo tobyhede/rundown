@@ -21,6 +21,7 @@ Jump from substep 1.1 to substep 1.3, skipping 1.2.
 ## 1. Substep Jump
 
 ### 1.1 Start
+
 - PASS: GOTO 1.3
 - FAIL: STOP
 
@@ -29,6 +30,7 @@ rd echo "substep start"
 ```
 
 ### 1.2 Skipped
+
 - PASS: CONTINUE
 
 ```bash
@@ -36,6 +38,7 @@ rd echo --result fail
 ```
 
 ### 1.3 Target
+
 - PASS: COMPLETE
 
 ```bash

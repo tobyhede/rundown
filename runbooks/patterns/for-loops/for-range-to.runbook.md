@@ -14,9 +14,12 @@ scenarios:
 # FOR Range TO
 
 ## 1. Process items
+
 - FOR item IN 1 TO 5
 - PASS ALL: COMPLETE
+
 ### 1.1 Process {{item}}
+
 ```bash
 rd echo "item={{item}}"
 ```

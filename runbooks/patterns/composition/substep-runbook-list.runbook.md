@@ -4,7 +4,7 @@ description: Demonstrates runbook references within substeps
 
 scenarios:
   basic:
-    description: Tests successful execution of child runbooks referenced within substeps
+    description: Child runbooks execute within substeps
     commands:
       - rd run --prompted substep-runbook-list.runbook.md
       - rd pass
@@ -17,16 +17,19 @@ tags:
 
 # Substep Runbooks
 
-Demonstrates explicit substep form for runbook references (equivalent to step-level runbook-list shorthand).
+Explicit substep form for runbook references
+(equivalent to step-level runbook-list shorthand).
 
 ## 1. Verification Suite
 
 ### 1.1 Lint Check
+
 - FAIL ANY: STOP "Lint failed"
 
 - child-task.runbook.md
 
 ### 1.2 Type Check
+
 - FAIL ANY: STOP "Types failed"
 
 - child-task.runbook.md

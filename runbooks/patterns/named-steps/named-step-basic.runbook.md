@@ -1,6 +1,6 @@
 ---
 name: named-step-basic
-description: Demonstrates mixing numbered and named steps with GOTO error handling
+description: Named steps with GOTO error handling
 tags:
   - named-steps
 
@@ -23,15 +23,15 @@ scenarios:
 # Named Steps Example
 
 ## 1. Main runbook
+
 - FAIL: GOTO ErrorHandler
 - PASS: COMPLETE SUCCESS
-
 
 Do the main work
 
 ## ErrorHandler
+
 - PASS: STOP RECOVERED
 - FAIL: STOP "Unrecoverable error"
-
 
 Handle any errors that occur

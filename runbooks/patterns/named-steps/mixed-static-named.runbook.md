@@ -1,6 +1,6 @@
 ---
 name: mixed-static-named
-description: Demonstrates mixing numbered static steps with named dynamic steps, showing error handling and routing patterns.
+description: Mixed static and named steps with error routing
 tags:
   - named-steps
   - mixed
@@ -29,17 +29,20 @@ scenarios:
 # Mixed Named and Static Steps
 
 ## 1. Setup
+
 - PASS: CONTINUE
 
 ## 2. Execute
+
 - PASS: CONTINUE
 
 ## 3. Validate
+
 - FAIL: GOTO ErrorHandler
 - PASS: COMPLETE
 
 ## ErrorHandler
-- PASS: STOP ERROR
 
+- PASS: STOP ERROR
 
 Log the error and stop
