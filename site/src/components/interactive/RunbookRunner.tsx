@@ -57,10 +57,7 @@ function parseRdArgs(cmd: string): string[] {
   return parts[0] === 'rd' ? parts.slice(1) : parts;
 }
 
-function stripAnsi(str: string): string {
-  // eslint-disable-next-line no-control-regex
-  return str.replace(/\x1B\[[0-9;]*[JKmsu]/g, '');
-}
+import stripAnsi from 'strip-ansi';
 
 export function RunbookRunner({
   runbookPath,
