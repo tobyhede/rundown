@@ -202,7 +202,7 @@ describe('buildActiveStatus', () => {
 
     const result = buildActiveStatus(state, '/test');
 
-    expect(result.lastAction).toEqual({ action: 'RETRY (1/3)', result: false });
+    expect(result.lastAction).toEqual({ action: 'RETRY (1/3)', result: 'FAIL' });
     expect(formatActionForDisplay).toHaveBeenCalledWith({ type: 'RETRY' }, 1, 3);
   });
 
@@ -227,7 +227,7 @@ describe('buildActiveStatus', () => {
 
     const result = buildActiveStatus(state, '/test');
 
-    expect(result.lastAction).toEqual({ action: 'CONTINUE', result: true });
+    expect(result.lastAction).toEqual({ action: 'CONTINUE', result: 'PASS' });
   });
 
   it('omits step when currentStep not found', () => {

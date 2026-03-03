@@ -1,6 +1,7 @@
 import {
   ScenarioSchema,
   ScenarioExpectSchema,
+  StepAssertionSchema,
   ScenariosSchema,
   parseScenarios,
   getEffectiveResult,
@@ -60,7 +61,7 @@ describe('ScenarioSchema', () => {
   it('accepts scenario with expect.result instead of result', () => {
     const scenario = {
       commands: ['rd run test.runbook.md', 'rd pass'],
-      expect: { result: 'COMPLETE', finalStep: '2' },
+      expect: { result: 'COMPLETE' },
     };
 
     const result = ScenarioSchema.safeParse(scenario);
@@ -71,7 +72,7 @@ describe('ScenarioSchema', () => {
     const scenario = {
       commands: ['rd run test.runbook.md', 'rd pass'],
       result: 'COMPLETE',
-      expect: { result: 'COMPLETE', stepsCompleted: 2 },
+      expect: { result: 'COMPLETE' },
     };
 
     const result = ScenarioSchema.safeParse(scenario);
@@ -92,7 +93,7 @@ describe('ScenarioSchema', () => {
   it('rejects scenario with neither result nor expect.result', () => {
     const scenario = {
       commands: ['rd run test.runbook.md'],
-      expect: { stepsCompleted: 2 }, // No result anywhere
+      expect: {}, // No result anywhere
     };
 
     const result = ScenarioSchema.safeParse(scenario);
@@ -115,45 +116,66 @@ describe('ScenarioExpectSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('validates all fields', () => {
-    const expect_block = {
-      result: 'COMPLETE',
-      finalStep: '3',
-      stepsCompleted: 2,
-      lastAction: 'CONTINUE',
-      lastResult: 'pass',
-      retryCount: 0,
-      variables: { completed: true, count: 5 },
-    };
-
-    const result = ScenarioExpectSchema.safeParse(expect_block);
+  it('validates with result only', () => {
+    const result = ScenarioExpectSchema.safeParse({ result: 'COMPLETE' });
     expect(result.success).toBe(true);
   });
 
-  it('rejects invalid lastAction value', () => {
-    const result = ScenarioExpectSchema.safeParse({ lastAction: 'INVALID' });
+  it('validates with steps array', () => {
+    const result = ScenarioExpectSchema.safeParse({
+      result: 'COMPLETE',
+      steps: [{ at: '2', action: 'CONTINUE', result: 'PASS' }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects invalid result', () => {
+    const result = ScenarioExpectSchema.safeParse({ result: 'SUCCESS' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('StepAssertionSchema', () => {
+  it('validates with all fields', () => {
+    const result = StepAssertionSchema.safeParse({
+      at: '1.3.1',
+      from: '1.2.1',
+      action: 'BREAK',
+      result: 'FAIL',
+      command: 'rd echo',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('validates empty object (all optional)', () => {
+    const result = StepAssertionSchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('coerces numeric at to string', () => {
+    const result = StepAssertionSchema.safeParse({ at: 1.1 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.at).toBe('1.1');
+    }
+  });
+
+  it('coerces numeric from to string', () => {
+    const result = StepAssertionSchema.safeParse({ from: 2 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.from).toBe('2');
+    }
+  });
+
+  it('rejects invalid action', () => {
+    const result = StepAssertionSchema.safeParse({ action: 'INVALID' });
     expect(result.success).toBe(false);
   });
 
-  it('rejects invalid lastResult value', () => {
-    const result = ScenarioExpectSchema.safeParse({ lastResult: 'success' });
+  it('rejects invalid result', () => {
+    const result = StepAssertionSchema.safeParse({ result: 'pass' }); // lowercase
     expect(result.success).toBe(false);
-  });
-
-  it('rejects negative stepsCompleted', () => {
-    const result = ScenarioExpectSchema.safeParse({ stepsCompleted: -1 });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects non-integer stepsCompleted', () => {
-    const result = ScenarioExpectSchema.safeParse({ stepsCompleted: 1.5 });
-    expect(result.success).toBe(false);
-  });
-
-  it('validates individual field combinations', () => {
-    expect(ScenarioExpectSchema.safeParse({ finalStep: '2' }).success).toBe(true);
-    expect(ScenarioExpectSchema.safeParse({ retryCount: 3 }).success).toBe(true);
-    expect(ScenarioExpectSchema.safeParse({ variables: { key: 'value' } }).success).toBe(true);
   });
 });
 
@@ -181,9 +203,9 @@ describe('getEffectiveResult', () => {
   });
 
   it('throws when neither result nor expect.result is present', () => {
-    const scenario = { commands: ['rd pass'], expect: { stepsCompleted: 1 } } as any;
+    const scenario = { commands: ['rd pass'], expect: {} } as any;
     expect(() => getEffectiveResult(scenario)).toThrow(
-      'Scenario has neither result nor expect.result defined',
+      'Neither result nor expect.result is defined',
     );
   });
 });
@@ -210,7 +232,7 @@ describe('ScenariosSchema', () => {
     const scenarios = {
       rich: {
         commands: ['rd run test.md', 'rd pass'],
-        expect: { result: 'COMPLETE', finalStep: '2' },
+        expect: { result: 'COMPLETE' },
       },
     };
 

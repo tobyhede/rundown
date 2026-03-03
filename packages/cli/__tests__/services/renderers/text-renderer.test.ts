@@ -530,9 +530,9 @@ describe('TextRenderer', () => {
         type: 'STEP_TRANSITIONED',
         payload: {
           action: 'CONTINUE',
-          from: pos('1', 3),
-          to: pos('2', 3),
-          result: true,
+          from: '1',
+          at: '2',
+          result: 'PASS',
         },
       };
 

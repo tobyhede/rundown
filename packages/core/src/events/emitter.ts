@@ -131,7 +131,7 @@ export class ExecutionEventEmitter {
       STEP_ENTERED: ['position', 'stepName', 'hasCommand', 'isSubstep', 'prompted'],
       COMMAND_STARTED: ['command', 'displayCommand', 'position'],
       COMMAND_COMPLETED: ['command', 'success', 'exitCode', 'position'],
-      STEP_TRANSITIONED: ['action', 'from', 'to', 'result'],
+      STEP_TRANSITIONED: ['action', 'from', 'at', 'result'],
       POLICY_DENIED: ['command', 'reason', 'position'],
       RUNBOOK_COMPLETED: ['finalPosition'],
       RUNBOOK_STOPPED: ['position'],

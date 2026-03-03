@@ -45,7 +45,9 @@ export {
   RunbookStatsSchema,
   CheckResponseSchema,
   // Scenario schemas
-  ScenarioAssertionResultSchema,
+  StepAssertionInputSchema,
+  CapturedTransitionSchema,
+  ScenarioStepAssertionResultSchema,
   ScenarioEntrySchema,
   ScenarioDetailSchema,
   ScenarioListSchema,
@@ -68,6 +70,9 @@ export {
   RunCommandResponseSchema,
   // Abort schema
   AbortResponseSchema,
+  // Delegate/Claim schemas
+  DelegateResponseSchema,
+  ClaimResponseSchema,
   // Derived TypeScript types
   type Position,
   type RunbookContext,
@@ -85,7 +90,9 @@ export {
   type CheckValidationWarning,
   type RunbookStats,
   type CheckResponse,
-  type ScenarioAssertionResult,
+  type StepAssertionInput,
+  type CapturedTransition,
+  type ScenarioStepAssertionResult,
   type ScenarioEntry,
   type ScenarioDetail,
   type ScenarioRunResponse,
@@ -99,6 +106,8 @@ export {
   type ExecutionSummary,
   type RunCommandResponse,
   type AbortResponse,
+  type DelegateResponse,
+  type ClaimResponse,
   type CLIResponse,
   type CLIListResponse,
 } from './zod-schemas.js';

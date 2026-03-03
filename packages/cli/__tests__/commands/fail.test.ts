@@ -145,7 +145,7 @@ Do work.
   });
 
   describe('JSON action result semantics', () => {
-    it('reports result: false for RETRY transitions', async () => {
+    it('reports result: true and stepResult FAIL for RETRY transitions', async () => {
       // Start retry runbook in prompted mode
       runCli('run --prompted runbooks/retry.runbook.md', workspace);
 
@@ -155,7 +155,8 @@ Do work.
 
       expect(output).not.toBeNull();
       expect(output!.action as string).toMatch(/^RETRY/);
-      expect(output!.result).toBe(false);
+      expect(output!.result).toBe(true);
+      expect(output!.stepResult).toBe('FAIL');
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);
@@ -179,7 +180,7 @@ Do work.
       expect(parseResult.success).toBe(true);
     });
 
-    it('reports result: false for GOTO transitions', async () => {
+    it('reports result: true and stepResult FAIL for GOTO transitions', async () => {
       // Start fail-goto runbook in prompted mode (FAIL: GOTO 3)
       runCli('run --prompted runbooks/fail-goto.runbook.md', workspace);
 
@@ -189,7 +190,8 @@ Do work.
 
       expect(output).not.toBeNull();
       expect(output?.action as string).toMatch(/^GOTO/);
-      expect(output?.result).toBe(false);
+      expect(output?.result).toBe(true);
+      expect(output?.stepResult).toBe('FAIL');
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);

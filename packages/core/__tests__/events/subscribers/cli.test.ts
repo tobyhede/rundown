@@ -62,9 +62,9 @@ describe('CLISubscriber', () => {
     subscriber.handle(
       makeEvent('STEP_TRANSITIONED', {
         action: 'CONTINUE',
-        from: { current: '1', total: 5 },
-        to: { current: '2', total: 5 },
-        result: true,
+        from: '1',
+        at: '2',
+        result: 'PASS',
       }),
     );
     const output = writer.getOutput();

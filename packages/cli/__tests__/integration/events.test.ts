@@ -36,9 +36,9 @@ describe('event output integration', () => {
     });
     emitter.emit('STEP_TRANSITIONED', {
       action: 'COMPLETE',
-      from: { current: '1', total: 1 },
-      to: { current: '1', total: 1 },
-      result: true,
+      from: '1',
+      at: '1',
+      result: 'PASS',
     });
     emitter.emit('RUNBOOK_COMPLETED', {
       finalPosition: { current: '1', total: 1 },

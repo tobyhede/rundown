@@ -169,7 +169,7 @@ export function buildActiveStatus(
     );
     actionBlockData = { action: actionStr };
     if (activeState.lastResult) {
-      actionBlockData.result = activeState.lastResult === 'pass';
+      actionBlockData.result = activeState.lastResult === 'pass' ? 'PASS' : 'FAIL';
     }
   }
 

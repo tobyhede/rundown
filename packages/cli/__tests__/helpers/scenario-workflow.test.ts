@@ -27,15 +27,6 @@ jest.unstable_mockModule('node:fs', () => ({
   mkdtempSync: jest.fn().mockReturnValue('/tmp/rd-scenario-test'),
   mkdirSync: jest.fn(),
   copyFileSync: jest.fn(),
-  readdirSync: jest.fn().mockReturnValue([]),
-  readFileSync: jest.fn(),
-  statSync: jest.fn(),
-}));
-
-// Mock node:child_process
-jest.unstable_mockModule('node:child_process', () => ({
-  execFileSync: jest.fn(),
-  execSync: jest.fn(),
 }));
 
 // Mock shell-quote
@@ -43,20 +34,26 @@ jest.unstable_mockModule('shell-quote', () => ({
   parse: jest.fn().mockImplementation((str: string) => str.split(/\s+/)),
 }));
 
+// Mock command-sequence
+jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
+  executeCommandSequence: jest.fn(),
+  matchStepAssertions: jest.fn(),
+}));
+
 // Import after mocking
 const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook');
 const { extractRawFrontmatter } = await import('../../src/helpers/extract-raw-frontmatter');
 const { parseScenarios } = await import('../../src/schemas/scenarios');
 const { readFile, rm } = await import('node:fs/promises');
-const { readdirSync, readFileSync, statSync } = await import('node:fs');
-const { execFileSync } = await import('node:child_process');
+const { executeCommandSequence, matchStepAssertions } = await import(
+  '../../src/helpers/command-sequence'
+);
 const {
   loadScenarios,
   buildScenarioListRows,
   buildScenarioDetail,
   extractReferencedRunbooks,
   executeScenario,
-  evaluateExpectations,
 } = await import('../../src/helpers/scenario-workflow');
 
 // Types are inferred from mocked modules; use `any` casts where needed
@@ -256,13 +253,13 @@ describe('buildScenarioDetail', () => {
       rich: {
         result: 'COMPLETE',
         commands: ['rd run x.md', 'rd pass'],
-        expect: { result: 'COMPLETE', finalStep: '2' },
+        expect: { result: 'COMPLETE' },
       },
     } as any;
 
     const detail = buildScenarioDetail('rich', scenarios);
 
-    expect(detail?.expect).toEqual({ result: 'COMPLETE', finalStep: '2' });
+    expect(detail?.expect).toEqual({ result: 'COMPLETE' });
   });
 });
 
@@ -307,117 +304,6 @@ describe('extractReferencedRunbooks', () => {
   });
 });
 
-describe('evaluateExpectations', () => {
-  it('passes when all expectations match', () => {
-    const state = {
-      step: '3',
-      retryCount: 0,
-      lastAction: { type: 'COMPLETE' },
-      lastResult: 'pass',
-      steps: [{ status: 'complete' }, { status: 'complete' }, { status: 'pending' }],
-      variables: { completed: true },
-    };
-
-    const result = evaluateExpectations(state, {
-      finalStep: '3',
-      stepsCompleted: 2,
-      lastAction: 'COMPLETE',
-      lastResult: 'pass',
-      retryCount: 0,
-      variables: { completed: true },
-    });
-
-    expect(result.passed).toBe(true);
-    expect(result.assertions).toHaveLength(6);
-    expect(result.assertions.every((a) => a.passed)).toBe(true);
-  });
-
-  it('fails when finalStep does not match', () => {
-    const state = { step: '2' };
-
-    const result = evaluateExpectations(state, { finalStep: '3' });
-
-    expect(result.passed).toBe(false);
-    expect(result.assertions).toHaveLength(1);
-    expect(result.assertions[0]).toEqual({
-      field: 'finalStep',
-      expected: '3',
-      actual: '2',
-      passed: false,
-    });
-  });
-
-  it('fails when stepsCompleted does not match', () => {
-    const state = {
-      steps: [{ status: 'complete' }, { status: 'pending' }],
-    };
-
-    const result = evaluateExpectations(state, { stepsCompleted: 2 });
-
-    expect(result.passed).toBe(false);
-    expect(result.assertions[0].actual).toBe(1);
-  });
-
-  it('checks lastAction type', () => {
-    const state = { lastAction: { type: 'STOP' } };
-
-    const result = evaluateExpectations(state, { lastAction: 'COMPLETE' });
-
-    expect(result.passed).toBe(false);
-    expect(result.assertions[0]).toMatchObject({
-      field: 'lastAction',
-      expected: 'COMPLETE',
-      actual: 'STOP',
-      passed: false,
-    });
-  });
-
-  it('checks lastResult', () => {
-    const state = { lastResult: 'fail' };
-
-    const result = evaluateExpectations(state, { lastResult: 'pass' });
-
-    expect(result.passed).toBe(false);
-  });
-
-  it('checks retryCount', () => {
-    const state = { retryCount: 2 };
-
-    const result = evaluateExpectations(state, { retryCount: 0 });
-
-    expect(result.passed).toBe(false);
-    expect(result.assertions[0]).toMatchObject({
-      field: 'retryCount',
-      expected: 0,
-      actual: 2,
-    });
-  });
-
-  it('checks individual variables', () => {
-    const state = { variables: { completed: true, count: 5 } };
-
-    const result = evaluateExpectations(state, {
-      variables: { completed: true, count: 3 },
-    });
-
-    expect(result.passed).toBe(false);
-    expect(result.assertions).toHaveLength(2);
-    const completedAssertion = result.assertions.find((a) => a.field === 'variables.completed');
-    const countAssertion = result.assertions.find((a) => a.field === 'variables.count');
-    expect(completedAssertion?.passed).toBe(true);
-    expect(countAssertion?.passed).toBe(false);
-  });
-
-  it('returns empty assertions for empty expect', () => {
-    const state = { step: '1' };
-
-    const result = evaluateExpectations(state, {});
-
-    expect(result.passed).toBe(true);
-    expect(result.assertions).toHaveLength(0);
-  });
-});
-
 describe('executeScenario', () => {
   const mockOutput = {
     message: jest.fn(),
@@ -439,16 +325,12 @@ describe('executeScenario', () => {
     };
   }
 
-  it('returns passed for COMPLETE scenario when state shows completed', async () => {
-    (readdirSync as jest.MockedFunction<typeof readdirSync>).mockReturnValue([
-      'wf-test.json',
-    ] as any);
-    (readFileSync as jest.MockedFunction<typeof readFileSync>).mockReturnValue(
-      JSON.stringify({ variables: { completed: true } }),
-    );
-    (statSync as jest.MockedFunction<typeof statSync>).mockReturnValue({
-      mtimeMs: Date.now(),
-    } as any);
+  it('returns passed when terminalResult matches expected', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue({
+      terminalResult: 'COMPLETE',
+      transitions: [],
+      capturedTokens: [],
+    });
 
     const result = await executeScenario(
       makeLoadedRunbook() as any,
@@ -461,87 +343,14 @@ describe('executeScenario', () => {
     expect(result.passed).toBe(true);
     expect(result.expected).toBe('COMPLETE');
     expect(result.actual).toBe('COMPLETE');
-    expect(execFileSync).toHaveBeenCalled();
-    expect(rm).toHaveBeenCalled();
   });
 
-  it('uses the most recently modified state file when multiple exist', async () => {
-    (readdirSync as jest.MockedFunction<typeof readdirSync>).mockReturnValue([
-      'wf-old.json',
-      'wf-new.json',
-    ] as any);
-    (readFileSync as jest.MockedFunction<typeof readFileSync>).mockReturnValue(
-      JSON.stringify({ variables: { completed: true } }),
-    );
-    const now = Date.now();
-    (statSync as jest.MockedFunction<typeof statSync>).mockImplementation((p: any) => {
-      const filePath = typeof p === 'string' ? p : p.toString();
-      return {
-        mtimeMs: filePath.includes('wf-new') ? now : now - 10000,
-      } as any;
+  it('returns failed when terminalResult does not match expected', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue({
+      terminalResult: 'STOP',
+      transitions: [],
+      capturedTokens: [],
     });
-
-    const result = await executeScenario(
-      makeLoadedRunbook() as any,
-      'happy',
-      true,
-      mockOutput,
-      '/cli/dist/cli.js',
-    );
-
-    expect(result.passed).toBe(true);
-    // Verify readFileSync was called with the newer file
-    const readCalls = (readFileSync as jest.MockedFunction<typeof readFileSync>).mock.calls;
-    const lastReadPath = String(readCalls[readCalls.length - 1][0]);
-    expect(lastReadPath).toContain('wf-new.json');
-  });
-
-  it('returns passed for STOP scenario when state shows stopped', async () => {
-    const loaded = {
-      filePath: '/test/patterns/my.runbook.md',
-      name: 'my-runbook',
-      description: 'Test runbook',
-      scenarios: {
-        stop: {
-          result: 'STOP',
-          commands: ['rd run my.runbook.md', 'rd stop'],
-        },
-      },
-    };
-
-    (readdirSync as jest.MockedFunction<typeof readdirSync>).mockReturnValue([
-      'wf-test.json',
-    ] as any);
-    (readFileSync as jest.MockedFunction<typeof readFileSync>).mockReturnValue(
-      JSON.stringify({ variables: { stopped: true } }),
-    );
-    (statSync as jest.MockedFunction<typeof statSync>).mockReturnValue({
-      mtimeMs: Date.now(),
-    } as any);
-
-    const result = await executeScenario(
-      loaded as any,
-      'stop',
-      true,
-      mockOutput,
-      '/cli/dist/cli.js',
-    );
-
-    expect(result.passed).toBe(true);
-    expect(result.expected).toBe('STOP');
-    expect(result.actual).toBe('STOP');
-  });
-
-  it('returns failed when actual does not match expected', async () => {
-    (readdirSync as jest.MockedFunction<typeof readdirSync>).mockReturnValue([
-      'wf-test.json',
-    ] as any);
-    (readFileSync as jest.MockedFunction<typeof readFileSync>).mockReturnValue(
-      JSON.stringify({ variables: { stopped: true } }),
-    );
-    (statSync as jest.MockedFunction<typeof statSync>).mockReturnValue({
-      mtimeMs: Date.now(),
-    } as any);
 
     const result = await executeScenario(
       makeLoadedRunbook() as any,
@@ -556,23 +365,22 @@ describe('executeScenario', () => {
     expect(result.actual).toBe('STOP');
   });
 
-  it('includes assertions when expect block is present', async () => {
-    (readdirSync as jest.MockedFunction<typeof readdirSync>).mockReturnValue([
-      'wf-test.json',
-    ] as any);
-    (readFileSync as jest.MockedFunction<typeof readFileSync>).mockReturnValue(
-      JSON.stringify({
-        variables: { completed: true },
-        step: '2',
-        lastAction: { type: 'COMPLETE' },
-      }),
-    );
-    (statSync as jest.MockedFunction<typeof statSync>).mockReturnValue({
-      mtimeMs: Date.now(),
-    } as any);
+  it('evaluates step assertions when expect.steps present', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue({
+      terminalResult: 'COMPLETE',
+      transitions: [{ action: 'CONTINUE', from: '1', at: '2', result: 'PASS' }],
+      capturedTokens: [],
+    });
+    jest.mocked(matchStepAssertions).mockReturnValue([
+      {
+        assertion: { at: '2', action: 'CONTINUE' },
+        matched: true,
+        matchedEvent: { action: 'CONTINUE', at: '2' },
+      },
+    ]);
 
     const loaded = makeLoadedRunbook({
-      expect: { result: 'COMPLETE', finalStep: '2', lastAction: 'COMPLETE' },
+      expect: { result: 'COMPLETE', steps: [{ at: '2', action: 'CONTINUE' }] },
     });
 
     const result = await executeScenario(
@@ -584,28 +392,22 @@ describe('executeScenario', () => {
     );
 
     expect(result.passed).toBe(true);
-    expect(result.assertions).toBeDefined();
-    expect(result.assertions!.length).toBeGreaterThan(0);
-    expect(result.assertions!.every((a) => a.passed)).toBe(true);
+    expect(result.stepAssertions).toBeDefined();
+    expect(result.stepAssertions![0].matched).toBe(true);
   });
 
-  it('fails when expect assertions do not match', async () => {
-    (readdirSync as jest.MockedFunction<typeof readdirSync>).mockReturnValue([
-      'wf-test.json',
-    ] as any);
-    (readFileSync as jest.MockedFunction<typeof readFileSync>).mockReturnValue(
-      JSON.stringify({
-        variables: { completed: true },
-        step: '1',
-        lastAction: { type: 'CONTINUE' },
-      }),
-    );
-    (statSync as jest.MockedFunction<typeof statSync>).mockReturnValue({
-      mtimeMs: Date.now(),
-    } as any);
+  it('fails when step assertion does not match', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue({
+      terminalResult: 'COMPLETE',
+      transitions: [],
+      capturedTokens: [],
+    });
+    jest
+      .mocked(matchStepAssertions)
+      .mockReturnValue([{ assertion: { at: '3', action: 'COMPLETE' }, matched: false }]);
 
     const loaded = makeLoadedRunbook({
-      expect: { result: 'COMPLETE', finalStep: '3', lastAction: 'COMPLETE' },
+      expect: { result: 'COMPLETE', steps: [{ at: '3', action: 'COMPLETE' }] },
     });
 
     const result = await executeScenario(
@@ -617,7 +419,51 @@ describe('executeScenario', () => {
     );
 
     expect(result.passed).toBe(false);
-    expect(result.assertions).toBeDefined();
-    expect(result.assertions!.some((a) => !a.passed)).toBe(true);
+    expect(result.stepAssertions![0].matched).toBe(false);
+  });
+
+  it('passes executeCommandSequence correct options', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue({
+      terminalResult: 'COMPLETE',
+      transitions: [],
+      capturedTokens: [],
+    });
+
+    await executeScenario(
+      makeLoadedRunbook() as any,
+      'happy',
+      true,
+      mockOutput,
+      '/cli/dist/cli.js',
+    );
+
+    expect(executeCommandSequence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commands: ['rd run my.runbook.md', 'rd pass'],
+        cliPath: '/cli/dist/cli.js',
+        quiet: true,
+      }),
+    );
+  });
+
+  it('cleans up temp directory after execution', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue({
+      terminalResult: 'COMPLETE',
+      transitions: [],
+      capturedTokens: [],
+    });
+
+    await executeScenario(
+      makeLoadedRunbook() as any,
+      'happy',
+      true,
+      mockOutput,
+      '/cli/dist/cli.js',
+    );
+
+    expect(rm).toHaveBeenCalledWith('/tmp/rd-scenario-test', {
+      recursive: true,
+      force: true,
+    });
   });
 });

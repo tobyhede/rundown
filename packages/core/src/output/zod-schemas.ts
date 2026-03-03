@@ -197,16 +197,18 @@ export const ErrorResponseSchema = z
  */
 export const ActionResponseSchema = z
   .object({
-    /** Whether the action succeeded */
-    result: z.boolean().describe('Whether the action succeeded'),
+    /** Whether the operation succeeded */
+    result: z.boolean().describe('Whether the operation succeeded'),
+    /** Step outcome (PASS or FAIL) */
+    stepResult: z.enum(['PASS', 'FAIL']).optional().describe('Step outcome (PASS or FAIL)'),
     /** The action that was performed (e.g., "CONTINUE", "GOTO 3", "RETRY") */
     action: z.string().describe('Type of action performed'),
     /** The command that was executed */
     command: z.string().optional().describe('Command executed for this action'),
-    /** Position before the action */
-    from: PositionSchema.optional().describe('Starting position before action'),
-    /** Position after the action */
-    to: PositionSchema.optional().describe('Position after action execution'),
+    /** Step position before the transition (qualified ID) */
+    from: z.string().optional().describe('Step position before the transition (qualified ID)'),
+    /** Step position after the transition (qualified ID) */
+    at: z.string().optional().describe('Step position after the transition (qualified ID)'),
     /** Whether this resulted in runbook completion */
     complete: z.boolean().optional().describe('Whether the runbook completed'),
     /** Whether this resulted in runbook stopping */
@@ -295,8 +297,8 @@ export const StatusResponseSchema = z
       .object({
         /** The action that was performed */
         action: z.string().describe('Last action performed'),
-        /** The result of the action */
-        result: z.boolean().optional().describe('Result of the last action'),
+        /** Step outcome of the last action */
+        result: z.enum(['PASS', 'FAIL']).optional().describe('Step outcome of the last action'),
       })
       .optional()
       .describe('Last action information'),
@@ -463,20 +465,54 @@ export const ScenarioListSchema = z
   .describe('List of scenarios in a runbook');
 
 /**
- * Scenario assertion result for rich expectation evaluation.
+ * Schema for a single step transition assertion as specified in the scenario.
  */
-export const ScenarioAssertionResultSchema = z
+export const StepAssertionInputSchema = z
   .object({
-    /** Assertion field name */
-    field: z.string().describe('Assertion field name'),
-    /** Expected value */
-    expected: z.unknown().describe('Expected value'),
-    /** Actual value observed */
-    actual: z.unknown().describe('Actual value observed'),
-    /** Whether the assertion passed */
-    passed: z.boolean().describe('Whether the assertion passed'),
+    /** Current step position */
+    at: z.string().optional().describe('Current step position'),
+    /** Previous step position */
+    from: z.string().optional().describe('Previous step position'),
+    /** Transition action */
+    action: z.string().optional().describe('Transition action type'),
+    /** Step result */
+    result: z.enum(['PASS', 'FAIL']).optional().describe('Step result'),
+    /** Command executed */
+    command: z.string().optional().describe('Command executed'),
   })
-  .describe('Individual assertion result from scenario execution');
+  .describe('Step transition assertion from scenario definition');
+
+/**
+ * Schema for a captured step transition event from JSON output.
+ */
+export const CapturedTransitionSchema = z
+  .object({
+    /** Transition action */
+    action: z.string().optional().describe('Transition action type'),
+    /** Previous step position */
+    from: z.string().optional().describe('Previous step position'),
+    /** Current step position */
+    at: z.string().optional().describe('Current step position'),
+    /** Step result */
+    result: z.enum(['PASS', 'FAIL']).optional().describe('Step result'),
+    /** Command executed */
+    command: z.string().optional().describe('Command executed'),
+  })
+  .describe('Captured step transition from execution');
+
+/**
+ * Step assertion result from matching against the event stream.
+ */
+export const ScenarioStepAssertionResultSchema = z
+  .object({
+    /** The assertion that was evaluated */
+    assertion: StepAssertionInputSchema.describe('The assertion that was evaluated'),
+    /** Whether a matching event was found */
+    matched: z.boolean().describe('Whether a matching event was found'),
+    /** The event that matched (if any) */
+    matchedEvent: CapturedTransitionSchema.optional().describe('The event that matched'),
+  })
+  .describe('Result of matching a step assertion against the event stream');
 
 /**
  * Scenario run result.
@@ -493,11 +529,11 @@ export const ScenarioRunResponseSchema = z
     actual: z.string().describe('Actual outcome'),
     /** Detailed message */
     message: z.string().optional().describe('Additional status message'),
-    /** Per-field assertion results (present when expect block is used) */
-    assertions: z
-      .array(ScenarioAssertionResultSchema)
+    /** Per-step assertion results (present when expect.steps block is used) */
+    stepAssertions: z
+      .array(ScenarioStepAssertionResultSchema)
       .optional()
-      .describe('Per-field assertion results'),
+      .describe('Per-step assertion results'),
   })
   .describe('Response from scenario run command');
 
@@ -752,6 +788,59 @@ export const ScenarioSuiteRunResponseSchema = z
   .describe('Aggregate response from running a scenario suite');
 
 // ============================================================================
+// Delegate Command Schema
+// ============================================================================
+
+/**
+ * Delegate response schema.
+ *
+ * Output from `rd delegate <runbook> --step <id>` command.
+ */
+export const DelegateResponseSchema = z
+  .object({
+    /** Action performed */
+    action: z.literal('delegated').describe('Action type'),
+    /** Step or substep ID that was delegated */
+    step: z.string().describe('Step or substep ID delegated'),
+    /** Child runbook name or path */
+    runbook: z.string().describe('Child runbook name or path'),
+    /** Full delegation token */
+    token: z.string().describe('Delegation token'),
+    /** Hash of the delegation token */
+    token_hash: z.string().describe('Token hash'),
+    /** Parent run ID */
+    parent_run_id: z.string().describe('Parent run ID'),
+    /** Claim marker for environment variable usage */
+    claim_marker: z.string().describe('Claim marker (RD_CLAIM_TOKEN=<token>)'),
+  })
+  .describe('Response from the delegate command');
+
+// ============================================================================
+// Claim Command Schema
+// ============================================================================
+
+/**
+ * Claim response schema.
+ *
+ * Output from `rd claim <token>` command. The claim command launches a child
+ * runbook, so the response extends the execution summary with claim-specific fields.
+ */
+export const ClaimResponseSchema = ExecutionSummarySchema.extend({
+  /** Action performed */
+  action: z.literal('claimed').describe('Action type'),
+  /** Truncated delegation token */
+  token: z.string().describe('Truncated delegation token'),
+  /** Child run ID */
+  run_id: z.string().describe('Child run ID'),
+  /** Child runbook path */
+  runbook: z.string().describe('Child runbook path'),
+  /** Parent run ID */
+  parent_run_id: z.string().describe('Parent run ID'),
+  /** Parent step identifier */
+  parent_step: z.string().describe('Parent step identifier'),
+}).describe('Response from the claim command');
+
+// ============================================================================
 // Derived TypeScript Types
 // ============================================================================
 
@@ -809,8 +898,14 @@ export type ScenarioEntry = z.infer<typeof ScenarioEntrySchema>;
 /** Scenario detail */
 export type ScenarioDetail = z.infer<typeof ScenarioDetailSchema>;
 
-/** Scenario assertion result */
-export type ScenarioAssertionResult = z.infer<typeof ScenarioAssertionResultSchema>;
+/** Step assertion input */
+export type StepAssertionInput = z.infer<typeof StepAssertionInputSchema>;
+
+/** Captured transition */
+export type CapturedTransition = z.infer<typeof CapturedTransitionSchema>;
+
+/** Step assertion result */
+export type ScenarioStepAssertionResult = z.infer<typeof ScenarioStepAssertionResultSchema>;
 
 /** Scenario run response */
 export type ScenarioRunResponse = z.infer<typeof ScenarioRunResponseSchema>;
@@ -845,6 +940,12 @@ export type RunCommandResponse = z.infer<typeof RunCommandResponseSchema>;
 /** Abort response */
 export type AbortResponse = z.infer<typeof AbortResponseSchema>;
 
+/** Delegate response */
+export type DelegateResponse = z.infer<typeof DelegateResponseSchema>;
+
+/** Claim response */
+export type ClaimResponse = z.infer<typeof ClaimResponseSchema>;
+
 /** Union of all CLI responses */
 export type CLIResponse =
   | ActionResponse
@@ -856,7 +957,9 @@ export type CLIResponse =
   | StashResponse
   | PopResponse
   | EchoResponse
-  | AbortResponse;
+  | AbortResponse
+  | DelegateResponse
+  | ClaimResponse;
 
 /** Union of list outputs */
 export type CLIListResponse =

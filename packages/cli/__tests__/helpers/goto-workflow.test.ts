@@ -14,6 +14,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     total,
     ...(substep ? { substep } : {}),
   })),
+  derivePositionAt: jest.fn(
+    (pos: { current: string; substep?: string; for?: { index: number } }) =>
+      `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
+  ),
   countNumberedSteps: jest.fn().mockReturnValue(3),
 }));
 
@@ -61,6 +65,10 @@ beforeEach(() => {
       total,
       ...(substep ? { substep } : {}),
     }),
+  );
+  (core.derivePositionAt as jest.Mock).mockImplementation(
+    (pos: { current: string; substep?: string; for?: { index: number } }) =>
+      `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
   );
   (core.countNumberedSteps as jest.Mock).mockReturnValue(3);
   (runExecutionLoop as jest.Mock).mockResolvedValue('done');

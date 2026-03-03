@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { formatStepAssertionDescription } from '../helpers/command-sequence.js';
 import {
   loadScenarios,
   buildScenarioListRows,
@@ -155,23 +156,20 @@ export function registerScenariosCommand(program: Command): void {
           actual: runResult.actual,
         };
 
-        if (runResult.assertions) {
-          detailData.assertions = runResult.assertions;
+        if (runResult.stepAssertions) {
+          detailData.stepAssertions = runResult.stepAssertions;
         }
 
         output.detail(detailData, 'scenario_result');
 
-        // Display per-assertion failures in text mode
-        if (!options.json && runResult.assertions && runResult.assertions.length > 0) {
+        // Display step assertions in text mode
+        if (!options.json && runResult.stepAssertions && runResult.stepAssertions.length > 0) {
           output.message('', 'info');
-          output.message('Assertions:', 'info');
-          for (const assertion of runResult.assertions) {
-            const icon = assertion.passed ? '\u2713' : '\u2717';
-            const status = assertion.passed ? 'dim' : 'error';
-            output.message(
-              `  ${icon} ${assertion.field}: expected ${JSON.stringify(assertion.expected)}, got ${JSON.stringify(assertion.actual)}`,
-              status,
-            );
+          output.message('Step Assertions:', 'info');
+          for (const sa of runResult.stepAssertions) {
+            const icon = sa.matched ? '\u2713' : '\u2717';
+            const status = sa.matched ? 'dim' : 'error';
+            output.message(`  ${icon} ${formatStepAssertionDescription(sa)}`, status);
           }
         }
 

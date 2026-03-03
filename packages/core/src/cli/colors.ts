@@ -156,9 +156,9 @@ export function colorizeStatus(status: string): string {
 /**
  * Apply result-appropriate coloring (PASS/FAIL).
  *
- * @param result - Whether the result passed (true = PASS, false = FAIL)
+ * @param result - Step outcome string ('PASS' or 'FAIL')
  * @returns Colorized result string
  */
-export function colorizeResult(result: boolean): string {
-  return result ? success('PASS') : failure('FAIL');
+export function colorizeResult(result: 'PASS' | 'FAIL'): string {
+  return result === 'PASS' ? success('PASS') : failure('FAIL');
 }

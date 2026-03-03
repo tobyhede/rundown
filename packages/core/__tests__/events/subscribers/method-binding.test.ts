@@ -47,9 +47,9 @@ describe('Subscriber method binding', () => {
       });
       emitter.emit('STEP_TRANSITIONED', {
         action: 'CONTINUE',
-        from: { current: '1', total: 2 },
-        to: { current: '2', total: 2 },
-        result: true,
+        from: '1',
+        at: '2',
+        result: 'PASS',
       });
       emitter.emit('RUNBOOK_COMPLETED', {
         finalPosition: { current: '2', total: 2 },

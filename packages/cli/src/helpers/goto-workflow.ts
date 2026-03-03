@@ -10,6 +10,7 @@
 
 import {
   buildStepPosition,
+  derivePositionAt,
   RunbookStateManager,
   RunbookActorService,
   SessionService,
@@ -201,8 +202,8 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
   // Build action data for goto
   const actionData = {
     action: `GOTO ${stepIdToString(target)}`,
-    from: prevPos,
-    at: newPos,
+    from: derivePositionAt(prevPos),
+    at: derivePositionAt(newPos),
   };
 
   // Emit structured action output

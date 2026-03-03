@@ -37,7 +37,9 @@ export {
   CheckValidationErrorSchema,
   RunbookStatsSchema,
   // Scenario schemas
-  ScenarioAssertionResultSchema,
+  StepAssertionInputSchema,
+  CapturedTransitionSchema,
+  ScenarioStepAssertionResultSchema,
   ScenarioEntrySchema,
   ScenarioDetailSchema,
   ScenarioListSchema,
@@ -52,6 +54,9 @@ export {
   ScenarioSuiteListSchema,
   ScenarioSuiteCaseDetailSchema,
   ScenarioSuiteRunResponseSchema,
+  // Delegate/Claim schemas
+  DelegateResponseSchema,
+  ClaimResponseSchema,
   // Prune schema (same format as ls output)
   PruneResponseSchema,
   // Execution schemas
@@ -132,6 +137,8 @@ import {
   RunCommandResponseSchema,
   AvailableRunbooksListSchema,
   AbortResponseSchema,
+  DelegateResponseSchema,
+  ClaimResponseSchema,
 } from '@rundown-org/core';
 
 /**
@@ -162,4 +169,6 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
   'scenario-suite ls': ScenarioSuiteListSchema,
   'scenario-suite show': ScenarioSuiteCaseDetailSchema,
   'scenario-suite run': ScenarioSuiteRunResponseSchema,
+  delegate: DelegateResponseSchema,
+  claim: ClaimResponseSchema,
 };

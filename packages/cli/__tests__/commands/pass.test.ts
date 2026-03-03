@@ -264,7 +264,7 @@ This step stops on pass.
       expect(parseResult.success).toBe(true);
     });
 
-    it('reports result: false for RETRY transitions', async () => {
+    it('reports result FAIL in JSONL for RETRY transitions', async () => {
       // Create retry runbook where pass triggers retry (via command failure)
       const retryRunbook = `## 1. Retry on pass fail
 
@@ -288,15 +288,16 @@ rd echo --result fail
       const result = runCli('run runbooks/retry-test.md --json', workspace);
       const lines = result.stdout.trim().split('\n');
 
-      // Find the action output line (may be multiple JSON outputs)
+      // Find the STEP_TRANSITIONED JSONL event with RETRY action
       let foundRetry = false;
       for (const line of lines) {
         if (line.trim().startsWith('{')) {
           try {
             const output = JSON.parse(line) as Record<string, unknown>;
             const action = output.action as string | undefined;
-            if (action?.startsWith('RETRY')) {
-              expect(output.result).toBe(false);
+            if (action?.startsWith('RETRY') && typeof output.result === 'string') {
+              // In JSONL execution events, result is 'PASS'|'FAIL' string from StepTransitionedPayload
+              expect(output.result).toBe('FAIL');
               foundRetry = true;
               break;
             }
@@ -336,17 +337,19 @@ rd echo --result fail
       expect(output?.result).toBe(true);
     });
 
-    it('reports result: false for RETRY transitions', async () => {
+    it('reports result: true and stepResult FAIL for RETRY transitions', async () => {
       // Start pass-retry runbook in prompted mode
       runCli('run --prompted runbooks/pass-retry.runbook.md', workspace);
 
       // Pass should trigger RETRY (since PASS: RETRY 3)
+      // result is true (operation non-terminal), stepResult is FAIL (RETRY = not yet passing)
       const result = runCli('pass --json', workspace);
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
       expect(output?.action as string).toMatch(/^RETRY/);
-      expect(output?.result).toBe(false);
+      expect(output?.result).toBe(true);
+      expect(output?.stepResult).toBe('FAIL');
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);

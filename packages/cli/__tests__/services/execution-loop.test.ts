@@ -92,6 +92,10 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       (step: string, substep?: string, iteration?: number) =>
         `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
     ),
+    derivePositionAt: jest.fn(
+      (pos: { current: string; substep?: string; for?: { index: number } }) =>
+        `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
+    ),
     buildCompletionKey: jest.fn(
       (frameKey: string, entry: number, substep?: string) =>
         `${frameKey}|${String(entry)}|${substep ?? ''}`,

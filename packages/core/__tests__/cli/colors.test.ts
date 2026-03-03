@@ -160,14 +160,14 @@ describe('colors', () => {
       setColorEnabled(true);
     });
 
-    it('colors true (PASS) green', () => {
-      expect(colorizeResult(true)).toContain('\x1b[32m');
-      expect(colorizeResult(true)).toContain('PASS');
+    it('colors PASS green', () => {
+      expect(colorizeResult('PASS')).toContain('\x1b[32m');
+      expect(colorizeResult('PASS')).toContain('PASS');
     });
 
-    it('colors false (FAIL) red', () => {
-      expect(colorizeResult(false)).toContain('\x1b[31m');
-      expect(colorizeResult(false)).toContain('FAIL');
+    it('colors FAIL red', () => {
+      expect(colorizeResult('FAIL')).toContain('\x1b[31m');
+      expect(colorizeResult('FAIL')).toContain('FAIL');
     });
   });
 });

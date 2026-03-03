@@ -40,6 +40,6 @@ describe('Schema Coverage', () => {
 
   it('should have expected minimum command count', () => {
     // Guard against accidental mass deletion
-    expect(JSON_OUTPUT_COMMANDS.length).toBeGreaterThanOrEqual(17);
+    expect(JSON_OUTPUT_COMMANDS.length).toBeGreaterThanOrEqual(23);
   });
 });

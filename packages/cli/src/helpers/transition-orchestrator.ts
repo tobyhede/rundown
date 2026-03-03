@@ -2,14 +2,15 @@ import {
   asTerminalSnapshotOrDefault,
   buildStepPosition,
   countNumberedSteps,
+  derivePositionAt,
   deriveTransitionMessage,
   extractLastAction,
   extractLastMessage,
   extractRetryDisplayCount,
   extractRetryMax,
-  formatActionForDisplay,
   isRunbookComplete,
   isRunbookStopped,
+  parseActionType,
   type ExecutionEventEmitter,
   type RunbookCompletedPayload,
   type RunbookState,
@@ -96,17 +97,23 @@ interface OrchestrateTransitionArgs {
   command?: string;
 }
 
-/** Result of orchestrating a single step transition. */
+/**
+ * Result of orchestrating a single step transition.
+ *
+ * Discriminated union on `status`:
+ * - `continue` — The runbook is still active; `state` holds the updated runbook state.
+ * - `done` — The runbook completed successfully; `message` is the completion message.
+ * - `stopped` — The runbook was stopped (failure); `message` is the stop reason.
+ *
+ * Common fields across all variants:
+ * - `action` — The transition action type (e.g. "CONTINUE", "GOTO", "STOP").
+ * - `from` — Qualified step position before the transition.
+ * - `at` — Qualified step position after the transition.
+ */
 export type OrchestrateTransitionResult =
-  | {
-      status: 'continue';
-      state: RunbookState;
-      action: string;
-      from: StepPosition;
-      to: StepPosition;
-    }
-  | { status: 'done'; action: string; from: StepPosition; to: StepPosition; message?: string }
-  | { status: 'stopped'; action: string; from: StepPosition; to: StepPosition; message?: string };
+  | { status: 'continue'; state: RunbookState; action: string; from: string; at: string }
+  | { status: 'done'; action: string; from: string; at: string; message?: string }
+  | { status: 'stopped'; action: string; from: string; at: string; message?: string };
 
 function buildTransitionPositions(
   previousState: RunbookState,
@@ -172,20 +179,25 @@ export async function orchestrateTransition(
   const retryMax = extractRetryMax(snapshot);
   const lastAction = extractLastAction(snapshot);
   const retryDisplayCount = extractRetryDisplayCount(snapshot, updatedState.retryCount);
-  const action = formatActionForDisplay(lastAction, retryDisplayCount, retryMax);
+  const actionType = parseActionType(lastAction);
   const positions = buildTransitionPositions(previousState, updatedState, steps);
+  const fromStr = derivePositionAt(positions.from);
+  const atStr = derivePositionAt(positions.to);
 
   await manager.update(runbookId, {
     lastAction,
     lastResult: result,
   });
 
+  const toPos = positions.to;
   sink.onStepTransitioned({
-    action,
-    from: positions.from,
-    to: positions.to,
-    result: actionResult,
+    action: actionType,
+    from: fromStr,
+    at: atStr,
+    result: actionResult ? 'PASS' : 'FAIL',
     command,
+    ...(actionType === 'RETRY' ? { retryAttempt: retryDisplayCount, retryMax } : {}),
+    ...(toPos.for ? { forIndex: toPos.for.index, forEnd: toPos.for.end } : {}),
   });
 
   const terminalSnapshot = asTerminalSnapshotOrDefault(snapshot);
@@ -206,7 +218,7 @@ export async function orchestrateTransition(
     });
 
     await applyTerminalSideEffects(sessionService, policy.onComplete);
-    return { status: 'done', action, from: positions.from, to: positions.to, message };
+    return { status: 'done', action: actionType, from: fromStr, at: atStr, message };
   }
 
   if (isStopped) {
@@ -224,13 +236,13 @@ export async function orchestrateTransition(
     });
 
     await applyTerminalSideEffects(sessionService, policy.onStopped);
-    return { status: 'stopped', action, from: positions.from, to: positions.to, message };
+    return { status: 'stopped', action: actionType, from: fromStr, at: atStr, message };
   }
 
   const reloaded = await manager.load(runbookId);
   if (!reloaded) {
-    return { status: 'stopped', action, from: positions.from, to: positions.to };
+    return { status: 'stopped', action: actionType, from: fromStr, at: atStr };
   }
 
-  return { status: 'continue', state: reloaded, action, from: positions.from, to: positions.to };
+  return { status: 'continue', state: reloaded, action: actionType, from: fromStr, at: atStr };
 }

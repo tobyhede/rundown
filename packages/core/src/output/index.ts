@@ -113,13 +113,17 @@ export {
 
 // Scenario schemas
 export {
-  ScenarioAssertionResultSchema,
+  StepAssertionInputSchema,
+  CapturedTransitionSchema,
+  ScenarioStepAssertionResultSchema,
   ScenarioEntrySchema,
   ScenarioDetailSchema,
   ScenarioListSchema,
   ScenarioRunResponseSchema,
   ScenarioErrorResponseSchema,
-  type ScenarioAssertionResult,
+  type StepAssertionInput,
+  type CapturedTransition,
+  type ScenarioStepAssertionResult,
   type ScenarioEntry,
   type ScenarioDetail,
   type ScenarioRunResponse,
@@ -168,6 +172,14 @@ export {
 export {
   AbortResponseSchema,
   type AbortResponse,
+} from './schema.js';
+
+// Delegate/Claim schemas
+export {
+  DelegateResponseSchema,
+  ClaimResponseSchema,
+  type DelegateResponse,
+  type ClaimResponse,
 } from './schema.js';
 
 // Union types

@@ -1,4 +1,5 @@
 import type { StepPosition } from '../cli/types.js';
+import type { ActionType } from '../runbook/transition-kernel.js';
 
 // Re-export StepPosition for backwards compatibility and event payload typing
 export type { StepPosition };
@@ -74,13 +75,32 @@ export interface CommandCompletedPayload {
   readonly sandboxed?: boolean;
 }
 
+/**
+ * Payload emitted when a step transition occurs (STEP_TRANSITIONED event).
+ *
+ * Emitted after the XState machine processes a pass/fail event and a transition
+ * is applied. Contains the transition action, source and destination positions,
+ * and the step outcome.
+ */
 export interface StepTransitionedPayload {
-  readonly action: string;
-  readonly from: StepPosition;
-  readonly to: StepPosition;
-  /** Whether the step passed (true = PASS, false = FAIL) */
-  readonly result: boolean;
+  /** Transition type that was applied (e.g. CONTINUE, GOTO, STOP, COMPLETE, RETRY, BREAK, NEXT). */
+  readonly action: ActionType;
+  /** Qualified step position before the transition (e.g. "1", "1.2", "ErrorHandler"). */
+  readonly from: string;
+  /** Qualified step position after the transition. */
+  readonly at: string;
+  /** Step outcome that triggered the transition. */
+  readonly result: 'PASS' | 'FAIL';
+  /** The CLI command string that triggered this transition, if any. */
   readonly command?: string;
+  /** Current retry attempt (1-based). Only present for RETRY actions. */
+  readonly retryAttempt?: number;
+  /** Maximum retry attempts. Only present for RETRY actions. */
+  readonly retryMax?: number;
+  /** Current FOR loop iteration index (1-based). */
+  readonly forIndex?: number;
+  /** FOR loop upper bound (inclusive). Undefined for open-ended sources. */
+  readonly forEnd?: number;
 }
 
 export interface PolicyDeniedPayload {

@@ -55,7 +55,7 @@ export function registerPopCommand(program: Command): void {
             );
             actionBlockData = { action: actionStr };
             if (state.lastResult) {
-              actionBlockData.result = state.lastResult === 'pass';
+              actionBlockData.result = state.lastResult === 'pass' ? 'PASS' : 'FAIL';
             }
           }
 

@@ -76,14 +76,14 @@ describe('output formatter', () => {
 
   describe('printStepSeparator', () => {
     it('prints separator with step number', () => {
-      printStepSeparator({ current: '2', total: 5 }, writer);
+      printStepSeparator('2', writer);
       const output = writer.getOutput();
       expect(output).toContain('───');
       expect(output).toContain('2');
     });
 
     it('prints separator with substep number', () => {
-      printStepSeparator({ current: '1', total: 3, substep: '2' }, writer);
+      printStepSeparator('1.2', writer);
       const output = writer.getOutput();
       expect(output).toContain('1.2');
     });
@@ -140,8 +140,8 @@ describe('output formatter', () => {
       printActionBlock(
         {
           action: 'CONTINUE',
-          from: { current: '1', total: 5 },
-          result: true,
+          from: '1',
+          result: 'PASS',
         },
         writer,
       );
@@ -152,7 +152,7 @@ describe('output formatter', () => {
       printActionBlock(
         {
           action: 'GOTO 3',
-          from: { current: '1', total: 5 },
+          from: '1',
         },
         writer,
       );
@@ -163,8 +163,8 @@ describe('output formatter', () => {
       printActionBlock(
         {
           action: 'RETRY (1/3)',
-          from: { current: '2', total: 5 },
-          result: false,
+          from: '2',
+          result: 'FAIL',
         },
         writer,
       );
@@ -175,9 +175,9 @@ describe('output formatter', () => {
       printActionBlock(
         {
           action: 'RETRY (1/1)',
-          from: { current: '1', total: 1 },
+          from: '1',
           command: 'npm run deploy:check',
-          result: false,
+          result: 'FAIL',
         },
         writer,
       );
@@ -193,10 +193,10 @@ describe('output formatter', () => {
       printActionBlock(
         {
           action: 'CONTINUE',
-          from: { current: '1', total: 5 },
+          from: '1',
           command: 'npm test',
-          result: true,
-          at: { current: '2', total: 5 },
+          result: 'PASS',
+          at: '2',
         },
         writer,
       );
@@ -213,8 +213,10 @@ describe('output formatter', () => {
       printActionBlock(
         {
           action: 'CONTINUE',
-          from: { current: '2', total: 5, for: { index: 2, end: 5 } },
-          result: true,
+          from: '2',
+          result: 'PASS',
+          forIndex: 2,
+          forEnd: 5,
         },
         writer,
       );
@@ -225,8 +227,9 @@ describe('output formatter', () => {
       printActionBlock(
         {
           action: 'CONTINUE',
-          from: { current: '2', total: 5, for: { index: 3 } },
-          result: true,
+          from: '2',
+          result: 'PASS',
+          forIndex: 3,
         },
         writer,
       );

@@ -37,14 +37,15 @@ type JsonPosition = {
  */
 interface JsonOutput {
   result?: boolean;
+  stepResult?: 'PASS' | 'FAIL';
   action?: string;
   message?: string;
   error?: string;
   code?: string;
   data?: Record<string, unknown>;
   items?: unknown[];
-  from?: JsonPosition;
-  to?: JsonPosition;
+  from?: JsonPosition | string;
+  at?: string;
   [key: string]: unknown;
 }
 
@@ -142,6 +143,7 @@ export class JSONRenderer implements OutputRenderer {
       case 'complete':
         this.output.result = true;
         this.output.action = 'complete';
+        this.output.complete = true;
         if (event.message) {
           this.output.message = event.message;
         }
@@ -152,6 +154,7 @@ export class JSONRenderer implements OutputRenderer {
       case 'stopped':
         this.output.result = false;
         this.output.action = 'stop';
+        this.output.stopped = true;
         if (event.message) {
           this.output.message = event.message;
         }
@@ -233,16 +236,16 @@ export class JSONRenderer implements OutputRenderer {
 
     this.output.action = block.action;
     if (block.result !== undefined) {
-      this.output.result = block.result;
+      this.output.stepResult = block.result;
     }
     if (block.command) {
       this.output.command = block.command;
     }
     if (block.from) {
-      this.output.from = this.toJsonPosition(block.from);
+      this.output.from = block.from;
     }
     if (block.at) {
-      this.output.to = this.toJsonPosition(block.at);
+      this.output.at = block.at;
     }
 
     if (event.complete) {

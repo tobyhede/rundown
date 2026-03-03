@@ -34,9 +34,9 @@ describe('RunbookEventV1 types', () => {
       seq: 2,
       payload: {
         action: 'CONTINUE',
-        from: { current: '1', total: 5 },
-        to: { current: '2', total: 5 },
-        result: true,
+        from: '1',
+        at: '2',
+        result: 'PASS',
       } satisfies StepTransitionedPayload,
     };
     expect(event.type).toBe('STEP_TRANSITIONED');

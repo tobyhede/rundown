@@ -37,9 +37,9 @@ describe('JSONSubscriber', () => {
         'STEP_TRANSITIONED',
         {
           action: 'CONTINUE',
-          from: { current: '1', total: 2 },
-          to: { current: '2', total: 2 },
-          result: true,
+          from: '1',
+          at: '2',
+          result: 'PASS',
         },
         2,
       ),
