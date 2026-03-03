@@ -102,14 +102,18 @@ async function executeSuiteCase(
         copyFileSync(resolve(suiteDir, ref), dest);
       } catch (err: unknown) {
         if (
-          !(
-            err instanceof Error &&
-            'code' in err &&
-            (err as NodeJS.ErrnoException).code === 'ENOENT'
-          )
+          err instanceof Error &&
+          'code' in err &&
+          (err as NodeJS.ErrnoException).code === 'ENOENT'
         ) {
-          throw err;
+          return {
+            passed: false,
+            scenario: caseName,
+            expected: effectiveResult,
+            actual: `CHILD_RUNBOOK_NOT_FOUND: ${ref}`,
+          };
         }
+        throw err;
       }
     }
 
