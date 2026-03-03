@@ -1,5 +1,5 @@
 ---
-name: FOR Break On Pass
+name: for-break-on-pass
 description: PASS BREAK exits the loop early when a substep passes.
 tags:
   - for-loops

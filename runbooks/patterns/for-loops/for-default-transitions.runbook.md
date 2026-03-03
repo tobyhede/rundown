@@ -1,5 +1,5 @@
 ---
-name: FOR Default Transitions
+name: for-default-transitions
 description: FOR loop substeps relying on default transitions (PASS CONTINUE, FAIL STOP).
 tags:
   - for-loops

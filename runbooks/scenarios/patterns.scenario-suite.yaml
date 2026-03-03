@@ -91,6 +91,34 @@ cases:
       - rd pass
     result: COMPLETE
 
+  # for-loops/
+  for-range-to-completed:
+    description: FOR loop iterates five times and completes
+    file: ../patterns/for-loops/for-range-to.runbook.md
+    commands:
+      - rd run for-range-to.runbook.md
+    result: COMPLETE
+
+  # prompts/
+  implicit-prompt-completed:
+    description: Pass both implicit prompt steps
+    file: ../patterns/prompts/implicit-prompt.runbook.md
+    commands:
+      - rd run --prompted implicit-prompt.runbook.md
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
+  # delegation/
+  delegate-basic-completed:
+    description: Pass both delegation steps
+    file: ../patterns/delegation/delegate-basic.runbook.md
+    commands:
+      - rd run --prompted delegate-basic.runbook.md
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
   # composition/
   step-runbook-list-completed:
     description: All child workflows pass

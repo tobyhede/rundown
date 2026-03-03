@@ -1,5 +1,5 @@
 ---
-name: FOR Next Iteration
+name: for-next-iteration
 description: FOR loop iteration advancement in prompted mode.
 tags:
   - for-loops

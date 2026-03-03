@@ -223,6 +223,11 @@ The iteration-aware identifier syntax encodes all positional context in a single
 
 Numeric-looking values (e.g., `1.1`) are coerced from YAML numbers to strings by the schema parser. Authors write `at: 1.1` without quotes.
 
+> **YAML quoting:** Step positions like `1.10` (step 1, substep 10) must be
+> quoted as `"1.10"` in YAML. Without quotes, YAML parses `1.10` as the
+> float `1.1`, which would fail to match the actual step position. This
+> applies to any `at`/`from` value where trailing zeros are significant.
+
 ### Schema Structure
 
 ```yaml

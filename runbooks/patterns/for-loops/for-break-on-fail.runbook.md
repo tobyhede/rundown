@@ -1,5 +1,5 @@
 ---
-name: FOR Break On Fail
+name: for-break-on-fail
 description: FAIL BREAK exits the loop early when a substep fails.
 tags:
   - for-loops

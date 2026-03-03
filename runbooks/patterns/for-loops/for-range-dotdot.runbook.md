@@ -1,5 +1,5 @@
 ---
-name: FOR Range DotDot
+name: for-range-dotdot
 description: FOR loop using 1..5 implicit range syntax.
 tags:
   - for-loops

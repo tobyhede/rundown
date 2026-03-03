@@ -80,8 +80,16 @@ async function executeSuiteCase(
     for (const ref of referenced) {
       try {
         copyFileSync(resolve(suiteDir, ref), join(runbooksDir, ref));
-      } catch {
-        /* non-fatal — command will fail with clear error */
+      } catch (err: unknown) {
+        if (
+          !(
+            err instanceof Error &&
+            'code' in err &&
+            (err as NodeJS.ErrnoException).code === 'ENOENT'
+          )
+        ) {
+          throw err;
+        }
       }
     }
 

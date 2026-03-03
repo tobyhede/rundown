@@ -1,5 +1,5 @@
 ---
-name: FOR Nested Transitions
+name: for-nested-transitions
 description: Iteration results aggregate to parent step transitions with PASS ALL and FAIL ANY.
 tags:
   - for-loops

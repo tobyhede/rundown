@@ -1,5 +1,5 @@
 ---
-name: FOR Retry In Iteration
+name: for-retry-in-iteration
 description: RETRY within a FOR loop iteration retries the substep before advancing.
 tags:
   - for-loops

@@ -1,5 +1,5 @@
 ---
-name: FOR Variable Source
+name: for-variable-source
 description: FOR loop iterating over a variable data source.
 tags:
   - for-loops

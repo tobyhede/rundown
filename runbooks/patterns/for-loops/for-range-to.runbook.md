@@ -1,5 +1,5 @@
 ---
-name: FOR Range TO
+name: for-range-to
 description: FOR loop using 1 TO 5 range syntax with five iterations.
 tags:
   - for-loops
