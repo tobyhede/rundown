@@ -5,7 +5,7 @@ How Rundown orchestrates work through agents. This document covers the five orch
 **Related docs:**
 - [RUNDOWN.md](./RUNDOWN.md) - CLI reference including subagent commands
 - [SPEC.md](./SPEC.md) - Rundown format specification (steps, substeps, transitions)
-- [PATTERNS.md](./PATTERNS.md) - Concrete runbook pattern examples
+- [runbooks/patterns/](../runbooks/patterns/) - Concrete runbook pattern examples
 
 ---
 
@@ -141,23 +141,23 @@ Verify test coverage and assertions.
 **Command sequence:**
 
 ```bash
-# Parent queues substep
-rd run --step 2.1
+# Parent delegates substep to child runbook
+rd delegate <runbook> --step 2.1
 
-# Subagent binds to pending step
-rd run --agent subagent-abc
+# Subagent claims the delegation token
+rd claim <token>
 
 # Subagent works, then reports result
-rd pass --agent subagent-abc
+rd pass
 ```
 
 Agent type context injection is driven by runtime hook events — see [Context File Discovery](#context-file-discovery).
 
 **Dispatch frontier and identity:**
-- `run --step` requires a parseable step identifier; when the active step has substeps, step-only dispatch (`N`) is rejected and `N.M` is required.
-- `run --step` accepts an optional runbook argument. When omitted, child runbook path is inferred only if the targeted substep has exactly one workflow.
+- `delegate --step` requires a parseable step identifier; when the active step has substeps, step-only dispatch (`N`) is rejected and `N.M` is required.
+- `delegate <runbook> --step <id>` takes the child runbook as a required positional argument.
 - Plugin Step/Task dispatch must include a parseable identifier prefix (for example `1.2 - Review` or `ErrorHandler: Recover`).
-- `run --step` is constrained to the active step frontier.
+- `delegate --step` is constrained to the active step frontier.
 - If the active step is in a FOR loop, queueing is constrained to the active iteration frontier.
 - Canonical target identity is `step + substep + iteration`.
 - Display path (`STEP.INDEX.SUBSTEP`, e.g. `2.3.1`) is output-only.
@@ -292,7 +292,7 @@ STATUS: FAIL
 | `FAIL` | Agent encountered issues or rejected the work |
 | `BLOCKED` | Agent could not proceed (used in plan execution) |
 
-The plugin parses this from agent output and translates it to `rd pass --agent <id>` or `rd fail --agent <id>`. See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
+The plugin parses this from agent output and translates it to `rd pass` or `rd fail` within the child runbook context. See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
 
 Routing behavior:
 - Agent completion and plain `pass/fail` share one record-and-drain transition path.

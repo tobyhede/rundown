@@ -56,7 +56,6 @@ interface StatusDetailData {
   step?: { name: string; description?: string };
   lastAction?: { action: string; result?: 'PASS' | 'FAIL' };
   pending?: string[];
-  agents?: Record<string, { step: string; status: string; result?: string }>;
   delegations?: { substep: string; runbook: string; state: string; childRunId?: string }[];
 }
 
@@ -224,7 +223,6 @@ export class TextRenderer implements OutputRenderer {
       step,
       lastAction,
       pending,
-      agents,
       delegations,
     } = data as StatusDetailData;
 
@@ -274,15 +272,6 @@ export class TextRenderer implements OutputRenderer {
     // Show pending steps
     if (pending && pending.length > 0) {
       this.writer.writeLine(`\nPending: ${pending.join(', ')}`);
-    }
-
-    // Show agent bindings
-    if (agents && Object.keys(agents).length > 0) {
-      this.writer.writeLine('\nAgents:');
-      for (const [agentId, binding] of Object.entries(agents)) {
-        const resultStr = binding.result ? ` (${binding.result})` : '';
-        this.writer.writeLine(`  ${agentId}: ${binding.step} [${binding.status}]${resultStr}`);
-      }
     }
 
     // Show delegations
