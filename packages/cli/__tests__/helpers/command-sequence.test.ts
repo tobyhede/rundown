@@ -241,8 +241,10 @@ describe('substituteTokens', () => {
     );
   });
 
-  it('${TOKEN_0} is not matched (literal passthrough)', () => {
-    expect(substituteTokens('rd claim ${TOKEN_0}', ['abc'])).toBe('rd claim ${TOKEN_0}');
+  it('${TOKEN_0} throws (token numbering is 1-based)', () => {
+    expect(() => substituteTokens('rd claim ${TOKEN_0}', ['abc'])).toThrow(
+      /references uncaptured token/,
+    );
   });
 
   it('returns original string unchanged when no placeholders', () => {

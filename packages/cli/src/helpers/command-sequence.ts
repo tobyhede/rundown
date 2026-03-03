@@ -82,7 +82,7 @@ export function injectJsonFlag(args: string[]): string[] {
  */
 export function substituteTokens(cmd: string, tokens: string[]): string {
   return cmd.replace(
-    /\$\{TOKEN(?:_([1-9]\d*))?\}/g,
+    /\$\{TOKEN(?:_(\d+))?\}/g,
     (match: string, indexStr: string | undefined) => {
       const idx = indexStr ? parseInt(indexStr, 10) - 1 : 0; // ${TOKEN} = index 0, ${TOKEN_2} = index 1
       if (idx < 0 || idx >= tokens.length) {
