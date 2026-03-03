@@ -28,6 +28,7 @@ import { drainResolvedCompletions, runExecutionLoop } from '../services/executio
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { createPassTransitionConfig, createFailTransitionConfig } from './transitions.js';
+import type { TransitionOrchestrationPolicy } from './transition-orchestrator.js';
 
 /** Maximum recursion depth for cascading propagation. */
 const MAX_PROPAGATION_DEPTH = 32;
@@ -130,6 +131,13 @@ export async function handleDelegationCompletion(
   const transitionConfig =
     result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
 
+  // Delegation-specific: never pop during drain.
+  // Session is managed explicitly below and by runExecutionLoop.
+  const delegationPolicy: TransitionOrchestrationPolicy = {
+    onComplete: { popRunbook: false },
+    onStopped: { popRunbook: false },
+  };
+
   const parentActorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
@@ -153,12 +161,13 @@ export async function handleDelegationCompletion(
     runbookId: parentRunId,
     steps: parentSteps,
     currentState: parentState,
-    transitionPolicy: transitionConfig.policy,
+    transitionPolicy: delegationPolicy,
     computeActionResult: transitionConfig.computeActionResult,
   });
 
   // 8. Check if parent reached terminal state — cascade if it also has delegation linkage
   if (drained.status === 'stopped') {
+    await sessionService.popRunbook();
     const freshParent = await manager.load(parentRunId);
     if (freshParent?.delegation) {
       await handleDelegationCompletion(freshParent, 'fail', cwd, output, depth + 1);
@@ -168,6 +177,7 @@ export async function handleDelegationCompletion(
   }
 
   if (drained.status === 'done') {
+    await sessionService.popRunbook();
     const freshParent = await manager.load(parentRunId);
     if (freshParent?.delegation) {
       return handleDelegationCompletion(freshParent, 'pass', cwd, output, depth + 1);

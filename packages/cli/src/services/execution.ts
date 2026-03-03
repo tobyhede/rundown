@@ -17,6 +17,7 @@ import {
   SessionService,
   ExecutionLifecycleService,
   ForIterationService,
+  logger,
   type Step,
   type Substep,
   type RunbookMetadata,
@@ -392,8 +393,22 @@ export async function drainResolvedCompletions({
     });
     applied += 1;
 
-    if (transitionResult.status === 'done') return { status: 'done', unresolved: 0, applied };
-    if (transitionResult.status === 'stopped') return { status: 'stopped', unresolved: 0, applied };
+    if (transitionResult.status === 'done' || transitionResult.status === 'stopped') {
+      // Defense-in-depth: warn if terminal status reached with unresolved substeps
+      const remainingUnresolved = orderedSubsteps.filter((id) => !resolvedBySubstep.has(id)).length;
+      if (remainingUnresolved > 0) {
+        void logger.warn('drainResolvedCompletions: terminal status with unresolved substeps', {
+          runbookId,
+          stepName: currentStep.name,
+          status: transitionResult.status,
+          substepCount: orderedSubsteps.length,
+          resolvedCount: resolvedBySubstep.size,
+          unresolvedCount: remainingUnresolved,
+          appliedSubstep: state.substep,
+        });
+      }
+      return { status: transitionResult.status, unresolved: 0, applied };
+    }
     state = transitionResult.state;
   }
 }

@@ -24,6 +24,7 @@ import { drainResolvedCompletions, runExecutionLoop } from '../services/executio
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import { createFailTransitionConfig } from '../helpers/transitions.js';
 import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
+import type { TransitionOrchestrationPolicy } from '../helpers/transition-orchestrator.js';
 
 /**
  * Propagates a force-abort by draining resolved completions on the parent
@@ -44,6 +45,14 @@ async function propagateForceAbort(
   output: OutputEmitter,
 ): Promise<void> {
   const transitionConfig = createFailTransitionConfig();
+
+  // Delegation-specific: never pop during drain.
+  // Session is managed explicitly below and by runExecutionLoop.
+  const delegationPolicy: TransitionOrchestrationPolicy = {
+    onComplete: { popRunbook: false },
+    onStopped: { popRunbook: false },
+  };
+
   const parentActorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
@@ -64,12 +73,13 @@ async function propagateForceAbort(
     runbookId: parentRunId,
     steps: parentSteps,
     currentState: reloadedParent,
-    transitionPolicy: transitionConfig.policy,
+    transitionPolicy: delegationPolicy,
     computeActionResult: transitionConfig.computeActionResult,
   });
 
   // If drain advanced to terminal, cascade propagation
   if (drained.status === 'done' || drained.status === 'stopped') {
+    await sessionService.popRunbook();
     const cascadeParent = await manager.load(parentRunId);
     if (cascadeParent?.delegation) {
       const cascadeResult: 'pass' | 'fail' = drained.status === 'done' ? 'pass' : 'fail';

@@ -1310,10 +1310,21 @@ function buildActionTransition(
   switch (action.type) {
     case 'CONTINUE':
       return buildContinueTransition(stepName, substepId, steps, resultKind);
-    case 'COMPLETE':
+    case 'COMPLETE': {
+      // Defense-in-depth: if at a non-last substep, defer to parent aggregation
+      // rather than bypassing it with a direct terminal transition.
+      if (substepId && !isLastSubstepOfStep(stepName, substepId, steps)) {
+        return buildContinueTransition(stepName, substepId, steps, resultKind);
+      }
       return buildTerminalTransition('COMPLETE', 'COMPLETE', action.message);
-    case 'STOP':
+    }
+    case 'STOP': {
+      // Defense-in-depth: if at a non-last substep, defer to parent aggregation.
+      if (substepId && !isLastSubstepOfStep(stepName, substepId, steps)) {
+        return buildContinueTransition(stepName, substepId, steps, resultKind);
+      }
       return buildTerminalTransition('STOPPED', 'STOP', action.message);
+    }
     case 'GOTO':
       return buildGotoTransition(action.target, stepName, substepId, steps, sources);
     case 'NEXT':
