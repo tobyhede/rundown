@@ -10,7 +10,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 }));
 
 // Mock execution service for isValidResult
-jest.unstable_mockModule('../../src/services/execution', () => ({
+jest.unstable_mockModule('../../src/services/execution.js', () => ({
   isValidResult: jest.fn((r: string) => r === 'pass' || r === 'fail'),
 }));
 
@@ -70,6 +70,7 @@ describe('executeEchoLogic', () => {
     const result = await executeEchoLogic(['fail'], ['hello'], '/tmp');
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(1);
+    expect(result.output).toBe('hello');
   });
 
   it('selects result based on retry count', async () => {

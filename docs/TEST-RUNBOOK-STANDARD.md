@@ -20,7 +20,7 @@ This document defines the conventions for authoring test runbooks and scenarios.
 
 ## Directory Structure
 
-```
+```text
 runbooks/patterns/
   transitions/       # PASS/FAIL, CONTINUE/STOP/COMPLETE, defaults, ALL/ANY
   retries/           # RETRY N, exhaustion actions, counter reset
@@ -40,13 +40,13 @@ Each directory groups runbooks by the Rundown feature they exercise. Directories
 
 Filenames are descriptive of the feature and behavior, using kebab-case:
 
-```
+```text
 <feature>-<behavior>.runbook.md
 ```
 
 Examples:
 
-```
+```text
 for-break-on-fail.runbook.md
 retry-exhaustion-goto.runbook.md
 goto-named-step.runbook.md
@@ -173,7 +173,8 @@ auto-execution:
   description: Code block determines pass/fail automatically
   commands:
     - rd run for-break-on-fail.runbook.md
-  result: STOP
+  expect:
+    result: STOP
 ```
 
 ## Assertion Model
@@ -203,7 +204,7 @@ In the Rundown syntax, `PASS: CONTINUE` on a substep inside a FOR loop means "co
 
 Example transition stream for a 3-iteration FOR loop where all pass:
 
-```
+```js
 { at: 1.1.1, action: NEXT, result: PASS }    # iteration 1 -> 2
 { at: 1.2.1, action: NEXT, result: PASS }    # iteration 2 -> 3
 { at: 1.3.1, action: COMPLETE, result: PASS } # iteration 3 -> parent resolves
@@ -221,7 +222,7 @@ The iteration-aware identifier syntax encodes all positional context in a single
 | `ErrorHandler` | Named step |
 | `ErrorHandler.1` | Named step, substep 1 |
 
-Numeric-looking values (e.g., `1.1`) are coerced from YAML numbers to strings by the schema parser. Authors write `at: 1.1` without quotes.
+Numeric-looking values (e.g., `1.1`) should be quoted to prevent YAML 1.2 from parsing them as floats. Without quotes, trailing zeros are lost (`1.10` becomes `1.1`). Authors should write `at: "1.1"` and quote any numeric-looking identifiers (`from`, `to`, etc.).
 
 > **YAML quoting:** Step positions like `1.10` (step 1, substep 10) must be
 > quoted as `"1.10"` in YAML. Without quotes, YAML parses `1.10` as the
@@ -235,11 +236,11 @@ expect:
   result: COMPLETE              # Terminal outcome (required)
 
   steps:                        # Transition assertions (optional, ordered)
-    - at: 1.1
-      from: 1
+    - at: "1.1"
+      from: "1"
       action: CONTINUE
       result: PASS
-    - at: 3                     # Last entry serves as terminal assertion
+    - at: "3"                   # Last entry serves as terminal assertion
       action: COMPLETE
       result: PASS
 ```
@@ -257,7 +258,7 @@ This means you do not have to assert on every transition -- just the ones releva
 ```yaml
 # Skips iterations 1 and 2, matches the BREAK on iteration 3
 steps:
-  - at: 1.3.1
+  - at: "1.3.1"
     action: BREAK
 ```
 
@@ -269,10 +270,10 @@ steps:
 expect:
   result: STOP
   steps:
-    - at: 1.3.1
+    - at: "1.3.1"
       result: FAIL
       action: BREAK
-    - at: 1
+    - at: "1"
       action: STOP
 ```
 
@@ -282,10 +283,10 @@ expect:
 expect:
   result: COMPLETE
   steps:
-    - at: 1
+    - at: "1"
       result: FAIL
       action: RETRY
-    - at: 1
+    - at: "1"
       result: PASS
       action: COMPLETE
 ```
@@ -297,7 +298,7 @@ expect:
   result: COMPLETE
   steps:
     - at: ErrorHandler
-      from: 1
+      from: "1"
       action: GOTO
       result: FAIL
     - at: ErrorHandler
