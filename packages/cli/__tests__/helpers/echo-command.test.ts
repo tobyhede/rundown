@@ -10,7 +10,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 }));
 
 // Mock execution service for isValidResult
-jest.unstable_mockModule('../../src/services/execution', () => ({
+jest.unstable_mockModule('../../src/services/execution.js', () => ({
   isValidResult: jest.fn((r: string) => r === 'pass' || r === 'fail'),
 }));
 

@@ -15,8 +15,10 @@ describe('createBridgedEmitter', () => {
       retryCount: 0,
       variables: {},
       steps: [],
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       ...overrides,
-    } as RunbookState;
+    };
   }
 
   function makeOutput(): {
