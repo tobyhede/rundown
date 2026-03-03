@@ -132,6 +132,7 @@ The `rd` command is an alias for `rundown`.
 | `rundown echo` | Test helper: echo with configurable result |
 | `rundown prune` | Remove stale runbook state files |
 | `rundown scenario <cmd>` | List, show, or run scenarios |
+| `rundown scenario-suite <cmd>` | List, show, or run scenario suite cases |
 | `rundown prompt <content>` | Output content in markdown fences |
 | `rundown delegate <runbook> --step <id>` | Delegate substep to child runbook |
 | `rundown claim <token>` | Claim a delegation token and launch child |

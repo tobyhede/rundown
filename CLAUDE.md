@@ -47,10 +47,10 @@ rundown scenario ls <file>           # List scenarios in a runbook
 rundown scenario show <file> <name>  # Show scenario details
 rundown scenario run <file> <name>   # Run a scenario
 rundown scenario run <file> <name> -q  # Run scenario (suppress output)
-rundown prompt <content> # Output content in markdown fences
 rundown scenario-suite ls <suite-file>           # List cases in a scenario suite
 rundown scenario-suite show <suite-file> <case>  # Show case details
 rundown scenario-suite run <suite-file> [case]   # Run a case (or all with --all)
+rundown prompt <content> # Output content in markdown fences
 rundown delegate <runbook> --step <id>  # Delegate substep to child runbook
 rundown delegate <runbook> --step <id> --var key=value  # With variables
 rundown claim <token>                   # Claim a delegation token and launch child
