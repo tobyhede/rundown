@@ -112,9 +112,10 @@ The `rd` command is an alias for `rundown`.
 
 | Command | Description |
 |---------|-------------|
-| `rundown run <file>` | Start a runbook |
-| `rundown run <file> --var key=value` | Set template variable (repeatable) |
-| `rundown run <file> --var-file path` | Load variables from YAML file |
+| `rundown run [file]` | Start a runbook |
+| `rundown run [file] --var key=value` | Set template variable (repeatable) |
+| `rundown run [file] --var-file path` | Load variables from YAML file |
+| `rundown run [file] --prompted` | Show commands without auto-executing |
 | `rundown pass` | Mark current step as passed (evaluates PASS condition) |
 | `rundown fail` | Mark current step as failed (evaluates FAIL condition) |
 | `rundown goto <n>` | Jump to step number |
@@ -131,7 +132,11 @@ The `rd` command is an alias for `rundown`.
 | `rundown echo` | Test helper: echo with configurable result |
 | `rundown prune` | Remove stale runbook state files |
 | `rundown scenario <cmd>` | List, show, or run scenarios |
+| `rundown scenario-suite <cmd>` | List, show, or run scenario suite cases |
 | `rundown prompt <content>` | Output content in markdown fences |
+| `rundown delegate <runbook> --step <id>` | Delegate substep to child runbook |
+| `rundown claim <token>` | Claim a delegation token and launch child |
+| `rundown abort <token>` | Cancel a delegation token |
 
 ## Packages
 
@@ -146,11 +151,17 @@ The `rd` command is an alias for `rundown`.
 ## Documentation
 
 - [SPEC.md](docs/SPEC.md) - Rundown format specification
+- [FORMAT.md](docs/FORMAT.md) - Formal BNF-style grammar
 - [MCP.md](docs/MCP.md) - MCP server reference
 - [SECURITY.md](docs/SECURITY.md) - Security policy configuration
 - [RUNDOWN.md](docs/RUNDOWN.md) - Rundown internal architecture
+- [CLI-OUTPUT-SPEC.md](docs/CLI-OUTPUT-SPEC.md) - CLI output format specification
+- [SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
 - [AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
 - [PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
+- [DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
+- [TEST-RUNBOOK-STANDARD.md](docs/TEST-RUNBOOK-STANDARD.md) - Declarative test runbook standard
+- [Runbook Patterns](runbooks/patterns/README.md) - Runbook authoring patterns
 
 ## Contributing
 
