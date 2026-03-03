@@ -92,7 +92,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-artifacts-node${{ matrix.node-version }}
-          path: .
+          path: packages
 
       - name: Type-checked lint (ESLint)
         run: npm run lint:typed
@@ -121,7 +121,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-artifacts-node${{ matrix.node-version }}
-          path: .
+          path: packages
 
       - name: Test with coverage
         run: npm run test:coverage
@@ -151,7 +151,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-artifacts-node22
-          path: .
+          path: packages
 
       - name: Install Playwright Chromium
         run: npx playwright install chromium --with-deps
