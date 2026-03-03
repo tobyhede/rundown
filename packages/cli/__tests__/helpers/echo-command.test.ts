@@ -70,6 +70,7 @@ describe('executeEchoLogic', () => {
     const result = await executeEchoLogic(['fail'], ['hello'], '/tmp');
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(1);
+    expect(result.output).toBe('hello');
   });
 
   it('selects result based on retry count', async () => {
