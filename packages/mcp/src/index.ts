@@ -57,12 +57,10 @@ function createServer(): McpServer {
     'status',
     {
       description: 'Get runbook state',
-      inputSchema: { agent: z.string().optional() },
+      inputSchema: {},
     },
-    async (args) => {
-      const cmd = ['status'];
-      if (args.agent) cmd.push('--agent', args.agent);
-      return toResponse(await runCli(cmd));
+    async () => {
+      return toResponse(await runCli(['status']));
     },
   );
 
@@ -72,16 +70,12 @@ function createServer(): McpServer {
       description: 'Start runbook',
       inputSchema: {
         file: z.string().optional(),
-        step: z.string().optional(),
-        agent: z.string().optional(),
         prompted: z.boolean().optional(),
       },
     },
     async (args) => {
       const cmd = ['run'];
       if (args.file) cmd.push(args.file);
-      if (args.step) cmd.push('--step', args.step);
-      if (args.agent) cmd.push('--agent', args.agent);
       if (args.prompted) cmd.push('--prompted');
       return toResponse(await runCli(cmd));
     },
@@ -91,12 +85,10 @@ function createServer(): McpServer {
     'pass',
     {
       description: 'Mark step passed',
-      inputSchema: { agent: z.string().optional() },
+      inputSchema: {},
     },
-    async (args) => {
-      const cmd = ['pass'];
-      if (args.agent) cmd.push('--agent', args.agent);
-      return toResponse(await runCli(cmd));
+    async () => {
+      return toResponse(await runCli(['pass']));
     },
   );
 
@@ -104,12 +96,10 @@ function createServer(): McpServer {
     'fail',
     {
       description: 'Mark step failed',
-      inputSchema: { agent: z.string().optional() },
+      inputSchema: {},
     },
-    async (args) => {
-      const cmd = ['fail'];
-      if (args.agent) cmd.push('--agent', args.agent);
-      return toResponse(await runCli(cmd));
+    async () => {
+      return toResponse(await runCli(['fail']));
     },
   );
 

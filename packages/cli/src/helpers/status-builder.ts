@@ -134,7 +134,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
  * Build status data for an active runbook.
  *
  * Resolves current step, builds action block data, collects pending steps
- * and agent bindings.
+ * and delegations.
  *
  * @param activeState - The active runbook state
  * @param cwd - Current working directory (for step resolution)
