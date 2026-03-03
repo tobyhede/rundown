@@ -204,7 +204,7 @@ In the Rundown syntax, `PASS: CONTINUE` on a substep inside a FOR loop means "co
 
 Example transition stream for a 3-iteration FOR loop where all pass:
 
-```json
+```js
 { at: 1.1.1, action: NEXT, result: PASS }    # iteration 1 -> 2
 { at: 1.2.1, action: NEXT, result: PASS }    # iteration 2 -> 3
 { at: 1.3.1, action: COMPLETE, result: PASS } # iteration 3 -> parent resolves
