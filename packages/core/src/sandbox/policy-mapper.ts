@@ -117,11 +117,7 @@ function isWithinRoot(candidate: string, root: string): boolean {
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..');
 }
 
-function selectExpansionRoots(
-  roots: string[],
-  repoRoot: string,
-  cwd: string,
-): string[] {
+function selectExpansionRoots(roots: string[], repoRoot: string, cwd: string): string[] {
   return [...new Set(roots)].filter((root) => {
     return isWithinRoot(root, repoRoot) || isWithinRoot(root, cwd);
   });

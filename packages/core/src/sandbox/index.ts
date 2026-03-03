@@ -88,16 +88,16 @@ export async function checkSandboxAvailability(): Promise<SandboxAvailability> {
   }
 
   // Unsupported platform
-    return {
-      available: false,
-      mechanism: 'none',
-      reason: `Sandbox not supported on platform: ${platform}. Use WSL on Windows.`,
-      platform,
-      supportsReadRestrictions: false,
-      supportsWriteRestrictions: false,
-      supportsDenyPaths: false,
-    };
-  }
+  return {
+    available: false,
+    mechanism: 'none',
+    reason: `Sandbox not supported on platform: ${platform}. Use WSL on Windows.`,
+    platform,
+    supportsReadRestrictions: false,
+    supportsWriteRestrictions: false,
+    supportsDenyPaths: false,
+  };
+}
 
 /**
  * Execute a command with OS-level sandbox restrictions.

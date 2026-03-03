@@ -892,19 +892,15 @@ describe('resolveVariables', () => {
       await fs.writeFile(file, 'SECRET=value\n');
 
       await expect(
-        resolveVariables(
-          { var: [`data=file:${file}`] },
-          tmpDir,
-          {
-            evaluator: {
-              checkPath: jest.fn().mockReturnValue({
-                allowed: false,
-                requiresPrompt: false,
-                reason: 'Path blocked by policy',
-              }),
-            } as any,
-          },
-        ),
+        resolveVariables({ var: [`data=file:${file}`] }, tmpDir, {
+          evaluator: {
+            checkPath: jest.fn().mockReturnValue({
+              allowed: false,
+              requiresPrompt: false,
+              reason: 'Path blocked by policy',
+            }),
+          } as any,
+        }),
       ).rejects.toBeInstanceOf(FileSourcePolicyError);
     });
 
@@ -922,11 +918,10 @@ describe('resolveVariables', () => {
         requestPermission: jest.fn().mockResolvedValue({ granted: true, persist: false }),
       };
 
-      const result = await resolveVariables(
-        { var: [`data=file:${file}`] },
-        tmpDir,
-        { evaluator: evaluator as any, prompter: prompter as any },
-      );
+      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir, {
+        evaluator: evaluator as any,
+        prompter: prompter as any,
+      });
 
       expect(prompter.requestPermission).toHaveBeenCalledWith(
         'read',
@@ -945,19 +940,15 @@ describe('resolveVariables', () => {
       await fs.writeFile(file, 'ok\n');
 
       await expect(
-        resolveVariables(
-          { var: [`data=file:${file}`] },
-          tmpDir,
-          {
-            evaluator: {
-              checkPath: jest.fn().mockReturnValue({
-                allowed: false,
-                requiresPrompt: true,
-                reason: 'Prompt before read',
-              }),
-            } as any,
-          },
-        ),
+        resolveVariables({ var: [`data=file:${file}`] }, tmpDir, {
+          evaluator: {
+            checkPath: jest.fn().mockReturnValue({
+              allowed: false,
+              requiresPrompt: true,
+              reason: 'Prompt before read',
+            }),
+          } as any,
+        }),
       ).rejects.toThrow('Prompt before read');
     });
   });

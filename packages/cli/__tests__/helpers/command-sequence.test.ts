@@ -97,7 +97,8 @@ describe('parseJsonLines', () => {
   });
 
   it('extracts token from delegate response', () => {
-    const stdout = '{"action":"delegated","step":"1.1","runbook":"child.runbook.md","token":"rdtk_abc123","token_hash":"sha256:xyz","parent_run_id":"run-1"}\n';
+    const stdout =
+      '{"action":"delegated","step":"1.1","runbook":"child.runbook.md","token":"rdtk_abc123","token_hash":"sha256:xyz","parent_run_id":"run-1"}\n';
     const result = parseJsonLines(stdout);
     expect(result.tokens).toHaveLength(1);
     expect(result.tokens[0]).toBe('rdtk_abc123');

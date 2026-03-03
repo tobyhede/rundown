@@ -103,7 +103,12 @@ export function substituteTokens(cmd: string, tokens: string[]): string {
  */
 async function runCommandWithTee(
   command: { kind: 'rd'; args: string[] } | { kind: 'shell'; cmd: string },
-  options: { cwd: string; quiet: boolean; cliPath: string; env?: Record<string, string | undefined> },
+  options: {
+    cwd: string;
+    quiet: boolean;
+    cliPath: string;
+    env?: Record<string, string | undefined>;
+  },
 ): Promise<{ stdout: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
@@ -391,7 +396,6 @@ export async function executeCommandSequence(
         throw new Error(`Shell command failed with exit code ${String(result.exitCode)}: ${cmd}`);
       }
     }
-
   }
 
   return { terminalResult, transitions, capturedTokens };

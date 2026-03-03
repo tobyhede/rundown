@@ -141,7 +141,12 @@ function wireMocks(manager: any, lifecycleService: any): void {
   MockManager.mockImplementation(() => manager);
   MockLifecycle.mockImplementation(() => lifecycleService);
   MockActor.mockImplementation(() => ({}) as any);
-  MockSession.mockImplementation(() => ({}) as any);
+  MockSession.mockImplementation(
+    () =>
+      ({
+        popRunbook: jest.fn().mockResolvedValue(null),
+      }) as any,
+  );
 }
 
 beforeEach(() => {
@@ -442,6 +447,95 @@ describe('handleDelegationCompletion', () => {
     // Should not even acquire lock
     const MockLock = core.DelegationLock as jest.MockedClass<typeof core.DelegationLock>;
     expect(MockLock).not.toHaveBeenCalled();
+  });
+
+  it('passes delegation-specific popRunbook:false policy to drain', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const _lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    wireMocks(manager, lifecycleService);
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'continue',
+      applied: 0,
+      state: parentState,
+    });
+
+    await handleDelegationCompletion(childState, 'pass', '/test', output);
+
+    expect(drainResolvedCompletions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transitionPolicy: {
+          onComplete: { popRunbook: false },
+          onStopped: { popRunbook: false },
+        },
+      }),
+    );
+  });
+
+  it('explicitly pops session when drain returns done', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const _lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    wireMocks(manager, lifecycleService);
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'done',
+      applied: 1,
+      state: parentState,
+    });
+
+    await handleDelegationCompletion(childState, 'pass', '/test', output);
+
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
+    const sessionInstance = MockSession.mock.results[0]?.value;
+    expect(sessionInstance.popRunbook).toHaveBeenCalled();
+  });
+
+  it('explicitly pops session when drain returns stopped', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const _lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    wireMocks(manager, lifecycleService);
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'stopped',
+      applied: 1,
+      state: parentState,
+    });
+
+    await handleDelegationCompletion(childState, 'fail', '/test', output);
+
+    const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
+    const sessionInstance = MockSession.mock.results[0]?.value;
+    expect(sessionInstance.popRunbook).toHaveBeenCalled();
   });
 
   it('uses fail transition config when result is fail', async () => {

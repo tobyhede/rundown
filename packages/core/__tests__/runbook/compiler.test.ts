@@ -5024,6 +5024,265 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('COMPLETE');
       expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'COMPLETE' });
     });
+
+    describe('2-substep delegation bug scenarios', () => {
+      it('Test A: explicit CONTINUE substeps with PASS ALL: COMPLETE parent — PASS 1.1 advances to 1.2', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+            ],
+          },
+        ];
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        actor.send({ type: 'PASS' }); // 1.1 passes -> should advance to 1.2, NOT COMPLETE
+
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
+      });
+
+      it('Test B: explicit CONTINUE substeps with PASS ALL: COMPLETE parent — PASS both completes', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+            ],
+          },
+        ];
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        actor.send({ type: 'PASS' }); // 1.1 passes -> 1.2
+        actor.send({ type: 'PASS' }); // 1.2 passes -> parent -> PASS ALL -> COMPLETE
+
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'COMPLETE' });
+      });
+
+      it('Test C: explicit CONTINUE substeps with PASS ALL: COMPLETE parent — PASS then FAIL stops', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+            ],
+          },
+        ];
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        actor.send({ type: 'PASS' }); // 1.1 passes -> 1.2
+        actor.send({ type: 'FAIL' }); // 1.2 fails -> parent -> ALL failed -> STOP
+
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('Test D: no explicit substep transitions (inferred defaults) with PASS ALL: COMPLETE parent — PASS 1.1 advances to 1.2', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                // No transitions — rely on compiler inferring DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                // No transitions — rely on compiler inferring DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS
+              },
+            ],
+          },
+        ];
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        actor.send({ type: 'PASS' }); // 1.1 passes -> should advance to 1.2, NOT COMPLETE
+
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
+      });
+
+      it('Test E: substep with explicit COMPLETE transition defers to parent aggregation on non-last substep', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ];
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 has explicit COMPLETE, but defense-in-depth defers to parent aggregation
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 is last substep — COMPLETE goes through parent aggregation → COMPLETE
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('Test F: substep with explicit STOP transition defers to parent aggregation on non-last substep', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ];
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 has explicit STOP on fail, but defense-in-depth defers to parent
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 has STOP on fail — goes through parent aggregation → STOPPED
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+    });
   });
 
   describe('retry state architecture', () => {
@@ -5830,9 +6089,7 @@ echo "processing"
           name: '1',
           description: 'FOR step',
           forClause: { start: 1, end: 2 },
-          substeps: [
-            { id: '1', description: 'Check item' },
-          ],
+          substeps: [{ id: '1', description: 'Check item' }],
         },
         {
           name: '2',

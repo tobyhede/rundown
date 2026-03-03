@@ -485,7 +485,11 @@ async function enforceFileSourcePolicy(
   }
 
   if (decision.requiresPrompt && security.prompter) {
-    const prompt = await security.prompter.requestPermission('read', canonicalPath, decision.reason);
+    const prompt = await security.prompter.requestPermission(
+      'read',
+      canonicalPath,
+      decision.reason,
+    );
     if (prompt.granted) {
       return;
     }
