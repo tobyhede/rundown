@@ -35,11 +35,16 @@ import { resolveRunbookFile } from './resolve-runbook.js';
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
-import { extractVarsFromMarkdown, resolveVariables } from '../services/variable-discovery.js';
+import {
+  FileSourcePolicyError,
+  extractVarsFromMarkdown,
+  resolveVariables,
+} from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
   expandForClauseVariables,
 } from '../services/template-renderer.js';
+import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
 
 /**
  * Variable options from CLI flags.
@@ -219,10 +224,35 @@ export async function prepareRunbook(
 
   const rawContent = await fs.readFile(filePath, 'utf8');
   const frontmatterVars = extractVarsFromMarkdown(rawContent);
-  const { vars: mergedVariables, sources } = await resolveVariables(
-    { varFile: varOpts.varFile, var: varOpts.var, frontmatterVars },
-    cwd,
-  );
+  let mergedVariables: Record<string, string>;
+  let sources: Record<string, DataSource>;
+  try {
+    const resolvedVariables = await resolveVariables(
+      { varFile: varOpts.varFile, var: varOpts.var, frontmatterVars },
+      cwd,
+      {
+        evaluator: getPolicyEvaluator(),
+        prompter: getPolicyPrompter(),
+      },
+    );
+    mergedVariables = { ...resolvedVariables.vars };
+    sources = { ...resolvedVariables.sources };
+  } catch (error) {
+    if (error instanceof FileSourcePolicyError) {
+      return {
+        ok: false,
+        error: error.message,
+        code: error.code,
+        details: {
+          runbook: file,
+          variable: error.variable,
+          filePath: error.filePath,
+          reason: error.reason,
+        },
+      };
+    }
+    throw error;
+  }
   const templateVars: Record<string, string> = {
     ...mergedVariables,
     ...buildContextVars(mergedVariables),

@@ -71,6 +71,7 @@ describe('SeatbeltSandbox', () => {
       expect(availability.platform).toBe('darwin');
       expect(availability.supportsReadRestrictions).toBe(true);
       expect(availability.supportsWriteRestrictions).toBe(true);
+      expect(availability.supportsDenyPaths).toBe(true);
     });
 
     it('caches availability result', async () => {
@@ -113,7 +114,9 @@ describe('SeatbeltSandbox', () => {
       repoRoot: '/test/repo',
       readOnlyPaths: ['/test/read'],
       readWritePaths: ['/test/write'],
+      denyPatterns: [],
       denyPaths: [],
+      env: { PATH: '/usr/bin', HOME: '/Users/test' },
     };
 
     it('executes command successfully', async () => {
@@ -297,7 +300,9 @@ describe('SeatbeltSandbox', () => {
         repoRoot: '/test/repo',
         readOnlyPaths: ['/path/with"quote'],
         readWritePaths: ['/path/with"double"quotes'],
+        denyPatterns: [],
         denyPaths: [],
+        env: { PATH: '/usr/bin' },
       };
 
       const sandbox = new SeatbeltSandbox();
@@ -348,7 +353,46 @@ describe('SeatbeltSandbox', () => {
         expect.objectContaining({
           cwd: '/test/cwd',
           stdio: 'inherit',
+          env: expect.objectContaining({
+            HOME: '/Users/test',
+            PATH: '/test/cwd/node_modules/.bin:/usr/bin',
+          }),
         }),
+      );
+    });
+
+    it('writes explicit deny rules into the generated profile', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            process.nextTick(() => {
+              callback(0);
+            });
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      await sandbox.execute('echo deny', {
+        ...mockOptions,
+        denyPaths: ['/test/repo/.env'],
+      });
+
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('(deny file-read* file-write* (literal "/test/repo/.env"))'),
+        expect.any(Object),
       );
     });
   });

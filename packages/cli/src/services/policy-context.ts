@@ -35,6 +35,8 @@ export interface PolicyCliOptions {
   denyAll?: boolean;
   /** Path to policy config file (--policy) */
   policyPath?: string;
+  /** Trust executable JavaScript policy configs (--trust-js-policy) */
+  trustJsPolicy?: boolean;
   /** Skip confirmation prompts (--yes) */
   yes?: boolean;
   /** Non-interactive mode - no prompts (--non-interactive) */
@@ -88,6 +90,7 @@ export async function initializePolicyContext(
   const { policy, filepath, isDefault, warnings } = await loadPolicy({
     cwd,
     configPath: options.policyPath,
+    trustJsPolicy: options.trustJsPolicy,
   });
 
   // Log warnings if any
@@ -214,6 +217,7 @@ export function parsePolicyCliOptions(opts: Record<string, unknown>): PolicyCliO
     allowAll: opts.allowAll === true,
     denyAll: opts.denyAll === true,
     policyPath: typeof opts.policy === 'string' ? opts.policy : undefined,
+    trustJsPolicy: opts.trustJsPolicy === true,
     yes: opts.yes === true,
     nonInteractive: opts.nonInteractive === true,
     sandbox: typeof opts.sandbox === 'boolean' ? opts.sandbox : undefined,

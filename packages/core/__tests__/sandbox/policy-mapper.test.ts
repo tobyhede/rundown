@@ -17,7 +17,9 @@ describe('policyToSandboxOptions', () => {
     expect(options.repoRoot).toBe('/test/cwd');
     expect(options.readOnlyPaths).toBeDefined();
     expect(options.readWritePaths).toBeDefined();
+    expect(options.denyPatterns).toBeDefined();
     expect(options.denyPaths).toBeDefined();
+    expect(options.env).toEqual({});
   });
 
   it('uses provided repoRoot and tmpDir', () => {
@@ -214,6 +216,71 @@ describe('policyToSandboxOptions', () => {
     // Should not have duplicates
     const readOnlyUnique = [...new Set(options.readOnlyPaths)];
     expect(options.readOnlyPaths).toEqual(readOnlyUnique);
+  });
+
+  it('uses effective override rules for the active runbook', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: [] },
+      },
+      overrides: [
+        {
+          runbook: 'deploy/*.runbook.md',
+          read: {
+            allow: ['{repo}/deploy-secrets/**'],
+            deny: ['{repo}/deploy-secrets/.env'],
+          },
+        },
+      ],
+      grants: [],
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      runbookPath: 'deploy/prod.runbook.md',
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readOnlyPaths).toContain('/repo/deploy-secrets');
+    expect(options.denyPatterns).toContain('/repo/deploy-secrets/.env');
+  });
+
+  it('includes matching grants in effective sandbox paths', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: [] },
+      },
+      overrides: [],
+      grants: [
+        {
+          type: 'read',
+          pattern: '{repo}/granted/**',
+          runbook: 'deploy/*.runbook.md',
+          scope: 'permanent',
+          grantedAt: '2026-03-03T00:00:00.000Z',
+        },
+      ],
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      runbookPath: 'deploy/prod.runbook.md',
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readOnlyPaths).toContain('/repo/granted');
   });
 });
 

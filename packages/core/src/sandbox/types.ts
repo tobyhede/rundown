@@ -27,6 +27,12 @@ export interface SandboxOptions {
   /** Paths that should be explicitly denied (overrides allow) */
   denyPaths: string[];
 
+  /** Original deny glob patterns with placeholders resolved */
+  denyPatterns: string[];
+
+  /** Environment passed to the sandboxed command */
+  env: Record<string, string>;
+
   /** Whether to allow execution without sandbox if unavailable */
   allowUnsandboxed?: boolean;
 }
@@ -78,6 +84,9 @@ export interface SandboxAvailability {
 
   /** Whether the sandbox supports file write restrictions */
   supportsWriteRestrictions: boolean;
+
+  /** Whether the sandbox supports deny-path enforcement */
+  supportsDenyPaths: boolean;
 }
 
 /**

@@ -19,19 +19,10 @@ import type {
   SandboxImplementation,
 } from './types.js';
 
-/**
- * Build PATH with node_modules/.bin prepended.
- * This ensures local package binaries are found during command execution.
- *
- * @param cwd - Working directory
- * @returns Enhanced PATH environment variable
- */
-function buildEnhancedPath(cwd: string): string {
+function buildEnhancedPathFromEnv(cwd: string, env: Record<string, string>): string {
   const binPath = join(cwd, 'node_modules', '.bin');
-  const isWindows = process.platform === 'win32';
-  const pathSeparator = isWindows ? ';' : ':';
-  const existingPath = process.env.PATH ?? process.env.Path ?? '';
-  return existingPath ? `${binPath}${pathSeparator}${existingPath}` : binPath;
+  const existingPath = env.PATH ?? env.Path ?? '';
+  return existingPath ? `${binPath}:${existingPath}` : binPath;
 }
 
 /**
@@ -145,6 +136,13 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
     .map((p) => `(allow file-read* file-write* (subpath "${escapePath(p)}"))`)
     .join('\n');
 
+  const denyRules = options.denyPaths
+    .flatMap((p) => [
+      `(deny file-read* file-write* (literal "${escapePath(p)}"))`,
+      `(deny file-read* file-write* (subpath "${escapePath(p)}"))`,
+    ])
+    .join('\n');
+
   // Get Node.js execution paths dynamically
   const executionPaths = getNodeExecutionPaths();
 
@@ -196,9 +194,6 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
   (subpath "/private/var/db")
   (subpath "/private/var/select")
   (subpath "/private/tmp")
-  ;; Allow reading from current user's home directory for Node.js and CLI scripts
-  ;; This is needed for symlink targets and module resolution
-  (subpath "${escapePath(process.env.HOME ?? '/Users')}")
 )
 
 ;; Allow metadata operations (lstat, stat) on /private/var for path traversal
@@ -238,6 +233,9 @@ ${readOnlyRules}
 
 ;; Custom read-write paths (from policy)
 ${readWriteRules}
+
+;; Explicit deny paths (derived from effective policy)
+${denyRules}
 
 ;; Allow network (can be restricted further if needed)
 (allow network-outbound)
@@ -284,6 +282,7 @@ export class SeatbeltSandbox implements SandboxImplementation {
         platform: process.platform,
         supportsReadRestrictions: false,
         supportsWriteRestrictions: false,
+        supportsDenyPaths: false,
       };
       return Promise.resolve(this.availabilityCache);
     }
@@ -298,6 +297,7 @@ export class SeatbeltSandbox implements SandboxImplementation {
         platform: process.platform,
         supportsReadRestrictions: false,
         supportsWriteRestrictions: false,
+        supportsDenyPaths: false,
       };
       return Promise.resolve(this.availabilityCache);
     }
@@ -308,6 +308,7 @@ export class SeatbeltSandbox implements SandboxImplementation {
       platform: process.platform,
       supportsReadRestrictions: true,
       supportsWriteRestrictions: true,
+      supportsDenyPaths: true,
     };
     return Promise.resolve(this.availabilityCache);
   }
@@ -329,7 +330,7 @@ export class SeatbeltSandbox implements SandboxImplementation {
       writeFileSync(profilePath, profile, { mode: 0o600 });
 
       // Execute with sandbox-exec
-      return await this.executeWithProfile(command, profilePath, options.cwd);
+      return await this.executeWithProfile(command, profilePath, options);
     } finally {
       // Clean up profile file
       try {
@@ -345,23 +346,23 @@ export class SeatbeltSandbox implements SandboxImplementation {
    *
    * @param command - The shell command to execute
    * @param profilePath - Path to the Seatbelt profile
-   * @param cwd - Working directory
+   * @param options - Sandbox options including cwd and env
    * @returns Execution result
    */
   private executeWithProfile(
     command: string,
     profilePath: string,
-    cwd: string,
+    options: SandboxOptions,
   ): Promise<SandboxExecutionResult> {
     return new Promise((resolve) => {
       // Enhance PATH to include node_modules/.bin for local package binaries
       const enhancedEnv = {
-        ...process.env,
-        PATH: buildEnhancedPath(cwd),
+        ...options.env,
+        PATH: buildEnhancedPathFromEnv(options.cwd, options.env),
       };
 
       const child = spawn('/usr/bin/sandbox-exec', ['-f', profilePath, '/bin/sh', '-c', command], {
-        cwd,
+        cwd: options.cwd,
         stdio: 'inherit',
         env: enhancedEnv,
       });

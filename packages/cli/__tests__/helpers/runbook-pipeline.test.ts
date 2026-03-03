@@ -17,7 +17,22 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
+  DEFAULT_POLICY: {
+    version: 1,
+    default: {
+      mode: 'prompted',
+      run: { allow: [], deny: [] },
+      read: { allow: [], deny: [] },
+      write: { allow: [], deny: [] },
+      env: { allow: [], deny: [] },
+    },
+    overrides: [],
+    grants: [],
+  },
+  PolicyEvaluator: jest.fn(),
+  PolicyPrompter: jest.fn(),
   RunbookStateManager: jest.fn(),
+  loadPolicy: jest.fn(),
   DelegationScanService: jest.fn(),
   DelegationLock: jest.fn(),
   reconstituteContextVars: jest.fn().mockReturnValue({}),
@@ -61,6 +76,19 @@ jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
 
 // Mock variable-discovery
 jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
+  FileSourcePolicyError: class FileSourcePolicyError extends Error {
+    readonly code = 'POLICY_DENIED';
+    readonly variable: string;
+    readonly filePath: string;
+    readonly reason: string;
+
+    constructor(variable: string, filePath: string, reason: string) {
+      super(`File source "${variable}" blocked by policy: ${reason}`);
+      this.variable = variable;
+      this.filePath = filePath;
+      this.reason = reason;
+    }
+  },
   extractVarsFromMarkdown: jest.fn().mockReturnValue({}),
   resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {} }),
 }));
@@ -83,7 +111,7 @@ const parser = await import('@rundown-org/parser');
 const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook');
 const { runExecutionLoop, buildStepVariables } = await import('../../src/services/execution');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
-const { extractVarsFromMarkdown, resolveVariables } = await import(
+const { FileSourcePolicyError, extractVarsFromMarkdown, resolveVariables } = await import(
   '../../src/services/variable-discovery'
 );
 const { substituteRunbookVariables, expandForClauseVariables, expandLoopVariables } = await import(
@@ -281,6 +309,27 @@ describe('prepareRunbook', () => {
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
       expect(result.error).toContain('missing');
+    }
+  });
+
+  it('returns POLICY_DENIED when file-backed variable resolution is blocked by policy', async () => {
+    resolveRunbookFile.mockResolvedValue('/test/good.md');
+    (resolveVariables as jest.Mock).mockRejectedValue(
+      new FileSourcePolicyError('items', '/test/.env', 'Path blocked by policy'),
+    );
+
+    const result = await prepareRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('POLICY_DENIED');
+      expect(result.error).toContain('items');
+      expect(result.details).toEqual({
+        runbook: 'good.md',
+        variable: 'items',
+        filePath: '/test/.env',
+        reason: 'Path blocked by policy',
+      });
     }
   });
 });

@@ -11,7 +11,10 @@ import { lilconfig, lilconfigSync, type LilconfigResult } from 'lilconfig';
 import * as yaml from 'js-yaml';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createRequire } from 'node:module';
 import { type PolicyConfig, parsePolicy, safeParsePolicyConfig, DEFAULT_POLICY } from './schema.js';
+
+const requireFromModule = createRequire(import.meta.url);
 
 /**
  * YAML loader for lilconfig.
@@ -32,21 +35,29 @@ function yamlLoader(_filepath: string, content: string): unknown {
  * 2. `.rundownrc.json`
  * 3. `.rundownrc.yaml`
  * 4. `.rundownrc.yml`
- * 5. `rundown.config.js`
- * 6. `rundown.config.cjs`
- * 7. `rundown.config.mjs`
- * 8. `package.json` (rundown field)
+ * 5. `package.json` (rundown field)
  */
 const SEARCH_PLACES = [
   '.rundownrc',
   '.rundownrc.json',
   '.rundownrc.yaml',
   '.rundownrc.yml',
-  'rundown.config.js',
-  'rundown.config.cjs',
-  'rundown.config.mjs',
   'package.json',
 ];
+
+export class PolicyConfigTrustRequiredError extends Error {
+  readonly filepath: string;
+
+  constructor(filepath: string) {
+    super(
+      `Executable policy config requires trust: ${filepath}. ` +
+        'JavaScript policy files are not auto-discovered and may execute code. ' +
+        'Use YAML/JSON/package.json or rerun with --trust-js-policy.',
+    );
+    this.name = 'PolicyConfigTrustRequiredError';
+    this.filepath = filepath;
+  }
+}
 
 /**
  * Result from loading a policy configuration.
@@ -74,6 +85,8 @@ export interface PolicyLoadOptions {
   stopDir?: string;
   /** Whether to use built-in defaults if no config found */
   useDefaults?: boolean;
+  /** Whether to allow loading executable JavaScript policy configs */
+  trustJsPolicy?: boolean;
 }
 
 /**
@@ -100,13 +113,19 @@ export interface PolicyLoadOptions {
  * ```
  */
 export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<PolicyLoadResult> {
-  const { cwd = process.cwd(), configPath, stopDir, useDefaults = true } = options;
+  const {
+    cwd = process.cwd(),
+    configPath,
+    stopDir,
+    useDefaults = true,
+    trustJsPolicy = false,
+  } = options;
 
   const warnings: string[] = [];
 
   // If explicit config path provided, load it directly
   if (configPath) {
-    return loadPolicyFromFile(configPath);
+    return loadPolicyFromFile(configPath, { trustJsPolicy });
   }
 
   // Create lilconfig instance with YAML support
@@ -193,7 +212,10 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
  * @param filepath - Path to the configuration file
  * @returns Policy load result
  */
-export async function loadPolicyFromFile(filepath: string): Promise<PolicyLoadResult> {
+export async function loadPolicyFromFile(
+  filepath: string,
+  options: { trustJsPolicy?: boolean } = {},
+): Promise<PolicyLoadResult> {
   const absolutePath = path.resolve(filepath);
 
   if (!fs.existsSync(absolutePath)) {
@@ -217,6 +239,9 @@ export async function loadPolicyFromFile(filepath: string): Promise<PolicyLoadRe
   } else if (ext === '.yaml' || ext === '.yml' || ext === '') {
     config = yaml.load(content);
   } else if (ext === '.js' || ext === '.cjs' || ext === '.mjs') {
+    if (!options.trustJsPolicy) {
+      throw new PolicyConfigTrustRequiredError(absolutePath);
+    }
     // Dynamic import for JS configs
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const module = await import(absolutePath);
@@ -244,13 +269,19 @@ export async function loadPolicyFromFile(filepath: string): Promise<PolicyLoadRe
  * @returns Policy load result
  */
 export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResult {
-  const { cwd = process.cwd(), configPath, stopDir, useDefaults = true } = options;
+  const {
+    cwd = process.cwd(),
+    configPath,
+    stopDir,
+    useDefaults = true,
+    trustJsPolicy = false,
+  } = options;
 
   const warnings: string[] = [];
 
   // If explicit config path provided, load it directly
   if (configPath) {
-    return loadPolicyFromFileSync(configPath);
+    return loadPolicyFromFileSync(configPath, { trustJsPolicy });
   }
 
   // Create lilconfig instance for sync search
@@ -336,7 +367,10 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
  * @param filepath - Path to the configuration file
  * @returns Policy load result
  */
-export function loadPolicyFromFileSync(filepath: string): PolicyLoadResult {
+export function loadPolicyFromFileSync(
+  filepath: string,
+  options: { trustJsPolicy?: boolean } = {},
+): PolicyLoadResult {
   const absolutePath = path.resolve(filepath);
 
   if (!fs.existsSync(absolutePath)) {
@@ -359,10 +393,20 @@ export function loadPolicyFromFileSync(filepath: string): PolicyLoadResult {
   } else if (ext === '.yaml' || ext === '.yml' || ext === '') {
     config = yaml.load(content);
   } else if (ext === '.js' || ext === '.cjs') {
+    if (!options.trustJsPolicy) {
+      throw new PolicyConfigTrustRequiredError(absolutePath);
+    }
     // Note: .mjs requires async import
 
-    const module = require(absolutePath) as { default?: unknown };
-    config = module.default ?? module;
+    const module = requireFromModule(absolutePath) as { __esModule?: boolean; default?: unknown };
+    config = module.__esModule && 'default' in module ? module.default : module;
+  } else if (ext === '.mjs') {
+    if (!options.trustJsPolicy) {
+      throw new PolicyConfigTrustRequiredError(absolutePath);
+    }
+    throw new Error(
+      'ES module config files (.mjs) require async loading. Use loadPolicy() instead of loadPolicySync().',
+    );
   } else {
     throw new Error(`Unsupported config file extension: ${ext}`);
   }

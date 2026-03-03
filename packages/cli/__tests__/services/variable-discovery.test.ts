@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import {
   discoverVariables,
+  FileSourcePolicyError,
   findConfigFile,
   parseVarFlag,
   mergeVariables,
@@ -884,6 +885,80 @@ describe('resolveVariables', () => {
         path: await fs.realpath(file),
         format: 'text',
       });
+    });
+
+    it('throws when policy denies a file-backed source', async () => {
+      const file = path.join(tmpDir, '.env');
+      await fs.writeFile(file, 'SECRET=value\n');
+
+      await expect(
+        resolveVariables(
+          { var: [`data=file:${file}`] },
+          tmpDir,
+          {
+            evaluator: {
+              checkPath: jest.fn().mockReturnValue({
+                allowed: false,
+                requiresPrompt: false,
+                reason: 'Path blocked by policy',
+              }),
+            } as any,
+          },
+        ),
+      ).rejects.toBeInstanceOf(FileSourcePolicyError);
+    });
+
+    it('prompts for file-backed sources when policy requires confirmation', async () => {
+      const file = path.join(tmpDir, 'prompted.txt');
+      await fs.writeFile(file, 'ok\n');
+      const evaluator = {
+        checkPath: jest.fn().mockReturnValue({
+          allowed: false,
+          requiresPrompt: true,
+          reason: 'Prompt before read',
+        }),
+      };
+      const prompter = {
+        requestPermission: jest.fn().mockResolvedValue({ granted: true, persist: false }),
+      };
+
+      const result = await resolveVariables(
+        { var: [`data=file:${file}`] },
+        tmpDir,
+        { evaluator: evaluator as any, prompter: prompter as any },
+      );
+
+      expect(prompter.requestPermission).toHaveBeenCalledWith(
+        'read',
+        await fs.realpath(file),
+        'Prompt before read',
+      );
+      expect(result.sources.data).toEqual({
+        kind: 'file',
+        path: await fs.realpath(file),
+        format: 'text',
+      });
+    });
+
+    it('fails cleanly when a promptable file-backed source has no prompter', async () => {
+      const file = path.join(tmpDir, 'prompted-no-ui.txt');
+      await fs.writeFile(file, 'ok\n');
+
+      await expect(
+        resolveVariables(
+          { var: [`data=file:${file}`] },
+          tmpDir,
+          {
+            evaluator: {
+              checkPath: jest.fn().mockReturnValue({
+                allowed: false,
+                requiresPrompt: true,
+                reason: 'Prompt before read',
+              }),
+            } as any,
+          },
+        ),
+      ).rejects.toThrow('Prompt before read');
     });
   });
 });

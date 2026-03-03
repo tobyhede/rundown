@@ -14,7 +14,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
-import type { DataSource, FileFormat } from '@rundown-org/core';
+import type { DataSource, FileFormat, PolicyEvaluator, PolicyPrompter } from '@rundown-org/core';
 
 /**
  * Valid identifier pattern for variable names.
@@ -64,6 +64,26 @@ export interface ResolvedVariables {
    * template rendering pipeline.
    */
   readonly sources: Readonly<Record<string, DataSource>>;
+}
+
+export interface VariableSecurityContext {
+  readonly evaluator?: PolicyEvaluator;
+  readonly prompter?: PolicyPrompter;
+}
+
+export class FileSourcePolicyError extends Error {
+  readonly code = 'POLICY_DENIED';
+  readonly variable: string;
+  readonly filePath: string;
+  readonly reason: string;
+
+  constructor(variable: string, filePath: string, reason: string) {
+    super(`File source "${variable}" blocked by policy: ${reason}`);
+    this.name = 'FileSourcePolicyError';
+    this.variable = variable;
+    this.filePath = filePath;
+    this.reason = reason;
+  }
 }
 
 /**
@@ -329,6 +349,7 @@ async function routeVariable(
   sources: Record<string, DataSource>,
   cwd: string,
   projectRoot: string,
+  security?: VariableSecurityContext,
 ): Promise<void> {
   // String with file: prefix → file source only (not in vars)
   if (typeof value === 'string' && value.startsWith('file:')) {
@@ -349,6 +370,8 @@ async function routeVariable(
       console.warn(`Warning: Ignoring file source "${key}" — path escapes project directory`);
       return;
     }
+
+    await enforceFileSourcePolicy(key, canonical, security);
 
     sources[key] = { kind: 'file', path: canonical, format: inferFileFormat(canonical) };
 
@@ -447,6 +470,31 @@ async function collectRawLayers(
   return [builtins, frontmatter, discovered, fromFile, fromFlags];
 }
 
+async function enforceFileSourcePolicy(
+  key: string,
+  canonicalPath: string,
+  security?: VariableSecurityContext,
+): Promise<void> {
+  if (!security?.evaluator) {
+    return;
+  }
+
+  const decision = security.evaluator.checkPath(canonicalPath, 'read');
+  if (decision.allowed) {
+    return;
+  }
+
+  if (decision.requiresPrompt && security.prompter) {
+    const prompt = await security.prompter.requestPermission('read', canonicalPath, decision.reason);
+    if (prompt.granted) {
+      return;
+    }
+    throw new FileSourcePolicyError(key, canonicalPath, 'User denied permission');
+  }
+
+  throw new FileSourcePolicyError(key, canonicalPath, decision.reason);
+}
+
 /**
  * Resolve variables into dual maps: string vars for templates + data sources for FOR loops.
  *
@@ -474,6 +522,7 @@ export async function resolveVariables(
     frontmatterVars?: Record<string, unknown>;
   },
   cwd: string,
+  security?: VariableSecurityContext,
 ): Promise<ResolvedVariables> {
   const vars: Record<string, string> = {};
   const sources: Record<string, DataSource> = {};
@@ -502,7 +551,7 @@ export async function resolveVariables(
         console.warn(`Warning: Ignoring reserved runtime variable: ${key}`);
         continue;
       }
-      await routeVariable(key, value, vars, sources, cwd, projectRoot);
+      await routeVariable(key, value, vars, sources, cwd, projectRoot, security);
     }
   }
 

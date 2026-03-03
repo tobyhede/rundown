@@ -14,20 +14,6 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/**
- * Build PATH with node_modules/.bin prepended.
- * This ensures local package binaries are found during command execution.
- *
- * @param cwd - Working directory
- * @returns Enhanced PATH environment variable
- */
-function buildEnhancedPath(cwd: string): string {
-  const binPath = join(cwd, 'node_modules', '.bin');
-  const pathSeparator = ':';
-  const existingPath = process.env.PATH ?? '';
-  return existingPath ? `${binPath}${pathSeparator}${existingPath}` : binPath;
-}
-
 import type {
   SandboxOptions,
   SandboxExecutionResult,
@@ -130,6 +116,7 @@ export class LandlockSandbox implements SandboxImplementation {
         platform: process.platform,
         supportsReadRestrictions: false,
         supportsWriteRestrictions: false,
+        supportsDenyPaths: false,
       };
       return Promise.resolve(this.availabilityCache);
     }
@@ -143,6 +130,7 @@ export class LandlockSandbox implements SandboxImplementation {
         platform: process.platform,
         supportsReadRestrictions: false,
         supportsWriteRestrictions: false,
+        supportsDenyPaths: false,
       };
       return Promise.resolve(this.availabilityCache);
     }
@@ -157,6 +145,7 @@ export class LandlockSandbox implements SandboxImplementation {
         platform: process.platform,
         supportsReadRestrictions: false,
         supportsWriteRestrictions: false,
+        supportsDenyPaths: false,
       };
       return Promise.resolve(this.availabilityCache);
     }
@@ -167,6 +156,7 @@ export class LandlockSandbox implements SandboxImplementation {
       platform: process.platform,
       supportsReadRestrictions: true,
       supportsWriteRestrictions: true,
+      supportsDenyPaths: false,
     };
     return Promise.resolve(this.availabilityCache);
   }
@@ -179,6 +169,18 @@ export class LandlockSandbox implements SandboxImplementation {
    * @returns Execution result
    */
   async execute(command: string, options: SandboxOptions): Promise<SandboxExecutionResult> {
+    if (options.denyPatterns.length > 0 || options.denyPaths.length > 0) {
+      return {
+        success: false,
+        exitCode: 126,
+        sandboxed: false,
+        policyDenied: true,
+        denialReason:
+          'Linux sandbox backend cannot safely enforce deny-path policy. ' +
+          'Execution was blocked to avoid weakening policy. Disable sandbox only for trusted runs.',
+      };
+    }
+
     // Ensure we have a wrapper
     if (!this.wrapperPath) {
       const availability = await this.getAvailability();
@@ -234,8 +236,8 @@ export class LandlockSandbox implements SandboxImplementation {
 
       // Enhance PATH to include node_modules/.bin for local package binaries
       const enhancedEnv = {
-        ...process.env,
-        PATH: buildEnhancedPath(options.cwd),
+        ...options.env,
+        PATH: buildEnhancedPathFromEnv(options.cwd, options.env),
       };
 
       // wrapperPath is guaranteed to be set at this point (checked at start of execute method)
@@ -268,4 +270,10 @@ export class LandlockSandbox implements SandboxImplementation {
       });
     });
   }
+}
+
+function buildEnhancedPathFromEnv(cwd: string, env: Record<string, string>): string {
+  const binPath = join(cwd, 'node_modules', '.bin');
+  const existingPath = env.PATH ?? env.Path ?? '';
+  return existingPath ? `${binPath}:${existingPath}` : binPath;
 }

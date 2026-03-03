@@ -7,6 +7,7 @@ import {
   loadPolicyFromFile,
   loadPolicyFromFileSync,
   mergePolicies,
+  PolicyConfigTrustRequiredError,
   writePolicyConfig,
 } from '../../src/policy/loader.js';
 import { DEFAULT_POLICY, type PolicyConfig } from '../../src/policy/schema.js';
@@ -264,6 +265,67 @@ describe('Policy Loader - JSON files', () => {
 
     expect(result.isDefault).toBe(false);
     expect(result.policy.default.mode).toBe('execute');
+  });
+});
+
+describe('Policy Loader - JavaScript policy trust', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rundown-js-policy-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('ignores rundown.config.js during auto-discovery', async () => {
+    fs.writeFileSync(
+      path.join(tempDir, 'rundown.config.js'),
+      `module.exports = { version: 1, default: { mode: 'deny' } };`,
+    );
+
+    const result = await loadPolicy({ cwd: tempDir });
+
+    expect(result.isDefault).toBe(true);
+    expect(result.filepath).toBeUndefined();
+    expect(result.policy.default.mode).toBe(DEFAULT_POLICY.default.mode);
+  });
+
+  it('rejects explicit JS config without trust (async)', async () => {
+    const configPath = path.join(tempDir, 'policy.cjs');
+    fs.writeFileSync(configPath, `module.exports = { version: 1, default: { mode: 'deny' } };`);
+
+    await expect(loadPolicyFromFile(configPath)).rejects.toBeInstanceOf(
+      PolicyConfigTrustRequiredError,
+    );
+  });
+
+  it('rejects explicit JS config without trust (sync)', () => {
+    const configPath = path.join(tempDir, 'policy.cjs');
+    fs.writeFileSync(configPath, `module.exports = { version: 1, default: { mode: 'deny' } };`);
+
+    expect(() => loadPolicyFromFileSync(configPath)).toThrow(PolicyConfigTrustRequiredError);
+  });
+
+  it('loads explicit JS config when trust is enabled', async () => {
+    const configPath = path.join(tempDir, 'policy.cjs');
+    fs.writeFileSync(configPath, `module.exports = { version: 1, default: { mode: 'deny' } };`);
+
+    const result = await loadPolicyFromFile(configPath, { trustJsPolicy: true });
+
+    expect(result.isDefault).toBe(false);
+    expect(result.policy.default.mode).toBe('deny');
+  });
+
+  it('loads explicit JS config synchronously when trust is enabled', () => {
+    const configPath = path.join(tempDir, 'policy.cjs');
+    fs.writeFileSync(configPath, `module.exports = { version: 1, default: { mode: 'deny' } };`);
+
+    const result = loadPolicyFromFileSync(configPath, { trustJsPolicy: true });
+
+    expect(result.isDefault).toBe(false);
+    expect(result.policy.default.mode).toBe('deny');
   });
 });
 

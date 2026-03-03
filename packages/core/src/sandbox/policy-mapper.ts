@@ -9,6 +9,8 @@
 
 import * as path from 'node:path';
 import * as os from 'node:os';
+import * as fs from 'node:fs';
+import picomatch from 'picomatch';
 import type { PolicyEvaluator } from '../policy/evaluator.js';
 import type { PolicyConfig } from '../policy/schema.js';
 import type { SandboxOptions } from './types.js';
@@ -44,6 +46,14 @@ export interface PolicyMapperOptions {
  */
 function resolvePlaceholders(pattern: string, repoRoot: string, tmpDir: string): string {
   return pattern.replace(/\{repo\}/g, repoRoot).replace(/\{tmp\}/g, tmpDir);
+}
+
+function hasGlob(pattern: string): boolean {
+  return /[*?[\]{}]/.test(pattern);
+}
+
+function isSubtreeDenyPattern(pattern: string): boolean {
+  return /(?:\/|\\)\*\*$/.test(pattern);
 }
 
 /**
@@ -102,6 +112,96 @@ function extractBasePath(pattern: string): string {
   return path.dirname(`${beforeGlob}x`); // Add 'x' to handle trailing slash
 }
 
+function isWithinRoot(candidate: string, root: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..');
+}
+
+function selectExpansionRoots(
+  roots: string[],
+  repoRoot: string,
+  cwd: string,
+): string[] {
+  return [...new Set(roots)].filter((root) => {
+    return isWithinRoot(root, repoRoot) || isWithinRoot(root, cwd);
+  });
+}
+
+function collectConcreteDenyPaths(
+  patterns: string[],
+  roots: string[],
+  repoRoot: string,
+  cwd: string,
+): string[] {
+  const concrete = new Set<string>();
+  const expansionRoots = selectExpansionRoots(roots, repoRoot, cwd);
+
+  for (const pattern of patterns) {
+    if (!hasGlob(pattern)) {
+      concrete.add(pattern);
+      continue;
+    }
+
+    const basePath = extractBasePath(pattern);
+    if (
+      isSubtreeDenyPattern(pattern) &&
+      basePath !== '.' &&
+      basePath !== path.sep &&
+      !basePath.includes('*') &&
+      !basePath.includes('?')
+    ) {
+      concrete.add(basePath);
+      continue;
+    }
+
+    const matcher = picomatch(pattern, { dot: true });
+    for (const root of expansionRoots) {
+      collectMatches(root, matcher, concrete);
+    }
+  }
+
+  return [...concrete];
+}
+
+function collectMatches(
+  currentPath: string,
+  matcher: (value: string) => boolean,
+  matches: Set<string>,
+): void {
+  if (!fs.existsSync(currentPath)) {
+    return;
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(currentPath);
+  } catch {
+    return;
+  }
+
+  if (matcher(currentPath)) {
+    matches.add(currentPath);
+  }
+
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    return;
+  }
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(currentPath, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (entry.name === '.git' || entry.name === 'node_modules') {
+      continue;
+    }
+    collectMatches(path.join(currentPath, entry.name), matcher, matches);
+  }
+}
+
 /**
  * Convert a policy evaluator's configuration to sandbox options.
  *
@@ -127,13 +227,12 @@ export function policyToSandboxOptions(
   const repoRoot = options.repoRoot ?? options.cwd;
   const tmpDir = options.tmpDir ?? os.tmpdir();
 
-  // Get the policy from evaluator (we'll need to access it)
-  // For now, we use a simplified approach based on common patterns
-  const policy = getEffectivePolicy(evaluator);
+  const readRules = evaluator.getEffectiveRules('read');
+  const writeRules = evaluator.getEffectiveRules('write');
 
   // Resolve read-only paths (from read.allow minus write.allow)
-  const readAllowPaths = resolvePathPatterns(policy.read.allow, repoRoot, tmpDir);
-  const writeAllowPaths = resolvePathPatterns(policy.write.allow, repoRoot, tmpDir);
+  const readAllowPaths = resolvePathPatterns(readRules.allow, repoRoot, tmpDir);
+  const writeAllowPaths = resolvePathPatterns(writeRules.allow, repoRoot, tmpDir);
 
   // Read-only: paths in read.allow but not in write.allow
   const readOnlyPaths = readAllowPaths.filter((p) => !writeAllowPaths.includes(p));
@@ -141,39 +240,25 @@ export function policyToSandboxOptions(
   // Read-write: paths in write.allow (implies read as well)
   const readWritePaths = writeAllowPaths;
 
-  // Deny paths (from both read.deny and write.deny)
-  const denyPaths = [
-    ...resolvePathPatterns(policy.read.deny, repoRoot, tmpDir),
-    ...resolvePathPatterns(policy.write.deny, repoRoot, tmpDir),
-  ];
+  const denyPatterns = [...readRules.deny, ...writeRules.deny].map((pattern) =>
+    resolvePlaceholders(pattern, repoRoot, tmpDir),
+  );
+  const denyPaths = collectConcreteDenyPaths(
+    denyPatterns,
+    [...readAllowPaths, ...writeAllowPaths],
+    repoRoot,
+    options.cwd,
+  );
 
   return {
     cwd: options.cwd,
     repoRoot,
     readOnlyPaths: [...new Set(readOnlyPaths)],
     readWritePaths: [...new Set(readWritePaths)],
+    denyPatterns: [...new Set(denyPatterns)],
     denyPaths: [...new Set(denyPaths)],
+    env: {},
     allowUnsandboxed: options.allowUnsandboxed,
-  };
-}
-
-/**
- * Get the effective policy rules from an evaluator.
- *
- * This extracts the read/write rules that will be used for
- * sandbox path restrictions.
- *
- * @param evaluator - Policy evaluator
- * @returns Policy rules for read/write access
- */
-function getEffectivePolicy(evaluator: PolicyEvaluator): {
-  read: { allow: string[]; deny: string[] };
-  write: { allow: string[]; deny: string[] };
-} {
-  const policy = evaluator.getPolicy();
-  return {
-    read: policy.default.read,
-    write: policy.default.write,
   };
 }
 
@@ -199,17 +284,24 @@ export function policyConfigToSandboxOptions(
   const readOnlyPaths = readAllowPaths.filter((p) => !writeAllowPaths.includes(p));
   const readWritePaths = writeAllowPaths;
 
-  const denyPaths = [
-    ...resolvePathPatterns(policy.default.read.deny, repoRoot, tmpDir),
-    ...resolvePathPatterns(policy.default.write.deny, repoRoot, tmpDir),
-  ];
+  const denyPatterns = [...policy.default.read.deny, ...policy.default.write.deny].map((pattern) =>
+    resolvePlaceholders(pattern, repoRoot, tmpDir),
+  );
+  const denyPaths = collectConcreteDenyPaths(
+    denyPatterns,
+    [...readAllowPaths, ...writeAllowPaths],
+    repoRoot,
+    options.cwd,
+  );
 
   return {
     cwd: options.cwd,
     repoRoot,
     readOnlyPaths: [...new Set(readOnlyPaths)],
     readWritePaths: [...new Set(readWritePaths)],
+    denyPatterns: [...new Set(denyPatterns)],
     denyPaths: [...new Set(denyPaths)],
+    env: {},
     allowUnsandboxed: options.allowUnsandboxed,
   };
 }
