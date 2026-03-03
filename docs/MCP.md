@@ -25,7 +25,7 @@ This document provides a reference for the Rundown MCP (Model Context Protocol) 
   - [complete](#complete)
   - [stop](#stop)
 - [Response Format](#response-format)
-- [Multi-Agent Support](#multi-agent-support)
+- [Delegation](#delegation)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -147,10 +147,10 @@ The server delegates all operations to the CLI with `--json` flag for machine-re
 |------|-------------|----------|----------|
 | `validate` | Check runbook syntax | `file` | - |
 | `list` | List runbooks | - | `all`, `tags` |
-| `status` | Get runbook state | - | `agent` |
-| `run` | Start runbook | - | `file`, `step`, `agent`, `prompted` |
-| `pass` | Mark step passed | - | `agent` |
-| `fail` | Mark step failed | - | `agent` |
+| `status` | Get runbook state | - | - |
+| `run` | Start runbook | - | `file`, `prompted` |
+| `pass` | Mark step passed | - | - |
+| `fail` | Mark step failed | - | - |
 | `goto` | Jump to step | `step` | - |
 | `complete` | Force early completion | - | `message` |
 | `stop` | Stop runbook | - | `message` |
@@ -231,11 +231,7 @@ List active or available runbooks.
 
 Get current runbook state.
 
-**Parameters:**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `agent` | string | No | Agent ID for multi-agent coordination |
+**Parameters:** None.
 
 **Example:**
 ```json
@@ -245,31 +241,19 @@ Get current runbook state.
 }
 ```
 
-**Example - Agent-specific status:**
-```json
-{
-  "tool": "status",
-  "arguments": {
-    "agent": "subagent-1"
-  }
-}
-```
-
-**CLI Equivalent:** `rundown status [--agent <id>] --json`
+**CLI Equivalent:** `rundown status --json`
 
 ---
 
 ### run
 
-Start a runbook or bind an agent to a pending step.
+Start a runbook.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `file` | string | No | Runbook file to start |
-| `step` | string | No | Step ID to queue for agent binding |
-| `agent` | string | No | Agent ID binding to queued step |
 | `prompted` | boolean | No | Disable automatic command execution |
 
 **Example - Start runbook:**
@@ -293,30 +277,9 @@ Start a runbook or bind an agent to a pending step.
 }
 ```
 
-**Example - Queue step for agent:**
-```json
-{
-  "tool": "run",
-  "arguments": {
-    "step": "2.1",
-    "file": "task.runbook.md"
-  }
-}
-```
+**CLI Equivalent:** `rundown run [<file>] [--prompted] [--var key=value]... [--var-file path] --json`
 
-**Example - Agent binds to queued step:**
-```json
-{
-  "tool": "run",
-  "arguments": {
-    "agent": "subagent-1"
-  }
-}
-```
-
-**CLI Equivalent:** `rundown run [<file>] [--step <id>] [--agent <id>] [--prompted] [--var key=value]... [--var-file path] --json`
-
-**Note:** The `--var` and `--var-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters. See [CLI documentation](../CLAUDE.md#template-variables) for full variable configuration details.
+**Note:** The `--var` and `--var-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters. Delegation to child runbooks uses the CLI `delegate`/`claim`/`abort` commands. See [CLI documentation](../CLAUDE.md#template-variables) for full variable configuration details.
 
 ---
 
@@ -324,11 +287,7 @@ Start a runbook or bind an agent to a pending step.
 
 Mark the current step as passed.
 
-**Parameters:**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `agent` | string | No | Agent ID for multi-agent coordination |
+**Parameters:** None.
 
 **Example:**
 ```json
@@ -338,17 +297,7 @@ Mark the current step as passed.
 }
 ```
 
-**Example - Agent reports pass:**
-```json
-{
-  "tool": "pass",
-  "arguments": {
-    "agent": "subagent-1"
-  }
-}
-```
-
-**CLI Equivalent:** `rundown pass [--agent <id>] --json`
+**CLI Equivalent:** `rundown pass --json`
 
 ---
 
@@ -356,11 +305,7 @@ Mark the current step as passed.
 
 Mark the current step as failed.
 
-**Parameters:**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `agent` | string | No | Agent ID for multi-agent coordination |
+**Parameters:** None.
 
 **Example:**
 ```json
@@ -370,17 +315,7 @@ Mark the current step as failed.
 }
 ```
 
-**Example - Agent reports failure:**
-```json
-{
-  "tool": "fail",
-  "arguments": {
-    "agent": "subagent-1"
-  }
-}
-```
-
-**CLI Equivalent:** `rundown fail [--agent <id>] --json`
+**CLI Equivalent:** `rundown fail --json`
 
 ---
 
@@ -522,36 +457,24 @@ Errors are returned in the same format:
 
 ---
 
-## Multi-Agent Support
+## Delegation
 
-Tools with an `agent` parameter support multi-agent coordination:
+MCP tools operate on the active runbook context. Multi-agent delegation (dispatching substeps to child runbooks) is managed via the CLI `delegate`/`claim`/`abort` commands, not through MCP tools.
 
-| Tool | Agent Support |
-|------|---------------|
-| `status` | Query agent-specific runbook stack |
-| `run` | Bind agent to pending step |
-| `pass` | Report pass for agent's step |
-| `fail` | Report fail for agent's step |
+### Delegation Workflow (CLI)
 
-### Multi-Agent Workflow
+```bash
+# 1. Main agent delegates substep to child runbook
+rd delegate task.runbook.md --step 2.1
 
-1. **Main agent** starts parent runbook and queues substeps
-2. **Subagent** binds to queued step via `run` with `agent` parameter
-3. **Subagent** executes assigned work
-4. **Subagent** reports outcome via `pass` or `fail` with `agent` parameter
+# 2. Subagent claims the delegation token
+rd claim <token>
 
-```json
-// Main agent queues step with child runbook
-{ "tool": "run", "arguments": { "step": "2.1", "file": "task.runbook.md" } }
-
-// Subagent binds to queued step
-{ "tool": "run", "arguments": { "agent": "worker-1" } }
-
-// Subagent completes work
-{ "tool": "pass", "arguments": { "agent": "worker-1" } }
+# 3. Subagent works through child runbook and reports result
+rd pass    # or: rd fail
 ```
 
-See [RUNDOWN.md](./RUNDOWN.md#subagent-dispatch-patterns) for detailed multi-agent patterns.
+See [RUNDOWN.md](./RUNDOWN.md#delegation-commands) for full delegation command reference.
 
 ---
 

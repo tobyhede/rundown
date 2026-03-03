@@ -33,7 +33,7 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
   - [Enforcement Control](#enforcement-control)
   - [Validation](#validation)
   - [Maintenance](#maintenance)
-  - [Subagent Commands](#subagent-commands)
+  - [Delegation Commands](#delegation-commands)
 - [Common Tasks](#common-tasks)
 - [Subagent Dispatch Patterns](#subagent-dispatch-patterns)
   - [Pattern 1: Orchestrator Control](#pattern-1-orchestrator-control)
@@ -387,16 +387,12 @@ The session tracks which runbooks are active using a **stack-based model**:
 
 ```json
 {
-  "stacks": {
-    "agent-123": ["wf-2024-01-07-abc123"]
-  },
   "defaultStack": ["wf-2024-01-07-xyz789"],
   "stashedRunbookId": null
 }
 ```
 
-- **defaultStack**: Main runbook stack (no agent ID)
-- **stacks**: Per-agent runbook stacks
+- **defaultStack**: Active runbook stack (delegation creates nested entries)
 - **stashedRunbookId**: Temporarily paused runbook (for `rundown stash`/`rundown pop`)
 
 ### Runbook State Structure
@@ -420,24 +416,17 @@ Each runbook state file contains:
     "log_file": { "kind": "file", "path": "data/results.jsonl", "format": "jsonl" }
   },
   "steps": [],
-  "pendingSteps": [
+  "substepStates": [
     {
-      "stepId": { "step": "2", "substep": "1" },
-      "runbook": "child.runbook.md",
-      "targetStep": "2",
-      "targetSubstep": "1",
-      "targetIteration": 2
+      "substep": "1",
+      "delegation": {
+        "tokenHash": "abc123...",
+        "childRunbookPath": ".claude/rundown/runbooks/child.runbook.md",
+        "status": "claimed",
+        "childRunId": "wf-2024-01-07-child1"
+      }
     }
   ],
-  "agentBindings": {
-    "agent-123": {
-      "stepId": { "step": "2", "substep": "1" },
-      "status": "running",
-      "targetStep": "2",
-      "targetSubstep": "1",
-      "targetIteration": 2
-    }
-  },
   "resolvedCompletions": {},
   "frameEntries": { "2|2": 1 },
   "activeFrameKey": "2|2",
@@ -479,8 +468,7 @@ Key fields:
 - `forStack[].source`: Resolved source for the active loop (range, array, or file with snapshot)
 - `forStack[].currentValue`: Data element at the current iteration (array/file sources)
 - `iterationResults`: Array of per-iteration outcomes (`"pass"` or `"fail"`) for the current loop
-- `pendingSteps[].target*`: Canonical dispatch target identity (`step + substep + iteration`)
-- `agentBindings[].target*`: Bound agent target identity (same model as pending steps, plus frame + entry where stamped)
+- `substepStates[].delegation`: Delegation state for substeps (tokenHash, childRunbookPath, status, childRunId)
 - `resolvedCompletions`: Completion records keyed by `frame + entry + substep`
 - `frameEntries` / `activeFrameKey` / `activeEntry`: Re-entry-safe frame identity used to reject stale completions
 - `snapshot`: XState persisted snapshot for state restoration
@@ -664,7 +652,6 @@ Immediately terminate the active runbook.
 
 ```bash
 rundown stop [message]
-rundown stop --agent <agentId>
 ```
 
 Deletes runbook state and clears from session.
@@ -678,7 +665,6 @@ Manually complete a runbook before reaching the final step.
 ```bash
 rundown complete                            # Force completion from current step
 rundown complete "Skipping remaining steps" # Complete with message
-rundown complete --agent myAgent            # Complete runbook in agent-specific stack
 ```
 
 **When to use:**
@@ -698,7 +684,6 @@ Signal successful step completion.
 
 ```bash
 rundown pass
-rundown pass --agent <agentId>
 ```
 
 **Aliases:** `rundown yes`, `rundown ok`
@@ -715,7 +700,6 @@ Signal step failure.
 
 ```bash
 rundown fail
-rundown fail --agent <agentId>
 ```
 
 **Alias:** `rundown no`
@@ -766,7 +750,6 @@ Display active runbook information.
 
 ```bash
 rundown status
-rundown status --agent <agentId>
 ```
 
 **Output:**
@@ -780,10 +763,6 @@ For:      2/5
 At:       3.2.1
 
 Execute batch...
-
-Pending: 3.1
-Agents:
-  agent-123: 3.1 [running]
 ```
 
 #### `rundown ls` - List Runbooks
@@ -863,25 +842,22 @@ rundown prune --inactive    # Only inactive
 rundown prune --active      # Only active (careful!)
 ```
 
-### Subagent Commands
+### Delegation Commands
 
 | Command | Description |
 |---------|-------------|
-| `rundown run --step <id>` | Queue step for agent binding |
-| `rundown run --agent <id>` | Bind agent to pending step |
-| `rundown pass --agent <id>` | Mark agent's work as passed |
-| `rundown fail --agent <id>` | Mark agent's work as failed |
+| `rd delegate <runbook> --step <id>` | Delegate substep to child runbook |
+| `rd delegate <runbook> --step <id> --var key=value` | Delegate with variables |
+| `rd claim <token>` | Claim a delegation token and launch child |
+| `rd claim <token> --var key=value` | Claim with variables |
+| `rd abort <token>` | Cancel a delegation token |
+| `rd abort <token> --force` | Cancel a claimed delegation |
 
-Dispatch/completion rules:
-- `run --step` requires a parseable step identifier; step-only targets are rejected when the active step has substeps (use `N.M`).
-- Runbook argument is optional: `run --step <id> [runbook]`.
-- If runbook is omitted and target substep has exactly one child runbook, the child runbook path is inferred and queued automatically.
-- If runbook is omitted and target substep has multiple child runbooks, queueing fails with an explicit ambiguity error.
-- Dispatch frontier is the current step only; when FOR is active, frontier is current iteration only.
-- Canonical target identity is `step + substep + iteration`.
-- Expanded path (`STEP.INDEX.SUBSTEP`, e.g. `1.2.1`) is display-only.
+Delegation semantics:
+- `delegate` requires a child runbook as a positional argument and `--step` to identify the target substep.
+- `claim` uses the delegation token (printed by `delegate`) to launch the child runbook.
+- Child runbook uses plain `rd pass` / `rd fail` to report its outcome.
 - Completion routing is frame + entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
-- `pass/fail --agent` and plain `pass/fail` both record completion and use the same deterministic drain path.
 
 ### Runtime Identity Glossary
 
@@ -995,26 +971,23 @@ Main agent runs runbook, dispatches subagents for substeps.
 # 1. Main agent starts parent runbook
 rd run runbook.runbook.md
 
-# 2. At substep, main agent queues step (child runbook may be inferred)
-rd run --step 2.1
-# or explicitly:
-rd run --step 2.1 task.runbook.md
+# 2. At substep, main agent delegates to child runbook
+rd delegate task.runbook.md --step 2.1
 
-# 3. Subagent binds to queued step (picks up runbook automatically)
-rd run --agent subagent-1
+# 3. Subagent claims the delegation token
+rd claim <token>
 
 # 4. Subagent works through child runbook...
 
-# 5. Subagent reports result
-rd pass --agent subagent-1    # or: rd fail --agent subagent-1
+# 5. Subagent reports result (plain pass/fail, no --agent needed)
+rd pass    # or: rd fail
 ```
 
 **Key points:**
-- `--step` must include a parseable step identifier; when substeps exist, use explicit `N.M`
-- Child runbook can be explicit (`rd run --step 2.1 task.runbook.md`) or inferred when the substep has exactly one child runbook
-- If a substep has multiple child runbooks, an explicit runbook argument is required
-- Subagent uses `--agent` flag on all commands (`run`, `pass`, `fail`)
-- Completions are validated against frame + entry identity; stale completions from prior re-entry are rejected explicitly
+- `delegate` requires the child runbook as a positional argument and `--step` to identify the target substep
+- The delegation token printed by `delegate` is passed to `claim` by the subagent
+- Child uses plain `rd pass` / `rd fail` — no `--agent` flag needed
+- Completions are validated against frame + entry identity; stale completions from prior re-entry are rejected
 - Valid completions are recorded and drained in deterministic substep order before step-level transition
 
 ### Pattern 2: Agent-Controlled Branching
@@ -1214,9 +1187,8 @@ rundown pop                  # Resume enforcement
 rundown check <file>         # Validate runbook
 rundown prune                # Clean up state
 
-# Subagent Dispatch
-rd run --step <id> [runbook]   # Queue step; runbook inferred when unambiguous
-rd run --agent <agentId>       # Subagent binds to queued step
-rd pass --agent <agentId>      # Subagent marks work passed
-rd fail --agent <agentId>      # Subagent marks work failed
+# Delegation
+rd delegate <runbook> --step <id>  # Delegate substep to child runbook
+rd claim <token>                   # Claim delegation token
+rd abort <token>                   # Cancel delegation token
 ```
