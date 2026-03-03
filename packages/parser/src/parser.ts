@@ -78,6 +78,7 @@ interface StepBuilder {
   forClause?: ForClause;
   hasSeenForClause: boolean;
   forConditionals?: ParsedConditional[];
+  stepConditionals?: ParsedConditional[];
   invalidH3s: Array<{ line: number; text: string }>;
 }
 
@@ -228,7 +229,12 @@ export function parseRunbookDocument(
     if (isHeading(node) && node.depth === 3 && currentStep) {
       inPreamble = false;
       if (currentStep.pendingSubstep) {
+        // H3 #2+: flush inter-substep conditionals to preceding substep
         currentStep.pendingSubstep.pendingConditionals.push(...pendingConditionals);
+        pendingConditionals = [];
+      } else if (pendingConditionals.length > 0) {
+        // First H3: save step-level conditionals separately
+        currentStep.stepConditionals = [...pendingConditionals];
         pendingConditionals = [];
       }
       finalizePendingSubstep();
@@ -557,9 +563,10 @@ function finalizeStep(
   }
 
   // Validate NEXT usage before converting to transitions
-  validateNEXTUsage(pendingConditionals, step.forClause !== undefined);
+  const effectiveConditionals = step.stepConditionals ?? pendingConditionals;
+  validateNEXTUsage(effectiveConditionals, step.forClause !== undefined);
 
-  const transitions = convertToTransitions(pendingConditionals);
+  const transitions = convertToTransitions(effectiveConditionals);
 
   if (step.forClause && step.forConditionals?.length) {
     const forTrans = convertToTransitions(step.forConditionals);

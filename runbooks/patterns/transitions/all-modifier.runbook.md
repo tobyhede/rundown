@@ -12,6 +12,13 @@ scenarios:
       - rd pass
       - rd pass
     result: COMPLETE
+  one-fails-stopped:
+    description: One substep fails, FAIL ANY fires STOP
+    commands:
+      - rd run --prompted all-modifier.runbook.md
+      - rd fail
+      - rd pass
+    result: STOP
   auto-execution:
     description: All substeps auto-execute and pass
     commands:

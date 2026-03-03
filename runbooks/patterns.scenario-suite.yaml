@@ -138,6 +138,118 @@ cases:
       - rd pass
     result: COMPLETE
 
+  # for-loops/ (new coverage)
+  for-descending-completed:
+    description: Descending range iterates 3, 2, 1
+    file: patterns/for-loops/for-descending.runbook.md
+    commands:
+      - rd run for-descending.runbook.md
+    result: COMPLETE
+
+  for-next-action-fail-skips:
+    description: FAIL NEXT skips the failed iteration and loop continues
+    file: patterns/for-loops/for-next-action.runbook.md
+    commands:
+      - rd run for-next-action.runbook.md
+    result: COMPLETE
+
+  for-iteration-transitions-continue:
+    description: FAIL CONTINUE per iteration allows loop to complete
+    file: patterns/for-loops/for-iteration-transitions.runbook.md
+    commands:
+      - rd run for-iteration-transitions.runbook.md
+    result: COMPLETE
+
+  for-iteration-retry-after-retry:
+    description: Each iteration fails once then passes on retry via iteration-level RETRY
+    file: patterns/for-loops/for-iteration-retry.runbook.md
+    commands:
+      - rd run for-iteration-retry.runbook.md
+    result: COMPLETE
+
+  for-variable-bounds-completed:
+    description: Template variable bounds expand at parse time
+    file: patterns/for-loops/for-variable-bounds.runbook.md
+    commands:
+      - rd run --var Max=3 for-variable-bounds.runbook.md
+    result: COMPLETE
+
+  # goto/ (new coverage)
+  goto-at-iteration-completed:
+    description: GOTO AT jumps into FOR loop at iteration 3
+    file: patterns/goto/goto-at-iteration.runbook.md
+    commands:
+      - rd run goto-at-iteration.runbook.md
+    result: COMPLETE
+
+  # variables/ (new coverage)
+  context-current-completed:
+    description: Context position variables echo from substep
+    file: patterns/variables/context-current.runbook.md
+    commands:
+      - rd run context-current.runbook.md
+    result: COMPLETE
+
+  variable-precedence-override:
+    description: CLI --var overrides frontmatter default
+    file: patterns/variables/variable-precedence.runbook.md
+    commands:
+      - rd run --var greeting=overridden variable-precedence.runbook.md
+    result: COMPLETE
+
+  # transitions/ (new coverage)
+  separator-syntax-completed:
+    description: Each step uses a different separator and all pass
+    file: patterns/transitions/separator-syntax.runbook.md
+    commands:
+      - rd run separator-syntax.runbook.md
+    result: COMPLETE
+
+  fail-all-standalone-completed:
+    description: One substep passes so PASS ANY continues
+    file: patterns/transitions/fail-all-standalone.runbook.md
+    commands:
+      - rd run --prompted fail-all-standalone.runbook.md
+      - rd fail
+      - rd pass
+      - rd pass
+    result: COMPLETE
+
+  fail-all-standalone-stopped:
+    description: All substeps fail and FAIL ALL stops
+    file: patterns/transitions/fail-all-standalone.runbook.md
+    commands:
+      - rd run --prompted fail-all-standalone.runbook.md
+      - rd fail
+      - rd fail
+    result: STOP
+
+  all-modifier-one-fails-stopped:
+    description: One substep fails, FAIL ANY fires STOP
+    file: patterns/transitions/all-modifier.runbook.md
+    commands:
+      - rd run --prompted all-modifier.runbook.md
+      - rd fail
+      - rd pass
+    result: STOP
+
+  any-modifier-mixed-completed:
+    description: First fails, second passes, PASS ANY fires COMPLETE
+    file: patterns/transitions/any-modifier.runbook.md
+    commands:
+      - rd run --prompted any-modifier.runbook.md
+      - rd fail
+      - rd pass
+    result: COMPLETE
+
+  # named-steps/ (new coverage)
+  named-step-for-loop-completed:
+    description: Named step iterates normally with FOR loop
+    file: patterns/named-steps/named-step-for-loop.runbook.md
+    commands:
+      - rd run named-step-for-loop.runbook.md
+    result: COMPLETE
+
   # composition/
   step-runbook-list-completed:
     description: All child workflows pass

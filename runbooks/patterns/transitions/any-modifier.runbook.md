@@ -12,6 +12,13 @@ scenarios:
       - rd pass
       - rd pass
     result: COMPLETE
+  mixed-completed:
+    description: First fails, second passes, PASS ANY fires COMPLETE
+    commands:
+      - rd run --prompted any-modifier.runbook.md
+      - rd fail
+      - rd pass
+    result: COMPLETE
   auto-execution:
     description: Substeps auto-execute, PASS ANY fires
     commands:

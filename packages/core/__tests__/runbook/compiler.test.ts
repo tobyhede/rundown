@@ -5751,4 +5751,114 @@ echo "processing"
       expect(snapshot.value).toBe('COMPLETE');
     });
   });
+
+  describe('aggregation substep default transitions', () => {
+    it('substeps under ALL/ANY aggregation default to CONTINUE on fail', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Aggregated check',
+          transitions: {
+            all: false,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [
+            { id: '1', description: 'First check' },
+            { id: '2', description: 'Second check' },
+          ],
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      // Substep 1 fails — should CONTINUE to substep 2 (not STOP)
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      // Substep 2 passes — aggregation evaluates: PASS ANY → COMPLETE
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('COMPLETE');
+    });
+
+    it('substeps under ALL aggregation: all fail triggers STOP', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'Aggregated check',
+          transitions: {
+            all: false,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [
+            { id: '1', description: 'First check' },
+            { id: '2', description: 'Second check' },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      // Both substeps fail — FAIL ALL → STOP
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
+    it('substeps under FOR loop default to CONTINUE on fail', () => {
+      const steps: Step[] = [
+        {
+          name: '1',
+          description: 'FOR step',
+          forClause: { start: 1, end: 2 },
+          substeps: [
+            { id: '1', description: 'Check item' },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ];
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      // Iteration 1: substep fails → CONTINUE to parent → FOR logic evaluates
+      actor.send({ type: 'FAIL' });
+      // Should proceed to next iteration, not STOP
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      // Iteration 2: substep passes → loop completes → step 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::2');
+    });
+  });
 });

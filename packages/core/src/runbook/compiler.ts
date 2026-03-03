@@ -140,6 +140,17 @@ const DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS: Transitions = {
 };
 
 /**
+ * Default transitions for substeps under parent aggregation or FOR loops.
+ * Both pass and fail use CONTINUE so results propagate to the parent
+ * aggregation state for ALL/ANY evaluation.
+ */
+const DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS: Transitions = {
+  all: true,
+  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+};
+
+/**
  * Internal helper to format state IDs for the XState machine.
  * Uses _ instead of . to avoid XState path resolution issues.
  */
@@ -784,8 +795,8 @@ function buildParentStateConfig(
         actions: assign({
           iterationRetryCount: ({ context }: { context: RunbookContext }) =>
             context.iterationRetryCount + 1,
-          // Reset retryCount so substep-level retries start fresh on re-run
-          retryCount: 0,
+          // Increment retryCount so commands (e.g. rd echo --result) see the retry attempt
+          retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
           retryMax: transition.retry,
           lastAction: { type: 'RETRY' as const },
           substepResults: [] as ('pass' | 'fail')[],
@@ -1346,9 +1357,12 @@ export function compileRunbookToMachine(
     const stepName = step.name;
     if (step.substeps && step.substeps.length > 0) {
       step.substeps.forEach((substep) => {
-        const inferredTransitions =
-          substep.runbooks && substep.runbooks.length > 0
-            ? DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS
+        const hasRunbooks = !!(substep.runbooks && substep.runbooks.length > 0);
+        const hasParentAggregation = !!(step.transitions || step.forClause);
+        const inferredTransitions = hasRunbooks
+          ? DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS
+          : hasParentAggregation
+            ? DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS
             : DEFAULT_TRANSITIONS;
         allStates.push({
           id: formatStateId(stepName, substep.id),
