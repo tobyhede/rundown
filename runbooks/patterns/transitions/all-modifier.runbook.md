@@ -1,6 +1,6 @@
 ---
 name: all-modifier
-description: PASS ALL and FAIL ALL aggregate modifiers
+description: PASS ALL aggregate modifier (pessimistic strategy)
 tags:
   - transitions
 
@@ -21,11 +21,11 @@ scenarios:
 
 # ALL Modifier
 
-PASS ALL requires all substeps to pass. FAIL ALL requires all to fail.
+PASS ALL requires all substeps to pass. Paired with FAIL ANY (pessimistic).
 
 ## 1. Aggregated check
 - PASS ALL: COMPLETE
-- FAIL ALL: STOP "All checks failed"
+- FAIL ANY: STOP "A check failed"
 
 ### 1.1 First check
 

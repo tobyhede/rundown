@@ -1,6 +1,6 @@
 ---
 name: any-modifier
-description: PASS ANY and FAIL ANY aggregate modifiers
+description: PASS ANY aggregate modifier (optimistic strategy)
 tags:
   - transitions
 
@@ -21,11 +21,11 @@ scenarios:
 
 # ANY Modifier
 
-PASS ANY fires when at least one substep passes. FAIL ANY fires when at least one fails.
+PASS ANY fires when at least one substep passes. Paired with FAIL ALL (optimistic).
 
 ## 1. Optimistic check
 - PASS ANY: COMPLETE
-- FAIL ANY: STOP "A check failed"
+- FAIL ALL: STOP "All checks failed"
 
 ### 1.1 Primary check
 

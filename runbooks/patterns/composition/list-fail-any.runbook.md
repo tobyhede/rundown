@@ -17,6 +17,7 @@ scenarios:
     commands:
       - rd run --prompted list-fail-any.runbook.md
       - rd fail
+      - rd pass
     result: STOP
 ---
 
