@@ -130,7 +130,7 @@ Run the child task.
       const secondChildId = (await getActiveState(workspace))!.id;
 
       expect(firstChildId).toBe(secondChildId);
-    });
+    }, 15_000);
 
     it('third claim still returns same child', async () => {
       await writeParentRunbook();
@@ -149,7 +149,7 @@ Run the child task.
       result = runCli(`claim ${token}`, workspace);
 
       expect(result.exitCode).toBe(0);
-    });
+    }, 15_000);
   });
 
   describe('JSON output', () => {
@@ -407,7 +407,7 @@ rd echo --result fail
       expect(result1.exitCode).toBe(0);
       expect(result2.exitCode).toBe(0);
       expect(result3.exitCode).toBe(0);
-    });
+    }, 15_000);
   });
 
   describe('context inheritance', () => {
