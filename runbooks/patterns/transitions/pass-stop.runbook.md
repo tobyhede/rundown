@@ -18,6 +18,7 @@ scenarios:
 PASS: STOP halts the runbook immediately when a step succeeds.
 
 ## 1. Critical check
+
 - PASS: STOP "Halted on success"
 - FAIL: CONTINUE
 

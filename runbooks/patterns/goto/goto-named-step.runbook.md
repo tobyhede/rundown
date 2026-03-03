@@ -1,6 +1,6 @@
 ---
 name: goto-named-step
-description: Demonstrates GOTO patterns involving named steps (Name->Name, Name->Static, Static->Name)
+description: GOTO between named and static steps
 tags:
   - goto
 
@@ -36,6 +36,7 @@ scenarios:
 # Named GOTO Patterns
 
 ## Initialize
+
 - PASS: GOTO Cleanup
 - FAIL: STOP
 
@@ -48,6 +49,7 @@ rd echo "initialize"
 ```
 
 ## Process
+
 - PASS: GOTO 1
 - FAIL: STOP
 
@@ -60,6 +62,7 @@ rd echo "process"
 ```
 
 ## 1. Static Step
+
 - PASS: GOTO Cleanup
 - FAIL: STOP
 
@@ -70,6 +73,7 @@ rd echo "static step"
 ```
 
 ## Cleanup
+
 - PASS: COMPLETE
 - FAIL: STOP
 

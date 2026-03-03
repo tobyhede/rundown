@@ -19,6 +19,7 @@ scenarios:
 Jump from step 1 to step 3, skipping step 2.
 
 ## 1. Step Jump
+
 - PASS: GOTO 3
 - FAIL: STOP
 
@@ -27,6 +28,7 @@ rd echo "jump start"
 ```
 
 ## 2. Skipped Step
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -37,6 +39,7 @@ rd echo --result fail
 ```
 
 ## 3. Jump Target
+
 - PASS: COMPLETE
 
 Target of step jump.

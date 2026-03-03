@@ -1,6 +1,6 @@
 ---
 name: named-step-named-substeps
-description: Demonstrates named steps containing named substeps with explicit step references (ErrorHandler.Prepare, ErrorHandler.Execute, ErrorHandler.Verify).
+description: Named steps with named substeps
 
 scenarios:
   success-completes:
@@ -10,7 +10,7 @@ scenarios:
       - rd pass
     result: COMPLETE
   error-handler-failure-at-prepare:
-    description: Tests error handler failing at prepare stage and stopping runbook
+    description: Error handler fails at prepare, runbook stops
     commands:
       - rd run --prompted named-step-named-substeps.runbook.md
       - rd fail
@@ -26,6 +26,7 @@ tags:
 Demonstrates named steps containing named substeps.
 
 ## 1. Setup
+
 - PASS: CONTINUE
 - FAIL: GOTO ErrorHandler
 
@@ -35,10 +36,10 @@ Initial setup.
 rd echo "initial setup"
 ```
 
-
 ## ErrorHandler
 
 ### ErrorHandler.Prepare
+
 - PASS: GOTO ErrorHandler.Execute
 - FAIL: STOP
 
@@ -48,8 +49,8 @@ Prepare for error handling.
 rd echo "prepare error handling"
 ```
 
-
 ### ErrorHandler.Execute
+
 - PASS: GOTO ErrorHandler.Verify
 - FAIL: STOP
 
@@ -59,8 +60,8 @@ Execute error recovery.
 rd echo "execute recovery"
 ```
 
-
 ### ErrorHandler.Verify
+
 - PASS: GOTO 1
 - FAIL: STOP
 
@@ -69,4 +70,3 @@ Verify recovery succeeded.
 ```bash
 rd echo "verify recovery"
 ```
-

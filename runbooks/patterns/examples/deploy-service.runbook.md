@@ -52,25 +52,30 @@ Uses a mix of prompt context and commands.
 Commands are automatically executed, and the exit code determines `pass` or `fail`.
 
 ## 1. Run Pre-deploy checks
+
 The `rd echo` command simulates real commands.
 The `--result` flag controls the result of the simulated command.
 
 ### 1.1 Verify required permissions
+
 ```bash
 rd echo npm run deploy:check:permissions
 ```
 
 ### 1.2 Verify environment configuration
+
 ```bash
 rd echo npm run deploy:check:env
 ```
 
 ### 1.3 Check current status
+
 ```bash
 rd echo npm run deploy:check:status
 ```
 
 ### 1.4 Create database snapshot
+
 ```bash
 rd echo npm run database:snapshot
 ```
@@ -79,7 +84,6 @@ rd echo npm run database:snapshot
 
 Post to Slack `#deployments` channel.
 Follow the existing Slack guidelines.
-
 
 ## 3. Deployment
 
@@ -90,13 +94,17 @@ rd echo npm run deploy:push
 ```
 
 ### 3.2 Migrate database
+
 - FAIL: GOTO Rollback
+
 ```bash
 rd echo npm run database:migrate
 ```
 
 ### 3.3 Restart services
+
 - FAIL: RETRY
+
 ```bash
 rd echo npm run deploy:restart
 ```
@@ -104,11 +112,13 @@ rd echo npm run deploy:restart
 ## 4. Post-deployment verification
 
 ### 4.1 Run smoke tests
+
 ```bash
 rd echo npm run test:smoke --production
 ```
 
 ### 4.2 Run health checks
+
 - PASS: RETRY 3 CONTINUE
 - FAIL: GOTO Rollback
 
@@ -123,8 +133,8 @@ rd echo --result pass --result pass --result pass npm run check:health
 Post to Slack `#deployments` channel.
 Follow the existing Slack guidelines.
 
+## Rollback. Rollback on Failure
 
-## Rollback. Rollback on Failure.
 - PASS: STOP "Deployment rolled back due to failure."
 
 ```bash

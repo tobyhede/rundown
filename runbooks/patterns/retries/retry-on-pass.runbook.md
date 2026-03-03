@@ -21,7 +21,7 @@ scenarios:
       - rd fail
     result: STOP
   auto-execution:
-    description: Code block auto-executes - passes three times, continues to finish
+    description: Auto-execute passes three times, continues
     commands:
       - rd run retry-on-pass.runbook.md
     result: COMPLETE
@@ -32,6 +32,7 @@ scenarios:
 Tests that RETRY on the PASS path retries when a step succeeds.
 
 ## 1. Polling step
+
 - PASS: RETRY 2 CONTINUE
 - FAIL: STOP
 
@@ -43,6 +44,7 @@ rd echo --result pass --result pass --result pass
 ```
 
 ## 2. Finish
+
 - PASS: COMPLETE
 
 Final step reached after pass-retry exhaustion.

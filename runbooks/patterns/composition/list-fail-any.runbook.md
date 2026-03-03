@@ -26,6 +26,7 @@ scenarios:
 FAIL ANY aggregate stops when any child runbook fails.
 
 ## 1. Verify all
+
 - FAIL ANY: STOP "Child failed"
 - child-task.runbook.md
 - child-task.runbook.md

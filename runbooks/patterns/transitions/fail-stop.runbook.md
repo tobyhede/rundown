@@ -24,6 +24,7 @@ scenarios:
 Explicit FAIL: STOP halts the runbook when a step fails.
 
 ## 1. Critical step
+
 - PASS: COMPLETE
 - FAIL: STOP "Critical failure"
 

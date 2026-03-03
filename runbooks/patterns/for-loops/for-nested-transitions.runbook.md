@@ -1,11 +1,11 @@
 ---
 name: for-nested-transitions
-description: Iteration results aggregate to parent step transitions with PASS ALL and FAIL ANY.
+description: Iteration results aggregate via PASS ALL and FAIL ANY
 tags:
   - for-loops
 scenarios:
   completed:
-    description: All iterations pass, step aggregates as PASS ALL, continues to step 2
+    description: All iterations pass, PASS ALL continues
     commands:
       - rd run for-nested-transitions.runbook.md
     result: COMPLETE
@@ -21,10 +21,13 @@ scenarios:
 # FOR Nested Transitions
 
 ## 1. Validate items
+
 - FOR item IN 1 TO 3
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP
+
 ### 1.1 Check {{item}}
+
 - PASS: CONTINUE
 - FAIL: BREAK
 
@@ -33,6 +36,7 @@ rd echo "item={{item}}"
 ```
 
 ## 2. Finalize
+
 - PASS: COMPLETE
 
 ```bash

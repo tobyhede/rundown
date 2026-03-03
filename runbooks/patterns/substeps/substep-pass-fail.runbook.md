@@ -31,6 +31,7 @@ Substep-level PASS/FAIL transitions including FAIL CONTINUE.
 ## 1. Checks
 
 ### 1.1 Required check
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -39,6 +40,7 @@ rd echo "check"
 ```
 
 ### 1.2 Optional check
+
 - PASS: CONTINUE
 - FAIL: CONTINUE
 
@@ -47,6 +49,7 @@ rd echo "optional"
 ```
 
 ## 2. Finish
+
 - PASS: COMPLETE
 
 ```bash

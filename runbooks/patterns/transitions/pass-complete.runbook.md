@@ -18,6 +18,7 @@ scenarios:
 PASS: COMPLETE finishes the runbook immediately when a step succeeds.
 
 ## 1. Final check
+
 - PASS: COMPLETE "Finished successfully"
 - FAIL: STOP
 
@@ -26,6 +27,7 @@ rd echo "final check"
 ```
 
 ## 2. Unreachable step
+
 - PASS: COMPLETE
 
 This step should never be reached.

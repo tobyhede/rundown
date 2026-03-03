@@ -24,6 +24,7 @@ scenarios:
 PASS ANY fires when at least one substep passes. Paired with FAIL ALL (optimistic).
 
 ## 1. Optimistic check
+
 - PASS ANY: COMPLETE
 - FAIL ALL: STOP "All checks failed"
 

@@ -32,6 +32,7 @@ scenarios:
 Tests that RETRY exhaustion with CONTINUE proceeds to the next step.
 
 ## 1. Best-effort step
+
 - PASS: COMPLETE
 - FAIL: RETRY 1 CONTINUE
 
@@ -42,6 +43,7 @@ rd echo --result fail --result fail
 ```
 
 ## 2. Cleanup
+
 - PASS: COMPLETE
 
 Cleanup step reached after exhaustion of step 1.

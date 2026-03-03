@@ -1,6 +1,6 @@
 ---
 name: default-implicit
-description: Tests implicit PASS to CONTINUE and FAIL to STOP when no transitions defined
+description: Implicit default transitions (PASS CONTINUE, FAIL STOP)
 tags:
   - transitions
 
@@ -36,9 +36,9 @@ rd echo --result pass
 ```
 
 ## 2. Final step
+
 - PASS: COMPLETE
 
 ```bash
 rd echo --result pass
 ```
-

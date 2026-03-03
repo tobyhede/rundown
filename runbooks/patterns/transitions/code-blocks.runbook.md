@@ -25,6 +25,7 @@ scenarios:
 Demonstrates various code block patterns in runbooks.
 
 ## 1. Setup
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -34,8 +35,8 @@ Setup with bash command.
 rd echo "setup environment"
 ```
 
-
 ## 2. Execute
+
 - PASS: CONTINUE
 - FAIL: STOP
 
@@ -46,8 +47,8 @@ rd echo "Starting execution"
 rd echo "run main task"
 ```
 
-
 ## 3. Validate
+
 - PASS: COMPLETE
 - FAIL: STOP
 
@@ -57,4 +58,3 @@ Validate with conditional.
 rd echo "Validating..."
 rd echo "validate results"
 ```
-

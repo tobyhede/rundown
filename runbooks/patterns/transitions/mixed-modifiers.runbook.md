@@ -15,7 +15,7 @@ scenarios:
       - rd pass
     result: COMPLETE
   auto-execution:
-    description: Step 1 passes, step 2 passes and GOTOs to step 4, which completes
+    description: Step 2 passes, GOTOs step 4, completes
     commands:
       - rd run mixed-modifiers.runbook.md
     result: COMPLETE
@@ -24,6 +24,7 @@ scenarios:
 # Complex Transitions
 
 ## 1. Aggregation
+
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP "Failed"
 
@@ -31,8 +32,8 @@ scenarios:
 rd echo --result pass
 ```
 
-
 ## 2. Optimistic
+
 - PASS ANY: GOTO 4
 - FAIL ALL: RETRY 3
 
@@ -40,19 +41,18 @@ rd echo --result pass
 rd echo --result pass
 ```
 
-
 ## 3. Empty
+
 - PASS: CONTINUE
 
 ```bash
 rd echo --result pass
 ```
 
-
 ## 4. End
+
 - PASS: COMPLETE
 
 ```bash
 rd echo --result pass
 ```
-

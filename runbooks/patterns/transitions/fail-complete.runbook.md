@@ -19,6 +19,7 @@ FAIL: COMPLETE finishes the runbook when a step fails.
 Useful for handled failures or early exit success.
 
 ## 1. Check condition
+
 - PASS: CONTINUE
 - FAIL: COMPLETE "Completed with warnings"
 
