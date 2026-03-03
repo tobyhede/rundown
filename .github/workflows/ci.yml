@@ -39,7 +39,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: "${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}"
+        node-version: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}
 
     steps:
       - uses: actions/checkout@v6
@@ -74,7 +74,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: "${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}"
+        node-version: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}
 
     steps:
       - uses: actions/checkout@v6
@@ -103,7 +103,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: "${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}"
+        node-version: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}
 
     steps:
       - uses: actions/checkout@v6
@@ -168,7 +168,7 @@ jobs:
 
   # Trigger turboshovel tests after successful CI on main
   notify-dependents:
-    needs: test
+    needs: [quality-checks, lint-typed, test, playwright]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
