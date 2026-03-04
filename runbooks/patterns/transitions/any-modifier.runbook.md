@@ -32,8 +32,8 @@ PASS ANY fires when at least one substep passes. Paired with FAIL ALL (optimisti
 
 ## 1. Optimistic check
 
-- PASS ANY: COMPLETE
-- FAIL ALL: STOP "All checks failed"
+- PASS ANY COMPLETE
+- FAIL ALL STOP "All checks failed"
 
 ### 1.1 Primary check
 

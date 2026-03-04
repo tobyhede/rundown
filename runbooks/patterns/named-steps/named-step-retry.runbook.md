@@ -15,7 +15,7 @@ scenarios:
 
 ## 1. Entry
 
-- PASS: GOTO Validate
+- PASS GOTO Validate
 
 ```bash
 rd echo "entry"
@@ -23,8 +23,8 @@ rd echo "entry"
 
 ## Validate
 
-- PASS: COMPLETE
-- FAIL: RETRY 1 STOP
+- PASS COMPLETE
+- FAIL RETRY 1 STOP
 
 ```bash
 rd echo --result fail --result pass

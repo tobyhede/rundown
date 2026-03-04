@@ -32,8 +32,8 @@ Tests that RETRY exhaustion with STOP halts the runbook.
 
 ## 1. Critical step
 
-- PASS: COMPLETE
-- FAIL: RETRY 1 STOP
+- PASS COMPLETE
+- FAIL RETRY 1 STOP
 
 Fails initially, retries once. If it fails again, it STOPS the runbook.
 

@@ -44,8 +44,8 @@ Demonstrates static steps with a named error handler step.
 
 ## 1. Setup
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
+- PASS CONTINUE
+- FAIL GOTO ErrorHandler
 
 Prepare the environment.
 
@@ -55,8 +55,8 @@ rd echo "setup environment"
 
 ## 2. Execute
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
+- PASS CONTINUE
+- FAIL GOTO ErrorHandler
 
 Execute the main task.
 
@@ -66,8 +66,8 @@ rd echo "execute task"
 
 ## 3. Cleanup
 
-- PASS: COMPLETE
-- FAIL: GOTO ErrorHandler
+- PASS COMPLETE
+- FAIL GOTO ErrorHandler
 
 Final cleanup.
 
@@ -77,8 +77,8 @@ rd echo "cleanup resources"
 
 ## ErrorHandler
 
-- PASS: GOTO 1
-- FAIL: STOP "Unrecoverable error"
+- PASS GOTO 1
+- FAIL STOP "Unrecoverable error"
 
 Central error handling step.
 

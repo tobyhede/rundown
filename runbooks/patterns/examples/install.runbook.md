@@ -53,8 +53,8 @@ and a test runbook executes successfully.
 
 ### 1.1 Verify Node.js
 
-- PASS: CONTINUE
-- FAIL: STOP "Node.js v18.0.0 or higher is required"
+- PASS CONTINUE
+- FAIL STOP "Node.js v18.0.0 or higher is required"
 
 Verify Node.js v18.0.0 or higher is installed.
 
@@ -66,8 +66,8 @@ node --version
 
 ### 2.1 Install globally
 
-- PASS: CONTINUE
-- FAIL: RETRY 1 STOP "Failed to install Rundown CLI"
+- PASS CONTINUE
+- FAIL RETRY 1 STOP "Failed to install Rundown CLI"
 
 Install the Rundown CLI globally using npm.
 
@@ -77,8 +77,8 @@ npm i -g @rundown-org/cli
 
 ### 2.2 Verify installation
 
-- PASS: CONTINUE
-- FAIL: STOP "Rundown CLI installation verification failed"
+- PASS CONTINUE
+- FAIL STOP "Rundown CLI installation verification failed"
 
 Verify the installation succeeded.
 
@@ -88,15 +88,15 @@ rd --version
 
 ## 3 Getting Started
 
-- YES: CONTINUE
-- NO: COMPLETE "Rundown CLI installed successfully"
+- YES CONTINUE
+- NO COMPLETE "Rundown CLI installed successfully"
 
 Would you like to create and run a simple "Hello World" runbook?
 
 ### 3.1 Create first runbook
 
-- PASS: CONTINUE
-- FAIL: STOP "Failed to create runbook"
+- PASS CONTINUE
+- FAIL STOP "Failed to create runbook"
 
 Create a file named `hello.runbook.md`.
 
@@ -118,8 +118,8 @@ echo 'Hello from Rundown!'
 
 ### 3.2 Run first runbook
 
-- PASS: COMPLETE "Rundown CLI installed and verified with hello.runbook.md"
-- FAIL: STOP "Failed to run example runbook"
+- PASS COMPLETE "Rundown CLI installed and verified with hello.runbook.md"
+- FAIL STOP "Failed to run example runbook"
 
 Execute the runbook.
 

@@ -21,8 +21,8 @@ Parent runbook that delegates to a child, which delegates to a grandchild.
 
 ## 1. Parent work
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Child task
 

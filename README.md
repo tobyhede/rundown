@@ -74,24 +74,24 @@ name: Deploy to Production
 ---
 
 ## 1. Run Tests
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
 rd echo npm test
 ```
 
 ## 2. Build Application
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
 rd echo npm run build
 ```
 
 ## 3. Deploy
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 ```bash
 rd echo npm run deploy

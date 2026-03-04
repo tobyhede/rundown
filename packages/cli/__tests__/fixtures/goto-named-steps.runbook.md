@@ -1,7 +1,7 @@
 ## Setup (name: Setup)
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Initialize the runbook.
 
@@ -11,8 +11,8 @@ rd echo --result pass
 
 ## ProcessData (name: ProcessData)
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Process the data.
 
@@ -22,8 +22,8 @@ rd echo --result pass
 
 ## ErrorHandler (name: ErrorHandler)
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Handle any errors that occurred.
 

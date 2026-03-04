@@ -95,7 +95,7 @@ rd echo npm run deploy:push
 
 ### 3.2 Migrate database
 
-- FAIL: GOTO Rollback
+- FAIL GOTO Rollback
 
 ```bash
 rd echo npm run database:migrate
@@ -103,7 +103,7 @@ rd echo npm run database:migrate
 
 ### 3.3 Restart services
 
-- FAIL: RETRY
+- FAIL RETRY
 
 ```bash
 rd echo npm run deploy:restart
@@ -119,8 +119,8 @@ rd echo npm run test:smoke --production
 
 ### 4.2 Run health checks
 
-- PASS: RETRY 3 CONTINUE
-- FAIL: GOTO Rollback
+- PASS RETRY 3 CONTINUE
+- FAIL GOTO Rollback
 
 Monitors in a `RETRY` loop
 
@@ -135,7 +135,7 @@ Follow the existing Slack guidelines.
 
 ## Rollback. Rollback on Failure
 
-- PASS: STOP "Deployment rolled back due to failure."
+- PASS STOP "Deployment rolled back due to failure."
 
 ```bash
 rd echo npm run deploy:rollback

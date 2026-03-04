@@ -15,7 +15,7 @@ scenarios:
 
 ## 1. Echo undefined
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "value={{undefined_var}}"

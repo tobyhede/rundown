@@ -17,8 +17,8 @@ scenarios:
 
 ## 1. Delegated work
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Child task
 

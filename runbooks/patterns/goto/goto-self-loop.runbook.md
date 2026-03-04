@@ -27,4 +27,4 @@ scenarios:
 GOTO to the same step creates a retry loop until failure stops it.
 
 ## 1. Loop
-- PASS: GOTO 1
+- PASS GOTO 1

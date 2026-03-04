@@ -19,7 +19,7 @@ scenarios:
 ## 1. Process tasks
 
 - FOR item IN 1 TO 3
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 1.1 Task {{item}}
 

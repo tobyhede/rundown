@@ -20,13 +20,13 @@ Plain body text serves as an implicit prompt.
 
 ## 1. Review deployment
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Review the deployment configuration.
 
 ## 2. Confirm changes
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Confirm the changes are correct.

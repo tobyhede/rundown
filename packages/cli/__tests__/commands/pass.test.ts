@@ -120,8 +120,8 @@ describe('pass command', () => {
     beforeEach(async () => {
       // stop-on-pass.md created inline in the lastResult test
       const stopOnPassRunbook = `## 1. Stop on pass
-- PASS: STOP
-- FAIL: CONTINUE
+- PASS STOP
+- FAIL CONTINUE
 
 This step stops on pass.
 `;
@@ -157,12 +157,12 @@ This step stops on pass.
     it('should restore parent runbook as active when nested child completes', async () => {
       // Create parent/child runbooks for nesting test
       const parentRunbook = `## 1. Parent step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do parent work.
 `;
       const childRunbook = `## 1. Child step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do child work.
 `;
@@ -194,12 +194,12 @@ Do child work.
     it('pops to parent runbook on completion', async () => {
       // Create parent/child runbooks
       const parentRunbook = `## 1. Step one
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do something.
 `;
       const childRunbook = `## 1. Step one
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do work.
 `;
@@ -227,8 +227,8 @@ Do work.
     it('sets lastResult to pass even when STOP is triggered', async () => {
       // Create a runbook where PASS triggers STOP (edge case)
       const stopOnPassRunbook = `## 1. Stop on pass
-- PASS: STOP
-- FAIL: CONTINUE
+- PASS STOP
+- FAIL CONTINUE
 
 This step stops on pass.
 `;
@@ -268,8 +268,8 @@ This step stops on pass.
       // Create retry runbook where pass triggers retry (via command failure)
       const retryRunbook = `## 1. Retry on pass fail
 
-- PASS: CONTINUE
-- FAIL: RETRY 3
+- PASS CONTINUE
+- FAIL RETRY 3
 
 This step has FAIL: RETRY.
 
@@ -279,7 +279,7 @@ rd echo --result fail
 
 ## 2. Done
 
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'retry-test.md'), retryRunbook);
@@ -359,8 +359,8 @@ rd echo --result fail
     it('reports result: false for STOP transitions', async () => {
       // Create stop-on-pass runbook
       const stopOnPassRunbook = `## 1. Stop on pass
-- PASS: STOP
-- FAIL: CONTINUE
+- PASS STOP
+- FAIL CONTINUE
 
 This step stops on pass.
 `;

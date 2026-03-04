@@ -15,7 +15,7 @@ scenarios:
 
 ## 1. Entry
 
-- PASS: GOTO Process
+- PASS GOTO Process
 
 ```bash
 rd echo "entry"
@@ -24,7 +24,7 @@ rd echo "entry"
 ## Process
 
 - FOR item IN 1 TO 3
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### Process.1 Handle {{item}}
 

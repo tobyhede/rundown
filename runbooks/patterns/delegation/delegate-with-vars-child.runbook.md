@@ -15,8 +15,8 @@ scenarios:
 
 ## 1. Echo environment
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 ```bash
 rd echo "environment={{environment}}"

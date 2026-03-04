@@ -112,7 +112,7 @@ Execution path notation such as `1.2.1` (`STEP.INDEX.SUBSTEP`) is display-only. 
 Control flow is defined by **Transitions** (conditions) and **Actions** (effects).
 
 ### 4.1 Transitions
-Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
+Syntax: `- {RESULT} [{AGGREGATION}] {ACTION}`
 
 | Component | Values | Description |
 | :--- | :--- | :--- |
@@ -124,7 +124,7 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 **Defaults**:
 *   If only `PASS` defined: `FAIL` -> `STOP`.
 *   If only `FAIL` defined: `PASS` -> `CONTINUE`.
-*   If neither is defined: `PASS: CONTINUE`, `FAIL: STOP`.
+*   If neither is defined: `PASS CONTINUE`, `FAIL STOP`.
 
 ### 4.2 Actions
 

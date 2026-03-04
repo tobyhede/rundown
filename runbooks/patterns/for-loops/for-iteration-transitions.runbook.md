@@ -16,8 +16,8 @@ scenarios:
 ## 1. Process items
 
 - FOR item IN 1 TO 3
-  - FAIL: CONTINUE
-- FAIL ANY: CONTINUE
+  - FAIL CONTINUE
+- FAIL ANY CONTINUE
 
 ### 1.1 Check {{item}}
 
@@ -27,7 +27,7 @@ rd echo --result fail
 
 ## 2. Done
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "completed"

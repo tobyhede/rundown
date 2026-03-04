@@ -18,8 +18,8 @@ Simple child runbook used as a delegation target. Auto-completes on execution.
 
 ## 1. Execute child task
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 ```bash
 rd echo "child task completed"

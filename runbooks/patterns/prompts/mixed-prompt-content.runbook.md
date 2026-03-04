@@ -21,8 +21,8 @@ scenarios:
 
 ## 1. Mixed prompts
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 **Prompt:** Explicit prompt.
 

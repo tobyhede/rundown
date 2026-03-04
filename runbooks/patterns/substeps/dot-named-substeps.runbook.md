@@ -22,8 +22,8 @@ Named substeps using dot-name syntax.
 
 ### 1.Prepare
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
 rd echo "prepare"
@@ -31,7 +31,7 @@ rd echo "prepare"
 
 ### 1.Cleanup
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "cleanup"

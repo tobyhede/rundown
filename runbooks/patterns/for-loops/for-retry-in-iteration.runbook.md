@@ -16,12 +16,12 @@ scenarios:
 ## 1. Process items
 
 - FOR item IN 1 TO 2
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 1.1 Attempt {{item}}
 
-- PASS: CONTINUE
-- FAIL: RETRY 2 STOP
+- PASS CONTINUE
+- FAIL RETRY 2 STOP
 
 ```bash
 rd echo --result fail --result pass

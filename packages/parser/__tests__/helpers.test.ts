@@ -14,6 +14,7 @@ import {
   validateNEXTUsage,
   parseForClause,
   type ParsedConditional,
+  RunbookSyntaxError,
 } from '../src/index.js';
 import { formatAction, isExecutableCodeBlock } from '../src/helpers.js';
 
@@ -196,7 +197,7 @@ describe('isPromptCodeBlock', () => {
 
 describe('parseConditional with YES/NO', () => {
   it('should preserve YES as type', () => {
-    const result = parseConditional('YES: CONTINUE');
+    const result = parseConditional('YES CONTINUE');
     expect(result).toEqual({
       type: 'yes',
       retry: 0,
@@ -207,7 +208,7 @@ describe('parseConditional with YES/NO', () => {
   });
 
   it('should preserve NO as type', () => {
-    const result = parseConditional('NO: STOP');
+    const result = parseConditional('NO STOP');
     expect(result).toEqual({
       type: 'no',
       retry: 0,
@@ -884,19 +885,41 @@ describe('parseAction error cases', () => {
 
 describe('parseConditional error cases', () => {
   it('throws for PASS with invalid action', () => {
-    expect(() => parseConditional('PASS: UNKNOWN')).toThrow('Invalid PASS transition');
+    expect(() => parseConditional('PASS UNKNOWN')).toThrow('Invalid PASS transition');
   });
 
   it('throws for FAIL with invalid action', () => {
-    expect(() => parseConditional('FAIL: INVALID')).toThrow('Invalid FAIL transition');
+    expect(() => parseConditional('FAIL INVALID')).toThrow('Invalid FAIL transition');
   });
 
   it('throws for YES with invalid action', () => {
-    expect(() => parseConditional('YES: BADACTION')).toThrow('Invalid YES transition');
+    expect(() => parseConditional('YES BADACTION')).toThrow('Invalid YES transition');
   });
 
   it('throws for NO with invalid action', () => {
-    expect(() => parseConditional('NO: NOTVALID')).toThrow('Invalid NO transition');
+    expect(() => parseConditional('NO NOTVALID')).toThrow('Invalid NO transition');
+  });
+
+  it('throws on colon separator', () => {
+    expect(() => parseConditional('PASS: CONTINUE')).toThrow(RunbookSyntaxError);
+    expect(() => parseConditional('FAIL: STOP')).toThrow(RunbookSyntaxError);
+    expect(() => parseConditional('YES: GOTO 2')).toThrow(RunbookSyntaxError);
+    expect(() => parseConditional('NO: RETRY')).toThrow(RunbookSyntaxError);
+  });
+
+  it('throws on arrow separator', () => {
+    expect(() => parseConditional('PASS→ CONTINUE')).toThrow(RunbookSyntaxError);
+    expect(() => parseConditional('FAIL→ STOP')).toThrow(RunbookSyntaxError);
+  });
+
+  it('throws on dash separator', () => {
+    expect(() => parseConditional('PASS— CONTINUE')).toThrow(RunbookSyntaxError);
+  });
+
+  it('throws with helpful error message', () => {
+    expect(() => parseConditional('PASS: CONTINUE')).toThrow(
+      'Separator character not allowed in transitions. Use "PASS CONTINUE" instead of "PASS: CONTINUE"',
+    );
   });
 });
 
@@ -1178,8 +1201,8 @@ describe('extractSubstepHeader edge cases', () => {
 });
 
 describe('parseConditional with modifier', () => {
-  it('parses PASS ALL: CONTINUE', () => {
-    const result = parseConditional('PASS ALL: CONTINUE');
+  it('parses PASS ALL CONTINUE', () => {
+    const result = parseConditional('PASS ALL CONTINUE');
     expect(result).toEqual({
       type: 'pass',
       retry: 0,
@@ -1189,8 +1212,8 @@ describe('parseConditional with modifier', () => {
     });
   });
 
-  it('parses FAIL ANY: STOP', () => {
-    const result = parseConditional('FAIL ANY: STOP');
+  it('parses FAIL ANY STOP', () => {
+    const result = parseConditional('FAIL ANY STOP');
     expect(result).toEqual({
       type: 'fail',
       retry: 0,
@@ -1203,7 +1226,7 @@ describe('parseConditional with modifier', () => {
 
 describe('ParsedConditional with retry property', () => {
   it('parseConditional extracts retry as property', () => {
-    const result = parseConditional('FAIL: RETRY 2 GOTO 3');
+    const result = parseConditional('FAIL RETRY 2 GOTO 3');
     expect(result).toEqual({
       type: 'fail',
       retry: 2,
@@ -1214,7 +1237,7 @@ describe('ParsedConditional with retry property', () => {
   });
 
   it('parseConditional handles NEXT shorthand', () => {
-    const result = parseConditional('PASS: NEXT');
+    const result = parseConditional('PASS NEXT');
     expect(result).toEqual({
       type: 'pass',
       retry: 0,
@@ -1225,7 +1248,7 @@ describe('ParsedConditional with retry property', () => {
   });
 
   it('parseConditional handles RETRY with NEXT', () => {
-    const result = parseConditional('FAIL: RETRY 2 NEXT');
+    const result = parseConditional('FAIL RETRY 2 NEXT');
     expect(result).toEqual({
       type: 'fail',
       retry: 2,

@@ -17,8 +17,8 @@ scenarios:
 
 ## 1. Child work
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Grandchild task
 

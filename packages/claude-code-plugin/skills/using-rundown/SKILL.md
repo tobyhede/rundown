@@ -37,8 +37,8 @@ Prompt steps:
  - manually trigger transition by calling the `rd pass` or `rd fail` commands
 
 The default transitions for all steps:
-  - `PASS: CONTINUE` (proceed to next step)
-  - `FAIL: STOP` (halt execution)
+  - `PASS CONTINUE` (proceed to next step)
+  - `FAIL STOP` (halt execution)
 
 
 ## Core Workflow
@@ -56,8 +56,8 @@ Given a runbook `deploy.md`:
 
 ````markdown
 ## 1. Run tests
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
 npm test

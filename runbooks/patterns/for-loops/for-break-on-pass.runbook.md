@@ -18,12 +18,12 @@ scenarios:
 ## 1. Find match
 
 - FOR item IN 1 TO 3
-- PASS ANY: COMPLETE
+- PASS ANY COMPLETE
 
 ### 1.1 Try {{item}}
 
-- PASS: BREAK
-- FAIL: CONTINUE
+- PASS BREAK
+- FAIL CONTINUE
 
 ```bash
 rd echo "item={{item}}"

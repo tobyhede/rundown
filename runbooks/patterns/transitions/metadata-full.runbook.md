@@ -20,7 +20,7 @@ scenarios:
 
 ## 1. Echo variables
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "greeting={{greeting}} port={{port}}"

@@ -21,8 +21,8 @@ GOTO from named step Setup to named step Finish, skipping Middle.
 
 ## Setup
 
-- PASS: GOTO Finish
-- FAIL: STOP
+- PASS GOTO Finish
+- FAIL STOP
 
 ```bash
 rd echo "setup"
@@ -30,7 +30,7 @@ rd echo "setup"
 
 ## Middle
 
-- PASS: CONTINUE
+- PASS CONTINUE
 
 This step should be skipped.
 
@@ -40,7 +40,7 @@ rd echo --result fail
 
 ## Finish
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "finish"

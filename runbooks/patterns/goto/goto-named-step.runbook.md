@@ -37,8 +37,8 @@ scenarios:
 
 ## Initialize
 
-- PASS: GOTO Cleanup
-- FAIL: STOP
+- PASS GOTO Cleanup
+- FAIL STOP
 
 Please initialize.
 
@@ -50,8 +50,8 @@ rd echo "initialize"
 
 ## Process
 
-- PASS: GOTO 1
-- FAIL: STOP
+- PASS GOTO 1
+- FAIL STOP
 
 Please process.
 
@@ -63,8 +63,8 @@ rd echo "process"
 
 ## 1. Static Step
 
-- PASS: GOTO Cleanup
-- FAIL: STOP
+- PASS GOTO Cleanup
+- FAIL STOP
 
 Tests GOTO Static -> Name.
 
@@ -74,8 +74,8 @@ rd echo "static step"
 
 ## Cleanup
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Target for jumps.
 

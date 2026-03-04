@@ -16,7 +16,7 @@ scenarios:
 ## 1. Process window
 
 - FOR item IN 1 TO 2 OF {{ items }}
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 1.1 Handle {{item}}
 

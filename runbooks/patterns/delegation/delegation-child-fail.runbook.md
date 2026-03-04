@@ -18,8 +18,8 @@ Child runbook that auto-fails. Used as a delegation target for failure propagati
 
 ## 1. Execute child task
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 ```bash
 rd echo --result fail "child task failed"

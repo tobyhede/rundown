@@ -194,8 +194,8 @@ In WebContainer environments (e.g., StackBlitz), nested process spawning may not
 Example of a step that auto-executes:
 ````markdown
 ## 3. Run tests
-- PASS: CONTINUE
-- FAIL: RETRY 2
+- PASS CONTINUE
+- FAIL RETRY 2
 
 ```bash
 npm test
@@ -205,8 +205,8 @@ npm test
 Example of a prompted step:
 ````markdown
 ## 4. Code review
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Review the implementation for issues.
 `rundown pass` if acceptable, `rundown fail` if blocked.
@@ -221,12 +221,12 @@ Steps can iterate their substeps over a numeric range using a FOR annotation. FO
 ````markdown
 ## 3. Process batches
 - FOR batch IN 1 TO 5
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1. Process item
-- PASS: CONTINUE
-- FAIL: BREAK
+- PASS CONTINUE
+- FAIL BREAK
 ````
 
 Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `.2`, ...), so FOR execution is equivalent across these forms:
@@ -234,7 +234,7 @@ Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `
 ````markdown
 ## 2. Review the plan
 - FOR pass IN 1 TO 2
-- FAIL ANY: GOTO Synthesize
+- FAIL ANY GOTO Synthesize
 
 - review-technical-accuracy.runbook.md
 - review-structural-integrity.runbook.md
@@ -243,7 +243,7 @@ Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `
 ````markdown
 ## 2. Review the plan
 - FOR pass IN 1 TO 2
-- FAIL ANY: GOTO Synthesize
+- FAIL ANY GOTO Synthesize
 
 ### 2.1
 - review-technical-accuracy.runbook.md
@@ -344,11 +344,11 @@ log_file: file:data/results.jsonl
 ````markdown
 ## 2 Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 ### 1 Handle item
-- PASS: CONTINUE
-- FAIL: BREAK
+- PASS CONTINUE
+- FAIL BREAK
 Handle {{item}} (iteration {{Index}}).
 ````
 
@@ -967,8 +967,8 @@ Main agent runs runbook, dispatches subagents for substeps.
 **Runbook structure:**
 ```markdown
 ## 2. Execute batch
-- PASS ALL: CONTINUE
-- FAIL ANY: GOTO 4
+- PASS ALL CONTINUE
+- FAIL ANY GOTO 4
 
 ### 2.1 Process item
   - task.runbook.md
@@ -1004,8 +1004,8 @@ Agent decides next action based on context.
 
 ```markdown
 ## 5. Check remaining
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Check TodoWrite for remaining items.
 

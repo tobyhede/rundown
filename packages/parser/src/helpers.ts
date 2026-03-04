@@ -514,13 +514,21 @@ function parseConditionalPrefix(
   let modifier: AggregationModifier = null;
   let remaining = rest;
 
-  const modifierMatch = /^\s+(ALL|ANY)[\s:→-]/.exec(remaining);
+  const modifierMatch = /^\s+(ALL|ANY)\s/.exec(remaining);
   if (modifierMatch) {
     modifier = modifierMatch[1] as 'ALL' | 'ANY';
     remaining = remaining.slice(modifierMatch[0].length);
   }
 
-  const actionStr = stripSeparator(remaining);
+  const trimmedRemaining = remaining.trimStart();
+
+  // Detect legacy separators and produce helpful error
+  if (/^[:\u2014\u2192]/.test(trimmedRemaining)) {
+    throw new RunbookSyntaxError(
+      `Separator character not allowed in transitions. Use "PASS CONTINUE" instead of "PASS: CONTINUE"`,
+    );
+  }
+  const actionStr = trimmedRemaining;
 
   // Try to parse as RETRY first
   let retry = 0;
@@ -552,9 +560,9 @@ function parseConditionalPrefix(
  * Parse a conditional transition line into a ParsedConditional object.
  *
  * Recognizes these formats:
- * - PASS/YES: triggers on step success (e.g., "PASS: CONTINUE", "YES → GOTO 2")
- * - FAIL/NO: triggers on step failure (e.g., "FAIL: STOP", "NO → RETRY 3")
- * - With aggregation: "PASS ALL: CONTINUE", "FAIL ANY: STOP"
+ * - PASS/YES: triggers on step success (e.g., "PASS CONTINUE", "YES GOTO 2")
+ * - FAIL/NO: triggers on step failure (e.g., "FAIL STOP", "NO RETRY 3")
+ * - With aggregation: "PASS ALL CONTINUE", "FAIL ANY STOP"
  *
  * @param text - The conditional line to parse
  * @returns Parsed conditional with type, action, and optional modifier, or null if not a conditional

@@ -87,7 +87,7 @@ Step-level `runbooks` syntax is shorthand for implicit sequential substeps (`###
 If prompt text appears before a step-level `runbooks` shorthand body, it is attached to the first generated implicit substep only.
 
 where transition is:
-  - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result
+  - { PASS | FAIL | YES | NO } [ { ALL | ANY } ] result
 
 Transitions must appear as list items with the `-` bullet prefix (a dash followed by a space). Paragraph-style transitions (without prefix) are not valid.
 
@@ -261,8 +261,8 @@ Canonical runtime targeting is `step + substep + iteration`.
 
 | Input | Expands To |
 |-------|------------|
-| `PASS: X` | `PASS ALL: X` |
-| `FAIL: X` | `FAIL ANY: X` |
+| `PASS X` | `PASS ALL X` |
+| `FAIL X` | `FAIL ANY X` |
 
 ### RETRY Defaults
 
@@ -283,9 +283,9 @@ Canonical runtime targeting is `step + substep + iteration`.
 
 | Condition         | Expands To |
 |-------------------|------------|
-| None defined      | `PASS ALL: CONTINUE` + `FAIL ANY: STOP` |
-| Only PASS defined | Adds `FAIL ANY: STOP` |
-| Only FAIL defined | Adds `PASS ALL: CONTINUE` |
+| None defined      | `PASS ALL CONTINUE` + `FAIL ANY STOP` |
+| Only PASS defined | Adds `FAIL ANY STOP` |
+| Only FAIL defined | Adds `PASS ALL CONTINUE` |
 
 **Convention:** Always write both transitions explicitly. The parser supports implicit defaults, but runbooks should be readable without memorizing the default table.
 

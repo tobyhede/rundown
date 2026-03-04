@@ -23,13 +23,13 @@ scenarios:
 ## 1. Validate items
 
 - FOR item IN 1 TO 3
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Check {{item}}
 
-- PASS: CONTINUE
-- FAIL: BREAK
+- PASS CONTINUE
+- FAIL BREAK
 
 ```bash
 rd echo "item={{item}}"
@@ -37,7 +37,7 @@ rd echo "item={{item}}"
 
 ## 2. Finalize
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "done"

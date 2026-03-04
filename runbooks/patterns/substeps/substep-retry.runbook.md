@@ -28,8 +28,8 @@ RETRY on a substep that fails then succeeds on retry.
 
 ### 1.1 Flaky substep
 
-- PASS: CONTINUE
-- FAIL: RETRY 2 STOP
+- PASS CONTINUE
+- FAIL RETRY 2 STOP
 
 ```bash
 rd echo --result fail --result pass
@@ -37,7 +37,7 @@ rd echo --result fail --result pass
 
 ### 1.2 Final substep
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "done"

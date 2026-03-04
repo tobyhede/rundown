@@ -89,14 +89,14 @@ describe('fail command', () => {
     it('pops to parent runbook on fail completion', async () => {
       // Create parent/child runbooks
       const parentRunbook = `## 1. Step one
-- PASS: COMPLETE
-- FAIL: COMPLETE
+- PASS COMPLETE
+- FAIL COMPLETE
 
 Do something.
 `;
       const childRunbook = `## 1. Step one
-- PASS: COMPLETE
-- FAIL: COMPLETE
+- PASS COMPLETE
+- FAIL COMPLETE
 
 Do work.
 `;
@@ -226,8 +226,8 @@ Do work.
     it('fail on substep with PASS ALL transition', async () => {
       // Create runbook with substeps and PASS ALL
       const substepRunbook = `## 1. Process
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 First substep
 Do first task.
@@ -236,7 +236,7 @@ Do first task.
 Do second task.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step.
 `;
@@ -257,13 +257,13 @@ Final step.
     it('consecutive fail commands maintain state consistency', async () => {
       // Create a runbook that transitions on second fail
       const multiFailRunbook = `## 1. Retry step
-- FAIL: RETRY 2
-- PASS: CONTINUE
+- FAIL RETRY 2
+- PASS CONTINUE
 
 Try this step.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step.
 `;
@@ -292,7 +292,7 @@ Final step.
     it('fail on runbook with no explicit fail transition uses default', async () => {
       // Create runbook with only PASS transition (no explicit FAIL)
       const noFailTransition = `## 1. Step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do something.
 `;

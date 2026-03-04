@@ -46,8 +46,8 @@ export function renderTransitions(transitions: Transitions): string {
   const lines: string[] = [];
   const passAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ALL' : ' ANY';
   const failAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ANY' : ' ALL';
-  lines.push(`- PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
-  lines.push(`- FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
+  lines.push(`- PASS${passAgg} ${renderTransitionAction(transitions.pass)}`);
+  lines.push(`- FAIL${failAgg} ${renderTransitionAction(transitions.fail)}`);
   return lines.join('\n');
 }
 
@@ -81,7 +81,7 @@ export function renderSubstep(substep: Substep, parentStepName: string): string 
  * present, they are appended as indented nested bullets.
  *
  * @param forClause - The FOR clause to render
- * @returns Array of DSL strings (e.g., ["- FOR pass IN 1 TO 2", "  - PASS ANY: CONTINUE"])
+ * @returns Array of DSL strings (e.g., ["- FOR pass IN 1 TO 2", "  - PASS ANY CONTINUE"])
  */
 function renderForClause(forClause: NonNullable<Step['forClause']>): string[] {
   const lines: string[] = [];
@@ -114,8 +114,8 @@ function renderForClause(forClause: NonNullable<Step['forClause']>): string[] {
   if (transitions) {
     const passAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ALL' : ' ANY';
     const failAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ANY' : ' ALL';
-    lines.push(`  - PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
-    lines.push(`  - FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
+    lines.push(`  - PASS${passAgg} ${renderTransitionAction(transitions.pass)}`);
+    lines.push(`  - FAIL${failAgg} ${renderTransitionAction(transitions.fail)}`);
   }
 
   return lines;

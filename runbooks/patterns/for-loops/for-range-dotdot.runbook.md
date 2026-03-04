@@ -16,7 +16,7 @@ scenarios:
 ## 1. Process items
 
 - FOR item IN 1..5
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 1.1 Process {{item}}
 

@@ -20,8 +20,8 @@ FAIL: CONTINUE proceeds to the next step even when a step fails.
 
 ## 1. Optional step
 
-- PASS: COMPLETE
-- FAIL: CONTINUE
+- PASS COMPLETE
+- FAIL CONTINUE
 
 Best effort execution.
 
@@ -31,7 +31,7 @@ rd echo "optional step"
 
 ## 2. Cleanup
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Executes after step 1, even if step 1 failed.
 

@@ -59,12 +59,12 @@ name: test-workflow
 # Test Workflow
 
 ## 1. First Step
-- PASS: CONTINUE
+- PASS CONTINUE
 
 Do the first thing.
 
 ## 2. Second Step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do the second thing.
 `;
@@ -103,18 +103,18 @@ name: test-fail-workflow
 # Test Fail Workflow
 
 ## 1. First Step
-- PASS: CONTINUE
-- FAIL: GOTO 3
+- PASS CONTINUE
+- FAIL GOTO 3
 
 Do the first thing.
 
 ## 2. Normal Path
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Skipped on failure.
 
 ## 3. Recovery
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Recovery step.
 `;
@@ -149,17 +149,17 @@ name: test-goto
 # Test Goto
 
 ## 1. First Step
-- PASS: CONTINUE
+- PASS CONTINUE
 
 First step.
 
 ## 2. Second Step
-- PASS: CONTINUE
+- PASS CONTINUE
 
 Second step.
 
 ## 3. Third Step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Third step.
 `;

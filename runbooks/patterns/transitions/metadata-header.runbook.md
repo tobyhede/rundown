@@ -20,14 +20,14 @@ This is a description of the runbook.
 
 ## 1. First Step
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Execute.
 
 ## 2. Second Step
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Process.

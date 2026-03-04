@@ -75,12 +75,12 @@ describe('stop command', () => {
     it('pops to parent runbook', async () => {
       // Create parent/child runbooks
       const parentRunbook = `## 1. Step one
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do something.
 `;
       const childRunbook = `## 1. Step one
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do work.
 `;
@@ -132,8 +132,8 @@ Do work.
   describe('delegation propagation', () => {
     async function writeParentRunbook(): Promise<void> {
       const content = `## 1. Review
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Code review
 Do code review.
@@ -142,7 +142,7 @@ Do code review.
 Do security review.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step.
 `;
@@ -151,8 +151,8 @@ Final step.
 
     async function writeChildRunbook(): Promise<void> {
       const content = `## 1. Execute
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Run the child task.
 `;
@@ -279,8 +279,8 @@ Run the child task.
     it('3-level cascade — stop child propagates through parent to grandparent', async () => {
       // Grandparent with substeps
       const grandparentContent = `## 1. Pipeline
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Deploy
 Deploy step.
@@ -292,8 +292,8 @@ Verify step.
 
       // Parent with a substep
       const parentContent = `## 1. Review
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Task
 Review the deployment.

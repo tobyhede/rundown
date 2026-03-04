@@ -25,8 +25,8 @@ scenarios:
 
 ## 1. Optimistic check
 
-- PASS ANY: CONTINUE
-- FAIL ALL: STOP
+- PASS ANY CONTINUE
+- FAIL ALL STOP
 
 ### 1.1 First check
 
@@ -42,7 +42,7 @@ rd echo "check two"
 
 ## 2. Done
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "completed"

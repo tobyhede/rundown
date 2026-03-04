@@ -16,7 +16,7 @@ scenarios:
 ## 1. Process array items
 
 - FOR item IN {{ items }}
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 1.1 Handle {{item}}
 

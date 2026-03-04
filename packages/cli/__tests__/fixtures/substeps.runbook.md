@@ -4,7 +4,7 @@ Has substeps.
 
 ### 1.1 Substep A
 
-- PASS: CONTINUE
+- PASS CONTINUE
 
 First substep.
 
@@ -14,8 +14,8 @@ rd echo --result pass
 
 ### 1.2 Substep B
 
-- PASS: CONTINUE
-- FAIL: RETRY 2
+- PASS CONTINUE
+- FAIL RETRY 2
 
 Second substep.
 
@@ -25,8 +25,8 @@ rd echo --result fail --result pass
 
 ## 2. Complete
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Done.
 

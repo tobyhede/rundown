@@ -19,12 +19,12 @@ describe('rd check', () => {
     fs.writeFileSync(
       runbookPath,
       `## 1. First step
-- PASS: CONTINUE
+- PASS CONTINUE
 
 Do something.
 
 ## 2. Second step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do another thing.
 `,
@@ -42,12 +42,12 @@ Do another thing.
     fs.writeFileSync(
       runbookPath,
       `## 1. First step
-- PASS: CONTINUE
+- PASS CONTINUE
 
 Do something.
 
 ## 3. Third step (skipped 2)
-- PASS: GOTO 99
+- PASS GOTO 99
 
 Do another thing.
 `,
@@ -68,12 +68,12 @@ Do another thing.
     fs.writeFileSync(
       runbookPath,
       `## 1. First step
-- PASS: CONTINUE
+- PASS CONTINUE
 
 Do something.
 
 ## 3. Third step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Missing step 2.
 `,
@@ -95,7 +95,7 @@ Missing step 2.
     fs.writeFileSync(
       runbookPath,
       `## 1 Step
-- FAIL: GOTO 1
+- FAIL GOTO 1
 
 Do something.
 `,
@@ -125,7 +125,7 @@ vars:
   Step: custom
 ---
 ## 1. Do something
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Hello.
 `,
@@ -148,7 +148,7 @@ vars:
   Index: 5
 ---
 ## 1. Do something
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Hello.
 `,
@@ -171,7 +171,7 @@ vars:
   Date: "2025-01-01"
 ---
 ## 1. Do something
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Hello.
 `,
