@@ -29,6 +29,7 @@ import {
   type RunbookStoppedPayload,
   type StepTransitionedPayload,
 } from '@rundown-org/core';
+import { stepHasSubsteps } from '@rundown-org/parser';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
   drainResolvedCompletions,
@@ -247,7 +248,11 @@ export async function executeTransition(
   const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
   const activeState = ensured.state;
   const activeStep = findStepOrThrow(steps, activeState.step);
-  const isSubstepCompletion = !!(activeState.substep && (activeStep.kind === 'substeps' || activeStep.kind === 'for') && activeStep.substeps.length);
+  const isSubstepCompletion = !!(
+    activeState.substep &&
+    stepHasSubsteps(activeStep) &&
+    activeStep.substeps.length
+  );
 
   if (isSubstepCompletion) {
     const cursor = activeCursorTarget(activeState);

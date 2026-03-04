@@ -36,7 +36,7 @@ function hasActiveDelegation(
 ): boolean {
   if (!substepStates) return false;
   const ss = substepStates.find((s) => s.id === substepId);
-  return ss?.delegation !== undefined && ss.delegation.cancelledAt === null;
+  return ss?.delegation?.cancelledAt === null;
 }
 
 /**

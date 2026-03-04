@@ -30,7 +30,7 @@ import {
   DELEGATION_TOKEN_PREFIX,
   ErrorCodes,
 } from '@rundown-org/core';
-import { isSourced, type ForClause, type Step } from '@rundown-org/parser';
+import { isSourced, stepHasSubsteps, type Step } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
@@ -344,7 +344,7 @@ async function launchRunbook(
 
   await sessionService.pushRunbook(state.id);
 
-  if ((runbook.steps[0].kind === 'substeps' || runbook.steps[0].kind === 'for') && runbook.steps[0].substeps.length > 0) {
+  if (stepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
     await manager.initializeSubsteps(state.id, runbook.steps[0].substeps);
     await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
   }

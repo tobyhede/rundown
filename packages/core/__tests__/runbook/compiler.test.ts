@@ -2,7 +2,13 @@ import { describe, it, expect } from '@jest/globals';
 import { createActor } from 'xstate';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import { compileRunbookToMachine, MAX_FILE_ITERATIONS } from '../../src/runbook/compiler.js';
-import type { Step, BaseStep, StepWithCommand, StepWithSubsteps, StepWithFor } from '../../src/runbook/types.js';
+import type {
+  Step,
+  BaseStep,
+  StepWithCommand,
+  StepWithSubsteps,
+  StepWithFor,
+} from '../../src/runbook/types.js';
 
 describe('runbook compiler', () => {
   /** Input type: Step variants without the `kind` discriminant. */
@@ -22,10 +28,13 @@ describe('runbook compiler', () => {
   function inferSteps(raw: StepInput[]): Step[] {
     return raw.map((s) => {
       const kind =
-        'forClause' in s ? 'for'
-        : 'substeps' in s ? 'substeps'
-        : 'command' in s ? 'command'
-        : 'base';
+        'forClause' in s
+          ? 'for'
+          : 'substeps' in s
+            ? 'substeps'
+            : 'command' in s
+              ? 'command'
+              : 'base';
       return { ...s, kind } as Step;
     });
   }
@@ -6331,7 +6340,7 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('COMPLETE');
     });
 
-    it('substeps under ALL aggregation: all fail triggers STOP', () => {
+    it('substeps under ANY aggregation: all fail triggers STOP', () => {
       const steps = inferSteps([
         {
           name: '1',

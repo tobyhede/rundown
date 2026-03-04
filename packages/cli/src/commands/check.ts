@@ -1,7 +1,12 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Command } from 'commander';
-import { parseRunbookDocument, validateRunbook, type Step } from '@rundown-org/parser';
+import {
+  parseRunbookDocument,
+  stepHasSubsteps,
+  validateRunbook,
+  type Step,
+} from '@rundown-org/parser';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
@@ -9,7 +14,7 @@ import { validateFrontmatterVars } from '../helpers/validate-frontmatter-vars.js
 
 function countSubsteps(steps: readonly Step[]): number {
   return steps.reduce((count, step) => {
-    return count + (step.kind === 'substeps' || step.kind === 'for' ? step.substeps.length : 0);
+    return count + (stepHasSubsteps(step) ? step.substeps.length : 0);
   }, 0);
 }
 

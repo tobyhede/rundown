@@ -228,14 +228,15 @@ ${nodePathRules}
   (subpath "${escapePath(join(options.cwd, 'node_modules'))}")
 )
 
+;; Explicit deny paths (derived from effective policy)
+;; Must appear before allow rules — seatbelt uses first-match-wins
+${denyRules}
+
 ;; Custom read-only paths (from policy)
 ${readOnlyRules}
 
 ;; Custom read-write paths (from policy)
 ${readWriteRules}
-
-;; Explicit deny paths (derived from effective policy)
-${denyRules}
 
 ;; Allow network (can be restricted further if needed)
 (allow network-outbound)

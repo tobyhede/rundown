@@ -42,7 +42,7 @@ scenarios:
 
 # FAIL ANY AWAIT Three Substeps
 
-Three substeps with AWAIT validates no short-circuit at any point.
+Three substeps with AWAIT validate no short-circuit at any point.
 
 ## 1. Deferred pessimistic check
 

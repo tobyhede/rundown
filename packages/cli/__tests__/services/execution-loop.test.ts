@@ -255,7 +255,12 @@ describe('runExecutionLoop', () => {
 
   it('returns waiting if step has no command', async () => {
     const stepsNoCmd = [
-      { kind: 'base', name: '1', description: 'No command', transitions: { pass: { next: 'COMPLETE' } } },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'No command',
+        transitions: { pass: { next: 'COMPLETE' } },
+      },
     ];
     mockManager.load.mockResolvedValue({
       id: runbookId,
@@ -293,7 +298,12 @@ describe('runExecutionLoop', () => {
 
     const testSteps = [
       steps[0],
-      { kind: 'base', name: '2', description: 'Step 2', transitions: { pass: { next: 'COMPLETE' } } },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'Step 2',
+        transitions: { pass: { next: 'COMPLETE' } },
+      },
     ];
 
     const result = await runExecutionLoop(

@@ -16,6 +16,7 @@ import { createActor, type AnyActorRef } from 'xstate';
 import type { Step, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent } from './compiler.js';
+import { stepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 
 /**
@@ -279,64 +280,67 @@ export class RunbookActorService {
     const actor = await this.createActor(id, steps);
     if (!actor) return null;
     try {
-      // Pre-send diagnostics
-      const preSnapshot = actor.getPersistedSnapshot() as Record<string, unknown>;
-      const preValue = preSnapshot.value as string;
-      const preCtx = preSnapshot.context as Record<string, unknown> | undefined;
-      const preSubstep = preCtx?.substep as string | undefined;
-      const stepMatch = /^step::(.+?)(?:::(.+))?$/.exec(preValue);
-      const currentStepName = stepMatch?.[1];
-      const currentStep = currentStepName
-        ? steps.find((s) => s.name === currentStepName)
-        : undefined;
-      const substepCount =
-        currentStep && (currentStep.kind === 'substeps' || currentStep.kind === 'for')
-          ? currentStep.substeps.length
-          : 0;
+      if (logger.isDebugEnabled()) {
+        // Pre-send diagnostics
+        const preSnapshot = actor.getPersistedSnapshot() as Record<string, unknown>;
+        const preValue = preSnapshot.value as string;
+        const preCtx = preSnapshot.context as Record<string, unknown> | undefined;
+        const preSubstep = preCtx?.substep as string | undefined;
+        const stepMatch = /^step::(.+?)(?:::(.+))?$/.exec(preValue);
+        const currentStepName = stepMatch?.[1];
+        const currentStep = currentStepName
+          ? steps.find((s) => s.name === currentStepName)
+          : undefined;
+        const substepCount =
+          currentStep && stepHasSubsteps(currentStep) ? currentStep.substeps.length : 0;
 
-      void logger.debug('sendAndSync:pre-send', {
-        runbookId: id,
-        stateValue: preValue,
-        eventType: event.type,
-        substep: preSubstep,
-        substepCount,
-      });
+        void logger.debug('sendAndSync:pre-send', {
+          runbookId: id,
+          stateValue: preValue,
+          eventType: event.type,
+          substep: preSubstep,
+          substepCount,
+        });
 
-      actor.send(event);
+        actor.send(event);
 
-      // Post-send diagnostics
-      const postSnapshot = actor.getPersistedSnapshot() as Record<string, unknown>;
-      const postValue = postSnapshot.value as string;
-      const postCtx = postSnapshot.context as Record<string, unknown> | undefined;
-      const postLastAction = postCtx?.lastAction as { type: string } | undefined;
+        // Post-send diagnostics
+        const postSnapshot = actor.getPersistedSnapshot() as Record<string, unknown>;
+        const postValue = postSnapshot.value as string;
+        const postCtx = postSnapshot.context as Record<string, unknown> | undefined;
+        const postLastAction = postCtx?.lastAction as { type: string } | undefined;
 
-      void logger.debug('sendAndSync:post-send', {
-        runbookId: id,
-        stateValue: postValue,
-        lastAction: postLastAction?.type,
-        transition: `${preValue} → ${postValue}`,
-      });
+        void logger.debug('sendAndSync:post-send', {
+          runbookId: id,
+          stateValue: postValue,
+          lastAction: postLastAction?.type,
+          transition: `${preValue} → ${postValue}`,
+        });
 
-      // Anomaly: non-last substep transitions to terminal state
-      if (
-        (postValue === 'COMPLETE' || postValue === 'STOPPED') &&
-        currentStep &&
-        (currentStep.kind === 'substeps' || currentStep.kind === 'for') &&
-        preSubstep
-      ) {
-        const isLastSubstep =
-          preSubstep === currentStep.substeps[currentStep.substeps.length - 1].id;
-        if (!isLastSubstep) {
-          void logger.warn('sendAndSync:anomaly — non-last substep reached terminal state', {
-            runbookId: id,
-            stepName: currentStepName,
-            substep: preSubstep,
-            substepCount,
-            terminalState: postValue,
-            lastAction: postLastAction?.type,
-            eventType: event.type,
-          });
+        // Anomaly: non-last substep transitions to terminal state
+        if (
+          (postValue === 'COMPLETE' || postValue === 'STOPPED') &&
+          currentStep &&
+          stepHasSubsteps(currentStep) &&
+          currentStep.substeps.length > 0 &&
+          preSubstep
+        ) {
+          const isLastSubstep =
+            preSubstep === currentStep.substeps[currentStep.substeps.length - 1].id;
+          if (!isLastSubstep) {
+            void logger.warn('sendAndSync:anomaly — non-last substep reached terminal state', {
+              runbookId: id,
+              stepName: currentStepName,
+              substep: preSubstep,
+              substepCount,
+              terminalState: postValue,
+              lastAction: postLastAction?.type,
+              eventType: event.type,
+            });
+          }
         }
+      } else {
+        actor.send(event);
       }
 
       const { state, snapshot } = await this.updateFromActor(id, actor, steps);

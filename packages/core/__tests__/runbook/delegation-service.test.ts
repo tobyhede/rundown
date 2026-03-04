@@ -119,7 +119,10 @@ describe('createDelegation', () => {
 
   it('throws DELEGATION_STEP_NOT_CURRENT when step is not at frontier', () => {
     const state = makeState({ step: '2' });
-    const steps = [...makeSteps('1'), { kind: 'base' as const, name: '2', description: 'Step 2' }] as readonly Step[];
+    const steps = [
+      ...makeSteps('1'),
+      { kind: 'base' as const, name: '2', description: 'Step 2' },
+    ] as readonly Step[];
 
     expect(() =>
       createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps),

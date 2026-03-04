@@ -748,7 +748,10 @@ function buildParentStateConfig(
   const always: AlwaysTransition[] = [];
 
   // FOR iteration-level aggregation helpers
-  const forTransitions = parentStep.kind === 'for' ? (parentStep.forClause.transitions ?? DEFAULT_FOR_TRANSITIONS) : DEFAULT_FOR_TRANSITIONS;
+  const forTransitions =
+    parentStep.kind === 'for'
+      ? (parentStep.forClause.transitions ?? DEFAULT_FOR_TRANSITIONS)
+      : DEFAULT_FOR_TRANSITIONS;
 
   const computeIterationResult = (context: RunbookContext): 'pass' | 'fail' => {
     const results = context.substepResults ?? [];
@@ -1100,9 +1103,10 @@ function resolveActionTarget(action: Action, stepName: string, steps: Step[]): s
     case 'GOTO': {
       const targetStep = steps.find((s) => s.name === action.target.step);
       if (!targetStep) return 'COMPLETE';
-      const substep = (targetStep.kind === 'substeps' || targetStep.kind === 'for')
-        ? (action.target.substep ?? targetStep.substeps[0]?.id)
-        : action.target.substep;
+      const substep =
+        targetStep.kind === 'substeps' || targetStep.kind === 'for'
+          ? (action.target.substep ?? targetStep.substeps[0]?.id)
+          : action.target.substep;
       return formatStateId(targetStep.name, substep);
     }
     case 'NEXT':
@@ -1444,7 +1448,9 @@ export function compileRunbookToMachine(
     if (stepHasSubsteps(step)) {
       step.substeps.forEach((substep) => {
         const hasRunbooks = !!(substep.runbooks && substep.runbooks.length > 0);
-        const hasParentAggregation = !!(step.transitions ?? (step.kind === 'for' ? step.forClause : undefined));
+        const hasParentAggregation = !!(
+          step.transitions ?? (step.kind === 'for' ? step.forClause : undefined)
+        );
         const inferredTransitions = hasRunbooks
           ? DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS
           : hasParentAggregation

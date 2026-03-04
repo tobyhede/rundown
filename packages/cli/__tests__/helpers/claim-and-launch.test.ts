@@ -55,6 +55,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   isSourced: jest.fn(),
+  stepHasSubsteps: (step: { kind: string }) => step.kind === 'substeps' || step.kind === 'for',
 }));
 
 // Mock resolve-runbook

@@ -31,7 +31,7 @@ import {
   type ForContext,
   type DataSource,
 } from '@rundown-org/core';
-import { isSourced, type ForClause } from '@rundown-org/parser';
+import { isSourced, stepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import {
   getPolicyEvaluator,
@@ -344,7 +344,9 @@ export async function drainResolvedCompletions({
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     const currentStep = findStepOrThrow(steps, state.step);
-    if (!((currentStep.kind === 'substeps' || currentStep.kind === 'for') && currentStep.substeps.length) || !state.substep) {
+    const hasActiveSubsteps =
+      stepHasSubsteps(currentStep) && currentStep.substeps.length > 0 && !!state.substep;
+    if (!hasActiveSubsteps) {
       return { status: 'continue', state, unresolved: 0, applied };
     }
 
@@ -395,7 +397,9 @@ export async function drainResolvedCompletions({
 
     if (transitionResult.status === 'done' || transitionResult.status === 'stopped') {
       // Defense-in-depth: warn if terminal status reached with unresolved substeps
-      const remainingUnresolved = orderedSubsteps.filter((id) => !resolvedBySubstep.has(id)).length;
+      const remainingUnresolved = orderedSubsteps.filter(
+        (id) => !resolvedBySubstep.has(id) && id !== completion.targetSubstep,
+      ).length;
       if (remainingUnresolved > 0) {
         void logger.warn('drainResolvedCompletions: terminal status with unresolved substeps', {
           runbookId,
@@ -454,7 +458,7 @@ export async function runExecutionLoop(
 
     // Determine what to render: substep if we're at one, otherwise the step
     let itemToRender: Step | Substep = currentStep;
-    if (currentState.substep && (currentStep.kind === 'substeps' || currentStep.kind === 'for')) {
+    if (currentState.substep && stepHasSubsteps(currentStep)) {
       const substep = currentStep.substeps.find((s) => s.id === currentState.substep);
       if (substep) {
         itemToRender = substep;
@@ -572,7 +576,9 @@ export async function runExecutionLoop(
     const isSubstep = 'id' in itemToRender;
     const command = isSubstep
       ? (itemToRender as Substep).command
-      : currentStep.kind === 'command' ? currentStep.command : undefined;
+      : currentStep.kind === 'command'
+        ? currentStep.command
+        : undefined;
 
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,

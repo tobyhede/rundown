@@ -198,6 +198,13 @@ export const logger = {
     }),
 
   /**
+   * Check whether debug-level logging is enabled.
+   *
+   * @returns True if debug messages would be written
+   */
+  isDebugEnabled: (): boolean => isLoggingEnabled() && shouldLog('debug'),
+
+  /**
    * Get the current log file path (for mise tasks).
    *
    * @returns The absolute path to the current log file
