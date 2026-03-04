@@ -7,7 +7,7 @@ import type { StepId } from './schemas.js';
  * - Flow control: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY
  * - FOR loop: FOR, IN, TO, AT, BREAK
  * - Conditionals: PASS, FAIL, YES, NO
- * - Aggregation: ALL, ANY
+ * - Aggregation: ALL, ANY, AWAIT
  *
  * Using these as step names would create parsing ambiguity.
  */
@@ -24,6 +24,7 @@ export const RESERVED_WORDS = new Set([
   'NO',
   'ALL',
   'ANY',
+  'AWAIT',
   'BREAK',
   'FOR',
   'IN',

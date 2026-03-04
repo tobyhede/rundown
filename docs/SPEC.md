@@ -118,8 +118,11 @@ Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
 | :--- | :--- | :--- |
 | **Result** | `PASS` (`YES`), `FAIL` (`NO`) | Outcome of the step's body. |
 | **Aggregation** | `ALL`, `ANY` | For substeps. Step-level runbook-list shorthand is canonicalized to substeps. Default: `PASS ALL`, `FAIL ANY`. |
+| **Deferral** | `AWAIT` | Optional modifier after `ANY`. Defers aggregation until all substeps complete. Without `AWAIT`, `ANY` short-circuits (fail-fast/pass-fast). |
 
 Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` (pessimistic — any failure stops), or `PASS ANY` with `FAIL ALL` (optimistic — only total failure stops). Non-complementary combinations are invalid because they create evaluation gaps (ALL/ALL) or overlaps (ANY/ANY).
+
+**Short-circuit behavior (default):** Without `AWAIT`, aggregation short-circuits as soon as the outcome is determined — `FAIL ANY` (pessimistic) stops on the first failure, `PASS ANY` (optimistic) continues on the first success. This mirrors `Promise.all` / `Promise.any` semantics. Adding `AWAIT` defers evaluation until all substeps complete, like `Promise.allSettled`. Both `FAIL ANY AWAIT` and `PASS ANY AWAIT` are valid — `AWAIT` on either side defers both transitions of the complementary pair.
 
 **Defaults**:
 *   If only `PASS` defined: `FAIL` -> `STOP`.

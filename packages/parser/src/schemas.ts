@@ -161,12 +161,14 @@ export const TransitionsSchema = z.union([
   z.object({
     all: z.literal(true),
     modifierImplicit: z.literal(true).optional(),
+    await: z.literal(true).optional(),
     pass: TransitionObjectSchema,
     fail: TransitionObjectSchema,
   }),
   z.object({
     all: z.literal(false),
     modifierImplicit: z.literal(true).optional(),
+    await: z.literal(true).optional(),
     pass: TransitionObjectSchema,
     fail: TransitionObjectSchema,
   }),
