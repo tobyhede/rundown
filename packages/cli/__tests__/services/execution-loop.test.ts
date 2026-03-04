@@ -116,6 +116,16 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     asTerminalSnapshotOrDefault: jest.fn((snapshot: unknown) => {
       return asTerminalSnapshot(snapshot) ?? { status: 'active', value: undefined };
     }),
+    logger: {
+      debug: jest.fn().mockResolvedValue(undefined),
+      info: jest.fn().mockResolvedValue(undefined),
+      warn: jest.fn().mockResolvedValue(undefined),
+      error: jest.fn().mockResolvedValue(undefined),
+      always: jest.fn().mockResolvedValue(undefined),
+      event: jest.fn().mockResolvedValue(undefined),
+      getLogFilePath: jest.fn().mockReturnValue('/tmp/rundown-test.log'),
+      getLogDir: jest.fn().mockReturnValue('/tmp'),
+    },
   };
 });
 
