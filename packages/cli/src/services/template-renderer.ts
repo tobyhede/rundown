@@ -250,6 +250,7 @@ function substituteStep(step: Step, variables: Record<string, unknown>): Step {
       ...base,
       kind: 'substeps' as const,
       substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
+      substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
     };
   }
   if (step.kind === 'for') {
@@ -258,6 +259,7 @@ function substituteStep(step: Step, variables: Record<string, unknown>): Step {
       kind: 'for' as const,
       substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
       forClause: step.forClause,
+      substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
     };
   }
   // Exhaustive check - should never reach here

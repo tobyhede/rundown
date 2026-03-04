@@ -572,7 +572,7 @@ export async function runExecutionLoop(
     const isSubstep = 'id' in itemToRender;
     const command = isSubstep
       ? (itemToRender as Substep).command
-      : currentStep.kind === 'command' ? (currentStep as any).command : undefined;
+      : currentStep.kind === 'command' ? currentStep.command : undefined;
 
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,

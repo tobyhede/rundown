@@ -163,7 +163,10 @@ function collectMatches(
   currentPath: string,
   matcher: (value: string) => boolean,
   matches: Set<string>,
+  depth: number = 0,
+  maxDepth: number = 10,
 ): void {
+  if (depth > maxDepth) return;
   if (!fs.existsSync(currentPath)) {
     return;
   }
@@ -194,7 +197,7 @@ function collectMatches(
     if (entry.name === '.git' || entry.name === 'node_modules') {
       continue;
     }
-    collectMatches(path.join(currentPath, entry.name), matcher, matches);
+    collectMatches(path.join(currentPath, entry.name), matcher, matches, depth + 1, maxDepth);
   }
 }
 
