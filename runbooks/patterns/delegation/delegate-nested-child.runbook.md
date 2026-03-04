@@ -8,7 +8,7 @@ scenarios:
     description: Child delegates to grandchild and completes
     commands:
       - rd run delegate-nested-child.runbook.md
-      - rd delegate delegate-nested-grandchild.runbook.md --step 1.1
+      - rd delegate
       - rd claim ${TOKEN}
     result: COMPLETE
 ---
@@ -23,3 +23,5 @@ scenarios:
 ### 1.1 Grandchild task
 
 Delegated to a grandchild runbook.
+
+- delegate-nested-grandchild.runbook.md

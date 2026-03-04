@@ -112,6 +112,82 @@ describe('delegate command', () => {
     });
   });
 
+  describe('inference', () => {
+    /**
+     * Setup a runbook whose substep has a runbook reference (`- child.runbook.md`),
+     * enabling `rd delegate` to infer both target and runbook.
+     */
+    async function setupDelegationWithRunbookRef(): Promise<void> {
+      // Parent runbook: substep 1.1 references child.runbook.md
+      const parentContent = [
+        '# Delegation Test',
+        '',
+        '## 1. Main step',
+        '',
+        '- PASS ALL: COMPLETE',
+        '- FAIL ANY: STOP',
+        '',
+        '### 1.1 Child task',
+        '',
+        'Delegated to a child runbook.',
+        '',
+        '- child.runbook.md',
+      ].join('\n');
+      await writeFile(join(workspace.cwd, 'runbooks', 'with-ref.runbook.md'), parentContent);
+
+      // Create child runbook in all discovery locations
+      const childContent = createRunbook({
+        steps: [{ title: 'Child step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+      await writeFile(
+        join(workspace.cwd, '.claude', 'rundown', 'runbooks', 'child.runbook.md'),
+        childContent,
+      );
+
+      const startResult = runCli('run --prompted runbooks/with-ref.runbook.md', workspace);
+      expect(startResult.exitCode).toBe(0);
+    }
+
+    it('rd delegate (no args) infers both substep and runbook', async () => {
+      await setupDelegationWithRunbookRef();
+
+      const result = runCli(['delegate', '--json'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>;
+      expect(output.action).toBe('delegated');
+      expect(output.step).toBe('1.1');
+      expect(output.runbook).toBe('child.runbook.md');
+    });
+
+    it('rd delegate --step 1.1 infers runbook from substep reference', async () => {
+      await setupDelegationWithRunbookRef();
+
+      const result = runCli(['delegate', '--step', '1.1', '--json'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>;
+      expect(output.action).toBe('delegated');
+      expect(output.step).toBe('1.1');
+      expect(output.runbook).toBe('child.runbook.md');
+    });
+
+    it('backward compat: explicit rd delegate child.runbook.md --step 1.1 still works', async () => {
+      await setupDelegationWithRunbookRef();
+
+      const result = runCli(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--json'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>;
+      expect(output.action).toBe('delegated');
+      expect(output.step).toBe('1.1');
+    });
+  });
+
   describe('error cases', () => {
     it('fails for nonexistent step', async () => {
       await setupDelegation();

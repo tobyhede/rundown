@@ -47,7 +47,9 @@ rundown scenario show <file> <name>  # Show scenario details
 rundown scenario run <file> <name>   # Run a scenario
 rundown scenario run <file> <name> -q  # Run scenario (suppress output)
 rundown prompt <content> # Output content in markdown fences
-rundown delegate <runbook> --step <id>  # Delegate substep to child runbook
+rundown delegate                        # Infer substep and runbook from state
+rundown delegate --step <id>            # Infer runbook from substep reference
+rundown delegate <runbook> --step <id>  # Explicit delegation
 rundown delegate <runbook> --step <id> --var key=value  # With variables
 rundown claim <token>                   # Claim a delegation token and launch child
 rundown claim <token> --var key=value   # Claim with variables
