@@ -289,7 +289,10 @@ export class RunbookActorService {
       const currentStep = currentStepName
         ? steps.find((s) => s.name === currentStepName)
         : undefined;
-      const substepCount = currentStep?.substeps?.length ?? 0;
+      const substepCount =
+        currentStep && (currentStep.kind === 'substeps' || currentStep.kind === 'for')
+          ? currentStep.substeps.length
+          : 0;
 
       void logger.debug('sendAndSync:pre-send', {
         runbookId: id,
@@ -317,7 +320,8 @@ export class RunbookActorService {
       // Anomaly: non-last substep transitions to terminal state
       if (
         (postValue === 'COMPLETE' || postValue === 'STOPPED') &&
-        currentStep?.substeps?.length &&
+        currentStep &&
+        (currentStep.kind === 'substeps' || currentStep.kind === 'for') &&
         preSubstep
       ) {
         const isLastSubstep =

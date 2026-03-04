@@ -1,8 +1,8 @@
 import { setup, assign } from 'xstate';
 import type { Step, Action, Transitions, LastAction, ForContext, DataSource } from './types.js';
 import type { StepId } from './step-id.js';
-import type { ForClause } from '@rundown-org/parser';
-import { isSourced } from '@rundown-org/parser';
+import type { ForClause, StepHavingSubsteps } from '@rundown-org/parser';
+import { isSourced, stepHasSubsteps } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
 
 /**
@@ -104,7 +104,7 @@ interface ParentStateConfig {
   substepId?: string;
   transitions: Transitions;
   isParentState: true;
-  parentStep: Step;
+  parentStep: StepHavingSubsteps;
 }
 
 /**
@@ -220,13 +220,13 @@ function getStepForFirstSubstep(
 
   const [, stepName, substepId] = match;
   const step = steps.find((s) => s.name === stepName);
-  if (!step?.substeps?.length) return null;
+  if (!step || !stepHasSubsteps(step)) return null;
 
   if (substepId === step.substeps[0].id) {
     return {
       step,
-      forClause: step.forClause ?? { start: 1, end: 1 },
-      implicit: !step.forClause,
+      forClause: step.kind === 'for' ? step.forClause : { start: 1, end: 1 },
+      implicit: step.kind !== 'for',
     };
   }
 
@@ -248,7 +248,7 @@ function isLastSubstepOfStep(
 ): boolean {
   if (!substepId) return false;
   const step = steps.find((s) => s.name === stepName);
-  if (!step?.substeps?.length) return false;
+  if (!step || !stepHasSubsteps(step)) return false;
 
   const lastSubstepId = step.substeps[step.substeps.length - 1].id;
   return substepId === lastSubstepId;
@@ -459,11 +459,11 @@ function getStepForSubstep(
   if (!match) return null;
   const [, stepName] = match;
   const step = steps.find((s) => s.name === stepName);
-  if (!step?.substeps?.length) return null;
+  if (!step || !stepHasSubsteps(step)) return null;
   return {
     step,
-    forClause: step.forClause ?? { start: 1, end: 1 },
-    implicit: !step.forClause,
+    forClause: step.kind === 'for' ? step.forClause : { start: 1, end: 1 },
+    implicit: step.kind !== 'for',
   };
 }
 
@@ -594,7 +594,7 @@ function findNextStateId(stepName: string, substepId: string | undefined, steps:
   const currentStep = steps[currentStepIndex];
 
   // If we are in a substep, check if there is a next sibling
-  if (substepId && currentStep.substeps) {
+  if (substepId && (currentStep.kind === 'substeps' || currentStep.kind === 'for')) {
     const currentIndex = currentStep.substeps.findIndex((s) => s.id === substepId);
     if (currentIndex !== -1 && currentIndex < currentStep.substeps.length - 1) {
       const nextSubstep = currentStep.substeps[currentIndex + 1];
@@ -608,7 +608,7 @@ function findNextStateId(stepName: string, substepId: string | undefined, steps:
     // Skip named steps - they're only reachable via GOTO
     if (!isNumberedStep(nextStep)) continue;
 
-    if (nextStep.substeps && nextStep.substeps.length > 0) {
+    if ((nextStep.kind === 'substeps' || nextStep.kind === 'for') && nextStep.substeps.length > 0) {
       return formatStateId(nextStep.name, nextStep.substeps[0].id);
     }
     return formatStateId(nextStep.name);
@@ -648,7 +648,7 @@ function buildParentExitAssign(
   switch (parentAction.type) {
     case 'GOTO': {
       const targetStep = steps.find((s) => s.name === parentAction.target.step);
-      if (targetStep?.substeps?.length && targetStep.forClause) {
+      if (targetStep?.kind === 'for') {
         const forClause = targetStep.forClause;
         return assign({
           ...baseAssign,
@@ -668,7 +668,7 @@ function buildParentExitAssign(
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
         });
       }
-      const targetHasSubsteps = !!targetStep?.substeps?.length;
+      const targetHasSubsteps = targetStep && stepHasSubsteps(targetStep);
       const targetHasAggregationTransitions = !!targetStep?.transitions;
       return assign({
         ...baseAssign,
@@ -739,16 +739,16 @@ function buildParentStateConfig(
 ): { always: AlwaysTransition[]; entry?: unknown } {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
-  const hasFor = !!parentStep.forClause;
+  const hasFor = parentStep.kind === 'for';
   const hasTransitions = !!parentStep.transitions;
   const nextTarget = findNextStateId(stepName, undefined, steps);
-  const firstSubstep = parentStep.substeps?.[0];
+  const firstSubstep = parentStep.substeps[0];
   const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
 
   const always: AlwaysTransition[] = [];
 
   // FOR iteration-level aggregation helpers
-  const forTransitions = parentStep.forClause?.transitions ?? DEFAULT_FOR_TRANSITIONS;
+  const forTransitions = parentStep.kind === 'for' ? (parentStep.forClause.transitions ?? DEFAULT_FOR_TRANSITIONS) : DEFAULT_FOR_TRANSITIONS;
 
   const computeIterationResult = (context: RunbookContext): 'pass' | 'fail' => {
     const results = context.substepResults ?? [];
@@ -820,7 +820,7 @@ function buildParentStateConfig(
 
   // Helper: build guards to advance to next substep within an iteration.
   // Results count determines which substep to route to next.
-  const substeps = parentStep.substeps ?? [];
+  const substeps = parentStep.substeps;
   const pushAdvanceGuards = (resultsField: 'iterationResults' | 'substepResults'): void => {
     for (let i = 1; i < substeps.length; i++) {
       const prevSubstepId = substeps[i - 1].id;
@@ -1100,7 +1100,9 @@ function resolveActionTarget(action: Action, stepName: string, steps: Step[]): s
     case 'GOTO': {
       const targetStep = steps.find((s) => s.name === action.target.step);
       if (!targetStep) return 'COMPLETE';
-      const substep = action.target.substep ?? targetStep.substeps?.[0]?.id;
+      const substep = (targetStep.kind === 'substeps' || targetStep.kind === 'for')
+        ? (action.target.substep ?? targetStep.substeps[0]?.id)
+        : action.target.substep;
       return formatStateId(targetStep.name, substep);
     }
     case 'NEXT':
@@ -1157,7 +1159,7 @@ function buildLoopControlTransition(
   kind: 'pass' | 'fail',
 ): TransitionConfig {
   const currentStep = steps.find((s) => s.name === stepName);
-  if (!currentStep?.forClause) {
+  if (!currentStep || currentStep.kind !== 'for') {
     return { target: 'STOPPED', actions: assign({ lastAction: { type: actionType } }) };
   }
   // FOR step: accumulate into substepResults before transitioning to parent
@@ -1197,7 +1199,7 @@ function buildContinueTransition(
   // FOR substeps: preserve original last-vs-non-last routing.
   // FOR has iteration-level aggregation and GOTO can jump to any substep,
   // so count-based advance guards don't work for FOR.
-  if (substepId && currentStep?.forClause) {
+  if (substepId && currentStep?.kind === 'for') {
     const isLastSubstep = isLastSubstepOfStep(stepName, substepId, steps);
     if (isLastSubstep) {
       // Last substep: route to parent for iteration-level aggregation
@@ -1275,9 +1277,9 @@ function buildGotoTransition(
   }
 
   // Handle GOTO to step with substeps (explicit FOR or implicit 1..1)
-  if (targetStepObj.substeps?.length) {
-    const forClause = targetStepObj.forClause ?? { start: 1, end: 1 };
-    const isImplicit = !targetStepObj.forClause;
+  if (stepHasSubsteps(targetStepObj)) {
+    const forClause = targetStepObj.kind === 'for' ? targetStepObj.forClause : { start: 1, end: 1 };
+    const isImplicit = targetStepObj.kind !== 'for';
     // Target either the specified substep or default to first
     const resolvedSubstepId = target.substep ?? targetStepObj.substeps[0].id;
     const targetStateId = formatStateId(targetStepObj.name, resolvedSubstepId);
@@ -1341,7 +1343,7 @@ function buildGotoTransition(
 
   // Detect intra-loop GOTO: target is within same FOR step
   const currentStep = steps.find((s) => s.name === stepName);
-  const isIntraLoopGoto = !!(currentStep?.forClause && targetStepObj.name === stepName);
+  const isIntraLoopGoto = !!(currentStep?.kind === 'for' && targetStepObj.name === stepName);
 
   return {
     target: computedTarget,
@@ -1376,10 +1378,10 @@ function buildActionTransition(
       // Non-FOR substeps: always route to parent (parent handles fail-fast/aggregation)
       // FOR substeps: preserve last-vs-non-last routing (FOR has its own iteration logic)
       const currentStepForComplete = steps.find((s) => s.name === stepName);
-      if (substepId && !currentStepForComplete?.forClause) {
+      if (substepId && currentStepForComplete?.kind !== 'for') {
         return buildContinueTransition(stepName, substepId, steps, resultKind);
       }
-      if (substepId && currentStepForComplete?.forClause) {
+      if (substepId && currentStepForComplete?.kind === 'for') {
         if (!isLastSubstepOfStep(stepName, substepId, steps)) {
           return buildContinueTransition(stepName, substepId, steps, resultKind);
         }
@@ -1388,10 +1390,10 @@ function buildActionTransition(
     }
     case 'STOP': {
       const currentStepForStop = steps.find((s) => s.name === stepName);
-      if (substepId && !currentStepForStop?.forClause) {
+      if (substepId && currentStepForStop?.kind !== 'for') {
         return buildContinueTransition(stepName, substepId, steps, resultKind);
       }
-      if (substepId && currentStepForStop?.forClause) {
+      if (substepId && currentStepForStop?.kind === 'for') {
         if (!isLastSubstepOfStep(stepName, substepId, steps)) {
           return buildContinueTransition(stepName, substepId, steps, resultKind);
         }
@@ -1439,10 +1441,10 @@ export function compileRunbookToMachine(
 
   steps.forEach((step) => {
     const stepName = step.name;
-    if (step.substeps && step.substeps.length > 0) {
+    if (stepHasSubsteps(step)) {
       step.substeps.forEach((substep) => {
         const hasRunbooks = !!(substep.runbooks && substep.runbooks.length > 0);
-        const hasParentAggregation = !!(step.transitions ?? step.forClause);
+        const hasParentAggregation = !!(step.transitions ?? (step.kind === 'for' ? step.forClause : undefined));
         const inferredTransitions = hasRunbooks
           ? DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS
           : hasParentAggregation

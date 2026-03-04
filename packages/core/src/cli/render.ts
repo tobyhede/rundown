@@ -40,7 +40,7 @@ export function buildDisplayStepModel(
     headingId: isStep ? id : instanceNumber ? `${instanceNumber}.${id}` : id,
     description: item.description.trim(),
     ...(item.prompt ? { prompt: item.prompt } : {}),
-    ...(showCommand && item.command
+    ...(showCommand && 'command' in item && item.command
       ? {
           command: {
             code: item.command.code,

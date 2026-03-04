@@ -11,6 +11,7 @@ import type { SubstepState } from '../../src/runbook/types.js';
 describe('GOTO NEXT action handling', () => {
   it('evaluatePassCondition returns goto for GOTO NEXT action', () => {
     const step = {
+      kind: 'base' as const,
       name: '1',
       description: 'Test',
 
@@ -31,6 +32,7 @@ describe('GOTO NEXT action handling', () => {
 
   it('evaluateFailCondition returns goto for GOTO NEXT action', () => {
     const step = {
+      kind: 'base' as const,
       name: '1',
       description: 'Test',
 
@@ -53,6 +55,7 @@ describe('GOTO NEXT action handling', () => {
 describe('evaluatePassCondition', () => {
   it('returns message for COMPLETE action with message', () => {
     const step = {
+      kind: 'base' as const,
       name: '1',
       description: 'Test',
 
@@ -175,6 +178,7 @@ describe('evaluateFailCondition', () => {
 describe('evaluateFailCondition edge cases', () => {
   it('returns stopped when step has no transitions', () => {
     const step = {
+      kind: 'base' as const,
       name: '1',
       description: 'Test step without transitions',
     };
@@ -188,6 +192,7 @@ describe('evaluateFailCondition edge cases', () => {
 describe('evaluatePassCondition edge cases', () => {
   it('returns continue when step has no transitions', () => {
     const step = {
+      kind: 'base' as const,
       name: '1',
       description: 'Test step without transitions',
     };
@@ -241,6 +246,7 @@ describe('evaluateSubstepAggregation edge cases', () => {
 describe('evaluateFailCondition with retry property', () => {
   it('returns retry when retry > 0 and count < retry', () => {
     const step: Step = {
+      kind: 'base',
       name: '1',
 
       description: 'Test',
@@ -262,6 +268,7 @@ describe('evaluateFailCondition with retry property', () => {
 
   it('returns action when retries exhausted', () => {
     const step: Step = {
+      kind: 'base',
       name: '1',
 
       description: 'Test',

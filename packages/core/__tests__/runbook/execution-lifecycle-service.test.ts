@@ -7,8 +7,8 @@ import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle
 import type { Runbook, Step } from '../../src/runbook/types.js';
 
 const mockSteps: Step[] = [
-  { name: '1', description: 'Step 1' },
-  { name: '2', description: 'Step 2' },
+  { kind: 'base', name: '1', description: 'Step 1' },
+  { kind: 'base', name: '2', description: 'Step 2' },
 ];
 const mockRunbook: Runbook = {
   title: 'Test',

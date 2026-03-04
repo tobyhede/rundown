@@ -14,6 +14,7 @@ describe('RunbookStateManager', () => {
   let sessionService: SessionService;
   const mockSteps: Step[] = [
     {
+      kind: 'base',
       name: '1',
       description: 'Initial step',
     },

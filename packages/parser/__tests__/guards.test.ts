@@ -9,11 +9,18 @@ import {
 } from '../src/guards.js';
 import type { Step, Substep, ForClause } from '../src/ast.js';
 
-const createStep = (overrides: Partial<Step> = {}): Step => ({
-  name: '1',
-  description: 'Test step',
-  ...overrides,
-});
+const createStep = (overrides: Record<string, unknown> = {}): Step => {
+  const obj: Record<string, unknown> = { name: '1', description: 'Test step', ...overrides };
+  const kind =
+    obj.forClause !== undefined
+      ? 'for'
+      : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
+        ? 'substeps'
+        : obj.command !== undefined
+          ? 'command'
+          : 'base';
+  return { ...obj, kind } as Step;
+};
 
 const createSubstep = (overrides: Partial<Substep> = {}): Substep => ({
   id: '1',

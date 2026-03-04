@@ -189,20 +189,54 @@ export const SubstepSchema = z.object({
   line: z.number().optional(),
 });
 
-/**
- * Zod schema for Step
- */
-export const StepSchema = z.object({
-  name: StepNameSchema, // REQUIRED: "1", "ErrorHandler"
-  substepsDerivedFromRunbookList: z.literal(true).optional(),
-  forClause: ForClauseSchema.optional(),
+/** Shared step fields schema. */
+const StepFieldsSchema = {
+  name: StepNameSchema,
   description: z.string(),
-  command: CommandSchema.optional(),
-  prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
+  prompt: z.string().min(1).optional(),
   transitions: TransitionsSchema.optional(),
-  substeps: z.array(SubstepSchema).readonly().optional(),
   line: z.number().optional(),
+};
+
+/** Zod schema for BaseStep. */
+export const BaseStepSchema = z.object({
+  ...StepFieldsSchema,
+  kind: z.literal('base'),
 });
+
+/** Zod schema for StepWithCommand. */
+export const StepWithCommandSchema = z.object({
+  ...StepFieldsSchema,
+  kind: z.literal('command'),
+  command: CommandSchema,
+});
+
+/** Zod schema for StepWithSubsteps. */
+export const StepWithSubstepsSchema = z.object({
+  ...StepFieldsSchema,
+  kind: z.literal('substeps'),
+  substeps: z.array(SubstepSchema).readonly(),
+  substepsDerivedFromRunbookList: z.literal(true).optional(),
+});
+
+/** Zod schema for StepWithFor. */
+export const StepWithForSchema = z.object({
+  ...StepFieldsSchema,
+  kind: z.literal('for'),
+  forClause: ForClauseSchema,
+  substeps: z.array(SubstepSchema).readonly(),
+  substepsDerivedFromRunbookList: z.literal(true).optional(),
+});
+
+/**
+ * Zod schema for Step (discriminated union on `kind`).
+ */
+export const StepSchema = z.discriminatedUnion('kind', [
+  BaseStepSchema,
+  StepWithCommandSchema,
+  StepWithSubstepsSchema,
+  StepWithForSchema,
+]);
 
 /**
  * Zod schema for Runbook

@@ -508,6 +508,7 @@ describe('transition-kernel', () => {
   describe('deriveTransitionMessage', () => {
     it('returns pass transition message for pass result', () => {
       const step: Step = {
+        kind: 'base',
         name: '1',
         description: 'Test step',
         transitions: {
@@ -530,6 +531,7 @@ describe('transition-kernel', () => {
 
     it('returns fail transition message for fail result', () => {
       const step: Step = {
+        kind: 'base',
         name: '1',
         description: 'Test step',
         transitions: {
@@ -552,6 +554,7 @@ describe('transition-kernel', () => {
 
     it('returns undefined when pass transition has no message', () => {
       const step: Step = {
+        kind: 'base',
         name: '1',
         description: 'Test step',
         transitions: {
@@ -574,6 +577,7 @@ describe('transition-kernel', () => {
 
     it('returns undefined when fail transition has no message', () => {
       const step: Step = {
+        kind: 'base',
         name: '1',
         description: 'Test step',
         transitions: {
@@ -596,6 +600,7 @@ describe('transition-kernel', () => {
 
     it('uses retryCount when deriving message', () => {
       const step: Step = {
+        kind: 'base',
         name: '1',
         description: 'Test step',
         transitions: {

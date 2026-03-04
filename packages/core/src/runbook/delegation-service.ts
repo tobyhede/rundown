@@ -1,4 +1,4 @@
-import { parseStepIdFromString } from '@rundown-org/parser';
+import { parseStepIdFromString, stepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
 import { generateDelegationToken, hashDelegationToken } from './delegation-token.js';
 import { deriveExecutionAt, getActiveForContext } from './targeting.js';
@@ -111,7 +111,7 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
   }
 
   // 3. If step has substeps and no substep specified, require it
-  if (step.substeps && step.substeps.length > 0 && !parsed.substep) {
+  if (stepHasSubsteps(step) && !parsed.substep) {
     throw Errors.delegationSubstepRequired(
       parsed.step,
       step.substeps.map((ss) => ss.id),
@@ -120,7 +120,7 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
 
   // 3b. If substep specified, validate it exists in the step
   if (parsed.substep) {
-    if (!step.substeps || step.substeps.length === 0) {
+    if (!stepHasSubsteps(step)) {
       throw Errors.delegationSubstepNotFound(parsed.substep, parsed.step, []);
     }
     const validIds = step.substeps.map((ss) => ss.id);

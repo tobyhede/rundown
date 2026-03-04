@@ -140,7 +140,7 @@ function makeState(id: string, overrides: Record<string, unknown> = {}): any {
 }
 
 function makeStep(overrides: Record<string, unknown> = {}): any {
-  return {
+  const obj = {
     name: '1',
     description: 'Test Step',
     transitions: {
@@ -148,7 +148,16 @@ function makeStep(overrides: Record<string, unknown> = {}): any {
       fail: { action: 'continue' as const, retry: 0 },
     },
     ...overrides,
-  } as any;
+  };
+  const kind =
+    obj.forClause !== undefined
+      ? 'for'
+      : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
+        ? 'substeps'
+        : obj.command !== undefined
+          ? 'command'
+          : 'base';
+  return { ...obj, kind } as any;
 }
 
 function makeLifecycle(overrides: Record<string, unknown> = {}): any {
@@ -209,14 +218,14 @@ describe('validateSources', () => {
   it('passes when sourced FOR clause has defined source', () => {
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
 
-    const step = { forClause: { source: 'items' } };
+    const step = { kind: 'for', forClause: { source: 'items' } };
     expect(() => validateSources([step as any], { items: ['a', 'b'] })).not.toThrow();
   });
 
   it('throws when sourced FOR clause references undefined source', () => {
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
 
-    const step = { forClause: { source: 'missing' } };
+    const step = { kind: 'for', forClause: { source: 'missing' } };
     expect(() => validateSources([step as any], {})).toThrow(
       'FOR loop references undefined data source "{{missing}}"',
     );
@@ -225,7 +234,7 @@ describe('validateSources', () => {
   it('skips non-sourced FOR clauses', () => {
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(false);
 
-    const step = { forClause: { variable: 'i', start: 1, end: 5 } };
+    const step = { kind: 'for', forClause: { variable: 'i', start: 1, end: 5 } };
     expect(() => validateSources([step as any], {})).not.toThrow();
   });
 });

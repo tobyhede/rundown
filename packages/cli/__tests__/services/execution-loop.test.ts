@@ -154,6 +154,7 @@ describe('runExecutionLoop', () => {
   const runbookId = 'test-run-123';
   const steps: any[] = [
     {
+      kind: 'command',
       name: '1',
       description: 'Step 1',
       command: { code: 'echo hello', lang: 'sh' },
@@ -163,6 +164,7 @@ describe('runExecutionLoop', () => {
       },
     },
     {
+      kind: 'command',
       name: '2',
       description: 'Step 2',
       command: { code: 'echo world', lang: 'sh' },
@@ -253,7 +255,7 @@ describe('runExecutionLoop', () => {
 
   it('returns waiting if step has no command', async () => {
     const stepsNoCmd = [
-      { name: '1', description: 'No command', transitions: { pass: { next: 'COMPLETE' } } },
+      { kind: 'base', name: '1', description: 'No command', transitions: { pass: { next: 'COMPLETE' } } },
     ];
     mockManager.load.mockResolvedValue({
       id: runbookId,
@@ -291,7 +293,7 @@ describe('runExecutionLoop', () => {
 
     const testSteps = [
       steps[0],
-      { name: '2', description: 'Step 2', transitions: { pass: { next: 'COMPLETE' } } },
+      { kind: 'base', name: '2', description: 'Step 2', transitions: { pass: { next: 'COMPLETE' } } },
     ];
 
     const result = await runExecutionLoop(
@@ -376,6 +378,7 @@ describe('runExecutionLoop', () => {
   it('emits expanded command text in STEP_ENTERED payload for prompted mode', async () => {
     const forSteps = [
       {
+        kind: 'for',
         name: '1',
         description: 'Process',
         forClause: { variable: 'item', start: 1, end: 1 },

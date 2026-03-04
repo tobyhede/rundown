@@ -97,11 +97,13 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
   for (const step of steps) {
     // Conformance Rule 4: Exclusivity (Step level)
-    // A step can optionally have a prompt, plus at most one executable body kind.
-    const hasCommand = step.command !== undefined;
-    const hasSubsteps = step.substeps !== undefined && step.substeps.length > 0;
+    // The discriminated union enforces exclusivity by design:
+    // 'command' steps have command, 'substeps'/'for' steps have substeps, 'base' has neither.
+    // This check is kept for schema validation of externally-constructed steps.
+    const stepHasCommand = step.kind === 'command';
+    const stepHasSubsteps = step.kind === 'substeps' || step.kind === 'for';
 
-    const contentCount = [hasCommand, hasSubsteps].filter(Boolean).length;
+    const contentCount = [stepHasCommand, stepHasSubsteps].filter(Boolean).length;
     if (contentCount > 1) {
       diagnostics.push(
         error(
@@ -112,9 +114,9 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
     }
 
     // FOR step validation
-    if (step.forClause) {
-      // FOR steps must have substeps
-      if (!hasSubsteps) {
+    if (step.kind === 'for') {
+      // FOR steps always have substeps by type, but validate non-empty
+      if (step.substeps.length === 0) {
         diagnostics.push(
           error(step.line, `FOR step "${step.name}" must have at least one substep`),
         );
@@ -193,7 +195,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
       validateAction(step.transitions.fail.action, undefined, steps, step, diagnostics);
     }
 
-    if (step.substeps) {
+    if (step.kind === 'substeps' || step.kind === 'for') {
       for (const substep of step.substeps) {
         const sHasCommand = substep.command !== undefined;
         const sHasRunbooks = substep.runbooks !== undefined && substep.runbooks.length > 0;
@@ -236,7 +238,7 @@ function validateGotoAtTarget(
   diagnostics: ValidationDiagnostic[],
 ): boolean {
   if ('at' in action.target && action.target.at !== undefined) {
-    if (!targetStepObj.forClause) {
+    if (targetStepObj.kind !== 'for') {
       diagnostics.push(
         error(
           currentStepObj.line,
@@ -296,7 +298,7 @@ export function validateAction(
       return;
     }
     // Parent step must have a FOR clause
-    if (!currentStepObj.forClause) {
+    if (currentStepObj.kind !== 'for') {
       diagnostics.push(
         error(
           currentStepObj.line,
@@ -328,7 +330,7 @@ export function validateAction(
       if (!validateGotoAtTarget(action, namedStep, targetStep, currentStepObj, diagnostics)) return;
 
       if (targetSubstep) {
-        if (!namedStep.substeps || namedStep.substeps.length === 0) {
+        if (namedStep.kind !== 'substeps' && namedStep.kind !== 'for') {
           const context = getErrorContext(currentStepObj, currentSubstepId);
           diagnostics.push(
             error(
@@ -389,7 +391,7 @@ export function validateAction(
       return;
 
     if (targetSubstep) {
-      if (!targetStepObj.substeps || targetStepObj.substeps.length === 0) {
+      if (targetStepObj.kind !== 'substeps' && targetStepObj.kind !== 'for') {
         const context = getErrorContext(currentStepObj, currentSubstepId);
         diagnostics.push(
           error(

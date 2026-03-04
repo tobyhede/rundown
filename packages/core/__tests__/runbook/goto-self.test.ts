@@ -8,6 +8,7 @@ describe('GOTO to self (implicit retry)', () => {
     // Tests non-dynamic step that uses GOTO to itself by step number
     const steps: Step[] = [
       {
+        kind: 'base',
         name: '1',
         description: 'Retry Step',
         transitions: {
@@ -36,6 +37,7 @@ describe('GOTO to self (implicit retry)', () => {
   it('should reset retryCount when GOTO targets different step', () => {
     const steps: Step[] = [
       {
+        kind: 'base',
         name: '1',
         description: 'Step One',
         transitions: {
@@ -45,6 +47,7 @@ describe('GOTO to self (implicit retry)', () => {
         },
       },
       {
+        kind: 'base',
         name: '2',
         description: 'Step Two',
         transitions: {
@@ -74,6 +77,7 @@ describe('GOTO to self (implicit retry)', () => {
     // Transitions must be defined at substep level when step has substeps
     const steps: Step[] = [
       {
+        kind: 'substeps',
         name: '1',
         description: 'Step with substeps',
         substeps: [
@@ -117,6 +121,7 @@ describe('GOTO to self (implicit retry)', () => {
     // Transitions must be defined at substep level when step has substeps
     const steps: Step[] = [
       {
+        kind: 'substeps',
         name: '1',
         description: 'Step with substeps',
         substeps: [

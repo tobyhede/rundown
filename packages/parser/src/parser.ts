@@ -605,25 +605,65 @@ function finalizeStep(
       line: step.line,
     }));
 
-    return {
+    const shared = {
       name: step.name,
-      substepsDerivedFromRunbookList: true,
-      forClause: step.forClause,
       description: step.description,
       transitions: transitions ?? undefined,
-      substeps: syntheticSubsteps,
       line: step.line,
+    };
+    if (step.forClause) {
+      return {
+        ...shared,
+        kind: 'for' as const,
+        substepsDerivedFromRunbookList: true as const,
+        forClause: step.forClause,
+        substeps: syntheticSubsteps,
+      };
+    }
+    return {
+      ...shared,
+      kind: 'substeps' as const,
+      substepsDerivedFromRunbookList: true as const,
+      substeps: syntheticSubsteps,
+    };
+  }
+
+  // Build shared fields once
+  const shared = {
+    name: step.name,
+    description: step.description,
+    prompt,
+    transitions: transitions ?? undefined,
+    line: step.line,
+  };
+
+  if (step.forClause) {
+    return {
+      ...shared,
+      kind: 'for' as const,
+      forClause: step.forClause,
+      substeps: step.substeps.length > 0 ? step.substeps : [],
+    };
+  }
+
+  if (step.substeps.length > 0) {
+    return {
+      ...shared,
+      kind: 'substeps' as const,
+      substeps: step.substeps,
+    };
+  }
+
+  if (step.command) {
+    return {
+      ...shared,
+      kind: 'command' as const,
+      command: step.command,
     };
   }
 
   return {
-    name: step.name,
-    forClause: step.forClause,
-    description: step.description,
-    command: step.command,
-    prompt,
-    transitions: transitions ?? undefined,
-    substeps: step.substeps.length > 0 ? step.substeps : undefined,
-    line: step.line,
+    ...shared,
+    kind: 'base' as const,
   };
 }

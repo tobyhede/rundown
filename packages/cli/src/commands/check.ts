@@ -9,7 +9,7 @@ import { validateFrontmatterVars } from '../helpers/validate-frontmatter-vars.js
 
 function countSubsteps(steps: readonly Step[]): number {
   return steps.reduce((count, step) => {
-    return count + (step.substeps?.length ?? 0);
+    return count + (step.kind === 'substeps' || step.kind === 'for' ? step.substeps.length : 0);
   }, 0);
 }
 

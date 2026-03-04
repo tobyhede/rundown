@@ -75,32 +75,63 @@ export interface Substep {
 }
 
 /**
- * A single step in a runbook
+ * Shared fields common to all step variants.
  *
  * UNIFIED NAMING: All steps have a name.
  * - Numeric steps: name = "1", "2", etc.
  * - Named steps: name = "ErrorHandler", "Cleanup", etc.
  */
-export interface Step {
+interface StepFields {
   /** Step identifier: "1" or "ErrorHandler" (REQUIRED) */
   readonly name: string;
-  /** Parser canonicalization marker for step-level runbook-list shorthand. */
-  readonly substepsDerivedFromRunbookList?: true;
-  /** FOR loop clause defining iteration range */
-  readonly forClause?: ForClause;
   /** Human-readable description from the step header */
   readonly description: string;
-  /** Executable command from code block */
-  readonly command?: Command;
   /** Single consolidated prompt text */
   readonly prompt?: string;
   /** Pass/fail transition handlers */
   readonly transitions?: Transitions;
-  /** Child substeps (H3 headers) */
-  readonly substeps?: readonly Substep[];
   /** Source line number for error reporting */
   readonly line?: number;
 }
+
+/** Prompt-only or empty step — no command, no substeps. */
+export interface BaseStep extends StepFields {
+  readonly kind: 'base';
+}
+
+/** Step with an executable command (mutually exclusive with substeps). */
+export interface StepWithCommand extends StepFields {
+  readonly kind: 'command';
+  readonly command: Command;
+}
+
+/** Step with child substeps (no FOR clause). */
+export interface StepWithSubsteps extends StepFields {
+  readonly kind: 'substeps';
+  readonly substeps: readonly Substep[];
+  /** Parser canonicalization marker for step-level runbook-list shorthand. */
+  readonly substepsDerivedFromRunbookList?: true;
+}
+
+/** FOR loop step — always has substeps + forClause. */
+export interface StepWithFor extends StepFields {
+  readonly kind: 'for';
+  readonly forClause: ForClause;
+  readonly substeps: readonly Substep[];
+  /** Parser canonicalization marker for step-level runbook-list shorthand. */
+  readonly substepsDerivedFromRunbookList?: true;
+}
+
+/**
+ * A single step in a runbook.
+ *
+ * Discriminated union on `kind`: each variant guarantees exactly the fields
+ * the parser produces, so the type system encodes what the parser already validates.
+ */
+export type Step = BaseStep | StepWithCommand | StepWithSubsteps | StepWithFor;
+
+/** Utility type for functions that accept any step with substeps. */
+export type StepHavingSubsteps = StepWithSubsteps | StepWithFor;
 
 /**
  * Parsed runbook definition

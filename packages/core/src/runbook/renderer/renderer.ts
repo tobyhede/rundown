@@ -1,4 +1,5 @@
 import type { Step, Action, Transitions, TransitionObject, Substep, Runbook } from '../types.js';
+import type { ForClause } from '@rundown-org/parser';
 import { stepIdToString } from '../step-id.js';
 import { renderCodeFence, renderHeading } from './primitives.js';
 
@@ -83,7 +84,7 @@ export function renderSubstep(substep: Substep, parentStepName: string): string 
  * @param forClause - The FOR clause to render
  * @returns Array of DSL strings (e.g., ["- FOR pass IN 1 TO 2", "  - PASS ANY: CONTINUE"])
  */
-function renderForClause(forClause: NonNullable<Step['forClause']>): string[] {
+function renderForClause(forClause: ForClause): string[] {
   const lines: string[] = [];
 
   if (forClause.source !== undefined) {
@@ -122,6 +123,7 @@ function renderForClause(forClause: NonNullable<Step['forClause']>): string[] {
 }
 
 function getShorthandRunbookSubsteps(step: Step): readonly Substep[] | undefined {
+  if (step.kind !== 'substeps' && step.kind !== 'for') return undefined;
   if (step.substepsDerivedFromRunbookList !== true) return undefined;
   return step.substeps;
 }
@@ -143,7 +145,7 @@ export function renderStep(step: Step): string {
   lines.push(renderHeading(2, stepId, step.description, '. '));
   lines.push('');
 
-  if (step.forClause) {
+  if (step.kind === 'for') {
     lines.push(...renderForClause(step.forClause));
   }
 
@@ -152,7 +154,7 @@ export function renderStep(step: Step): string {
     lines.push(renderTransitions(step.transitions));
   }
 
-  if (step.forClause || step.transitions) {
+  if (step.kind === 'for' || step.transitions) {
     lines.push('');
   }
 
@@ -179,13 +181,13 @@ export function renderStep(step: Step): string {
   }
 
   // Command
-  if (step.command) {
+  if (step.kind === 'command') {
     lines.push(renderCodeFence(step.command.code, step.command.lang ?? 'bash'));
     lines.push('');
   }
 
   // Substeps - use step.name directly as the parent prefix
-  if (step.substeps) {
+  if (step.kind === 'substeps' || step.kind === 'for') {
     for (const substep of step.substeps) {
       lines.push(renderSubstep(substep, step.name));
       lines.push('');
