@@ -91,9 +91,7 @@ describe('Rundown Conformance (Fixture Driven)', () => {
       }
 
       if (tags.includes('substeps')) {
-        const hasSubstepStep = runbook.steps.some(
-          (s) => s.kind === 'substeps' || s.kind === 'for',
-        );
+        const hasSubstepStep = runbook.steps.some((s) => s.kind === 'substeps' || s.kind === 'for');
         expect(hasSubstepStep).toBe(true);
       }
 

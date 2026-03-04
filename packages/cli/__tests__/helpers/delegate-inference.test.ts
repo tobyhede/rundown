@@ -12,10 +12,7 @@ function makeSubstep(overrides: Partial<Substep> & { id: string; description: st
 }
 
 /** Build a minimal step with substeps. */
-function makeStepWithSubsteps(
-  name: string,
-  substeps: Substep[],
-): StepWithSubsteps {
+function makeStepWithSubsteps(name: string, substeps: Substep[]): StepWithSubsteps {
   return {
     kind: 'substeps' as const,
     name,
@@ -128,9 +125,7 @@ describe('inferDelegationTarget', () => {
   });
 
   it('throws RD-813 when step has no substeps', () => {
-    const steps: Step[] = [
-      { kind: 'base' as const, name: '1', description: 'Base step' },
-    ];
+    const steps: Step[] = [{ kind: 'base' as const, name: '1', description: 'Base step' }];
     const state = makeState({ step: '1' });
 
     expect(() => inferDelegationTarget(state, steps)).toThrow(
@@ -153,9 +148,7 @@ describe('inferRunbookFromStep', () => {
   });
 
   it('throws RD-814 when substep has no runbook reference', () => {
-    const substeps = [
-      makeSubstep({ id: '1', description: 'First' }),
-    ];
+    const substeps = [makeSubstep({ id: '1', description: 'First' })];
     const steps: Step[] = [makeStepWithSubsteps('1', substeps)];
     const state = makeState({ step: '1' });
 

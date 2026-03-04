@@ -268,8 +268,7 @@ export const ErrorCodes = {
     code: 'RD-813',
     category: ErrorCategory.DELEGATION,
     title: 'No delegatable substep',
-    description:
-      'No pending substep with a runbook reference found on the current step.',
+    description: 'No pending substep with a runbook reference found on the current step.',
     docSlug: 'delegation-no-delegatable-substep',
   },
   DELEGATION_SUBSTEP_NO_RUNBOOK: {
