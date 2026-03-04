@@ -1288,6 +1288,58 @@ describe('convertToTransitions with AWAIT', () => {
   });
 });
 
+describe('parseConditional AWAIT with action messages', () => {
+  it('FAIL ANY AWAIT: STOP with message preserves await and message', () => {
+    const result = parseConditional('FAIL ANY AWAIT: STOP "deferred failure"');
+    expect(result).toEqual({
+      type: 'fail',
+      retry: 0,
+      action: { type: 'STOP', message: 'deferred failure' },
+      modifier: 'ANY',
+      await: true,
+      raw: 'STOP "deferred failure"',
+    });
+  });
+
+  it('PASS ANY AWAIT: COMPLETE with message preserves await and message', () => {
+    const result = parseConditional('PASS ANY AWAIT: COMPLETE "all checked"');
+    expect(result).toEqual({
+      type: 'pass',
+      retry: 0,
+      action: { type: 'COMPLETE', message: 'all checked' },
+      modifier: 'ANY',
+      await: true,
+      raw: 'COMPLETE "all checked"',
+    });
+  });
+});
+
+describe('parseConditional YES/NO aliases with AWAIT', () => {
+  it('NO ANY AWAIT: STOP parses with await', () => {
+    const result = parseConditional('NO ANY AWAIT: STOP');
+    expect(result).toEqual({
+      type: 'no',
+      retry: 0,
+      action: { type: 'STOP' },
+      modifier: 'ANY',
+      await: true,
+      raw: 'STOP',
+    });
+  });
+
+  it('YES ANY AWAIT: CONTINUE parses with await', () => {
+    const result = parseConditional('YES ANY AWAIT: CONTINUE');
+    expect(result).toEqual({
+      type: 'yes',
+      retry: 0,
+      action: { type: 'CONTINUE' },
+      modifier: 'ANY',
+      await: true,
+      raw: 'CONTINUE',
+    });
+  });
+});
+
 describe('ParsedConditional with retry property', () => {
   it('parseConditional extracts retry as property', () => {
     const result = parseConditional('FAIL: RETRY 2 GOTO 3');

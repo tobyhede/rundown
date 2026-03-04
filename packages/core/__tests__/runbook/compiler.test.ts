@@ -5323,6 +5323,207 @@ echo "processing"
         expect(actor.getSnapshot().value).toBe('STOPPED');
       });
 
+      it('PASS ANY AWAIT — first pass defers, all complete → COMPLETE', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: false,
+              await: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ];
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 passes — AWAIT defers, advances to substep 1.2
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 passes — all results in, aggregation → COMPLETE
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('PASS ANY AWAIT — first pass defers, second fails, still COMPLETE', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: false,
+              await: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ];
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 passes — AWAIT defers, advances to substep 1.2
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 fails — all results in, at least one passed → COMPLETE
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('FAIL ANY AWAIT — first fails, second passes → STOPPED (any fail triggers STOP)', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              await: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ];
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 fails — AWAIT defers, advances to substep 1.2
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 passes — all results in, but hasFailed=true → FAIL ANY fires → STOPPED
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('FAIL ANY AWAIT with 3 substeps — no short-circuit, all complete before aggregation', () => {
+        const steps: Step[] = [
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              await: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '3',
+                description: 'Substep 3',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ];
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 fails — AWAIT defers, advances to substep 1.2
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 passes — AWAIT defers, advances to substep 1.3
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('step::1::3');
+
+        // Substep 1.3 passes — all results in, but hasFailed=true → FAIL ANY fires → STOPPED
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
       it('PASS ANY (all=false) short-circuits to COMPLETE on first pass', () => {
         const steps: Step[] = [
           {
