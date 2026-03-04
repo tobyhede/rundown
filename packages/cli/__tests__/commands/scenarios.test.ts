@@ -30,13 +30,13 @@ scenarios:
 
 ## 1. First Step
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ## 2. Second Step
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 `;
 
     const runbooksDir = join(workspace.cwd, '.claude', 'rundown', 'runbooks');
@@ -71,7 +71,7 @@ name: no-scenarios
 
 ## 1. Step
 
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
       await writeFile(
         join(workspace.cwd, '.claude', 'rundown', 'runbooks', 'no-scenarios.runbook.md'),

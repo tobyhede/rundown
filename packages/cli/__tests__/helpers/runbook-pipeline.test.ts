@@ -102,7 +102,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 
 // Mock node:fs/promises
 jest.unstable_mockModule('node:fs/promises', () => ({
-  readFile: jest.fn().mockResolvedValue('# Test\n\n## 1. Step\n- PASS: CONTINUE'),
+  readFile: jest.fn().mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE'),
 }));
 
 // Import after mocking
@@ -127,7 +127,7 @@ function makeState(id: string, overrides: Record<string, unknown> = {}): any {
     id,
     runbook: 'test.md',
     runbookPath: '/tmp/test.md',
-    runbookSrc: '## 1. Step\n- PASS: COMPLETE',
+    runbookSrc: '## 1. Step\n- PASS COMPLETE',
     step: '1',
     stepName: 'Step',
     retryCount: 0,
@@ -190,7 +190,7 @@ beforeEach(() => {
   (substituteRunbookVariables as jest.Mock).mockImplementation((runbook: unknown) => runbook);
   (expandForClauseVariables as jest.Mock).mockImplementation((content: string) => content);
   (expandLoopVariables as jest.Mock).mockImplementation((text: string) => text);
-  (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS: CONTINUE');
+  (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
   (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
   (core.deriveActiveFrame as jest.Mock).mockReturnValue({

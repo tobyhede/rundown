@@ -54,17 +54,17 @@ async function writeForRunbook(
 
   const content = `## 1. Process
 - FOR i IN 1 TO ${String(iterations)}
-${iterLines ? `${iterLines}\n` : ''}- PASS ${stepPassMod}: ${stepPass}
-- FAIL ${stepFailMod}: ${stepFail}
+${iterLines ? `${iterLines}\n` : ''}- PASS ${stepPassMod} ${stepPass}
+- FAIL ${stepFailMod} ${stepFail}
 
 ### 1.1 Check
-- PASS: CONTINUE
-- FAIL: CONTINUE
+- PASS CONTINUE
+- FAIL CONTINUE
 
 Do the check.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step.
 `;
@@ -90,7 +90,7 @@ describe('FOR loop transitions integration', () => {
     it('PASS ALL — all iterations pass → CONTINUE to next step', async () => {
       await writeForRunbook(workspace, 'agg-all-pass.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: BREAK`,
+        iterTransitions: `- PASS ALL CONTINUE\n- FAIL ANY BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -116,7 +116,7 @@ describe('FOR loop transitions integration', () => {
     it('PASS ALL — one iteration fails → STOP', async () => {
       await writeForRunbook(workspace, 'agg-one-fail.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: BREAK`,
+        iterTransitions: `- PASS ALL CONTINUE\n- FAIL ANY BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -135,7 +135,7 @@ describe('FOR loop transitions integration', () => {
     it('PASS ANY — one pass suffices', async () => {
       await writeForRunbook(workspace, 'agg-any-pass.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: CONTINUE`,
+        iterTransitions: `- PASS ALL CONTINUE\n- FAIL ANY CONTINUE`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
         stepPassMod: 'ANY',
@@ -162,7 +162,7 @@ describe('FOR loop transitions integration', () => {
     it('FAIL ANY: BREAK at iteration level — early exit skips remaining iterations', async () => {
       await writeForRunbook(workspace, 'agg-break.runbook.md', {
         iterations: 3,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: BREAK`,
+        iterTransitions: `- PASS ALL CONTINUE\n- FAIL ANY BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -187,7 +187,7 @@ describe('FOR loop transitions integration', () => {
     it('RETRY 2 BREAK — exhausts retries then breaks', async () => {
       await writeForRunbook(workspace, 'retry-break.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: RETRY 2 BREAK`,
+        iterTransitions: `- PASS ALL CONTINUE\n- FAIL ANY RETRY 2 BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -213,7 +213,7 @@ describe('FOR loop transitions integration', () => {
     it('RETRY 1 CONTINUE — retries then continues to next iteration', async () => {
       await writeForRunbook(workspace, 'retry-continue.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: RETRY 1 CONTINUE`,
+        iterTransitions: `- PASS ALL CONTINUE\n- FAIL ANY RETRY 1 CONTINUE`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -239,7 +239,7 @@ describe('FOR loop transitions integration', () => {
     it('RETRY succeeds on second attempt', async () => {
       await writeForRunbook(workspace, 'retry-success.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: RETRY 2 BREAK`,
+        iterTransitions: `- PASS ALL CONTINUE\n- FAIL ANY RETRY 2 BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });

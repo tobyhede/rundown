@@ -73,7 +73,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 
 // Mock node:fs/promises
 jest.unstable_mockModule('node:fs/promises', () => ({
-  readFile: jest.fn().mockResolvedValue('# Test\n\n## 1. Step\n- PASS: CONTINUE'),
+  readFile: jest.fn().mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE'),
   mkdir: jest.fn().mockResolvedValue(undefined),
 }));
 

@@ -140,7 +140,7 @@ echo hello
       fs.writeFileSync(
         runbookPath,
         `## Step 1
-- PASS: GOTO 99
+- PASS GOTO 99
 echo hello
 `,
       );
@@ -161,7 +161,7 @@ echo hello
         runbookPath,
         `## 1. Review the plan
 - FOR pass IN 1 TO 2
-- FAIL ANY: STOP
+- FAIL ANY STOP
 
 - review-technical-accuracy.runbook.md
 `,

@@ -439,16 +439,16 @@ export function createRunbook(options: CreateRunbookOptions): string {
     const hasAggregation = step.for != null || step.substeps != null;
     const allQualifier = step.all !== false ? ' ALL' : ' ANY';
     const anyQualifier = step.all !== false ? ' ANY' : ' ALL';
-    if (step.pass) lines.push(`- PASS${hasAggregation ? allQualifier : ''}: ${step.pass}`);
-    if (step.fail) lines.push(`- FAIL${hasAggregation ? anyQualifier : ''}: ${step.fail}`);
+    if (step.pass) lines.push(`- PASS${hasAggregation ? allQualifier : ''} ${step.pass}`);
+    if (step.fail) lines.push(`- FAIL${hasAggregation ? anyQualifier : ''} ${step.fail}`);
     lines.push('');
 
     if (step.substeps) {
       // Render substeps as H3 headers with qualified numbering
       step.substeps.forEach((sub, subIndex) => {
         lines.push(`### ${String(stepNum)}.${String(subIndex + 1)} ${sub.title}`);
-        if (sub.pass) lines.push(`- PASS: ${sub.pass}`);
-        if (sub.fail) lines.push(`- FAIL: ${sub.fail}`);
+        if (sub.pass) lines.push(`- PASS ${sub.pass}`);
+        if (sub.fail) lines.push(`- FAIL ${sub.fail}`);
         lines.push('');
         if (sub.content) {
           lines.push(sub.content);

@@ -434,7 +434,7 @@ describe('expandForClauseVariables', () => {
       '```',
       '',
       '## 2. Done',
-      '- PASS: COMPLETE',
+      '- PASS COMPLETE',
     ].join('\n');
 
     const expanded = expandForClauseVariables(rawMarkdown, { Max: '3' });

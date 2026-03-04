@@ -22,8 +22,8 @@ describe('Delegation claim integration', () => {
 
   async function writeParentRunbook(): Promise<void> {
     const content = `## 1. Review
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Code review
 Do code review.
@@ -32,7 +32,7 @@ Do code review.
 Do security review.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step.
 `;
@@ -41,7 +41,7 @@ Final step.
 
   async function writeChildRunbook(): Promise<void> {
     const content = `## 1. Execute
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Run the child task.
 `;
@@ -142,7 +142,7 @@ Run the child task.
 
     // Child runbook echoes the variable to confirm it was received
     const childContent = `## 1. Execute
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Task uses {{ myVar }}.
 `;
@@ -198,14 +198,14 @@ Task uses {{ myVar }}.
       '---',
       '',
       '## 1. Parent',
-      '- PASS ALL: COMPLETE',
-      '- FAIL ANY: STOP',
+      '- PASS ALL COMPLETE',
+      '- FAIL ANY STOP',
       '',
       '### 1.1 Delegated step',
       'Do work.',
       '',
       '## 2. Done',
-      '- PASS: COMPLETE',
+      '- PASS COMPLETE',
       '',
       'Finished.',
     ].join('\n');
@@ -215,7 +215,7 @@ Task uses {{ myVar }}.
     );
 
     // Child runbook for the delegation
-    const childContent = '## 1. Execute\n- PASS: COMPLETE\n\nRun task.\n';
+    const childContent = '## 1. Execute\n- PASS COMPLETE\n\nRun task.\n';
     await writeFile(
       join(workspace.cwd, '.claude', 'rundown', 'runbooks', 'child.runbook.md'),
       childContent,

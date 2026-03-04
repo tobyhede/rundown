@@ -71,7 +71,7 @@ function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookSt
     id,
     runbook: 'test.md',
     runbookPath: '/tmp/test.md',
-    runbookSrc: '## 1. Step\n- PASS: COMPLETE',
+    runbookSrc: '## 1. Step\n- PASS COMPLETE',
     step: '1',
     stepName: 'Step',
     retryCount: 0,

@@ -7,14 +7,14 @@ describe('getRunbookFromState', () => {
     const runbookSrc = `# Test Runbook
 
 ## 1. First Step
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo hello
 \`\`\`
 
 ## 2. Second Step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 \`\`\`bash
 echo done
@@ -49,7 +49,7 @@ echo done
     const runbookSrc = `# Template Runbook
 
 ## 1. Deploy
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Deploy to {{ env }}.
 `;
