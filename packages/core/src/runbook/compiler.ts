@@ -742,7 +742,7 @@ function buildParentStateConfig(
   const hasFor = parentStep.kind === 'for';
   const hasTransitions = !!parentStep.transitions;
   const nextTarget = findNextStateId(stepName, undefined, steps);
-  const firstSubstep = parentStep.substeps[0];
+  const firstSubstep = parentStep.substeps[0] as (typeof parentStep.substeps)[number] | undefined;
   const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
 
   const always: AlwaysTransition[] = [];
@@ -1159,7 +1159,7 @@ function buildLoopControlTransition(
   kind: 'pass' | 'fail',
 ): TransitionConfig {
   const currentStep = steps.find((s) => s.name === stepName);
-  if (!currentStep || currentStep.kind !== 'for') {
+  if (currentStep?.kind !== 'for') {
     return { target: 'STOPPED', actions: assign({ lastAction: { type: actionType } }) };
   }
   // FOR step: accumulate into substepResults before transitioning to parent
@@ -1343,7 +1343,7 @@ function buildGotoTransition(
 
   // Detect intra-loop GOTO: target is within same FOR step
   const currentStep = steps.find((s) => s.name === stepName);
-  const isIntraLoopGoto = !!(currentStep?.kind === 'for' && targetStepObj.name === stepName);
+  const isIntraLoopGoto = currentStep?.kind === 'for' && targetStepObj.name === stepName;
 
   return {
     target: computedTarget,

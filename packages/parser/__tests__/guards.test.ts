@@ -117,6 +117,7 @@ describe('hasCommand', () => {
   });
 });
 
+/* eslint-disable @typescript-eslint/no-deprecated -- testing deprecated API */
 describe('hasSubsteps', () => {
   it('returns true when step has non-empty substeps array', () => {
     const step = createStep({
@@ -241,6 +242,7 @@ describe('hasForClause', () => {
     });
   });
 });
+/* eslint-enable @typescript-eslint/no-deprecated */
 
 describe('isSourced', () => {
   it('returns true when source is present', () => {

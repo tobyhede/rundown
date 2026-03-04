@@ -253,18 +253,13 @@ function substituteStep(step: Step, variables: Record<string, unknown>): Step {
       substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
     };
   }
-  if (step.kind === 'for') {
-    return {
-      ...base,
-      kind: 'for' as const,
-      substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
-      forClause: step.forClause,
-      substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
-    };
-  }
-  // Exhaustive check - should never reach here
-  const _: never = step;
-  return _;
+  return {
+    ...base,
+    kind: 'for' as const,
+    substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
+    forClause: step.forClause,
+    substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
+  };
 }
 
 /**
