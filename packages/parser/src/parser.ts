@@ -387,6 +387,13 @@ export function parseRunbookDocument(
 
         // Check for FOR clause BEFORE conditionals
         const forClause = parseForClause(text);
+
+        // Throw if text looks like a FOR clause but didn't parse,
+        // unless it contains template variables ({{...}}) that need runtime expansion
+        if (forClause === null && text.trim().startsWith('FOR ') && !text.includes('{{')) {
+          throw new RunbookSyntaxError(`Invalid FOR clause: ${text.trim()}`);
+        }
+
         if (forClause && !currentStep.pendingSubstep) {
           // FOR is only valid at step level, not substep level
           // Enforce: only one FOR per step

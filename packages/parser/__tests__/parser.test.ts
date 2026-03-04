@@ -1848,4 +1848,9 @@ Clean up.
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps?.[0].id).toBe('ErrorHandler');
   });
+
+  it('rejects runbook with invalid FOR dotdot syntax', () => {
+    const md = `# Test\n\n## 1. Loop\n\n- FOR item IN 1..5\n\n### 1.1 Do thing\n\n\`\`\`bash\necho hi\n\`\`\`\n`;
+    expect(() => parseRunbook(md)).toThrow(/Invalid FOR clause/);
+  });
 });
