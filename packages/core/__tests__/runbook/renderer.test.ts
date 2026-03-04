@@ -60,7 +60,7 @@ describe('renderTransitions', () => {
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'failed' } },
     });
-    expect(result).toBe('- PASS ALL: CONTINUE\n- FAIL ANY: STOP "failed"');
+    expect(result).toBe('- PASS ALL CONTINUE\n- FAIL ANY STOP "failed"');
   });
 
   it('renders transitions with retry prefix', () => {
@@ -69,7 +69,7 @@ describe('renderTransitions', () => {
       pass: { kind: 'pass', retry: 2, action: { type: 'STOP' } },
       fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
     });
-    expect(result).toBe('- PASS ALL: RETRY 2 STOP\n- FAIL ANY: CONTINUE');
+    expect(result).toBe('- PASS ALL RETRY 2 STOP\n- FAIL ANY CONTINUE');
   });
 
   it('omits modifier when modifierImplicit is set', () => {
@@ -79,7 +79,7 @@ describe('renderTransitions', () => {
       pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     });
-    expect(result).toBe('- PASS: GOTO 2\n- FAIL: STOP');
+    expect(result).toBe('- PASS GOTO 2\n- FAIL STOP');
   });
 });
 
@@ -166,8 +166,8 @@ describe('renderStep', () => {
     };
     const result = renderStep(step);
     expect(result).toContain('- FOR pass IN 2');
-    expect(result).toContain('- PASS ANY: CONTINUE');
-    expect(result).toContain('- FAIL ALL: GOTO Synthesize');
+    expect(result).toContain('- PASS ANY CONTINUE');
+    expect(result).toContain('- FAIL ALL GOTO Synthesize');
   });
 
   it('renders shorthand for runbook-list-derived substep', () => {
@@ -319,8 +319,8 @@ echo hello
 
   it('round-trips runbook with substeps', () => {
     const original = `## 1. Dispatch reviewers
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 First reviewer
 ### 1.2 Second reviewer
@@ -343,15 +343,15 @@ echo hello
 
   it('round-trips runbook with GOTO substep targets', () => {
     const original = `## 1. First step
-- PASS: GOTO 2.1
-- FAIL: STOP
+- PASS GOTO 2.1
+- FAIL STOP
 
 ## 2. Target step
 
 ### 2.1 First substep
 ### 2.2 Second substep
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP`;
+- PASS ALL CONTINUE
+- FAIL ANY STOP`;
 
     const parsed1 = parseRunbook(original);
     expect(parsed1[0].transitions?.pass).toEqual({
@@ -372,8 +372,8 @@ echo hello
 
   it('round-trips transitions without modifiers (no ALL/ANY in output)', () => {
     const original = `## 1. First step
-- PASS: GOTO 2
-- FAIL: STOP
+- PASS GOTO 2
+- FAIL STOP
 
 ## 2. Second step`;
 
@@ -381,8 +381,8 @@ echo hello
     expect(parsed1[0].transitions?.modifierImplicit).toBe(true);
 
     const rendered = parsed1.map(renderStep).join('\n\n');
-    expect(rendered).toContain('- PASS: GOTO 2');
-    expect(rendered).toContain('- FAIL: STOP');
+    expect(rendered).toContain('- PASS GOTO 2');
+    expect(rendered).toContain('- FAIL STOP');
     expect(rendered).not.toMatch(/PASS\s+(ALL|ANY)/);
     expect(rendered).not.toMatch(/FAIL\s+(ALL|ANY)/);
 
@@ -398,8 +398,8 @@ echo hello
 
   it('round-trips transitions with explicit modifiers (ALL/ANY preserved)', () => {
     const original = `## 1. First step
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ## 2. Second step`;
 
@@ -407,8 +407,8 @@ echo hello
     expect(parsed1[0].transitions?.modifierImplicit).toBeUndefined();
 
     const rendered = parsed1.map(renderStep).join('\n\n');
-    expect(rendered).toContain('- PASS ALL: CONTINUE');
-    expect(rendered).toContain('- FAIL ANY: STOP');
+    expect(rendered).toContain('- PASS ALL CONTINUE');
+    expect(rendered).toContain('- FAIL ANY STOP');
   });
 
   it('validates substep child runbooks parsing', () => {
@@ -427,7 +427,7 @@ echo hello
   it('round-trips step-level runbook-list shorthand via implicit substep', () => {
     const original = `## 1. Review the plan
 - FOR pass IN 1 TO 2
-- FAIL ANY: GOTO Synthesize
+- FAIL ANY GOTO Synthesize
 
 - review-technical-accuracy.runbook.md
 - review-structural-integrity.runbook.md
@@ -467,8 +467,8 @@ describe('FOR clause with nested transitions', () => {
 
     const result = renderStep(step);
     expect(result).toContain('- FOR pass IN 3');
-    expect(result).toContain('  - PASS ALL: CONTINUE');
-    expect(result).toContain('  - FAIL ANY: BREAK');
+    expect(result).toContain('  - PASS ALL CONTINUE');
+    expect(result).toContain('  - FAIL ANY BREAK');
   });
 
   it('renders FOR clause without transitions (no nested bullets)', () => {
@@ -493,8 +493,8 @@ describe('FOR clause with nested transitions', () => {
     const markdown = `## 1. Review
 
 - FOR pass IN 1 TO 3
-  - PASS ALL: CONTINUE
-  - FAIL ANY: BREAK
+  - PASS ALL CONTINUE
+  - FAIL ANY BREAK
 
 ### 1.1 Check
 
