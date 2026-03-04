@@ -240,6 +240,7 @@ describe('output formatter', () => {
   describe('printStepBlock', () => {
     it('prints step heading and prompt (no step position line)', () => {
       const step: Step = {
+        kind: 'command',
         name: '1',
         description: 'First step',
         prompt: 'Do something.',

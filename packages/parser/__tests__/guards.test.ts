@@ -9,11 +9,18 @@ import {
 } from '../src/guards.js';
 import type { Step, Substep, ForClause } from '../src/ast.js';
 
-const createStep = (overrides: Partial<Step> = {}): Step => ({
-  name: '1',
-  description: 'Test step',
-  ...overrides,
-});
+const createStep = (overrides: Record<string, unknown> = {}): Step => {
+  const obj: Record<string, unknown> = { name: '1', description: 'Test step', ...overrides };
+  const kind =
+    obj.forClause !== undefined
+      ? 'for'
+      : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
+        ? 'substeps'
+        : obj.command !== undefined
+          ? 'command'
+          : 'base';
+  return { ...obj, kind } as Step;
+};
 
 const createSubstep = (overrides: Partial<Substep> = {}): Substep => ({
   id: '1',
@@ -110,6 +117,7 @@ describe('hasCommand', () => {
   });
 });
 
+/* eslint-disable @typescript-eslint/no-deprecated -- testing deprecated API */
 describe('hasSubsteps', () => {
   it('returns true when step has non-empty substeps array', () => {
     const step = createStep({
@@ -234,6 +242,7 @@ describe('hasForClause', () => {
     });
   });
 });
+/* eslint-enable @typescript-eslint/no-deprecated */
 
 describe('isSourced', () => {
   it('returns true when source is present', () => {

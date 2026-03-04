@@ -30,6 +30,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
 function makeSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly Step[] {
   return [
     {
+      kind: 'substeps',
       name: stepName,
       description: 'Test step',
       substeps: substepIds.map((id) => ({
@@ -44,6 +45,7 @@ function makeSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly 
 function makeSimpleSteps(stepName = '1'): readonly Step[] {
   return [
     {
+      kind: 'base',
       name: stepName,
       description: 'Simple step',
     },
@@ -117,7 +119,10 @@ describe('createDelegation', () => {
 
   it('throws DELEGATION_STEP_NOT_CURRENT when step is not at frontier', () => {
     const state = makeState({ step: '2' });
-    const steps = [...makeSteps('1'), { name: '2', description: 'Step 2' }] as readonly Step[];
+    const steps = [
+      ...makeSteps('1'),
+      { kind: 'base' as const, name: '2', description: 'Step 2' },
+    ] as readonly Step[];
 
     expect(() =>
       createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps),

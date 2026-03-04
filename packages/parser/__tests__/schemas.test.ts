@@ -468,21 +468,21 @@ describe('E5: RunbookSchema with metadata fields', () => {
       version: '1.0.0',
       author: 'Test Author',
       tags: ['test', 'automation'],
-      steps: [{ name: '1', description: 'Step 1' }],
+      steps: [{ kind: 'base', name: '1', description: 'Step 1' }],
     });
     expect(result.success).toBe(true);
   });
 
   it('validates runbook with only steps (all metadata optional)', () => {
     const result = RunbookSchema.safeParse({
-      steps: [{ name: '1', description: 'Step 1' }],
+      steps: [{ kind: 'base', name: '1', description: 'Step 1' }],
     });
     expect(result.success).toBe(true);
   });
 
   it('rejects non-string tags', () => {
     const result = RunbookSchema.safeParse({
-      steps: [{ name: '1', description: 'Step 1' }],
+      steps: [{ kind: 'base', name: '1', description: 'Step 1' }],
       tags: [123, true],
     });
     expect(result.success).toBe(false);
@@ -490,7 +490,7 @@ describe('E5: RunbookSchema with metadata fields', () => {
 
   it('validates runbook with empty tags array', () => {
     const result = RunbookSchema.safeParse({
-      steps: [{ name: '1', description: 'Step 1' }],
+      steps: [{ kind: 'base', name: '1', description: 'Step 1' }],
       tags: [],
     });
     expect(result.success).toBe(true);

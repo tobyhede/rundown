@@ -62,6 +62,11 @@ describe('policy context service', () => {
       expect(parsePolicyCliOptions({ sandbox: false }).sandbox).toBe(false);
     });
 
+    it('parses trustJsPolicy flag', () => {
+      expect(parsePolicyCliOptions({ trustJsPolicy: true }).trustJsPolicy).toBe(true);
+      expect(parsePolicyCliOptions({ trustJsPolicy: false }).trustJsPolicy).toBe(false);
+    });
+
     it('returns undefined for invalid types', () => {
       const opts = {
         allowRun: 123 as unknown,
@@ -100,6 +105,21 @@ describe('policy context service', () => {
       expect(context.isDefault).toBe(false);
       expect(context.cliOptions.allowAll).toBe(true);
       expect(context.configPath).toBe('/path/to/policy.yml');
+    });
+
+    it('forwards trustJsPolicy to the loader', async () => {
+      (core.loadPolicy as jest.Mock).mockResolvedValue({
+        policy: { allow: [], deny: [] },
+        filepath: '/path/to/policy.cjs',
+        isDefault: false,
+        warnings: [],
+      });
+
+      await initializePolicyContext({ trustJsPolicy: true });
+
+      expect(core.loadPolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ trustJsPolicy: true }),
+      );
     });
 
     it('logs warnings', async () => {

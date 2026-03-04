@@ -1201,6 +1201,145 @@ describe('parseConditional with modifier', () => {
   });
 });
 
+describe('parseConditional with AWAIT modifier', () => {
+  it('parses FAIL ANY AWAIT: STOP', () => {
+    const result = parseConditional('FAIL ANY AWAIT: STOP');
+    expect(result).toEqual({
+      type: 'fail',
+      retry: 0,
+      action: { type: 'STOP' },
+      modifier: 'ANY',
+      await: true,
+      raw: 'STOP',
+    });
+  });
+
+  it('parses PASS ANY AWAIT: CONTINUE', () => {
+    const result = parseConditional('PASS ANY AWAIT: CONTINUE');
+    expect(result).toEqual({
+      type: 'pass',
+      retry: 0,
+      action: { type: 'CONTINUE' },
+      modifier: 'ANY',
+      await: true,
+      raw: 'CONTINUE',
+    });
+  });
+
+  it('rejects FAIL ALL AWAIT: STOP with RunbookSyntaxError', () => {
+    expect(() => parseConditional('FAIL ALL AWAIT: STOP')).toThrow('AWAIT is only valid with ANY');
+  });
+
+  it('rejects PASS ALL AWAIT: CONTINUE with RunbookSyntaxError', () => {
+    expect(() => parseConditional('PASS ALL AWAIT: CONTINUE')).toThrow(
+      'AWAIT is only valid with ANY',
+    );
+  });
+
+  it('rejects bare FAIL AWAIT: STOP (AWAIT requires explicit ANY)', () => {
+    expect(() => parseConditional('FAIL AWAIT: STOP')).toThrow(
+      'AWAIT requires explicit ANY modifier',
+    );
+  });
+
+  it('rejects bare PASS AWAIT: CONTINUE (AWAIT requires explicit ANY)', () => {
+    expect(() => parseConditional('PASS AWAIT: CONTINUE')).toThrow(
+      'AWAIT requires explicit ANY modifier',
+    );
+  });
+
+  it('FAIL ANY without AWAIT does not set await', () => {
+    const result = parseConditional('FAIL ANY: STOP');
+    expect(result?.await).toBeUndefined();
+  });
+});
+
+describe('convertToTransitions with AWAIT', () => {
+  it('AWAIT on fail side propagates to Transitions object', () => {
+    const conditionals = [
+      parseConditional('PASS ALL: CONTINUE')!,
+      parseConditional('FAIL ANY AWAIT: STOP')!,
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result).toBeDefined();
+    expect(result!.await).toBe(true);
+    expect(result!.all).toBe(true);
+  });
+
+  it('AWAIT on pass side propagates to Transitions object', () => {
+    const conditionals = [
+      parseConditional('PASS ANY AWAIT: CONTINUE')!,
+      parseConditional('FAIL ALL: STOP')!,
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result).toBeDefined();
+    expect(result!.await).toBe(true);
+    expect(result!.all).toBe(false);
+  });
+
+  it('without AWAIT, Transitions object does not have await', () => {
+    const conditionals = [
+      parseConditional('PASS ALL: CONTINUE')!,
+      parseConditional('FAIL ANY: STOP')!,
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result).toBeDefined();
+    expect(result!.await).toBeUndefined();
+  });
+});
+
+describe('parseConditional AWAIT with action messages', () => {
+  it('FAIL ANY AWAIT: STOP with message preserves await and message', () => {
+    const result = parseConditional('FAIL ANY AWAIT: STOP "deferred failure"');
+    expect(result).toEqual({
+      type: 'fail',
+      retry: 0,
+      action: { type: 'STOP', message: 'deferred failure' },
+      modifier: 'ANY',
+      await: true,
+      raw: 'STOP "deferred failure"',
+    });
+  });
+
+  it('PASS ANY AWAIT: COMPLETE with message preserves await and message', () => {
+    const result = parseConditional('PASS ANY AWAIT: COMPLETE "all checked"');
+    expect(result).toEqual({
+      type: 'pass',
+      retry: 0,
+      action: { type: 'COMPLETE', message: 'all checked' },
+      modifier: 'ANY',
+      await: true,
+      raw: 'COMPLETE "all checked"',
+    });
+  });
+});
+
+describe('parseConditional YES/NO aliases with AWAIT', () => {
+  it('NO ANY AWAIT: STOP parses with await', () => {
+    const result = parseConditional('NO ANY AWAIT: STOP');
+    expect(result).toEqual({
+      type: 'no',
+      retry: 0,
+      action: { type: 'STOP' },
+      modifier: 'ANY',
+      await: true,
+      raw: 'STOP',
+    });
+  });
+
+  it('YES ANY AWAIT: CONTINUE parses with await', () => {
+    const result = parseConditional('YES ANY AWAIT: CONTINUE');
+    expect(result).toEqual({
+      type: 'yes',
+      retry: 0,
+      action: { type: 'CONTINUE' },
+      modifier: 'ANY',
+      await: true,
+      raw: 'CONTINUE',
+    });
+  });
+});
+
 describe('ParsedConditional with retry property', () => {
   it('parseConditional extracts retry as property', () => {
     const result = parseConditional('FAIL: RETRY 2 GOTO 3');

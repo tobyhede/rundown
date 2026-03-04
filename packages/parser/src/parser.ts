@@ -78,6 +78,7 @@ interface StepBuilder {
   forClause?: ForClause;
   hasSeenForClause: boolean;
   forConditionals?: ParsedConditional[];
+  stepConditionals?: ParsedConditional[];
   invalidH3s: Array<{ line: number; text: string }>;
 }
 
@@ -228,7 +229,12 @@ export function parseRunbookDocument(
     if (isHeading(node) && node.depth === 3 && currentStep) {
       inPreamble = false;
       if (currentStep.pendingSubstep) {
+        // H3 #2+: flush inter-substep conditionals to preceding substep
         currentStep.pendingSubstep.pendingConditionals.push(...pendingConditionals);
+        pendingConditionals = [];
+      } else if (pendingConditionals.length > 0) {
+        // First H3: save step-level conditionals separately
+        currentStep.stepConditionals = [...pendingConditionals];
         pendingConditionals = [];
       }
       finalizePendingSubstep();
@@ -381,6 +387,13 @@ export function parseRunbookDocument(
 
         // Check for FOR clause BEFORE conditionals
         const forClause = parseForClause(text);
+
+        // Throw if text looks like a FOR clause but didn't parse,
+        // unless it contains template variables ({{...}}) that need runtime expansion
+        if (forClause === null && text.trim().startsWith('FOR ') && !text.includes('{{')) {
+          throw new RunbookSyntaxError(`Invalid FOR clause: ${text.trim()}`);
+        }
+
         if (forClause && !currentStep.pendingSubstep) {
           // FOR is only valid at step level, not substep level
           // Enforce: only one FOR per step
@@ -557,9 +570,10 @@ function finalizeStep(
   }
 
   // Validate NEXT usage before converting to transitions
-  validateNEXTUsage(pendingConditionals, step.forClause !== undefined);
+  const effectiveConditionals = step.stepConditionals ?? pendingConditionals;
+  validateNEXTUsage(effectiveConditionals, step.forClause !== undefined);
 
-  const transitions = convertToTransitions(pendingConditionals);
+  const transitions = convertToTransitions(effectiveConditionals);
 
   if (step.forClause && step.forConditionals?.length) {
     const forTrans = convertToTransitions(step.forConditionals);
@@ -598,25 +612,65 @@ function finalizeStep(
       line: step.line,
     }));
 
-    return {
+    const shared = {
       name: step.name,
-      substepsDerivedFromRunbookList: true,
-      forClause: step.forClause,
       description: step.description,
       transitions: transitions ?? undefined,
-      substeps: syntheticSubsteps,
       line: step.line,
+    };
+    if (step.forClause) {
+      return {
+        ...shared,
+        kind: 'for' as const,
+        substepsDerivedFromRunbookList: true as const,
+        forClause: step.forClause,
+        substeps: syntheticSubsteps,
+      };
+    }
+    return {
+      ...shared,
+      kind: 'substeps' as const,
+      substepsDerivedFromRunbookList: true as const,
+      substeps: syntheticSubsteps,
+    };
+  }
+
+  // Build shared fields once
+  const shared = {
+    name: step.name,
+    description: step.description,
+    prompt,
+    transitions: transitions ?? undefined,
+    line: step.line,
+  };
+
+  if (step.forClause) {
+    return {
+      ...shared,
+      kind: 'for' as const,
+      forClause: step.forClause,
+      substeps: step.substeps.length > 0 ? step.substeps : [],
+    };
+  }
+
+  if (step.substeps.length > 0) {
+    return {
+      ...shared,
+      kind: 'substeps' as const,
+      substeps: step.substeps,
+    };
+  }
+
+  if (step.command) {
+    return {
+      ...shared,
+      kind: 'command' as const,
+      command: step.command,
     };
   }
 
   return {
-    name: step.name,
-    forClause: step.forClause,
-    description: step.description,
-    command: step.command,
-    prompt,
-    transitions: transitions ?? undefined,
-    substeps: step.substeps.length > 0 ? step.substeps : undefined,
-    line: step.line,
+    ...shared,
+    kind: 'base' as const,
   };
 }

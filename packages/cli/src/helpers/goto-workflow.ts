@@ -121,7 +121,7 @@ export function validateGotoTarget(stepArg: string, steps: readonly Step[]): Got
 
   if (target.at !== undefined) {
     const step = steps[stepIndex];
-    if (!step.forClause) {
+    if (step.kind !== 'for') {
       return {
         ok: false,
         error: `GOTO AT is only valid when the target step has a FOR clause (step "${target.step}" has no FOR)`,
@@ -133,7 +133,7 @@ export function validateGotoTarget(stepArg: string, steps: readonly Step[]): Got
 
   if (target.substep) {
     const step = steps[stepIndex];
-    if (!step.substeps || step.substeps.length === 0) {
+    if (step.kind !== 'substeps' && step.kind !== 'for') {
       return {
         ok: false,
         error: `Step ${stepIdToString({ step: target.step })} has no substeps`,

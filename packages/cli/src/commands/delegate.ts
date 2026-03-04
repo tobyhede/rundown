@@ -6,6 +6,7 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
+import { inferDelegationTarget, inferRunbookFromStep } from '../helpers/delegate-inference.js';
 import { loadVariablesFromFile } from '../services/variable-discovery.js';
 import { collect } from './echo.js';
 
@@ -37,16 +38,16 @@ function parseVarFlags(vars: string[]): Record<string, string> {
  */
 export function registerDelegateCommand(program: Command): void {
   program
-    .command('delegate <runbook>')
+    .command('delegate [runbook]')
     .description('Create a delegation token for a child runbook')
-    .requiredOption('--step <stepId>', 'Step or substep to delegate (e.g., 1.1)')
+    .option('--step <stepId>', 'Step or substep to delegate (e.g., 1.1)')
     .option('--var <key=value>', 'Set variable for child context (repeatable)', collect, [])
     .option('--var-file <path>', 'Load variables from YAML file')
     .option('--json', 'Output as JSON')
     .action(
       async (
-        runbook: string,
-        options: { step: string; var: string[]; varFile?: string; json?: boolean },
+        runbookArg: string | undefined,
+        options: { step?: string; var: string[]; varFile?: string; json?: boolean },
       ) => {
         await withErrorHandling(
           async () => {
@@ -63,14 +64,38 @@ export function registerDelegateCommand(program: Command): void {
               return;
             }
 
-            // Resolve child runbook path
-            const childPath = await resolveRunbookFile(cwd, runbook);
-            if (!childPath) {
-              throw Errors.delegationRunbookNotFound(runbook);
+            // Load parent steps from state (needed for inference and createDelegation)
+            const steps = getRunbookFromState(state, cwd);
+
+            // Resolve runbook and step — infer whichever is missing
+            let resolvedRunbook: string;
+            let resolvedStepId: string;
+
+            if (runbookArg && options.step) {
+              // Fully explicit (existing path)
+              resolvedRunbook = runbookArg;
+              resolvedStepId = options.step;
+            } else if (!runbookArg && options.step) {
+              // Step given, infer runbook from substep's runbooks field
+              resolvedRunbook = inferRunbookFromStep(state, steps, options.step);
+              resolvedStepId = options.step;
+            } else if (!runbookArg && !options.step) {
+              // Nothing given, infer both
+              const inferred = inferDelegationTarget(state, steps);
+              resolvedRunbook = inferred.runbookRef;
+              resolvedStepId = inferred.stepId;
+            } else {
+              // Runbook given, no step — infer step from first pending substep
+              const inferred = inferDelegationTarget(state, steps);
+              resolvedRunbook = runbookArg!;
+              resolvedStepId = inferred.stepId;
             }
 
-            // Load parent steps from state
-            const steps = getRunbookFromState(state, cwd);
+            // Resolve child runbook path
+            const childPath = await resolveRunbookFile(cwd, resolvedRunbook);
+            if (!childPath) {
+              throw Errors.delegationRunbookNotFound(resolvedRunbook);
+            }
 
             // Parse extra vars: --var-file (lower precedence) merged with --var (higher precedence)
             let extraVars: Record<string, string> | undefined;
@@ -89,7 +114,7 @@ export function registerDelegateCommand(program: Command): void {
             const result = createDelegation(
               {
                 state,
-                stepId: options.step,
+                stepId: resolvedStepId,
                 childRunbookPath: childPath,
                 extraVars,
                 ancestors: [],
@@ -106,15 +131,14 @@ export function registerDelegateCommand(program: Command): void {
             if (options.json) {
               output.json({
                 action: 'delegated',
-                step: options.step,
-                runbook,
+                step: resolvedStepId,
+                runbook: resolvedRunbook,
                 token: result.token,
                 token_hash: result.tokenHash,
                 parent_run_id: state.id,
-                claim_marker: `RD_CLAIM_TOKEN=${result.token}`,
               });
             } else {
-              output.message(`DELEGATED  step ${options.step} -> ${runbook}`);
+              output.message(`DELEGATED  step ${resolvedStepId} -> ${resolvedRunbook}`);
               output.message(`Token:     ${result.token}`);
               output.message('');
               output.message(`RD_CLAIM_TOKEN=${result.token}`);

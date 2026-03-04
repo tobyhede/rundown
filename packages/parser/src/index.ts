@@ -46,8 +46,15 @@ export type {
 export {
   hasPrompt,
   hasCommand,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- backward-compatible re-export
   hasSubsteps,
   hasRunbooks,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- backward-compatible re-export
   hasForClause,
   isSourced,
+  isBaseStep,
+  isStepWithCommand,
+  isStepWithSubsteps,
+  isStepWithFor,
+  stepHasSubsteps,
 } from './guards.js';

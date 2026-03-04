@@ -134,7 +134,7 @@ Scenario names describe the execution path:
 
 ### Token Capture
 
-The scenario runner watches all command output for `RD_CLAIM_TOKEN=<value>` markers. Captured tokens are available for substitution in subsequent commands:
+The scenario runner extracts delegation tokens from parsed JSON output. When `rd delegate` runs with `--json` (injected automatically), the response includes a `token` field. These tokens are captured in order and available for substitution in subsequent commands:
 
 - First token captured: `${TOKEN}`
 - Second token: `${TOKEN_2}`
@@ -145,23 +145,20 @@ This enables delegation scenarios without shell variable capture:
 
 ```yaml
 commands:
-  - rd run --prompted delegate-basic.runbook.md
+  - rd run delegate-basic.runbook.md
   - rd delegate child-task.runbook.md --step 1.1
   - rd claim ${TOKEN}
-  - rd pass
 ```
 
-The runner substitutes `${TOKEN}` with the actual token value captured from the delegate command's output. For multi-delegation scenarios:
+The runner substitutes `${TOKEN}` with the actual token value extracted from the delegate command's JSON `token` field. For multi-delegation scenarios:
 
 ```yaml
 commands:
-  - rd run --prompted delegate-hierarchy.runbook.md
+  - rd run delegate-hierarchy.runbook.md
   - rd delegate child-a.runbook.md --step 1.1
-  - rd delegate child-b.runbook.md --step 1.2
   - rd claim ${TOKEN}       # claims child-a token
-  - rd pass
+  - rd delegate child-b.runbook.md --step 1.2
   - rd claim ${TOKEN_2}     # claims child-b token
-  - rd pass
 ```
 
 ### Auto-Execution Scenarios

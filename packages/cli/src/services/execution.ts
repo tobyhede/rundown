@@ -17,6 +17,7 @@ import {
   SessionService,
   ExecutionLifecycleService,
   ForIterationService,
+  logger,
   type Step,
   type Substep,
   type RunbookMetadata,
@@ -30,7 +31,7 @@ import {
   type ForContext,
   type DataSource,
 } from '@rundown-org/core';
-import { isSourced } from '@rundown-org/parser';
+import { isSourced, stepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import {
   getPolicyEvaluator,
@@ -83,7 +84,7 @@ export function buildStepVariables(
   stepId: string,
   substepId: string | undefined,
   forStack?: readonly ForContext[],
-  forClause?: Step['forClause'],
+  forClause?: ForClause,
   sources?: Readonly<Record<string, DataSource>>,
   templateVars?: Readonly<Record<string, string>>,
 ): StepVariables {
@@ -343,7 +344,9 @@ export async function drainResolvedCompletions({
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     const currentStep = findStepOrThrow(steps, state.step);
-    if (!currentStep.substeps?.length || !state.substep) {
+    const hasActiveSubsteps =
+      stepHasSubsteps(currentStep) && currentStep.substeps.length > 0 && !!state.substep;
+    if (!hasActiveSubsteps) {
       return { status: 'continue', state, unresolved: 0, applied };
     }
 
@@ -392,8 +395,24 @@ export async function drainResolvedCompletions({
     });
     applied += 1;
 
-    if (transitionResult.status === 'done') return { status: 'done', unresolved: 0, applied };
-    if (transitionResult.status === 'stopped') return { status: 'stopped', unresolved: 0, applied };
+    if (transitionResult.status === 'done' || transitionResult.status === 'stopped') {
+      // Defense-in-depth: warn if terminal status reached with unresolved substeps
+      const remainingUnresolved = orderedSubsteps.filter(
+        (id) => !resolvedBySubstep.has(id) && id !== completion.targetSubstep,
+      ).length;
+      if (remainingUnresolved > 0) {
+        void logger.warn('drainResolvedCompletions: terminal status with unresolved substeps', {
+          runbookId,
+          stepName: currentStep.name,
+          status: transitionResult.status,
+          substepCount: orderedSubsteps.length,
+          resolvedCount: resolvedBySubstep.size,
+          unresolvedCount: remainingUnresolved,
+          appliedSubstep: state.substep,
+        });
+      }
+      return { status: transitionResult.status, unresolved: 0, applied };
+    }
     state = transitionResult.state;
   }
 }
@@ -439,7 +458,7 @@ export async function runExecutionLoop(
 
     // Determine what to render: substep if we're at one, otherwise the step
     let itemToRender: Step | Substep = currentStep;
-    if (currentState.substep && currentStep.substeps) {
+    if (currentState.substep && stepHasSubsteps(currentStep)) {
       const substep = currentStep.substeps.find((s) => s.id === currentState.substep);
       if (substep) {
         itemToRender = substep;
@@ -538,7 +557,7 @@ export async function runExecutionLoop(
       currentState.step,
       currentState.substep,
       currentState.forStack,
-      currentStep.forClause,
+      currentStep.kind === 'for' ? currentStep.forClause : undefined,
       currentState.sources,
       currentState.templateVars,
     );
@@ -555,28 +574,34 @@ export async function runExecutionLoop(
       currentState.forStack,
     );
     const isSubstep = 'id' in itemToRender;
+    const command = isSubstep
+      ? (itemToRender as Substep).command
+      : currentStep.kind === 'command'
+        ? currentStep.command
+        : undefined;
+
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,
       stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as Step).name,
       description: expandedDescription,
       prompt: expandedPrompt,
-      hasCommand: !!itemToRender.command,
-      commandCode: itemToRender.command?.code
-        ? expandLoopVariablesForCommand(itemToRender.command.code, stepVars)
-        : itemToRender.command?.code,
-      commandLang: itemToRender.command?.lang,
+      hasCommand: !!command,
+      commandCode: command?.code
+        ? expandLoopVariablesForCommand(command.code, stepVars)
+        : command?.code,
+      commandLang: command?.lang,
       isSubstep,
       prompted, // CRITICAL: Pass prompted flag for correct command display
     });
 
     // If CLI prompted mode, OR no command
     // Use itemToRender which may be a substep with its own command
-    if (prompted || !itemToRender.command) {
+    if (prompted || !command) {
       return 'waiting';
     }
 
-    // Expand command code for execution (after guard — itemToRender.command is guaranteed)
-    const expandedCommandCode = expandLoopVariablesForCommand(itemToRender.command.code, stepVars);
+    // Expand command code for execution (after guard — command is guaranteed)
+    const expandedCommandCode = expandLoopVariablesForCommand(command.code, stepVars);
 
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)

@@ -1,4 +1,15 @@
-import type { Step, Substep, Command, ForClause, SourceWindow } from './ast.js';
+import type {
+  Step,
+  Substep,
+  Command,
+  ForClause,
+  SourceWindow,
+  StepHavingSubsteps,
+  BaseStep,
+  StepWithCommand,
+  StepWithSubsteps,
+  StepWithFor,
+} from './ast.js';
 
 /**
  * Type guard: checks if a step or substep has a prompt defined.
@@ -23,20 +34,18 @@ export function hasPrompt<T extends Step | Substep>(unit: T): unit is T & { prom
  * @returns True if the unit has a Command defined, enabling type narrowing
  */
 export function hasCommand<T extends Step | Substep>(unit: T): unit is T & { command: Command } {
-  return unit.command !== undefined;
+  return 'command' in unit && unit.command !== undefined;
 }
 
 /**
  * Type guard: checks if a step has substeps defined.
  *
- * When this guard returns true, TypeScript narrows the type to include
- * a non-empty substeps array.
- *
  * @param step - The Step to check
  * @returns True if the step has one or more substeps, enabling type narrowing
+ * @deprecated Use `step.kind === 'substeps' || step.kind === 'for'` or {@link isStepWithSubsteps}/{@link isStepWithFor}
  */
-export function hasSubsteps(step: Step): step is Step & { substeps: readonly Substep[] } {
-  return step.substeps !== undefined && step.substeps.length > 0;
+export function hasSubsteps(step: Step): step is StepHavingSubsteps {
+  return step.kind === 'substeps' || step.kind === 'for';
 }
 
 /**
@@ -57,14 +66,12 @@ export function hasRunbooks(
 /**
  * Type guard: checks if a step has a FOR loop clause defined.
  *
- * When this guard returns true, TypeScript narrows the type to include
- * a non-undefined forClause property.
- *
  * @param step - The Step to check
  * @returns True if the step has a ForClause defined, enabling type narrowing
+ * @deprecated Use `step.kind === 'for'` or {@link isStepWithFor}
  */
-export function hasForClause(step: Step): step is Step & { forClause: ForClause } {
-  return step.forClause !== undefined;
+export function hasForClause(step: Step): step is StepWithFor {
+  return step.kind === 'for';
 }
 
 /**
@@ -76,4 +83,56 @@ export function hasForClause(step: Step): step is Step & { forClause: ForClause 
  */
 export function isSourced(fc: ForClause): fc is SourceWindow {
   return fc.source !== undefined;
+}
+
+/**
+ * Type guard: checks if a step is a BaseStep (no command, no substeps).
+ *
+ * @param step - The Step to check
+ * @returns True if the step is a BaseStep
+ */
+export function isBaseStep(step: Step): step is BaseStep {
+  return step.kind === 'base';
+}
+
+/**
+ * Type guard: checks if a step is a StepWithCommand.
+ *
+ * @param step - The Step to check
+ * @returns True if the step has a command
+ */
+export function isStepWithCommand(step: Step): step is StepWithCommand {
+  return step.kind === 'command';
+}
+
+/**
+ * Type guard: checks if a step is a StepWithSubsteps (no FOR clause).
+ *
+ * @param step - The Step to check
+ * @returns True if the step has substeps but no FOR clause
+ */
+export function isStepWithSubsteps(step: Step): step is StepWithSubsteps {
+  return step.kind === 'substeps';
+}
+
+/**
+ * Type guard: checks if a step is a StepWithFor (FOR loop with substeps).
+ *
+ * @param step - The Step to check
+ * @returns True if the step is a FOR loop step
+ */
+export function isStepWithFor(step: Step): step is StepWithFor {
+  return step.kind === 'for';
+}
+
+/**
+ * Type guard: checks if a step has substeps (either StepWithSubsteps or StepWithFor).
+ *
+ * Preferred over the deprecated {@link hasSubsteps}.
+ *
+ * @param step - The Step to check
+ * @returns True if the step has substeps
+ */
+export function stepHasSubsteps(step: Step): step is StepHavingSubsteps {
+  return step.kind === 'substeps' || step.kind === 'for';
 }

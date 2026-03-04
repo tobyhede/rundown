@@ -359,6 +359,8 @@ Handle {{item}} (iteration {{Index}}).
 | `.jsonl` | JSON Lines | One JSON value per line (string, number, boolean, null, array, or object) |
 | All others | Plain text | One value per non-empty line |
 
+`file:` sources are resolved to a canonical path, confined to the project root, and checked against the active security policy before execution starts. A denied source fails the runbook before the first step.
+
 **JSONL semantics:** Each `.jsonl` line is parsed as a JSON value. When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. Users who need raw line strings should use a text source (e.g., `.txt`) instead of `.jsonl`.
 
 **Open-ended iteration:** `FOR item IN {{ source }}` iterates until the source is exhausted, capped at 10,000 iterations.
@@ -593,6 +595,12 @@ In `prompted` mode (default), Rundown:
 | `-y, --yes` | Auto-approve prompts |
 | `--non-interactive` | CI mode (auto-deny unlisted commands) |
 | `--policy <file>` | Use custom policy file |
+| `--trust-js-policy` | Trust an explicitly selected JS policy file |
+| `--sandbox` | Enable OS-level filesystem sandbox |
+| `--no-sandbox` | Disable sandbox enforcement |
+| `--sandbox-strict` | Fail if sandbox is unavailable |
+
+Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, or `package.json`. Executable `rundown.config.js/.cjs/.mjs` files are only loaded when passed via `--policy` together with `--trust-js-policy`.
 
 ### Examples
 

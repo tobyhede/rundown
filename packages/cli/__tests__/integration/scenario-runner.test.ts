@@ -1,10 +1,10 @@
 import {
   createTestWorkspace,
-  runCli,
+  getCliPath,
   getAllStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname, basename, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractRawFrontmatter } from '../../src/helpers/extract-raw-frontmatter.js';
 import {
@@ -13,6 +13,7 @@ import {
   type Scenario,
   type Scenarios,
 } from '../../src/schemas/scenarios.js';
+import { executeCommandSequence } from '../../src/helpers/command-sequence.js';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -172,21 +173,22 @@ async function executeScenario(
 
   const expectedResult = getEffectiveResult(scenario);
 
-  for (let i = 0; i < scenario.commands.length; i++) {
-    const cmd = scenario.commands[i];
-    const isLastCommand = i === scenario.commands.length - 1;
-    const args = cmd.replace(/^rd\s+/, '');
-    const result = runCli(args, workspace);
+  const cliPath = getCliPath();
+  const binPath = workspace.binPath();
+  const pluginDir = join(workspace.cwd, 'plugin');
 
-    const isAgentFail = /^rd\s+fail\b/.test(cmd) && cmd.includes('--agent');
-    const allowNonZero = (isLastCommand && expectedResult === 'STOP') || isAgentFail;
-
-    if (!allowNonZero && result.exitCode !== 0) {
-      throw new Error(
-        `Command "${cmd}" failed with exit code ${String(result.exitCode)}: ${result.stderr}`,
-      );
-    }
-  }
+  await executeCommandSequence({
+    commands: scenario.commands,
+    cwd: workspace.cwd,
+    cliPath,
+    quiet: true,
+    env: {
+      PATH: `${binPath}${delimiter}${process.env.PATH ?? ''}`,
+      CLAUDE_PLUGIN_ROOT: pluginDir,
+      NO_COLOR: '1',
+      FORCE_COLOR: undefined,
+    },
+  });
 
   const states = await getAllStates(workspace);
   const expectedName = filename.split('/').pop()!;

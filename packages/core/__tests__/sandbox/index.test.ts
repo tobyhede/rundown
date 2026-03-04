@@ -12,6 +12,7 @@ jest.unstable_mockModule('../../src/sandbox/macos.js', () => ({
 
 jest.unstable_mockModule('../../src/runbook/executor.js', () => ({
   executeCommand: jest.fn(),
+  executeCommandWithEnv: jest.fn(),
 }));
 
 describe('Sandbox Index', () => {
@@ -24,6 +25,8 @@ describe('Sandbox Index', () => {
     readOnlyPaths: ['/test/read'],
     readWritePaths: ['/test/write'],
     denyPaths: ['/test/deny'],
+    denyPatterns: [],
+    env: {},
     allowUnsandboxed: false,
   };
 
@@ -89,7 +92,7 @@ describe('Sandbox Index', () => {
       Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
       const executor = await import('../../src/runbook/executor.js');
-      const mockFn = executor.executeCommand as unknown as jest.Mock<
+      const mockFn = executor.executeCommandWithEnv as unknown as jest.Mock<
         () => Promise<{ success: boolean; exitCode: number }>
       >;
       mockFn.mockResolvedValue({

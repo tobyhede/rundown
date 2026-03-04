@@ -107,6 +107,7 @@ describe('renderSubstep', () => {
 describe('renderStep', () => {
   it('renders basic step', () => {
     const step: Step = {
+      kind: 'base',
       name: '1',
       description: 'First step',
     };
@@ -116,6 +117,7 @@ describe('renderStep', () => {
 
   it('renders step with substeps including parent step number', () => {
     const step: Step = {
+      kind: 'substeps',
       name: '3',
       description: 'Dispatch reviewers',
       substeps: [
@@ -130,6 +132,7 @@ describe('renderStep', () => {
 
   it('renders step with command', () => {
     const step: Step = {
+      kind: 'command',
       name: '1',
       description: 'Run tests',
       command: { code: 'npm test' },
@@ -142,6 +145,7 @@ describe('renderStep', () => {
 
   it('renders step with non-bash command language', () => {
     const step: Step = {
+      kind: 'command',
       name: '1',
       description: 'Run script',
       command: { code: 'print("hello")', lang: 'python' },
@@ -154,6 +158,7 @@ describe('renderStep', () => {
 
   it('renders FOR clause before transitions', () => {
     const step: Step = {
+      kind: 'for',
       name: '2',
       description: 'Review the plan',
       forClause: { variable: 'pass', start: 1, end: 2 },
@@ -172,6 +177,7 @@ describe('renderStep', () => {
 
   it('renders shorthand for runbook-list-derived substep', () => {
     const step = {
+      kind: 'substeps',
       name: '2',
       substepsDerivedFromRunbookList: true,
       description: 'Review the plan',
@@ -190,6 +196,7 @@ describe('renderStep', () => {
 
   it('renders shorthand runbook-list-derived substep with prompt', () => {
     const step = {
+      kind: 'substeps',
       name: '2',
       substepsDerivedFromRunbookList: true,
       description: 'Review the plan',
@@ -212,6 +219,7 @@ describe('renderStep', () => {
 describe('renderForClause coverage', () => {
   it('renders FOR with source and default start', () => {
     const step: Step = {
+      kind: 'for',
       name: '1',
       description: 'Iterate',
       forClause: { variable: 'item', start: 1, end: undefined, source: 'items' },
@@ -223,6 +231,7 @@ describe('renderForClause coverage', () => {
 
   it('renders FOR with windowed source', () => {
     const step: Step = {
+      kind: 'for',
       name: '1',
       description: 'Iterate',
       forClause: { variable: 'item', start: 2, end: 5, source: 'items' },
@@ -234,6 +243,7 @@ describe('renderForClause coverage', () => {
 
   it('renders FOR with unnamed variable and explicit start', () => {
     const step: Step = {
+      kind: 'for',
       name: '1',
       description: 'Iterate',
       forClause: { start: 2, end: 5 },
@@ -245,6 +255,7 @@ describe('renderForClause coverage', () => {
 
   it('renders FOR with unnamed variable and implicit start', () => {
     const step: Step = {
+      kind: 'for',
       name: '1',
       description: 'Iterate',
       forClause: { start: 1, end: 5 },
@@ -308,13 +319,13 @@ echo hello
 ## 2. Next step`;
 
     const parsed1 = parseRunbook(original);
-    expect(parsed1[0].command?.lang).toBe('sh');
+    expect((parsed1[0] as any).command?.lang).toBe('sh');
 
     const rendered = parsed1.map(renderStep).join('\n\n');
     expect(rendered).toContain('```sh');
 
     const parsed2 = parseRunbook(rendered);
-    expect(parsed2[0].command?.lang).toBe('sh');
+    expect((parsed2[0] as any).command?.lang).toBe('sh');
   });
 
   it('round-trips runbook with substeps', () => {
@@ -328,17 +339,17 @@ echo hello
 ## 2. Complete`;
 
     const parsed1 = parseRunbook(original);
-    expect(parsed1[0].substeps).toHaveLength(2);
+    expect((parsed1[0] as any).substeps).toHaveLength(2);
 
     const rendered = parsed1.map(renderStep).join('\n\n');
     const parsed2 = parseRunbook(rendered);
 
     // Verify substeps survive round-trip
-    expect(parsed2[0].substeps).toHaveLength(2);
-    expect(parsed2[0].substeps?.[0].id).toBe('1');
-    expect(parsed2[0].substeps?.[0].description).toBe('First reviewer');
-    expect(parsed2[0].substeps?.[1].id).toBe('2');
-    expect(parsed2[0].substeps?.[1].description).toBe('Second reviewer');
+    expect((parsed2[0] as any).substeps).toHaveLength(2);
+    expect((parsed2[0] as any).substeps?.[0].id).toBe('1');
+    expect((parsed2[0] as any).substeps?.[0].description).toBe('First reviewer');
+    expect((parsed2[0] as any).substeps?.[1].id).toBe('2');
+    expect((parsed2[0] as any).substeps?.[1].description).toBe('Second reviewer');
   });
 
   it('round-trips runbook with GOTO substep targets', () => {
@@ -421,7 +432,7 @@ echo hello
 ## 2. Continue`;
 
     const parsed = parseRunbook(markdown);
-    expect(parsed[0].substeps?.[0].runbooks).toEqual(['setup.runbook.md']);
+    expect((parsed[0] as any).substeps?.[0].runbooks).toEqual(['setup.runbook.md']);
   });
 
   it('round-trips step-level runbook-list shorthand via implicit substep', () => {
@@ -438,9 +449,9 @@ echo hello
     const rendered = parsed1.map(renderStep).join('\n\n');
     const parsed2 = parseRunbook(rendered);
 
-    expect(parsed2[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
-    expect(parsed2[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(parsed2[0].substeps?.map((substep) => substep.runbooks)).toEqual([
+    expect((parsed2[0] as any).forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
+    expect((parsed2[0] as any).substepsDerivedFromRunbookList).toBe(true);
+    expect((parsed2[0] as any).substeps?.map((substep: any) => substep.runbooks)).toEqual([
       ['review-technical-accuracy.runbook.md'],
       ['review-structural-integrity.runbook.md'],
     ]);
@@ -450,6 +461,7 @@ echo hello
 describe('FOR clause with nested transitions', () => {
   it('renders FOR clause with nested transitions as indented bullets', () => {
     const step: Step = {
+      kind: 'for',
       name: '1',
       description: 'Review',
       forClause: {
@@ -473,6 +485,7 @@ describe('FOR clause with nested transitions', () => {
 
   it('renders FOR clause without transitions (no nested bullets)', () => {
     const step: Step = {
+      kind: 'for',
       name: '1',
       description: 'Review',
       forClause: {
@@ -504,21 +517,21 @@ echo check
 
     const parsed1 = parseRunbookDocument(markdown);
     expect(parsed1.steps).toHaveLength(1);
-    expect(parsed1.steps[0].forClause?.transitions).toBeDefined();
-    expect(parsed1.steps[0].forClause?.transitions?.pass.action.type).toBe('CONTINUE');
-    expect(parsed1.steps[0].forClause?.transitions?.fail.action.type).toBe('BREAK');
+    expect((parsed1.steps[0] as any).forClause?.transitions).toBeDefined();
+    expect((parsed1.steps[0] as any).forClause?.transitions?.pass.action.type).toBe('CONTINUE');
+    expect((parsed1.steps[0] as any).forClause?.transitions?.fail.action.type).toBe('BREAK');
 
     const rendered = renderStep(parsed1.steps[0]);
     const parsed2 = parseRunbookDocument(rendered);
 
     // Verify transitions survive round-trip
-    expect(parsed2.steps[0].forClause?.transitions).toBeDefined();
-    expect(parsed2.steps[0].forClause?.transitions?.pass).toEqual({
+    expect((parsed2.steps[0] as any).forClause?.transitions).toBeDefined();
+    expect((parsed2.steps[0] as any).forClause?.transitions?.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(parsed2.steps[0].forClause?.transitions?.fail).toEqual({
+    expect((parsed2.steps[0] as any).forClause?.transitions?.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'BREAK' },
@@ -532,8 +545,8 @@ describe('renderRunbook', () => {
       title: 'My Runbook',
       description: 'A test runbook',
       steps: [
-        { name: '1', description: 'First step' },
-        { name: '2', description: 'Second step' },
+        { kind: 'base', name: '1', description: 'First step' },
+        { kind: 'base', name: '2', description: 'Second step' },
       ],
     };
     const result = renderRunbook(runbook);
@@ -545,7 +558,7 @@ describe('renderRunbook', () => {
 
   it('renders runbook without title', () => {
     const runbook: Runbook = {
-      steps: [{ name: '1', description: 'Only step' }],
+      steps: [{ kind: 'base', name: '1', description: 'Only step' }],
     };
     const result = renderRunbook(runbook);
     expect(result).not.toMatch(/^# /m);

@@ -41,8 +41,8 @@ const core = await import('@rundown-org/core');
 const { runExecutionLoop } = await import('../../src/services/execution');
 const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-workflow');
 
-function makeStep(overrides: Partial<any> = {}): any {
-  return {
+function makeStep(overrides: Record<string, unknown> = {}): any {
+  const obj = {
     name: '1',
     description: 'Test Step',
     transitions: {
@@ -50,7 +50,16 @@ function makeStep(overrides: Partial<any> = {}): any {
       fail: { action: 'continue' as const, retry: 0 },
     },
     ...overrides,
-  } as any;
+  };
+  const kind =
+    obj.forClause !== undefined
+      ? 'for'
+      : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
+        ? 'substeps'
+        : obj.command !== undefined
+          ? 'command'
+          : 'base';
+  return { ...obj, kind } as any;
 }
 
 beforeEach(() => {

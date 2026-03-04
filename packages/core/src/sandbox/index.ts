@@ -12,7 +12,7 @@
  * @module
  */
 
-import { executeCommand } from '../runbook/executor.js';
+import { executeCommandWithEnv } from '../runbook/executor.js';
 import type {
   SandboxOptions,
   SandboxExecutionResult,
@@ -95,6 +95,7 @@ export async function checkSandboxAvailability(): Promise<SandboxAvailability> {
     platform,
     supportsReadRestrictions: false,
     supportsWriteRestrictions: false,
+    supportsDenyPaths: false,
   };
 }
 
@@ -149,7 +150,7 @@ export async function executeWithSandbox(
 
   // Execute without sandbox (trust mode)
   console.warn('Warning: Executing without sandbox. File policies not enforced.');
-  const result = await executeCommand(command, options.cwd);
+  const result = await executeCommandWithEnv(command, options.cwd, options.env);
 
   return {
     ...result,

@@ -2,14 +2,42 @@ import { describe, it, expect } from '@jest/globals';
 import { createActor } from 'xstate';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import { compileRunbookToMachine, MAX_FILE_ITERATIONS } from '../../src/runbook/compiler.js';
-import type { Step } from '../../src/runbook/types.js';
+import type {
+  Step,
+  BaseStep,
+  StepWithCommand,
+  StepWithSubsteps,
+  StepWithFor,
+} from '../../src/runbook/types.js';
 
 describe('runbook compiler', () => {
+  /** Input type: Step variants without the `kind` discriminant. */
+  type StepInput =
+    | Omit<BaseStep, 'kind'>
+    | Omit<StepWithCommand, 'kind'>
+    | Omit<StepWithSubsteps, 'kind'>
+    | Omit<StepWithFor, 'kind'>;
+
   const DEFAULT_TRANSITIONS = {
     all: true,
     pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
     fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
   };
+
+  /** Infer and inject `kind` on each step object so raw literals satisfy the Step union. */
+  function inferSteps(raw: StepInput[]): Step[] {
+    return raw.map((s) => {
+      const kind =
+        'forClause' in s
+          ? 'for'
+          : 'substeps' in s
+            ? 'substeps'
+            : 'command' in s
+              ? 'command'
+              : 'base';
+      return { ...s, kind } as Step;
+    });
+  }
 
   function createRunbook(markdown: string): Step[] {
     const runbook = parseRunbookDocument(markdown);
@@ -18,7 +46,7 @@ describe('runbook compiler', () => {
 
   describe('static step compilation', () => {
     it('generates discrete states for substeps', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Parent',
@@ -27,7 +55,7 @@ describe('runbook compiler', () => {
             { id: '2', description: 'Child 2' },
           ],
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       // @ts-expect-error - states is internal to machine
       const stateIds = Object.keys(machine.config.states);
@@ -37,12 +65,12 @@ describe('runbook compiler', () => {
     });
 
     it('generates single state for step without substeps', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Simple',
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       // @ts-expect-error - accessing internal states property
       const stateIds = Object.keys(machine.config.states);
@@ -50,7 +78,7 @@ describe('runbook compiler', () => {
     });
 
     it('parent state passes through for non-FOR step without transitions', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Non-FOR step, no transitions',
@@ -67,7 +95,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -105,7 +133,7 @@ describe('runbook compiler', () => {
     });
 
     it('last substep transitions to parent state', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step with substeps',
@@ -117,7 +145,7 @@ describe('runbook compiler', () => {
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -132,8 +160,8 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
     });
 
-    it('non-FOR substeps with FAIL ANY: STOP stops on any failure', () => {
-      const steps: Step[] = [
+    it('non-FOR substeps with FAIL ANY: STOP short-circuits on first failure', () => {
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Review step',
@@ -160,23 +188,23 @@ describe('runbook compiler', () => {
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
-      actor.send({ type: 'FAIL' }); // 1.1 fails, CONTINUE to 1.2
-      actor.send({ type: 'PASS' }); // 1.2 passes -> parent -> FAIL ANY -> STOPPED
+      // 1.1 fails — fail-fast: FAIL ANY (all=true) short-circuits to STOPPED immediately
+      actor.send({ type: 'FAIL' });
 
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['fail', 'pass']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['fail']);
     });
   });
 
   describe('CONTINUE with named steps', () => {
     it('skips named step and returns COMPLETE when no more numbered steps', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Setup',
@@ -186,7 +214,7 @@ describe('runbook compiler', () => {
           name: 'ErrorHandler',
           description: 'Named step - should be skipped by CONTINUE',
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -198,7 +226,7 @@ describe('runbook compiler', () => {
     });
 
     it('continues to next numbered step, skipping named steps in between', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'First',
@@ -212,7 +240,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Second',
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -232,7 +260,7 @@ describe('runbook compiler', () => {
      */
 
     it('sets lastAction to CONTINUE for CONTINUE transitions', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -242,7 +270,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Step 2',
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -254,7 +282,7 @@ describe('runbook compiler', () => {
     it('sets lastAction to CONTINUE even when jumping to non-sequential step via substeps', () => {
       // This is the key bug case: step 2 -> step 3.1 with CONTINUE
       // Previously displayed as "GOTO 3.1" because step numbers weren't sequential
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -279,7 +307,7 @@ describe('runbook compiler', () => {
             { id: '2', description: 'Substep 3.2' },
           ],
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -301,13 +329,13 @@ describe('runbook compiler', () => {
     });
 
     it('sets lastAction to STOP for STOP transitions', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
           transitions: DEFAULT_TRANSITIONS,
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -317,7 +345,7 @@ describe('runbook compiler', () => {
     });
 
     it('sets lastAction to COMPLETE for COMPLETE transitions', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -327,7 +355,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -337,7 +365,7 @@ describe('runbook compiler', () => {
     });
 
     it('sets lastAction to GOTO X for explicit GOTO transitions', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -355,7 +383,7 @@ describe('runbook compiler', () => {
           name: 'ErrorHandler',
           description: 'Error handler',
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -365,7 +393,7 @@ describe('runbook compiler', () => {
     });
 
     it('sets lastAction to GOTO X.Y for GOTO with substep', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -388,7 +416,7 @@ describe('runbook compiler', () => {
             { id: '3', description: 'Substep 2.3' },
           ],
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -398,7 +426,7 @@ describe('runbook compiler', () => {
     });
 
     it('sets lastAction to RETRY for RETRY transitions', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -412,7 +440,7 @@ describe('runbook compiler', () => {
             },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -423,7 +451,7 @@ describe('runbook compiler', () => {
     });
 
     it('sets lastAction for GOTO event (external jump)', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -432,7 +460,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Step 2',
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -442,12 +470,12 @@ describe('runbook compiler', () => {
     });
 
     it('sets lastAction for explicit RETRY event', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -460,7 +488,7 @@ describe('runbook compiler', () => {
   describe('resolveSimpleGotoTarget helper', () => {
     it('resolves numeric step target to correct state ID', () => {
       // This tests the behavior indirectly through GOTO action
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -479,7 +507,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -494,7 +522,7 @@ describe('runbook compiler', () => {
 
   describe('RETRY as transition property', () => {
     it('stays at current step during retry, then executes action', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -513,7 +541,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -536,7 +564,7 @@ describe('runbook compiler', () => {
     });
 
     it('works the same for PASS with retry', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -546,7 +574,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -568,7 +596,7 @@ describe('runbook compiler', () => {
 
   describe('RETRY with GOTO (loop pattern)', () => {
     it('stays at step during retries, then executes GOTO when exhausted', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Run Tests',
@@ -600,7 +628,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -630,7 +658,7 @@ describe('runbook compiler', () => {
     });
 
     it('STOPs when RETRY+GOTO exhausts retries', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Run Tests',
@@ -662,7 +690,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -695,7 +723,7 @@ describe('runbook compiler', () => {
 
   describe('FOR loop compilation', () => {
     it('iterates FOR loop the correct number of times via CONTINUE', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '2',
           description: 'Setup',
@@ -727,7 +755,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -778,7 +806,7 @@ describe('runbook compiler', () => {
     });
 
     it('initializes FOR context when FOR step is the first state', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 2 },
@@ -800,7 +828,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -828,7 +856,7 @@ describe('runbook compiler', () => {
     });
 
     it('exits loop immediately when start equals end (single iteration)', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 5, end: 5 },
@@ -850,7 +878,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -868,7 +896,7 @@ describe('runbook compiler', () => {
     });
 
     it('stores named variable in FOR context', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { variable: 'batch', start: 1, end: 2 },
@@ -890,7 +918,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -902,7 +930,7 @@ describe('runbook compiler', () => {
     });
 
     it('records iteration results including failures', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 4 },
@@ -929,7 +957,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -964,10 +992,11 @@ describe('runbook compiler', () => {
     });
 
     it('handles FOR step without substeps gracefully', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 2 },
+          substeps: [],
           description: 'For without substeps',
           transitions: DEFAULT_TRANSITIONS,
         },
@@ -980,21 +1009,21 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
-      // Should handle FOR on step without substeps (treated as single state)
+      // FOR with empty substeps is auto-skipped, machine starts at step 2
+      expect(actor.getSnapshot().value).toBe('step::2');
+      // PASS on step 2 completes the runbook
       actor.send({ type: 'PASS' });
-      // Should move to step 2 (next step)
-      const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(actor.getSnapshot().value).toBe('COMPLETE');
     });
 
     it('initializes FOR context when GOTO enters FOR step', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Start',
@@ -1029,7 +1058,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1057,7 +1086,7 @@ describe('runbook compiler', () => {
     });
 
     it('NEXT skips remaining substeps and advances to next iteration', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '2',
           description: 'Setup',
@@ -1093,7 +1122,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1129,7 +1158,7 @@ describe('runbook compiler', () => {
     });
 
     it('BREAK exits loop immediately regardless of remaining iterations', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '2',
           description: 'Setup',
@@ -1166,7 +1195,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1188,7 +1217,7 @@ describe('runbook compiler', () => {
     });
 
     it('NEXT records iteration results correctly across iterations', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 3 },
@@ -1215,7 +1244,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1243,7 +1272,7 @@ describe('runbook compiler', () => {
     });
 
     it('BREAK records the final iteration result before exiting', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 5 },
@@ -1275,7 +1304,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1312,7 +1341,7 @@ describe('runbook compiler', () => {
     });
 
     it('NEXT outside FOR loop goes to STOPPED', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'No FOR clause',
@@ -1322,7 +1351,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1334,7 +1363,7 @@ describe('runbook compiler', () => {
     });
 
     it('BREAK outside FOR loop goes to STOPPED', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'No FOR clause',
@@ -1344,7 +1373,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1356,7 +1385,7 @@ describe('runbook compiler', () => {
     });
 
     it('GOTO AT re-enters FOR step at specific iteration', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Start',
@@ -1391,7 +1420,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1420,7 +1449,7 @@ describe('runbook compiler', () => {
     });
 
     it('GOTO without AT targeting FOR step resets to first iteration', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Start',
@@ -1451,7 +1480,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1468,7 +1497,7 @@ describe('runbook compiler', () => {
     });
 
     it('GOTO event with AT initializes FOR context correctly', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Start',
@@ -1494,7 +1523,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1520,7 +1549,7 @@ describe('runbook compiler', () => {
     });
 
     it('GOTO event without AT to FOR step resets iteration', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Start',
@@ -1537,7 +1566,7 @@ describe('runbook compiler', () => {
             },
           ],
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1564,7 +1593,7 @@ describe('runbook compiler', () => {
       // Step 3: exit step
       // Flow: enter FOR at step 2, PASS substep 1 → GOTO step 1 → forStack cleared
       // Then GOTO back to step 2 → fresh loop (forStack has new context)
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Non-FOR target',
@@ -1604,7 +1633,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1633,7 +1662,7 @@ describe('runbook compiler', () => {
     });
 
     it('GOTO AT with unresolved template string falls back to loop start', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Start',
@@ -1668,7 +1697,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1686,7 +1715,7 @@ describe('runbook compiler', () => {
     it('GOTO AT with built-in {{Index}} resolves at runtime', () => {
       // When AT references built-in {{Index}}, it should
       // resolve to the current iteration value, not fall back to start.
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Loop A',
@@ -1730,7 +1759,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -1747,7 +1776,7 @@ describe('runbook compiler', () => {
     });
 
     it('GOTO AT with named loop variable resolves at runtime', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Loop A',
@@ -1791,7 +1820,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -1808,7 +1837,7 @@ describe('runbook compiler', () => {
     });
 
     it('GOTO event targeting non-first FOR substep initializes loop context', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Start',
@@ -1840,7 +1869,7 @@ describe('runbook compiler', () => {
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -1862,7 +1891,7 @@ describe('runbook compiler', () => {
 
   describe('implicit 1..1 loop model', () => {
     it('non-FOR step with substeps creates implicit ForContext on entry', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step with substeps, no FOR',
@@ -1879,7 +1908,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -1898,7 +1927,7 @@ describe('runbook compiler', () => {
     });
 
     it('implicit 1..1 loop never loops back on CONTINUE', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step with substeps, no FOR',
@@ -1915,7 +1944,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -1928,7 +1957,7 @@ describe('runbook compiler', () => {
     });
 
     it('iterationResults is undefined after implicit loop exit', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Single substep, no FOR',
@@ -1942,7 +1971,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -1954,7 +1983,7 @@ describe('runbook compiler', () => {
     });
 
     it('GOTO to non-FOR step with substeps initializes implicit ForContext', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Source',
@@ -1980,7 +2009,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -1994,7 +2023,7 @@ describe('runbook compiler', () => {
     });
 
     it('NEXT in non-FOR step still goes to STOPPED', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step with NEXT but no FOR',
@@ -2011,7 +2040,7 @@ describe('runbook compiler', () => {
           ],
         },
         { name: '2', description: 'Unreachable', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -2021,7 +2050,7 @@ describe('runbook compiler', () => {
     });
 
     it('BREAK in non-FOR step still goes to STOPPED', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step with BREAK but no FOR',
@@ -2038,7 +2067,7 @@ describe('runbook compiler', () => {
           ],
         },
         { name: '2', description: 'Unreachable', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -2049,7 +2078,7 @@ describe('runbook compiler', () => {
 
     it('explicit FOR loop behavior is unchanged', () => {
       // Regression: existing FOR 1..3 must still loop correctly
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 3 },
@@ -2064,7 +2093,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -2088,7 +2117,7 @@ describe('runbook compiler', () => {
     });
 
     it('intra-loop GOTO preserves forStack', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Loop step',
@@ -2125,7 +2154,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -2162,7 +2191,7 @@ describe('runbook compiler', () => {
     it('GOTO action with substep to cross-loop FOR step initializes forStack', () => {
       // Step 1 (non-FOR) → PASS: GOTO 2.1 → Step 2 (FOR 1..3)
       // Verifies that forStack is initialized (not cleared by buildSimpleGotoAssign)
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Source step',
@@ -2193,7 +2222,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -2212,7 +2241,7 @@ describe('runbook compiler', () => {
 
     it('GOTO action with substep + AT to FOR step resolves iteration', () => {
       // Step 1 (non-FOR) → PASS: GOTO 2.1 AT 2 → Step 2 (FOR 1..3) at iteration 2
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Source step',
@@ -2243,7 +2272,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -2260,7 +2289,7 @@ describe('runbook compiler', () => {
 
     it('GOTO action with substep to implicit (non-FOR) step initializes implicit forStack', () => {
       // Step 1 → PASS: GOTO 2.2 → Step 2 (non-FOR with substeps)
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Source step',
@@ -2290,7 +2319,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -2304,7 +2333,7 @@ describe('runbook compiler', () => {
     });
 
     it('GOTO event to non-FOR substep uses unified ForContext path', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Source step',
@@ -2326,7 +2355,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
@@ -2343,7 +2372,7 @@ describe('runbook compiler', () => {
 
   describe('post-loop aggregation', () => {
     it('PASS ALL fails when any iteration failed', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 3 },
@@ -2369,7 +2398,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2393,7 +2422,7 @@ describe('runbook compiler', () => {
     });
 
     it('PASS ALL fails when first iteration failed', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 3 },
@@ -2419,7 +2448,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2441,7 +2470,7 @@ describe('runbook compiler', () => {
     });
 
     it('PASS ALL succeeds when all iterations pass', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 3 },
@@ -2463,7 +2492,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2482,7 +2511,7 @@ describe('runbook compiler', () => {
     });
 
     it('PASS ANY succeeds when one iteration passes', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 3 },
@@ -2512,7 +2541,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2533,7 +2562,7 @@ describe('runbook compiler', () => {
     });
 
     it('BREAK triggers aggregation on accumulated results', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 5 },
@@ -2568,7 +2597,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2593,7 +2622,7 @@ describe('runbook compiler', () => {
     });
 
     it('NEXT at last iteration triggers aggregation', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 2 },
@@ -2628,7 +2657,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2647,7 +2676,7 @@ describe('runbook compiler', () => {
     });
 
     it('FAIL ALL triggers when all iterations fail under PASS ANY mode', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 3 },
@@ -2677,7 +2706,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2696,7 +2725,7 @@ describe('runbook compiler', () => {
     });
 
     it('PASS ALL with GOTO target records GOTO lastAction and initializes forStack for target FOR step', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 2 },
@@ -2742,7 +2771,7 @@ describe('runbook compiler', () => {
             },
           ],
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2771,7 +2800,7 @@ describe('runbook compiler', () => {
     });
 
     it('FAIL ANY with COMPLETE action records COMPLETE lastAction', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 2 },
@@ -2801,7 +2830,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2819,7 +2848,7 @@ describe('runbook compiler', () => {
     });
 
     it('PASS ALL with STOP action records STOP lastAction', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 2 },
@@ -2849,7 +2878,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2866,7 +2895,7 @@ describe('runbook compiler', () => {
     });
 
     it('PASS ALL failure triggers fail-path GOTO to non-FOR step', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 2 },
@@ -2904,7 +2933,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2923,7 +2952,7 @@ describe('runbook compiler', () => {
     });
 
     it('PASS ALL failure triggers fail-path GOTO AT to target FOR step', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 2 },
@@ -2969,7 +2998,7 @@ describe('runbook compiler', () => {
             },
           ],
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -2997,7 +3026,7 @@ describe('runbook compiler', () => {
     });
 
     it('PASS ANY success triggers pass-path GOTO to non-FOR step', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 3 },
@@ -3035,7 +3064,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -3055,7 +3084,7 @@ describe('runbook compiler', () => {
     });
 
     it('BREAK triggers aggregation and exits via pass-path GOTO', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 5 },
@@ -3102,7 +3131,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -3125,7 +3154,7 @@ describe('runbook compiler', () => {
 
   describe('descending FOR loop ranges', () => {
     it('iterates descending range (3, 2, 1) via CONTINUE', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 3, end: 1 },
@@ -3146,7 +3175,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -3180,7 +3209,7 @@ describe('runbook compiler', () => {
     });
 
     it('BREAK exits descending loop immediately', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 5, end: 1 },
@@ -3206,7 +3235,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -3221,7 +3250,7 @@ describe('runbook compiler', () => {
     });
 
     it('NEXT skips to next descending iteration', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 3, end: 1 },
@@ -3251,7 +3280,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -3276,7 +3305,7 @@ describe('runbook compiler', () => {
     });
 
     it('GOTO AT into descending range', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Start',
@@ -3310,7 +3339,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -3343,7 +3372,7 @@ describe('runbook compiler', () => {
     });
 
     it('single iteration when start equals end in descending context', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 5, end: 5 },
@@ -3364,7 +3393,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -3379,7 +3408,7 @@ describe('runbook compiler', () => {
     });
 
     it('records iteration results correctly for descending loop', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 3, end: 1 },
@@ -3405,7 +3434,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -3429,7 +3458,7 @@ describe('runbook compiler', () => {
     });
 
     it('iterates descending range with two substeps', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 3, end: 1 },
@@ -3455,7 +3484,7 @@ describe('runbook compiler', () => {
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -3710,7 +3739,7 @@ echo "processing"
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
 
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Loop step',
@@ -3744,7 +3773,7 @@ echo "processing"
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
           },
         },
-      ];
+      ]);
       const sources = { items: { kind: 'array' as const, items: ['x', 'y'] } };
       const machine = compileRunbookToMachine(steps, { sources });
       const actor = createActor(machine);
@@ -3783,7 +3812,7 @@ echo "processing"
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
 
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Source step',
@@ -3811,7 +3840,7 @@ echo "processing"
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
           },
         },
-      ];
+      ]);
       const sources = { items: { kind: 'array' as const, items: ['a', 'b', 'c'] } };
       const machine = compileRunbookToMachine(steps, { sources });
       const actor = createActor(machine);
@@ -3840,7 +3869,7 @@ echo "processing"
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
 
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Source step',
@@ -3868,7 +3897,7 @@ echo "processing"
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
           },
         },
-      ];
+      ]);
       const sources = { items: { kind: 'array' as const, items: ['a', 'b', 'c'] } };
       const machine = compileRunbookToMachine(steps, { sources });
       const actor = createActor(machine);
@@ -3944,7 +3973,7 @@ echo "processing"
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
 
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'File loop',
@@ -3965,7 +3994,7 @@ echo "processing"
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
           },
         },
-      ];
+      ]);
 
       const sources = {
         servers: { kind: 'file' as const, path: '/tmp/servers.txt', format: 'text' as const },
@@ -4001,7 +4030,7 @@ echo "processing"
     });
 
     it('stops file source loop when currentValue is undefined (no execution layer)', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'File loop',
@@ -4018,7 +4047,7 @@ echo "processing"
             },
           ],
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps, {
         sources: {
@@ -4044,7 +4073,7 @@ echo "processing"
     });
 
     it('file loop continues when currentValue IS set', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'File loop',
@@ -4061,7 +4090,7 @@ echo "processing"
             },
           ],
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps, {
         sources: {
@@ -4092,7 +4121,7 @@ echo "processing"
     });
 
     it('allows high-offset file loops to iterate (cap is on processed count)', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'File loop from offset',
@@ -4109,7 +4138,7 @@ echo "processing"
             },
           ],
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps, {
         sources: {
@@ -4146,7 +4175,7 @@ echo "processing"
 
   describe('file source snapshot initialisation', () => {
     it('initialises file source snapshot as null instead of a sentinel object', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'File loop',
@@ -4163,7 +4192,7 @@ echo "processing"
             },
           ],
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps, {
         sources: {
@@ -4200,7 +4229,7 @@ echo "processing"
 - PASS: COMPLETE
 `);
 
-      expect(steps[0].substeps?.[0]).toMatchObject({
+      expect((steps[0] as any).substeps?.[0]).toMatchObject({
         id: '1',
         runbooks: ['review-technical-accuracy.runbook.md'],
       });
@@ -4294,8 +4323,8 @@ echo "processing"
 `);
 
       // All four runbooks canonicalized into four implicit substeps (one runbook each)
-      expect(steps[0].substeps).toHaveLength(4);
-      expect(steps[0].substeps?.map((substep) => substep.runbooks)).toEqual([
+      expect((steps[0] as any).substeps).toHaveLength(4);
+      expect((steps[0] as any).substeps?.map((substep: any) => substep.runbooks)).toEqual([
         ['review-technical-accuracy.runbook.md'],
         ['review-structural-integrity.runbook.md'],
         ['review-build-runtime.runbook.md'],
@@ -4332,7 +4361,7 @@ echo "processing"
 
   describe('non-FOR substep aggregation', () => {
     it('PASS ALL: CONTINUE advances when all pass', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Review step',
@@ -4359,7 +4388,7 @@ echo "processing"
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -4373,7 +4402,7 @@ echo "processing"
     });
 
     it('FAIL ANY: GOTO routes to target step on failure', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Review step',
@@ -4409,7 +4438,7 @@ echo "processing"
         },
         { name: '2', description: 'Skipped', transitions: DEFAULT_TRANSITIONS },
         { name: '3', description: 'Error handler', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -4422,7 +4451,7 @@ echo "processing"
     });
 
     it('parent GOTO to non-first implicit substep does not reuse prior aggregation results', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Source with mixed outcomes',
@@ -4479,7 +4508,7 @@ echo "processing"
         },
         { name: '3', description: 'Pass handler', transitions: DEFAULT_TRANSITIONS },
         { name: '4', description: 'Fail handler', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -4494,7 +4523,7 @@ echo "processing"
     });
 
     it('PASS ANY: CONTINUE advances when any passes', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Review step',
@@ -4525,7 +4554,7 @@ echo "processing"
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -4538,7 +4567,7 @@ echo "processing"
     });
 
     it('single substep aggregation works correctly', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Review step',
@@ -4556,7 +4585,7 @@ echo "processing"
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       // Test FAIL path
       const machine1 = compileRunbookToMachine(steps);
@@ -4573,8 +4602,8 @@ echo "processing"
       expect(actor2.getSnapshot().value).toBe('step::2');
     });
 
-    it('three substeps with mixed results and PASS ALL stops on failure', () => {
-      const steps: Step[] = [
+    it('three substeps with mixed results and PASS ALL short-circuits on failure', () => {
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Review step',
@@ -4610,22 +4639,22 @@ echo "processing"
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
-      actor.send({ type: 'PASS' }); // 1.1 passes
-      actor.send({ type: 'FAIL' }); // 1.2 fails
-      actor.send({ type: 'PASS' }); // 1.3 passes -> parent -> PASS ALL -> STOPPED
+      actor.send({ type: 'PASS' }); // 1.1 passes → advance to 1.2
+      // 1.2 fails → fail-fast: FAIL ANY (all=true) short-circuits to STOPPED
+      actor.send({ type: 'FAIL' });
 
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail', 'pass']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
     });
 
     it('FOR loop iterates through parent state', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'FOR loop',
@@ -4634,7 +4663,7 @@ echo "processing"
           substeps: [{ id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS }],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -4650,7 +4679,7 @@ echo "processing"
     });
 
     it('BREAK exits FOR loop via parent state', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'FOR loop',
@@ -4673,7 +4702,7 @@ echo "processing"
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -4686,7 +4715,7 @@ echo "processing"
     });
 
     it('NEXT skips to next iteration via parent state', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'FOR loop',
@@ -4710,7 +4739,7 @@ echo "processing"
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -4730,7 +4759,7 @@ echo "processing"
     });
 
     it('FAIL ALL: STOP stops when all substeps fail under PASS ANY mode', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Review step',
@@ -4761,7 +4790,7 @@ echo "processing"
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -4775,7 +4804,7 @@ echo "processing"
     });
 
     it('parent transitions with retry re-runs substeps before terminal action', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Retry step',
@@ -4797,7 +4826,7 @@ echo "processing"
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -4814,7 +4843,7 @@ echo "processing"
     });
 
     it('parent retry exhausts after configured attempts across multiple substeps', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Multi-substep retry',
@@ -4845,22 +4874,17 @@ echo "processing"
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
-      actor.send({ type: 'FAIL' }); // 1.1 -> 1.2
-      expect(actor.getSnapshot().value).toBe('step::1::2');
-
-      actor.send({ type: 'FAIL' }); // 1.2 -> parent -> retry #1
+      // With fail-fast (FAIL ANY, no AWAIT), first FAIL short-circuits to parent
+      actor.send({ type: 'FAIL' }); // 1.1 -> parent (fail-fast) -> retry #1 -> 1.1
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
-      actor.send({ type: 'FAIL' }); // 1.1 -> 1.2
-      expect(actor.getSnapshot().value).toBe('step::1::2');
-
-      actor.send({ type: 'FAIL' }); // 1.2 -> parent -> retries exhausted
+      actor.send({ type: 'FAIL' }); // 1.1 -> parent (fail-fast) -> retries exhausted -> STOPPED
       expect(actor.getSnapshot().value).toBe('STOPPED');
     });
 
@@ -4871,7 +4895,7 @@ echo "processing"
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       };
 
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Source with parent retry',
@@ -4919,21 +4943,22 @@ echo "processing"
           ],
         },
         { name: '3', description: 'Done', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
-      actor.send({ type: 'FAIL' }); // 1.1 -> 1.2
-      actor.send({ type: 'FAIL' }); // 1.2 -> parent retry #1 -> 1.1
+      // With fail-fast (FAIL ANY, no AWAIT), first FAIL short-circuits to parent
+      actor.send({ type: 'FAIL' }); // 1.1 -> parent (fail-fast) -> retry #1 -> 1.1
       expect(actor.getSnapshot().context.parentRetryCount).toBe(1);
 
       actor.send({ type: 'PASS' }); // 1.1 -> GOTO 2.2 (bypass parent)
       expect(actor.getSnapshot().value).toBe('step::2::2');
       expect(actor.getSnapshot().context.parentRetryCount).toBe(0);
 
-      actor.send({ type: 'FAIL' }); // 2.2 -> parent should retry, not exhaust
+      // 2.2 fail-fast to parent -> parent should retry, not exhaust
+      actor.send({ type: 'FAIL' }); // 2.2 -> parent (fail-fast) -> retry -> 2.1
       expect(actor.getSnapshot().value).toBe('step::2::1');
     });
 
@@ -4944,7 +4969,7 @@ echo "processing"
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       };
 
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Source with parent retry',
@@ -4972,26 +4997,27 @@ echo "processing"
           ],
         },
         { name: '3', description: 'Done', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
-      actor.send({ type: 'FAIL' }); // 1.1 -> 1.2
-      actor.send({ type: 'FAIL' }); // 1.2 -> parent retry #1 -> 1.1
+      // With fail-fast (FAIL ANY, no AWAIT), first FAIL short-circuits to parent
+      actor.send({ type: 'FAIL' }); // 1.1 -> parent (fail-fast) -> retry #1 -> 1.1
       expect(actor.getSnapshot().context.parentRetryCount).toBe(1);
 
       actor.send({ type: 'GOTO', target: { step: '2', substep: '2' } });
       expect(actor.getSnapshot().value).toBe('step::2::2');
       expect(actor.getSnapshot().context.parentRetryCount).toBe(0);
 
-      actor.send({ type: 'FAIL' }); // 2.2 -> parent should retry, not exhaust
+      // 2.2 fail-fast to parent -> parent should retry, not exhaust
+      actor.send({ type: 'FAIL' }); // 2.2 -> parent (fail-fast) -> retry -> 2.1
       expect(actor.getSnapshot().value).toBe('step::2::1');
     });
 
     it('parent COMPLETE action forces early completion', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Complete step',
@@ -5013,7 +5039,7 @@ echo "processing"
           ],
         },
         { name: '2', description: 'Should be skipped', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5024,11 +5050,540 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('COMPLETE');
       expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'COMPLETE' });
     });
+
+    describe('2-substep delegation bug scenarios', () => {
+      it('Test A: explicit CONTINUE substeps with PASS ALL: COMPLETE parent — PASS 1.1 advances to 1.2', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        actor.send({ type: 'PASS' }); // 1.1 passes -> should advance to 1.2, NOT COMPLETE
+
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
+      });
+
+      it('Test B: explicit CONTINUE substeps with PASS ALL: COMPLETE parent — PASS both completes', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        actor.send({ type: 'PASS' }); // 1.1 passes -> 1.2
+        actor.send({ type: 'PASS' }); // 1.2 passes -> parent -> PASS ALL -> COMPLETE
+
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'COMPLETE' });
+      });
+
+      it('Test C: explicit CONTINUE substeps with PASS ALL: COMPLETE parent — PASS then FAIL stops', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        actor.send({ type: 'PASS' }); // 1.1 passes -> 1.2
+        actor.send({ type: 'FAIL' }); // 1.2 fails -> parent -> ALL failed -> STOP
+
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('Test D: no explicit substep transitions (inferred defaults) with PASS ALL: COMPLETE parent — PASS 1.1 advances to 1.2', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                // No transitions — rely on compiler inferring DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                // No transitions — rely on compiler inferring DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        actor.send({ type: 'PASS' }); // 1.1 passes -> should advance to 1.2, NOT COMPLETE
+
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
+      });
+
+      it('Test E: substep with explicit COMPLETE transition defers to parent aggregation on non-last substep', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 has explicit COMPLETE, but defense-in-depth defers to parent aggregation
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 is last substep — COMPLETE goes through parent aggregation → COMPLETE
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('Test F: substep FAIL with FAIL ANY (all=true) short-circuits to STOPPED on first fail', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 fails — with FAIL ANY (all=true, no AWAIT), first fail short-circuits to STOPPED
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('Test F-AWAIT: substep FAIL with AWAIT defers to parent aggregation', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              await: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 fails — AWAIT defers, advances to substep 1.2
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 fails — all results in, aggregation → STOPPED
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('PASS ANY AWAIT — first pass defers, all complete → COMPLETE', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: false,
+              await: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 passes — AWAIT defers, advances to substep 1.2
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 passes — all results in, aggregation → COMPLETE
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('PASS ANY AWAIT — first pass defers, second fails, still COMPLETE', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: false,
+              await: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 passes — AWAIT defers, advances to substep 1.2
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 fails — all results in, at least one passed → COMPLETE
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('FAIL ANY AWAIT — first fails, second passes → STOPPED (any fail triggers STOP)', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              await: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 fails — AWAIT defers, advances to substep 1.2
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 passes — all results in, but hasFailed=true → FAIL ANY fires → STOPPED
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('FAIL ANY AWAIT with 3 substeps — no short-circuit, all complete before aggregation', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: true,
+              await: true,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              {
+                id: '1',
+                description: 'Substep 1',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Substep 2',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+              {
+                id: '3',
+                description: 'Substep 3',
+                transitions: {
+                  all: true,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 fails — AWAIT defers, advances to substep 1.2
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 passes — AWAIT defers, advances to substep 1.3
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('step::1::3');
+
+        // Substep 1.3 passes — all results in, but hasFailed=true → FAIL ANY fires → STOPPED
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('PASS ANY (all=false) short-circuits to COMPLETE on first pass', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Delegation step',
+            transitions: {
+              all: false,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+            substeps: [
+              { id: '1', description: 'Substep 1' },
+              { id: '2', description: 'Substep 2' },
+            ],
+          },
+        ]);
+
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Substep 1.1 passes — with PASS ANY (all=false), first pass short-circuits to COMPLETE
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+    });
   });
 
   describe('retry state architecture', () => {
     it('creates fail-retry state when FAIL has retry > 0', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -5043,7 +5598,7 @@ echo "processing"
           },
         },
         { name: '2', description: 'Step 2', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const config = machine.config;
@@ -5052,7 +5607,7 @@ echo "processing"
     });
 
     it('creates pass-retry state when PASS has retry > 0', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -5062,7 +5617,7 @@ echo "processing"
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       expect(machine.config.states).toHaveProperty('step::1::pass-retry');
@@ -5070,7 +5625,7 @@ echo "processing"
     });
 
     it('creates retry state for substep with retry > 0', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -5088,7 +5643,7 @@ echo "processing"
           transitions: DEFAULT_TRANSITIONS,
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       expect(machine.config.states).toHaveProperty('step::1::1::fail-retry');
@@ -5114,7 +5669,7 @@ echo "processing"
     });
 
     it('retry state is transient and never observable in snapshots', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -5125,7 +5680,7 @@ echo "processing"
           },
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5145,14 +5700,14 @@ echo "processing"
     });
 
     it('does not create retry states when retry = 0', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
           transitions: DEFAULT_TRANSITIONS,
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const stateKeys = Object.keys(machine.config.states ?? {});
@@ -5160,7 +5715,7 @@ echo "processing"
     });
 
     it('dual retry: PASS and FAIL retry states share retryCount budget', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Step 1',
@@ -5170,7 +5725,7 @@ echo "processing"
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
 
@@ -5196,7 +5751,7 @@ echo "processing"
 
   describe('two-level FOR aggregation', () => {
     it('FOR with 2 substeps, mixed results, explicit CONTINUE iteration-level transitions', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: {
@@ -5239,7 +5794,7 @@ echo "processing"
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5264,7 +5819,7 @@ echo "processing"
     });
 
     it('FOR with FAIL ANY: BREAK iteration-level transition', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: {
@@ -5298,7 +5853,7 @@ echo "processing"
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5319,7 +5874,7 @@ echo "processing"
     });
 
     it('default FOR transitions (no explicit nested transitions) — behaves as PASS ALL with CONTINUE', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 2 },
@@ -5354,7 +5909,7 @@ echo "processing"
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5380,7 +5935,7 @@ echo "processing"
     });
 
     it('non-FOR steps are unaffected', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           description: 'Non-FOR step with 2 substeps',
@@ -5414,7 +5969,7 @@ echo "processing"
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5435,7 +5990,7 @@ echo "processing"
     });
 
     it('FOR with PASS ANY iteration-level transitions', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: {
@@ -5478,7 +6033,7 @@ echo "processing"
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5504,7 +6059,7 @@ echo "processing"
     });
 
     it('FOR with FAIL ANY: RETRY 2 BREAK retries twice then breaks', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: {
@@ -5538,7 +6093,7 @@ echo "processing"
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5561,7 +6116,7 @@ echo "processing"
     });
 
     it('FOR with FAIL ANY: RETRY 1 CONTINUE retries once then continues', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: {
@@ -5595,7 +6150,7 @@ echo "processing"
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5621,7 +6176,7 @@ echo "processing"
     });
 
     it('FOR iteration-level retry succeeds on second attempt', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: {
@@ -5655,7 +6210,7 @@ echo "processing"
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5683,7 +6238,7 @@ echo "processing"
     });
 
     it('FOR iterationRetryCount resets between iterations', () => {
-      const steps: Step[] = [
+      const steps = inferSteps([
         {
           name: '1',
           forClause: {
@@ -5717,7 +6272,7 @@ echo "processing"
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           },
         },
-      ];
+      ]);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -5749,6 +6304,114 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
+    });
+  });
+
+  describe('aggregation substep default transitions', () => {
+    it('substeps under ALL/ANY aggregation default to CONTINUE on fail', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Aggregated check',
+          transitions: {
+            all: false,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [
+            { id: '1', description: 'First check' },
+            { id: '2', description: 'Second check' },
+          ],
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      // Substep 1 fails — should CONTINUE to substep 2 (not STOP)
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      // Substep 2 passes — aggregation evaluates: PASS ANY → COMPLETE
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('COMPLETE');
+    });
+
+    it('substeps under ANY aggregation: all fail triggers STOP', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Aggregated check',
+          transitions: {
+            all: false,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [
+            { id: '1', description: 'First check' },
+            { id: '2', description: 'Second check' },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      // Both substeps fail — FAIL ALL → STOP
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
+    it('substeps under FOR loop default to CONTINUE on fail', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'FOR step',
+          forClause: { start: 1, end: 2 },
+          substeps: [{ id: '1', description: 'Check item' }],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      // Iteration 1: substep fails → CONTINUE to parent → FOR logic evaluates
+      actor.send({ type: 'FAIL' });
+      // Should proceed to next iteration, not STOP
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      // Iteration 2: substep passes → loop completes → step 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::2');
     });
   });
 });

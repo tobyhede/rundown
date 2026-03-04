@@ -104,6 +104,12 @@ export const Errors = {
   delegationAlreadyResolved: (step: string): RundownError =>
     new RundownError('DELEGATION_ALREADY_RESOLVED', { step }),
 
+  delegationNoDelegatableSubstep: (step: string): RundownError =>
+    new RundownError('DELEGATION_NO_DELEGATABLE_SUBSTEP', { step }),
+
+  delegationSubstepNoRunbook: (substep: string, step: string): RundownError =>
+    new RundownError('DELEGATION_SUBSTEP_NO_RUNBOOK', { substep, step }),
+
   // Generic
   unknown: (message: string, cause?: Error): RundownError =>
     new RundownError('UNKNOWN_ERROR', { message }, cause),

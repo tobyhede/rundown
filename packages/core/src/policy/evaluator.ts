@@ -497,35 +497,55 @@ export class PolicyEvaluator {
    * @param type - Permission type
    * @returns Merged permission rules
    */
-  private getEffectiveRules(type: 'run' | 'read' | 'write' | 'env'): PermissionRules {
-    const defaultRules = this.policy.default[type];
+  getEffectiveRules(type: 'run' | 'read' | 'write' | 'env'): PermissionRules {
+    const rules: PermissionRules = {
+      allow: [...this.policy.default[type].allow],
+      deny: [...this.policy.default[type].deny],
+    };
 
-    // Find matching override
     if (this.options.runbookPath) {
       for (const override of this.policy.overrides) {
-        if (picomatch.isMatch(this.options.runbookPath, override.runbook)) {
-          const overrideRules = override[type];
-          if (overrideRules) {
-            // Merge: override extends default
-            return {
-              allow: [...defaultRules.allow, ...overrideRules.allow],
-              deny: [...defaultRules.deny, ...overrideRules.deny],
-            };
-          }
+        if (!picomatch.isMatch(this.options.runbookPath, override.runbook)) {
+          continue;
         }
+
+        const overrideRules = override[type];
+        if (!overrideRules) {
+          continue;
+        }
+
+        rules.allow.push(...overrideRules.allow);
+        rules.deny.push(...overrideRules.deny);
       }
     }
 
-    // Apply grants from config
-    const grants = this.policy.grants.filter((g) => g.type === type);
+    const grants = this.policy.grants.filter((grant) => {
+      if (grant.type !== type) {
+        return false;
+      }
+      if (!grant.runbook) {
+        return true;
+      }
+      return this.options.runbookPath
+        ? picomatch.isMatch(this.options.runbookPath, grant.runbook)
+        : false;
+    });
+
     if (grants.length > 0) {
-      return {
-        allow: [...defaultRules.allow, ...grants.map((g) => g.pattern)],
-        deny: defaultRules.deny,
-      };
+      rules.allow.push(...grants.map((grant) => grant.pattern));
     }
 
-    return defaultRules;
+    return rules;
+  }
+
+  /**
+   * Resolve a path pattern by expanding placeholders.
+   *
+   * @param pattern - Pattern with optional {repo}, {tmp} placeholders
+   * @returns Resolved pattern string
+   */
+  resolvePathPattern(pattern: string): string {
+    return pattern.replace(/\{repo\}/g, this.repoRoot).replace(/\{tmp\}/g, this.tmpDir);
   }
 
   /**
@@ -563,10 +583,7 @@ export class PolicyEvaluator {
    * @returns True if matches
    */
   private matchPathPattern(absolutePath: string, pattern: string): boolean {
-    // Resolve placeholders
-    const resolvedPattern = pattern
-      .replace(/\{repo\}/g, this.repoRoot)
-      .replace(/\{tmp\}/g, this.tmpDir);
+    const resolvedPattern = this.resolvePathPattern(pattern);
 
     return picomatch.isMatch(absolutePath, resolvedPattern, {
       dot: true, // Match dotfiles

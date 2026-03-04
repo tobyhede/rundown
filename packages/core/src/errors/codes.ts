@@ -264,6 +264,21 @@ export const ErrorCodes = {
     description: 'This delegation has already been resolved. Propagation already completed.',
     docSlug: 'delegation-already-resolved',
   },
+  DELEGATION_NO_DELEGATABLE_SUBSTEP: {
+    code: 'RD-813',
+    category: ErrorCategory.DELEGATION,
+    title: 'No delegatable substep',
+    description: 'No pending substep with a runbook reference found on the current step.',
+    docSlug: 'delegation-no-delegatable-substep',
+  },
+  DELEGATION_SUBSTEP_NO_RUNBOOK: {
+    code: 'RD-814',
+    category: ErrorCategory.DELEGATION,
+    title: 'Substep has no runbook reference',
+    description:
+      'The specified substep does not have a runbook reference (e.g., "- child.runbook.md").',
+    docSlug: 'delegation-substep-no-runbook',
+  },
 
   // Generic
   UNKNOWN_ERROR: {

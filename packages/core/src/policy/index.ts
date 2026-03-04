@@ -67,6 +67,7 @@ export {
 export {
   type PolicyLoadResult,
   type PolicyLoadOptions,
+  PolicyConfigTrustRequiredError,
   loadPolicy,
   loadPolicyFromFile,
   loadPolicySync,

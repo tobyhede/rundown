@@ -194,6 +194,7 @@ export async function executeCommandWithPolicy(
         tmpDir: evaluator.getTmpDir(),
         allowUnsandboxed: !sandboxStrict,
       });
+      sandboxOptions.env = filteredEnv;
 
       const result = await executeWithSandbox(command, sandboxOptions);
       return {

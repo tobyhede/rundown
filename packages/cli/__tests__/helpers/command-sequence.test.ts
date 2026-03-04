@@ -96,6 +96,35 @@ describe('parseJsonLines', () => {
     expect(result.terminal).toBe('STOP');
   });
 
+  it('extracts token from delegate response', () => {
+    const stdout =
+      '{"action":"delegated","step":"1.1","runbook":"child.runbook.md","token":"rdtk_abc123","token_hash":"sha256:xyz","parent_run_id":"run-1"}\n';
+    const result = parseJsonLines(stdout);
+    expect(result.tokens).toHaveLength(1);
+    expect(result.tokens[0]).toBe('rdtk_abc123');
+  });
+
+  it('extracts multiple tokens from NDJSON', () => {
+    const stdout = [
+      '{"action":"delegated","step":"1.1","runbook":"child-a.runbook.md","token":"rdtk_first","token_hash":"sha256:a","parent_run_id":"run-1"}',
+      '{"action":"delegated","step":"1.2","runbook":"child-b.runbook.md","token":"rdtk_second","token_hash":"sha256:b","parent_run_id":"run-1"}',
+    ].join('\n');
+    const result = parseJsonLines(stdout);
+    expect(result.tokens).toHaveLength(2);
+    expect(result.tokens[0]).toBe('rdtk_first');
+    expect(result.tokens[1]).toBe('rdtk_second');
+  });
+
+  it('ignores objects without action=delegated', () => {
+    const stdout = [
+      '{"type":"step_transitioned","action":"CONTINUE","from":"1","at":"2","result":"PASS"}',
+      '{"type":"runbook_completed"}',
+      '{"complete":true,"action":"COMPLETE","result":true}',
+    ].join('\n');
+    const result = parseJsonLines(stdout);
+    expect(result.tokens).toHaveLength(0);
+  });
+
   it('falls through to line-by-line parsing when input is a JSON array', () => {
     const stdout =
       '[{"type":"step_transitioned","action":"CONTINUE","from":"1","at":"2","result":"PASS"}]\n';

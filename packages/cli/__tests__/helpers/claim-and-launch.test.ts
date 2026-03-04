@@ -17,6 +17,21 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
+  DEFAULT_POLICY: {
+    version: 1,
+    default: {
+      mode: 'prompted',
+      run: { allow: [], deny: [] },
+      read: { allow: [], deny: [] },
+      write: { allow: [], deny: [] },
+      env: { allow: [], deny: [] },
+    },
+    overrides: [],
+    grants: [],
+  },
+  PolicyEvaluator: jest.fn(),
+  PolicyPrompter: jest.fn(),
+  loadPolicy: jest.fn(),
   DelegationScanService: jest.fn().mockImplementation(() => ({
     findByToken: jest.fn().mockResolvedValue(null),
   })),
@@ -40,6 +55,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   isSourced: jest.fn(),
+  stepHasSubsteps: (step: { kind: string }) => step.kind === 'substeps' || step.kind === 'for',
 }));
 
 // Mock resolve-runbook
@@ -60,6 +76,19 @@ jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
 
 // Mock variable-discovery
 jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
+  FileSourcePolicyError: class FileSourcePolicyError extends Error {
+    readonly code = 'POLICY_DENIED';
+    readonly variable: string;
+    readonly filePath: string;
+    readonly reason: string;
+
+    constructor(variable: string, filePath: string, reason: string) {
+      super(`File source "${variable}" blocked by policy: ${reason}`);
+      this.variable = variable;
+      this.filePath = filePath;
+      this.reason = reason;
+    }
+  },
   extractVarsFromMarkdown: jest.fn().mockReturnValue({}),
   resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {} }),
 }));

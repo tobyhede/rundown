@@ -30,6 +30,10 @@ The sandbox enforces:
 - Read-write access to specific directories
 - Blocking of denied paths at the kernel level
 
+Platform-specific behavior:
+- macOS Seatbelt allows only system/runtime paths plus policy-derived read/write roots. It no longer grants blanket reads of `$HOME`.
+- Linux allow-path enforcement is available, but deny-path policies fail closed when the current backend cannot represent them safely.
+
 ## Sandbox Usage
 
 ```bash
@@ -117,6 +121,8 @@ File-backed data sources (`--var items=file:data.txt`) are subject to security c
 
 - **Symlink resolution:** `fs.realpath()` resolves symlinks before path validation
 - **Path containment:** Resolved paths must stay within the project root directory
+- **Policy enforcement:** The resolved path is checked against the active `read` policy before it becomes a FOR-loop source
+- **Prompt behavior:** Promptable reads ask for permission in interactive mode and fail startup in non-interactive mode
 - **Blocked sources:** Paths escaping the project are silently ignored with a warning
 - **Drift detection:** File snapshots (size, mtime, SHA-256 of first 64 KiB) detect modification between iterations
 - **Iteration cap:** `MAX_FILE_ITERATIONS` (10,000) prevents runaway loops from unbounded file sources
@@ -132,8 +138,30 @@ Policy configuration is discovered in the following order (highest to lowest pri
 1. `.rundownrc` (JSON or YAML)
 2. `.rundownrc.json`
 3. `.rundownrc.yaml` / `.rundownrc.yml`
-4. `rundown.config.js` / `.cjs` / `.mjs`
-5. `package.json` (`rundown` field)
+4. `package.json` (`rundown` field)
+
+### Executable JavaScript Policies
+
+JavaScript policy files are executable code. They are **not** auto-discovered.
+
+- Supported only when explicitly passed with `--policy`
+- Require `--trust-js-policy`
+- Supported extensions: `.js`, `.cjs`, `.mjs`
+
+Examples:
+
+```bash
+# Data-only policy file (recommended)
+rundown run deploy.runbook.md --policy ./.rundownrc.yaml
+
+# Executable policy file (explicit trust required)
+rundown run deploy.runbook.md --policy ./rundown.config.cjs --trust-js-policy
+```
+
+Migration from `rundown.config.js`:
+- Move the policy object into `.rundownrc.yaml`, `.rundownrc.json`, or `package.json`
+- Keep JavaScript only if you intentionally need executable policy logic
+- If you keep JavaScript, require `--policy ... --trust-js-policy` in your workflow
 
 ### Schema Reference
 
@@ -331,6 +359,7 @@ env:
 | `--allow-all` | Bypass all policy checks (trust mode) |
 | `--deny-all` | Block all operations not explicitly allowed |
 | `--policy <file>` | Use a specific policy configuration file |
+| `--trust-js-policy` | Trust an explicitly selected executable JS policy file |
 | `-y, --yes` | Skip confirmation prompts (auto-approve) |
 | `--non-interactive` | Non-interactive mode (auto-deny, CI-friendly) |
 | `--sandbox` | Enable OS-level sandbox (default on supported platforms) |
@@ -368,6 +397,9 @@ rundown run test.runbook.md --non-interactive
 
 # Use custom policy file
 rundown run deploy.runbook.md --policy ./ci-policy.yaml
+
+# Use executable JS policy file (explicit trust required)
+rundown run deploy.runbook.md --policy ./rundown.config.cjs --trust-js-policy
 ```
 
 ## Runbook Overrides
@@ -524,6 +556,10 @@ When sandbox is unavailable:
 | `--sandbox` (default) | Falls back to unsandboxed with warning |
 | `--sandbox-strict` | Fails with error, command not executed |
 | `--no-sandbox` | Executes without sandbox, no warning |
+
+Linux deny-path note:
+- If the effective policy contains deny-path rules that the Linux backend cannot enforce safely, Rundown blocks execution instead of silently weakening policy.
+- To proceed in that case, disable sandboxing only for trusted runs with `--no-sandbox`.
 
 ### Debugging Sandbox Issues
 

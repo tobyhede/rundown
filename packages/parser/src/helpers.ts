@@ -512,12 +512,33 @@ function parseConditionalPrefix(
   type: 'pass' | 'fail' | 'yes' | 'no',
 ): ParsedConditional | null {
   let modifier: AggregationModifier = null;
+  let hasAwait = false;
   let remaining = rest;
 
-  const modifierMatch = /^\s+(ALL|ANY)[\s:→-]/.exec(remaining);
+  const modifierMatch = /^\s+(ALL|ANY)(?:\s+(AWAIT))?[\s:→-]/.exec(remaining);
   if (modifierMatch) {
     modifier = modifierMatch[1] as 'ALL' | 'ANY';
+    hasAwait = !!modifierMatch[2];
     remaining = remaining.slice(modifierMatch[0].length);
+  }
+
+  // Validate: AWAIT requires ANY, ALL AWAIT is invalid
+  if (hasAwait && modifier === 'ALL') {
+    throw new RunbookSyntaxError(
+      'AWAIT is only valid with ANY (e.g., FAIL ANY AWAIT: STOP). ' +
+        'ALL already waits for all substeps by nature.',
+    );
+  }
+
+  // Reject bare AWAIT without ALL/ANY (e.g., "FAIL AWAIT: STOP")
+  if (!modifier) {
+    const awaitOnly = /^\s+AWAIT[\s:→-]/.exec(remaining);
+    if (awaitOnly) {
+      throw new RunbookSyntaxError(
+        'AWAIT requires explicit ANY modifier (e.g., FAIL ANY AWAIT: STOP). ' +
+          'Write FAIL ANY AWAIT: STOP instead of FAIL AWAIT: STOP.',
+      );
+    }
   }
 
   const actionStr = stripSeparator(remaining);
@@ -545,7 +566,7 @@ function parseConditionalPrefix(
     return null;
   }
 
-  return { type, retry, action, modifier, raw: actionStr };
+  return { type, retry, action, modifier, ...(hasAwait && { await: true }), raw: actionStr };
 }
 
 /**
@@ -663,6 +684,8 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   let failRetry = 0;
   let passModifier: AggregationModifier = null;
   let failModifier: AggregationModifier = null;
+  let passAwait = false;
+  let failAwait = false;
   let passKind: 'pass' | 'yes' = 'pass';
   let failKind: 'fail' | 'no' = 'fail';
 
@@ -673,11 +696,13 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
       passAction = conditional.action;
       passRetry = conditional.retry;
       passModifier = conditional.modifier;
+      passAwait = !!conditional.await;
       passKind = conditional.type;
     } else {
       failAction = conditional.action;
       failRetry = conditional.retry;
       failModifier = conditional.modifier;
+      failAwait = !!conditional.await;
       failKind = conditional.type;
     }
   }
@@ -685,11 +710,18 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   const all = resolveAggregationMode(passModifier, failModifier);
   const modifierImplicit =
     passModifier === null && failModifier === null ? (true as const) : undefined;
+  // AWAIT on either side defers both transitions (complementary pairs share the trigger)
+  const hasAwait = passAwait || failAwait;
+
+  const base = {
+    all,
+    ...(modifierImplicit && { modifierImplicit }),
+    ...(hasAwait && { await: true as const }),
+  };
 
   if (passAction && failAction) {
     return {
-      all,
-      ...(modifierImplicit && { modifierImplicit }),
+      ...base,
       pass: { kind: passKind, retry: passRetry, action: passAction },
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };
@@ -697,8 +729,7 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
 
   if (passAction && !failAction) {
     return {
-      all,
-      ...(modifierImplicit && { modifierImplicit }),
+      ...base,
       pass: { kind: passKind, retry: passRetry, action: passAction },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     };
@@ -706,8 +737,7 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
 
   if (!passAction && failAction) {
     return {
-      all,
-      ...(modifierImplicit && { modifierImplicit }),
+      ...base,
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };

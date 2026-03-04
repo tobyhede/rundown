@@ -810,8 +810,6 @@ export const DelegateResponseSchema = z
     token_hash: z.string().describe('Token hash'),
     /** Parent run ID */
     parent_run_id: z.string().describe('Parent run ID'),
-    /** Claim marker for environment variable usage */
-    claim_marker: z.string().describe('Claim marker (RD_CLAIM_TOKEN=<token>)'),
   })
   .describe('Response from the delegate command');
 

@@ -38,6 +38,7 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 | `prompts/` | User prompts and input handling |
 | `composition/` | Parent runbooks, agents, and delegation |
 | `delegation/` | Delegate/claim patterns for child runbooks |
+| `variables/` | Template variables, built-ins, and context |
 
 ## Creating New Patterns
 

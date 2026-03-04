@@ -51,7 +51,9 @@ rundown scenario-suite ls <suite-file>           # List cases in a scenario suit
 rundown scenario-suite show <suite-file> <case>  # Show case details
 rundown scenario-suite run <suite-file> [case]   # Run a case (or all with --all)
 rundown prompt <content> # Output content in markdown fences
-rundown delegate <runbook> --step <id>  # Delegate substep to child runbook
+rundown delegate                        # Infer substep and runbook from state
+rundown delegate --step <id>            # Infer runbook from substep reference
+rundown delegate <runbook> --step <id>  # Explicit delegation
 rundown delegate <runbook> --step <id> --var key=value  # With variables
 rundown claim <token>                   # Claim a delegation token and launch child
 rundown claim <token> --var key=value   # Claim with variables

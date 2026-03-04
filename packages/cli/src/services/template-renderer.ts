@@ -226,14 +226,39 @@ function substituteSubstep(substep: Substep, variables: Record<string, unknown>)
  * @returns Step with all string fields expanded
  */
 function substituteStep(step: Step, variables: Record<string, unknown>): Step {
-  return {
-    ...step,
+  const base = {
+    name: step.name,
     description: substituteText(step.description, variables),
     prompt: step.prompt ? substituteText(step.prompt, variables) : step.prompt,
-    command: substituteCommand(step.command, variables),
-    substeps: step.substeps
-      ? step.substeps.map((ss) => substituteSubstep(ss, variables))
-      : step.substeps,
+    transitions: step.transitions,
+    line: step.line,
+  };
+
+  // Handle kind-specific fields
+  if (step.kind === 'base') {
+    return { ...base, kind: 'base' as const };
+  }
+  if (step.kind === 'command') {
+    return {
+      ...base,
+      kind: 'command' as const,
+      command: substituteCommand(step.command, variables)!,
+    };
+  }
+  if (step.kind === 'substeps') {
+    return {
+      ...base,
+      kind: 'substeps' as const,
+      substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
+      substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
+    };
+  }
+  return {
+    ...base,
+    kind: 'for' as const,
+    substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
+    forClause: step.forClause,
+    substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
   };
 }
 

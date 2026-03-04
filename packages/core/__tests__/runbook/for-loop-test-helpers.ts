@@ -106,6 +106,7 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
   }
 
   const forStep: Step = {
+    kind: 'for',
     name: '1',
     description: 'FOR loop step',
     forClause: {
@@ -128,6 +129,7 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
   };
 
   const terminalStep: Step = {
+    kind: 'base',
     name: '2',
     description: 'Terminal',
     transitions: {

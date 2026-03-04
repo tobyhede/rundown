@@ -14,6 +14,7 @@ import {
   type ResolvedCompletion,
   type RunbookState,
 } from '@rundown-org/core';
+import { stepHasSubsteps } from '@rundown-org/parser';
 import {
   getStepRetryMax,
   buildMetadata,
@@ -182,7 +183,11 @@ export function buildActiveStatus(
   const activeFrameKey = activeState.activeFrameKey;
   const activeEntry = activeState.activeEntry;
   const unresolved =
-    currentStep?.substeps?.length && activeFrameKey && activeEntry !== undefined
+    currentStep &&
+    stepHasSubsteps(currentStep) &&
+    currentStep.substeps.length &&
+    activeFrameKey &&
+    activeEntry !== undefined
       ? countUnresolvedSubsteps(
           currentStep.substeps,
           activeState.resolvedCompletions,

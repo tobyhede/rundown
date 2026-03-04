@@ -335,6 +335,68 @@ Do work.
   });
 });
 
+describe('step-level transition preservation with substeps', () => {
+  it('preserves step-level transitions when multiple substeps exist', () => {
+    const markdown = `## 1. Aggregated check
+
+- PASS ALL: COMPLETE
+- FAIL ANY: STOP "A check failed"
+
+### 1.1 First check
+
+Do check one.
+
+### 1.2 Second check
+
+Do check two.
+`;
+    const steps = parseRunbook(markdown);
+    // Step-level transitions should be preserved
+    expect(steps[0].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'COMPLETE' },
+    });
+    expect(steps[0].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'STOP', message: 'A check failed' },
+    });
+    expect(steps[0].transitions?.all).toBe(true);
+    // Substeps should NOT have the step-level transitions
+    expect(steps[0].substeps?.[0].transitions).toBeUndefined();
+    expect(steps[0].substeps?.[1].transitions).toBeUndefined();
+  });
+
+  it('preserves step-level transitions with FOR clause and substeps', () => {
+    const markdown = `## 1. Process items
+
+- FOR item IN 1 TO 3
+  - FAIL: CONTINUE
+- PASS ALL: COMPLETE
+
+### 1.1 Check {{item}}
+
+Do the check.
+`;
+    const steps = parseRunbook(markdown);
+    // Step-level transitions should be preserved
+    expect(steps[0].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'COMPLETE' },
+    });
+    // FOR clause transitions should also be set
+    expect(steps[0].forClause?.transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'CONTINUE' },
+    });
+    // Substeps should NOT have transitions
+    expect(steps[0].substeps?.[0].transitions).toBeUndefined();
+  });
+});
+
 describe('substep GOTO validation', () => {
   it('accepts GOTO to sibling substep', () => {
     const markdown = `## 1. Execute
@@ -1785,5 +1847,10 @@ Clean up.
     // (they are positionally assigned to parent H2)
     expect(steps[0].substeps).toHaveLength(1);
     expect(steps[0].substeps?.[0].id).toBe('ErrorHandler');
+  });
+
+  it('rejects runbook with invalid FOR dotdot syntax', () => {
+    const md = `# Test\n\n## 1. Loop\n\n- FOR item IN 1..5\n\n### 1.1 Do thing\n\n\`\`\`bash\necho hi\n\`\`\`\n`;
+    expect(() => parseRunbook(md)).toThrow(/Invalid FOR clause/);
   });
 });

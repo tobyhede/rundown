@@ -16,6 +16,7 @@ describe('RunbookActorService', () => {
   let actorService: RunbookActorService;
   const mockSteps: Step[] = [
     {
+      kind: 'base',
       name: '1',
       description: 'Initial step',
     },
@@ -71,8 +72,8 @@ describe('RunbookActorService', () => {
 
       const steps: Step[] = [
         ...mockSteps,
-        { name: '2', description: 'S2' },
-        { name: '3', description: 'S3' },
+        { kind: 'base', name: '2', description: 'S2' },
+        { kind: 'base', name: '3', description: 'S3' },
       ];
 
       const { state: updated } = await actorService.updateFromActor(state.id, actor, steps);
@@ -343,7 +344,7 @@ describe('RunbookActorService', () => {
         },
       });
 
-      const steps: Step[] = [...mockSteps, { name: '2', description: 'After loop' }];
+      const steps: Step[] = [...mockSteps, { kind: 'base', name: '2', description: 'After loop' }];
 
       const { state: updated } = await actorService.updateFromActor(state.id, actor, steps);
       expect(updated.forStack).toBeUndefined(); // empty stack not persisted

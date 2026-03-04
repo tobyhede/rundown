@@ -13,6 +13,7 @@ function renderForTest(
 describe('renderStepForCLI', () => {
   it('renders step with heading and prompt (command shown via printCommandExec)', () => {
     const step: Step = {
+      kind: 'command',
       name: '1',
       description: 'Install dependencies',
       prompt: 'Run npm install to set up project.',
@@ -30,6 +31,7 @@ describe('renderStepForCLI', () => {
 
   it('renders step without command', () => {
     const step: Step = {
+      kind: 'base',
       name: '2',
       description: 'Review changes',
       prompt: 'Review the diff and approve.',
@@ -44,6 +46,7 @@ describe('renderStepForCLI', () => {
 
   it('renders step without prompts (heading only)', () => {
     const step: Step = {
+      kind: 'command',
       name: '3',
       description: 'Run build',
       command: { code: 'npm run build' },
@@ -57,7 +60,8 @@ describe('renderStepForCLI', () => {
   });
 
   it('omits transitions and substeps', () => {
-    const step: Step = {
+    const step = {
+      kind: 'command',
       name: '1',
       description: 'With extras',
       command: { code: 'npm test' },
@@ -67,7 +71,7 @@ describe('renderStepForCLI', () => {
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },
       substeps: [{ id: '1', description: 'Substep' }],
-    };
+    } as any as Step;
 
     const result = renderForTest(step);
 
@@ -80,6 +84,7 @@ describe('renderStepForCLI', () => {
 describe('step rendering with instance number', () => {
   it('renders step with instance number in heading', () => {
     const step: Step = {
+      kind: 'base',
       name: '1',
       description: 'Process Item',
       prompt: 'Process item.',
@@ -93,6 +98,7 @@ describe('step rendering with instance number', () => {
 
   it('renders step with prompt unchanged', () => {
     const step: Step = {
+      kind: 'base',
       name: '1',
       description: 'First step',
       prompt: 'Do something.',
@@ -105,6 +111,7 @@ describe('step rendering with instance number', () => {
 
   it('does not render command in step output (command shown via printCommandExec)', () => {
     const step: Step = {
+      kind: 'command',
       name: '1',
       description: 'Process',
       prompt: 'Process the batch.',
@@ -191,6 +198,7 @@ describe('substep rendering', () => {
 
   it('renders command as code block when showCommand is true', () => {
     const step: Step = {
+      kind: 'command',
       name: '1',
       description: 'Run tests',
       command: { code: 'npm test', lang: 'bash' } as any,
@@ -203,6 +211,7 @@ describe('substep rendering', () => {
 
   it('renders command with different language tag when showCommand is true', () => {
     const step: Step = {
+      kind: 'command',
       name: '1',
       description: 'Run python script',
       command: { code: 'print("hello")', lang: 'python' } as any,

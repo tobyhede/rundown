@@ -8,7 +8,14 @@
  * Steps can be numeric ("1", "2") or named ("ErrorHandler").
  * @see {@link @rundown-org/parser!Step}
  */
-export type { Step } from '@rundown-org/parser';
+export type {
+  Step,
+  BaseStep,
+  StepWithCommand,
+  StepWithSubsteps,
+  StepWithFor,
+  StepHavingSubsteps,
+} from '@rundown-org/parser';
 
 /**
  * A substep within a step (H3 header section).

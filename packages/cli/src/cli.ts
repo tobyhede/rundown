@@ -21,7 +21,7 @@ import { registerScenarioSuiteCommand } from './commands/scenario-suite.js';
 import { registerDelegateCommand } from './commands/delegate.js';
 import { registerClaimCommand } from './commands/claim.js';
 import { registerAbortCommand } from './commands/abort.js';
-import { setColorEnabled } from '@rundown-org/core';
+import { PolicyConfigTrustRequiredError, setColorEnabled } from '@rundown-org/core';
 import { initializePolicyContext, parsePolicyCliOptions } from './services/policy-context.js';
 import { outputCommandSchema } from './services/schema-service.js';
 
@@ -58,6 +58,7 @@ program
   .option('--allow-all', 'Allow all operations (bypass policy)')
   .option('--deny-all', 'Deny all operations')
   .option('--policy <file>', 'Path to policy configuration file')
+  .option('--trust-js-policy', 'Trust executable JavaScript policy config files')
   .option('-y, --yes', 'Skip confirmation prompts')
   .option('--non-interactive', 'Non-interactive mode (no prompts, CI-friendly)')
   // Sandbox options
@@ -99,4 +100,13 @@ registerDelegateCommand(program);
 registerClaimCommand(program);
 registerAbortCommand(program);
 
-program.parse();
+program.parseAsync().catch((error: unknown) => {
+  if (error instanceof PolicyConfigTrustRequiredError) {
+    console.error(error.message);
+  } else if (error instanceof Error) {
+    console.error(error.message);
+  } else {
+    console.error(String(error));
+  }
+  process.exit(1);
+});
