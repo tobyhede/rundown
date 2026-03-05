@@ -143,8 +143,7 @@ function extractVarFileDirs(scenario: Scenario): string[] {
   const varFilePattern = /--var-file\s+(\S+)/g;
 
   for (const cmd of scenario.commands) {
-    let match: RegExpExecArray | null;
-    while ((match = varFilePattern.exec(cmd)) !== null) {
+    for (const match of cmd.matchAll(varFilePattern)) {
       const varFilePath = match[1];
       const dir = dirname(varFilePath);
       if (dir && dir !== '.' && !dirs.includes(dir)) {

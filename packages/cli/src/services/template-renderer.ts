@@ -242,7 +242,7 @@ function substituteStep(step: Step, variables: Record<string, unknown>): Step {
       return {
         ...base,
         kind: 'command' as const,
-        command: substituteCommand(step.command, variables) as Command,
+        command: substituteCommand(step.command, variables)!,
       };
     case 'substeps':
       return {
