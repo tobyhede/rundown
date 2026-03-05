@@ -23,9 +23,9 @@ import type {
 // Config type — captures all 3 layers as data
 // ---------------------------------------------------------------------------
 
-export type SubstepAction = 'CONTINUE' | 'NEXT' | 'BREAK' | 'STOP' | 'COMPLETE';
-export type IterationAction = 'CONTINUE' | 'BREAK' | 'STOP' | 'COMPLETE';
-export type ParentAction = 'CONTINUE' | 'STOP' | 'COMPLETE';
+export type SubstepAction = 'CONTINUE' | 'DEFER' | 'NEXT' | 'BREAK' | 'STOP' | 'COMPLETE';
+export type IterationAction = 'CONTINUE' | 'DEFER' | 'BREAK' | 'STOP' | 'COMPLETE';
+export type ParentAction = 'CONTINUE' | 'DEFER' | 'STOP' | 'COMPLETE';
 
 export interface ForLoopConfig {
   iterations: number; // 1–5
@@ -57,6 +57,8 @@ function makeAction(type: string): Action {
   switch (type) {
     case 'CONTINUE':
       return { type: 'CONTINUE' };
+    case 'DEFER':
+      return { type: 'DEFER' };
     case 'NEXT':
       return { type: 'NEXT' };
     case 'BREAK':
@@ -320,7 +322,7 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
             earlyExit = 'NEXT';
             break;
           }
-          // CONTINUE: advance to next substep
+          // CONTINUE or DEFER: advance to next substep (DEFER propagates result to parent)
         }
 
         // Aggregate substep results for this iteration using iteration-level aggregation
