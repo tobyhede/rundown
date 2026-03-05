@@ -66,11 +66,26 @@ export interface ResolvedVariables {
   readonly sources: Readonly<Record<string, DataSource>>;
 }
 
+/**
+ * Security context for file-backed variable resolution.
+ *
+ * When provided, file data sources are checked against the active policy
+ * before reading. If a prompter is available and the policy denies access,
+ * the user is prompted for explicit permission.
+ */
 export interface VariableSecurityContext {
+  /** Policy evaluator for checking file read permissions. */
   readonly evaluator?: PolicyEvaluator;
+  /** Interactive prompter for requesting user permission on denied paths. */
   readonly prompter?: PolicyPrompter;
 }
 
+/**
+ * Error thrown when a file-backed data source is blocked by security policy.
+ *
+ * Contains structured metadata (variable name, file path, denial reason)
+ * for programmatic handling by the CLI pipeline.
+ */
 export class FileSourcePolicyError extends Error {
   readonly code = 'POLICY_DENIED';
   readonly variable: string;

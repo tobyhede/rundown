@@ -5,10 +5,10 @@ runbook
 runbooks
 rundown
 frontmatter
+preamble
 promptable
 substep
 substeps
-preamble
 microstep
 workpath
 worktree
@@ -42,6 +42,7 @@ zod
 
 # Technical terms
 autobuild
+delegatable
 bashisms
 centralise
 coreutils
@@ -164,6 +165,7 @@ behaviour
 categorises
 
 # Test fixture words
+dotdot
 émoji
 aindex
 ancvar

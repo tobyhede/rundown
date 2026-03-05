@@ -91,7 +91,7 @@ where transition is:
 
 Transitions must appear as list items with the `-` bullet prefix (a dash followed by a space). Paragraph-style transitions (without prefix) are not valid.
 
-### AWAIT modifier
+## AWAIT modifier
 
 `AWAIT` defers aggregation evaluation until all substeps complete (like `Promise.allSettled`).
 Without `AWAIT`, `ANY` short-circuits as soon as the outcome is determined (like `Promise.all` / `Promise.any`).

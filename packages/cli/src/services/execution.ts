@@ -406,6 +406,7 @@ export async function drainResolvedCompletions({
           stepName: currentStep.name,
           status: transitionResult.status,
           substepCount: orderedSubsteps.length,
+          // resolvedBySubstep.size excludes the current completion (filtered separately above)
           resolvedCount: resolvedBySubstep.size,
           unresolvedCount: remainingUnresolved,
           appliedSubstep: state.substep,

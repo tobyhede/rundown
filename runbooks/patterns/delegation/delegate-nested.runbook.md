@@ -1,6 +1,6 @@
 ---
 name: delegate-nested
-description: Multi-level delegation with parent, child, and grandchild
+description: Direct delegation to both child and grandchild via nested claims
 tags:
   - delegation
 scenarios:

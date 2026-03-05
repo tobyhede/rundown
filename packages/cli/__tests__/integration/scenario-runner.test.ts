@@ -118,6 +118,45 @@ function copyPatternToWorkspace(relativePath: string, workspace: TestWorkspace):
 }
 
 /**
+ * Recursively copy a directory synchronously.
+ */
+function copyDirSync(src: string, dest: string): void {
+  mkdirSync(dest, { recursive: true });
+  const entries = readdirSync(src);
+  for (const entry of entries) {
+    const srcPath = join(src, entry);
+    const destPath = join(dest, entry);
+    if (statSync(srcPath).isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+/**
+ * Extract directory paths from --var-file arguments in scenario commands.
+ * E.g. "--var-file data/sources.yaml" returns ["data"]
+ */
+function extractVarFileDirs(scenario: Scenario): string[] {
+  const dirs: string[] = [];
+  const varFilePattern = /--var-file\s+(\S+)/g;
+
+  for (const cmd of scenario.commands) {
+    let match: RegExpExecArray | null;
+    while ((match = varFilePattern.exec(cmd)) !== null) {
+      const varFilePath = match[1];
+      const dir = dirname(varFilePath);
+      if (dir && dir !== '.' && !dirs.includes(dir)) {
+        dirs.push(dir);
+      }
+    }
+  }
+
+  return dirs;
+}
+
+/**
  * Extract referenced runbook files from scenario commands.
  * Finds patterns like: rd delegate child-task.runbook.md --step 1
  */
@@ -157,6 +196,19 @@ function copyPatternWithDependencies(
       } catch (err) {
         console.warn(`Failed to copy referenced runbook ${ref}:`, err);
       }
+    }
+  }
+
+  const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
+  const patternSubdir = dirname(filename);
+  const varFileDirs = extractVarFileDirs(scenario);
+  for (const dir of varFileDirs) {
+    const srcDir = join(patternsDir, patternSubdir, dir);
+    const destDir = join(workspace.cwd, dir);
+    try {
+      copyDirSync(srcDir, destDir);
+    } catch (err) {
+      console.warn(`Failed to copy data directory ${dir}:`, err);
     }
   }
 }

@@ -106,7 +106,7 @@ scenarios:
       result: STOP
 ```
 
-Commands are written **without `--json`**. The scenario runner injects `--json` automatically when `expect.steps` is present. This keeps commands clean and human-readable -- the same commands work for site demos (plain text) and test assertions (JSON events).
+Commands are written **without `--json`**. The scenario runner injects `--json` automatically when `expect.steps` is present or when running `rd delegate` (for token capture). This keeps commands clean and human-readable -- the same commands work for site demos (plain text) and test assertions (JSON events).
 
 ### Naming Convention
 

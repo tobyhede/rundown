@@ -5,7 +5,7 @@ tags:
   - delegation
 
 scenarios:
-  auto-fail:
+  auto_fail:
     description: Child auto-executes and stops on failure
     commands:
       - rd run delegation-child-fail.runbook.md
