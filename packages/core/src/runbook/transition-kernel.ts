@@ -4,7 +4,15 @@ import type { LastAction, Step } from './types.js';
 /**
  * Action type derived from structured LastAction.
  */
-export type ActionType = 'GOTO' | 'RETRY' | 'CONTINUE' | 'DEFER' | 'COMPLETE' | 'STOP' | 'NEXT' | 'BREAK';
+export type ActionType =
+  | 'GOTO'
+  | 'RETRY'
+  | 'CONTINUE'
+  | 'DEFER'
+  | 'COMPLETE'
+  | 'STOP'
+  | 'NEXT'
+  | 'BREAK';
 
 interface SnapshotContext {
   lastAction?: LastAction;
