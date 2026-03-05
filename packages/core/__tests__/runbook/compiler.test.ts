@@ -6418,4 +6418,61 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('COMPLETE');
     });
   });
+
+  describe('graph validation', () => {
+    it('compiles a multi-step runbook without graph validation errors', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'First',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          },
+        },
+        {
+          name: '2',
+          description: 'Second',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          },
+        },
+        {
+          name: '3',
+          description: 'Third',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      // Should not throw — all targets resolve to valid states
+      expect(() => compileRunbookToMachine(steps)).not.toThrow();
+    });
+
+    it('routes GOTO to nonexistent step to COMPLETE instead of dangling', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Only step',
+          transitions: {
+            all: true,
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: 'nonexistent' } },
+            },
+            fail: DEFAULT_TRANSITIONS.fail,
+          },
+        },
+      ]);
+
+      // Compiler guards against dangling targets by routing to COMPLETE
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('COMPLETE');
+    });
+  });
 });
