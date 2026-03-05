@@ -306,6 +306,7 @@ export const RunbookStateSchema = z
       .discriminatedUnion('type', [
         z.object({ type: z.literal('START') }),
         z.object({ type: z.literal('CONTINUE') }),
+        z.object({ type: z.literal('DEFER') }),
         z.object({
           type: z.literal('GOTO'),
           target: z.string(),

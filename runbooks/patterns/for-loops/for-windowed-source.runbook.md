@@ -7,7 +7,7 @@ scenarios:
   completed:
     description: Window selects first 2 of 3 items
     commands:
-      - rd run --var items=alpha,beta,gamma for-windowed-source.runbook.md
+      - rd run --var-file data/array-sources.yaml for-windowed-source.runbook.md
     result: COMPLETE
 ---
 

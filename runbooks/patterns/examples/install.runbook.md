@@ -24,7 +24,7 @@ scenarios:
       - rd pass  # 2.1 Install globally
       - rd pass  # 2.2 Verify installation
       - rd no    # 3 Getting Started (skip)
-    result: COMPLETE
+    result: STOP
   prerequisites-fail:
     description: Fail early if Node.js prerequisite not met
     commands:

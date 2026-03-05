@@ -140,7 +140,7 @@ const DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS: Transitions = {
 };
 
 /**
- * Default transitions for substeps under parent aggregation or FOR loops.
+ * Default transitions for substeps under non-FOR parent aggregation.
  * Both pass and fail use CONTINUE so results propagate to the parent
  * aggregation state for ALL/ANY evaluation.
  */
@@ -148,6 +148,16 @@ const DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS: Transitions = {
   all: true,
   pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+};
+
+/**
+ * Default transitions for substeps under FOR loops.
+ * Both pass and fail use DEFER to propagate results to parent aggregation.
+ */
+const DEFAULT_FOR_SUBSTEP_TRANSITIONS: Transitions = {
+  all: true,
+  pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
 };
 
 /**
@@ -528,7 +538,7 @@ const DEFAULT_FOR_TRANSITIONS: Transitions = {
 function buildSubstepToParentAssign(
   stepName: string,
   iterationResult: 'pass' | 'fail',
-  actionType: 'CONTINUE' | 'NEXT' | 'BREAK',
+  actionType: 'CONTINUE' | 'DEFER' | 'NEXT' | 'BREAK',
   isPassThrough?: boolean,
 ): TransitionEntry {
   return {
@@ -704,6 +714,13 @@ function buildParentExitAssign(
         lastAction: { type: 'CONTINUE' as const },
         lastMessage: undefined as string | undefined,
       });
+    case 'DEFER':
+      return assign({
+        ...baseAssign,
+        forStack: [] as readonly ForContext[],
+        lastAction: { type: 'DEFER' as const },
+        lastMessage: undefined as string | undefined,
+      });
     default:
       return assign({
         ...baseAssign,
@@ -829,8 +846,8 @@ function buildParentStateConfig(
       const prevSubstepId = substeps[i - 1].id;
       always.push({
         guard: ({ context }: { context: RunbookContext }) => {
-          // Don't advance if NEXT/BREAK — let loop control guards handle those
-          if (context.lastAction?.type === 'NEXT' || context.lastAction?.type === 'BREAK') {
+          // Don't advance if NEXT/BREAK/DEFER — let loop control / aggregation guards handle those
+          if (context.lastAction?.type === 'NEXT' || context.lastAction?.type === 'BREAK' || context.lastAction?.type === 'DEFER') {
             return false;
           }
           // Check both result count AND substep position to handle GOTO correctly.
@@ -1095,6 +1112,7 @@ function buildRetryStateConfig(
 function resolveActionTarget(action: Action, stepName: string, steps: Step[]): string {
   switch (action.type) {
     case 'CONTINUE':
+    case 'DEFER':
       return findNextStateId(stepName, undefined, steps);
     case 'COMPLETE':
       return 'COMPLETE';
@@ -1174,6 +1192,74 @@ function buildLoopControlTransition(
       lastAction: { type: actionType },
       lastMessage: undefined as string | undefined,
       substep: undefined as string | undefined,
+    }),
+  };
+}
+
+/**
+ * Build an XState transition for the DEFER action.
+ *
+ * DEFER propagates the substep result to the parent aggregation state for
+ * ALL/ANY evaluation. At the step level (no substep), DEFER acts like CONTINUE.
+ *
+ * In FOR substeps: routes to parent with result accumulation (like CONTINUE
+ * for last substep, or advances to next sibling for non-last).
+ * In non-FOR substeps: routes to parent aggregation state with result.
+ *
+ * @param stepName - The current step name
+ * @param substepId - The current substep ID within the step
+ * @param steps - The full array of runbook steps
+ * @param kind - Whether this is a 'pass' or 'fail' transition
+ * @returns XState transition configuration
+ */
+function buildDeferTransition(
+  stepName: string,
+  substepId: string | undefined,
+  steps: Step[],
+  kind: 'pass' | 'fail',
+): TransitionConfig {
+  const currentStep = steps.find((s) => s.name === stepName);
+
+  // FOR substeps: same routing as CONTINUE but with DEFER lastAction
+  if (substepId && currentStep?.kind === 'for') {
+    const isLastSubstep = isLastSubstepOfStep(stepName, substepId, steps);
+    if (isLastSubstep) {
+      return {
+        target: formatStateId(stepName),
+        actions: assign({
+          substepResults: appendSubstepResult(kind),
+          lastAction: { type: 'DEFER' as const },
+          lastMessage: undefined as string | undefined,
+          substep: undefined as string | undefined,
+        }),
+      };
+    }
+    // Non-last FOR substep: advance to next sibling
+    const target = findNextStateId(stepName, substepId, steps);
+    return {
+      target,
+      actions: assign({
+        substepResults: appendSubstepResult(kind),
+        lastAction: { type: 'DEFER' as const },
+        lastMessage: undefined as string | undefined,
+        substep: extractSubstepFromStateId(target),
+      }),
+    };
+  }
+
+  // Non-FOR substeps: route to parent for aggregation
+  if (substepId && currentStep) {
+    return buildSubstepToParentAssign(stepName, kind, 'DEFER', false);
+  }
+
+  // Non-substep DEFER: behaves like CONTINUE (advance to next step)
+  const target = findNextStateId(stepName, substepId, steps);
+  return {
+    target,
+    actions: assign({
+      lastAction: { type: 'DEFER' as const },
+      lastMessage: undefined as string | undefined,
+      substep: extractSubstepFromStateId(target),
     }),
   };
 }
@@ -1378,32 +1464,12 @@ function buildActionTransition(
   switch (action.type) {
     case 'CONTINUE':
       return buildContinueTransition(stepName, substepId, steps, resultKind);
-    case 'COMPLETE': {
-      // Non-FOR substeps: always route to parent (parent handles fail-fast/aggregation)
-      // FOR substeps: preserve last-vs-non-last routing (FOR has its own iteration logic)
-      const currentStepForComplete = steps.find((s) => s.name === stepName);
-      if (substepId && currentStepForComplete?.kind !== 'for') {
-        return buildContinueTransition(stepName, substepId, steps, resultKind);
-      }
-      if (substepId && currentStepForComplete?.kind === 'for') {
-        if (!isLastSubstepOfStep(stepName, substepId, steps)) {
-          return buildContinueTransition(stepName, substepId, steps, resultKind);
-        }
-      }
+    case 'DEFER':
+      return buildDeferTransition(stepName, substepId, steps, resultKind);
+    case 'COMPLETE':
       return buildTerminalTransition('COMPLETE', 'COMPLETE', action.message);
-    }
-    case 'STOP': {
-      const currentStepForStop = steps.find((s) => s.name === stepName);
-      if (substepId && currentStepForStop?.kind !== 'for') {
-        return buildContinueTransition(stepName, substepId, steps, resultKind);
-      }
-      if (substepId && currentStepForStop?.kind === 'for') {
-        if (!isLastSubstepOfStep(stepName, substepId, steps)) {
-          return buildContinueTransition(stepName, substepId, steps, resultKind);
-        }
-      }
+    case 'STOP':
       return buildTerminalTransition('STOPPED', 'STOP', action.message);
-    }
     case 'GOTO':
       return buildGotoTransition(action.target, stepName, substepId, steps, sources);
     case 'NEXT':
@@ -1451,11 +1517,14 @@ export function compileRunbookToMachine(
         const hasParentAggregation = !!(
           step.transitions ?? (step.kind === 'for' ? step.forClause : undefined)
         );
+        const isForStep = step.kind === 'for';
         const inferredTransitions = hasRunbooks
           ? DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS
-          : hasParentAggregation
-            ? DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS
-            : DEFAULT_TRANSITIONS;
+          : isForStep
+            ? DEFAULT_FOR_SUBSTEP_TRANSITIONS
+            : hasParentAggregation
+              ? DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS
+              : DEFAULT_TRANSITIONS;
         allStates.push({
           id: formatStateId(stepName, substep.id),
           stepName,

@@ -5,17 +5,26 @@
 /**
  * A step within a runbook (H2 header section).
  *
+ * Discriminated union on `kind`: `'base'` | `'command'` | `'substeps'` | `'for'`.
  * Steps can be numeric ("1", "2") or named ("ErrorHandler").
  * @see {@link @rundown-org/parser!Step}
  */
-export type {
-  Step,
-  BaseStep,
-  StepWithCommand,
-  StepWithSubsteps,
-  StepWithFor,
-  StepHavingSubsteps,
-} from '@rundown-org/parser';
+export type { Step } from '@rundown-org/parser';
+
+/** Prompt-only or empty step — no command, no substeps. */
+export type { BaseStep } from '@rundown-org/parser';
+
+/** Step with an executable command (mutually exclusive with substeps). */
+export type { StepWithCommand } from '@rundown-org/parser';
+
+/** Step with child substeps (no FOR clause). */
+export type { StepWithSubsteps } from '@rundown-org/parser';
+
+/** FOR loop step — always has substeps and a forClause. */
+export type { StepWithFor } from '@rundown-org/parser';
+
+/** Utility type for any step variant that contains substeps. */
+export type { StepHavingSubsteps } from '@rundown-org/parser';
 
 /**
  * A substep within a step (H3 header section).
@@ -93,6 +102,7 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
 export type LastAction =
   | { readonly type: 'START' }
   | { readonly type: 'CONTINUE' }
+  | { readonly type: 'DEFER' }
   | {
       readonly type: 'GOTO';
       readonly target: string;

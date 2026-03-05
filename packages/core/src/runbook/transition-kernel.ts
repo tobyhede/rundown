@@ -4,7 +4,7 @@ import type { LastAction, Step } from './types.js';
 /**
  * Action type derived from structured LastAction.
  */
-export type ActionType = 'GOTO' | 'RETRY' | 'CONTINUE' | 'COMPLETE' | 'STOP' | 'NEXT' | 'BREAK';
+export type ActionType = 'GOTO' | 'RETRY' | 'CONTINUE' | 'DEFER' | 'COMPLETE' | 'STOP' | 'NEXT' | 'BREAK';
 
 interface SnapshotContext {
   lastAction?: LastAction;
@@ -41,6 +41,7 @@ function isLastAction(value: unknown): value is LastAction {
   switch (value.type) {
     case 'START':
     case 'CONTINUE':
+    case 'DEFER':
     case 'COMPLETE':
     case 'STOP':
     case 'RETRY':
@@ -203,6 +204,8 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'GOTO';
     case 'RETRY':
       return 'RETRY';
+    case 'DEFER':
+      return 'DEFER';
     case 'COMPLETE':
       return 'COMPLETE';
     case 'STOP':

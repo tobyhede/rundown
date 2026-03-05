@@ -128,6 +128,7 @@ export type StepId = Readonly<z.output<typeof StepIdSchema>>;
  */
 export const ActionSchema = z.union([
   z.object({ type: z.literal('CONTINUE') }),
+  z.object({ type: z.literal('DEFER') }),
   z.object({ type: z.literal('COMPLETE'), message: z.string().optional() }),
   z.object({ type: z.literal('STOP'), message: z.string().optional() }),
   z.object({ type: z.literal('GOTO'), target: StepIdSchema }),

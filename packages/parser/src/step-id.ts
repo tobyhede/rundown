@@ -26,6 +26,7 @@ export const RESERVED_WORDS = new Set([
   'ANY',
   'AWAIT',
   'BREAK',
+  'DEFER',
   'FOR',
   'IN',
   'TO',

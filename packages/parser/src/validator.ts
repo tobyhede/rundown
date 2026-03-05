@@ -124,7 +124,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
       // FOR iteration-level transitions allow full loop control and terminal routing.
       if (step.forClause.transitions) {
-        const allowedActions = ['CONTINUE', 'BREAK', 'GOTO', 'STOP', 'COMPLETE'];
+        const allowedActions = ['CONTINUE', 'DEFER', 'BREAK', 'GOTO', 'STOP', 'COMPLETE'];
         if (!allowedActions.includes(step.forClause.transitions.pass.action.type)) {
           diagnostics.push(
             error(
