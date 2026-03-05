@@ -905,7 +905,7 @@ function buildParentStateConfig(
     always.push({
       guard: ({ context }: { context: RunbookContext }) => {
         if (context.substep !== undefined) return false; // mid-iteration — not ready
-        if (context.lastAction?.type === 'BREAK') return false;
+        // BREAK clears forStack, so peekForStack returns undefined → naturally prevents loop-back
         const selected = getIterationTransition(context).transition;
         if (selected.action.type !== 'CONTINUE') return false;
         const top = peekForStack(context.forStack);
@@ -937,7 +937,9 @@ function buildParentStateConfig(
     const failTarget = resolveActionTarget(parentTransitions.fail.action, stepName, steps);
 
     const aggregationPasses = ({ context }: { context: RunbookContext }): boolean => {
-      const baseResults = hasFor ? (context.iterationResults ?? []) : (context.substepResults ?? []);
+      const baseResults = hasFor
+        ? (context.iterationResults ?? [])
+        : (context.substepResults ?? []);
       // For FOR steps: include the current (final) iteration's computed result
       const allResults = hasFor ? [...baseResults, computeIterationResult(context)] : baseResults;
       const hasFailed = allResults.some((r) => r === 'fail');
@@ -1158,6 +1160,8 @@ function buildLoopControlTransition(
       lastAction: { type: actionType },
       lastMessage: undefined as string | undefined,
       substep: undefined as string | undefined,
+      // BREAK clears forStack so loop-back guard naturally fails (empty stack → no more iterations)
+      ...(actionType === 'BREAK' ? { forStack: [] as readonly ForContext[] } : {}),
     }),
   };
 }
@@ -1350,11 +1354,7 @@ function buildGotoTransition(
         iterationRetryCount: 0,
         substep: resolvedSubstepId,
         substepResults: !isImplicit
-          ? ({
-              context,
-            }: {
-              context: RunbookContext;
-            }): ('pass' | 'fail')[] | undefined => {
+          ? ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] | undefined => {
               const top = peekForStack(context.forStack);
               if (top?.stepId === targetStepObj.name) return context.substepResults;
               return [];
@@ -1534,11 +1534,7 @@ export function compileRunbookToMachine(
               ),
             // Reset substepResults at start of iteration (FOR) or on first entry (non-FOR)
             substepResults: !stepInfo.implicit
-              ? ({
-                  context,
-                }: {
-                  context: RunbookContext;
-                }): ('pass' | 'fail')[] | undefined => {
+              ? ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] | undefined => {
                   // Preserve if re-entering same FOR step (intra-loop GOTO)
                   const top = peekForStack(context.forStack);
                   if (top?.stepId === stepInfo.step.name) return context.substepResults;
@@ -1620,11 +1616,7 @@ export function compileRunbookToMachine(
               substep: ({ event }: { event: RunbookEvent }) =>
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
               substepResults: !forStepForTarget.implicit
-                ? ({
-                    context,
-                  }: {
-                    context: RunbookContext;
-                  }): ('pass' | 'fail')[] | undefined => {
+                ? ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] | undefined => {
                     const top = peekForStack(context.forStack);
                     if (top?.stepId === forStepForTarget.step.name) return context.substepResults;
                     return [];
