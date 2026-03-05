@@ -174,8 +174,8 @@ describe('runbook compiler', () => {
               description: 'Check 1',
               transitions: {
                 all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
@@ -183,8 +183,8 @@ describe('runbook compiler', () => {
               description: 'Check 2',
               transitions: {
                 all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -200,7 +200,7 @@ describe('runbook compiler', () => {
       actor.send({ type: 'FAIL' });
 
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['fail']);
+      expect(actor.getSnapshot().context.substepResults).toEqual(['fail']);
     });
   });
 
@@ -4421,7 +4421,7 @@ echo "processing"
       actor.send({ type: 'PASS' }); // 1.2 passes -> parent -> PASS ALL -> step::2
 
       expect(actor.getSnapshot().value).toBe('step::2');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+      expect(actor.getSnapshot().context.substepResults).toEqual(['pass', 'pass']);
     });
 
     it('FAIL ANY: GOTO routes to target step on failure', () => {
@@ -4637,8 +4637,8 @@ echo "processing"
               description: 'Check 1',
               transitions: {
                 all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
@@ -4646,8 +4646,8 @@ echo "processing"
               description: 'Check 2',
               transitions: {
                 all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
@@ -4655,8 +4655,8 @@ echo "processing"
               description: 'Check 3',
               transitions: {
                 all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -4673,7 +4673,7 @@ echo "processing"
       actor.send({ type: 'FAIL' });
 
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
+      expect(actor.getSnapshot().context.substepResults).toEqual(['pass', 'fail']);
     });
 
     it('FOR loop iterates through parent state', () => {
@@ -4823,7 +4823,7 @@ echo "processing"
       actor.send({ type: 'FAIL' }); // 1.2 fails -> parent -> FAIL ALL -> STOPPED
 
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['fail', 'fail']);
+      expect(actor.getSnapshot().context.substepResults).toEqual(['fail', 'fail']);
     });
 
     it('parent transitions with retry re-runs substeps before terminal action', () => {
@@ -4881,8 +4881,8 @@ echo "processing"
               description: 'Check 1',
               transitions: {
                 all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
@@ -4890,8 +4890,8 @@ echo "processing"
               description: 'Check 2',
               transitions: {
                 all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -4912,10 +4912,10 @@ echo "processing"
     });
 
     it('cross-step substep GOTO resets parentRetryCount before target parent retries', () => {
-      const substepContinueTransitions = {
+      const substepDeferTransitions = {
         all: true,
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
       };
 
       const steps = inferSteps([
@@ -4938,7 +4938,7 @@ echo "processing"
                   retry: 0,
                   action: { type: 'GOTO' as const, target: { step: '2', substep: '2' } },
                 },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
@@ -4946,8 +4946,8 @@ echo "processing"
               description: 'Fail to trigger parent retry',
               transitions: {
                 all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -4961,8 +4961,8 @@ echo "processing"
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
           substeps: [
-            { id: '1', description: 'Target 1', transitions: substepContinueTransitions },
-            { id: '2', description: 'Target 2', transitions: substepContinueTransitions },
+            { id: '1', description: 'Target 1', transitions: substepDeferTransitions },
+            { id: '2', description: 'Target 2', transitions: substepDeferTransitions },
           ],
         },
         { name: '3', description: 'Done', transitions: DEFAULT_TRANSITIONS },
@@ -4986,10 +4986,10 @@ echo "processing"
     });
 
     it('cross-step GOTO event resets parentRetryCount before target parent retries', () => {
-      const substepContinueTransitions = {
+      const substepDeferTransitions = {
         all: true,
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
       };
 
       const steps = inferSteps([
@@ -5002,8 +5002,8 @@ echo "processing"
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
           substeps: [
-            { id: '1', description: 'Source 1', transitions: substepContinueTransitions },
-            { id: '2', description: 'Source 2', transitions: substepContinueTransitions },
+            { id: '1', description: 'Source 1', transitions: substepDeferTransitions },
+            { id: '2', description: 'Source 2', transitions: substepDeferTransitions },
           ],
         },
         {
@@ -5015,8 +5015,8 @@ echo "processing"
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
           substeps: [
-            { id: '1', description: 'Target 1', transitions: substepContinueTransitions },
-            { id: '2', description: 'Target 2', transitions: substepContinueTransitions },
+            { id: '1', description: 'Target 1', transitions: substepDeferTransitions },
+            { id: '2', description: 'Target 2', transitions: substepDeferTransitions },
           ],
         },
         { name: '3', description: 'Done', transitions: DEFAULT_TRANSITIONS },
@@ -5237,7 +5237,7 @@ echo "processing"
         actor.send({ type: 'PASS' }); // 1.1 passes -> should advance to 1.2, NOT COMPLETE
 
         expect(actor.getSnapshot().value).toBe('step::1::2');
-        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
+        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'DEFER' });
       });
 
       it('Test E: substep with explicit COMPLETE stops substep sequence and routes to parent', () => {
@@ -5935,10 +5935,10 @@ echo "processing"
       const snapshot = actor.getSnapshot();
       // Should reach step 2
       expect(snapshot.value).toBe('step::2');
-      // Non-FOR steps use iterationResults directly (one per substep)
-      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
-      // substepResults is not used for non-FOR steps
-      expect(snapshot.context.substepResults).toBeUndefined();
+      // Non-FOR steps use substepResults (one per substep)
+      expect(snapshot.context.substepResults).toEqual(['pass', 'pass']);
+      // iterationResults is initialized but unused for non-FOR steps (entry action sets [])
+      expect(snapshot.context.iterationResults).toEqual([]);
     });
 
     it('FOR with PASS ANY iteration-level transitions', () => {
