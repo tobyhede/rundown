@@ -200,7 +200,7 @@ describe('runbook compiler', () => {
       actor.send({ type: 'FAIL' });
 
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['fail']);
+      expect(actor.getSnapshot().context.substepResults).toEqual(['fail']);
     });
   });
 
@@ -4421,7 +4421,7 @@ echo "processing"
       actor.send({ type: 'PASS' }); // 1.2 passes -> parent -> PASS ALL -> step::2
 
       expect(actor.getSnapshot().value).toBe('step::2');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+      expect(actor.getSnapshot().context.substepResults).toEqual(['pass', 'pass']);
     });
 
     it('FAIL ANY: GOTO routes to target step on failure', () => {
@@ -4673,7 +4673,7 @@ echo "processing"
       actor.send({ type: 'FAIL' });
 
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
+      expect(actor.getSnapshot().context.substepResults).toEqual(['pass', 'fail']);
     });
 
     it('FOR loop iterates through parent state', () => {
@@ -4823,7 +4823,7 @@ echo "processing"
       actor.send({ type: 'FAIL' }); // 1.2 fails -> parent -> FAIL ALL -> STOPPED
 
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['fail', 'fail']);
+      expect(actor.getSnapshot().context.substepResults).toEqual(['fail', 'fail']);
     });
 
     it('parent transitions with retry re-runs substeps before terminal action', () => {
@@ -5935,10 +5935,10 @@ echo "processing"
       const snapshot = actor.getSnapshot();
       // Should reach step 2
       expect(snapshot.value).toBe('step::2');
-      // Non-FOR steps use iterationResults directly (one per substep)
-      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
-      // substepResults is not used for non-FOR steps
-      expect(snapshot.context.substepResults).toBeUndefined();
+      // Non-FOR steps use substepResults (one per substep)
+      expect(snapshot.context.substepResults).toEqual(['pass', 'pass']);
+      // iterationResults is initialized but unused for non-FOR steps (entry action sets [])
+      expect(snapshot.context.iterationResults).toEqual([]);
     });
 
     it('FOR with PASS ANY iteration-level transitions', () => {
