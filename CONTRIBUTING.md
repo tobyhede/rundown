@@ -162,23 +162,22 @@ pnpm exec playwright install
 
 ## Formatting and Linting
 
-We use ESLint to maintain code quality. Please ensure your code passes the linter before submitting a pull request.
+We use Biome and ESLint to maintain code quality. Please ensure your code passes the linter before submitting a pull request.
 
 ```bash
-# Run linter
+# Run linters (biome + eslint)
 npm run lint
 
 # Automatically fix linting issues
-npm run lint:fix
+npm run fix:lint
 ```
 
 ## Pull Request Process
 
 1. Create a new branch for your feature or bugfix.
-2. Ensure all tests pass (`npm run test` and site tests).
-3. Ensure the linter passes (`npm run lint`).
-4. Rebuild the snapshot if you've modified package code.
-5. Submit a pull request with a clear description of your changes.
+2. Run `npm run verify` before pushing (format, spell, lint, test).
+3. Rebuild the snapshot if you've modified package code.
+4. Submit a pull request with a clear description of your changes.
 
 ## Continuous Integration
 
@@ -221,7 +220,7 @@ Both upload SARIF results, so findings appear under **Security > Code scanning a
 
 1. `npm ci` - Install dependencies
 2. `npm run build` - Build all packages (parser → core → cli)
-3. `npm run lint` - Run ESLint
+3. `npm run lint` - Run linters (biome + eslint)
 4. `npm test` - Run Jest tests
 
 ## Releases

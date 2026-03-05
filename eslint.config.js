@@ -13,6 +13,7 @@ export default tseslint.config(
       '**/stryker.config.mjs',
       '**/*.d.ts',
       'site/**',
+      '.work/**',
       '.worktree/**',
       '.worktrees/**',
       '**/.stryker-tmp/**',

@@ -14,6 +14,7 @@ import picomatch from 'picomatch';
 import type { PolicyEvaluator } from '../policy/evaluator.js';
 import type { PolicyConfig } from '../policy/schema.js';
 import type { SandboxOptions } from './types.js';
+import { logger } from '../logger.js';
 
 /**
  * Options for creating sandbox options from policy.
@@ -166,7 +167,14 @@ function collectMatches(
   depth: number = 0,
   maxDepth: number = 10,
 ): void {
-  if (depth > maxDepth) return;
+  if (depth > maxDepth) {
+    void logger.warn('collectMatches: depth cap reached, deny expansion may be incomplete', {
+      path: currentPath,
+      depth,
+      maxDepth,
+    });
+    return;
+  }
   if (!fs.existsSync(currentPath)) {
     return;
   }
