@@ -10,7 +10,7 @@ import { z } from 'zod';
 export const StepAssertionSchema = z.object({
   at: z.union([z.string(), z.number()]).transform(String).optional(),
   from: z.union([z.string(), z.number()]).transform(String).optional(),
-  action: z.enum(['CONTINUE', 'GOTO', 'STOP', 'COMPLETE', 'RETRY', 'BREAK', 'NEXT']).optional(),
+  action: z.enum(['CONTINUE', 'DEFER', 'GOTO', 'STOP', 'COMPLETE', 'RETRY', 'BREAK', 'NEXT']).optional(),
   result: z.enum(['PASS', 'FAIL']).optional(),
   command: z.string().optional(),
 });

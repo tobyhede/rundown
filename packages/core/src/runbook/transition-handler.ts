@@ -12,7 +12,7 @@ import type { Step, SubstepState, Action, StepId, Transitions } from './types.js
  */
 export interface ConditionResult {
   /** The action to take based on the condition evaluation */
-  action: 'retry' | 'stopped' | 'goto' | 'continue' | 'complete';
+  action: 'retry' | 'stopped' | 'goto' | 'continue' | 'complete' | 'defer';
   /** New retry count (only set when action is 'retry') */
   newRetryCount?: number;
   /** Target step for GOTO action */
@@ -196,6 +196,8 @@ function evaluateAction(action: Action): ConditionResult {
   switch (action.type) {
     case 'CONTINUE':
       return { action: 'continue' };
+    case 'DEFER':
+      return { action: 'defer' };
     case 'STOP':
       return { action: 'stopped', message: action.message };
     case 'COMPLETE':

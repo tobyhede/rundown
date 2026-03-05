@@ -89,7 +89,7 @@ export function isSourced(fc: ForClause): fc is SourceWindow {
  * Type guard: checks if a step is a BaseStep (no command, no substeps).
  *
  * @param step - The Step to check
- * @returns True if the step is a BaseStep
+ * @returns True if `step` is a `BaseStep` (`step is BaseStep`), narrowing away command/substep variants
  */
 export function isBaseStep(step: Step): step is BaseStep {
   return step.kind === 'base';
@@ -99,7 +99,7 @@ export function isBaseStep(step: Step): step is BaseStep {
  * Type guard: checks if a step is a StepWithCommand.
  *
  * @param step - The Step to check
- * @returns True if the step has a command
+ * @returns True if `step` is a `StepWithCommand` (`step is StepWithCommand`), guaranteeing `step.command` exists
  */
 export function isStepWithCommand(step: Step): step is StepWithCommand {
   return step.kind === 'command';
@@ -109,7 +109,7 @@ export function isStepWithCommand(step: Step): step is StepWithCommand {
  * Type guard: checks if a step is a StepWithSubsteps (no FOR clause).
  *
  * @param step - The Step to check
- * @returns True if the step has substeps but no FOR clause
+ * @returns True if `step` is a `StepWithSubsteps` (`step is StepWithSubsteps`), guaranteeing `step.substeps` exists without a FOR clause
  */
 export function isStepWithSubsteps(step: Step): step is StepWithSubsteps {
   return step.kind === 'substeps';
@@ -119,7 +119,7 @@ export function isStepWithSubsteps(step: Step): step is StepWithSubsteps {
  * Type guard: checks if a step is a StepWithFor (FOR loop with substeps).
  *
  * @param step - The Step to check
- * @returns True if the step is a FOR loop step
+ * @returns True if `step` is a `StepWithFor` (`step is StepWithFor`), guaranteeing `step.forClause` and `step.substeps` exist
  */
 export function isStepWithFor(step: Step): step is StepWithFor {
   return step.kind === 'for';
@@ -131,7 +131,7 @@ export function isStepWithFor(step: Step): step is StepWithFor {
  * Preferred over the deprecated {@link hasSubsteps}.
  *
  * @param step - The Step to check
- * @returns True if the step has substeps
+ * @returns True if `step` is a `StepHavingSubsteps` (`step is StepHavingSubsteps`), guaranteeing `step.substeps` exists
  */
 export function stepHasSubsteps(step: Step): step is StepHavingSubsteps {
   return step.kind === 'substeps' || step.kind === 'for';
