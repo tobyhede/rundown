@@ -153,7 +153,7 @@ type StateConfig = ChildStateConfig | ParentStateConfig;
  * FAIL ANY: STOP
  */
 const DEFAULT_TRANSITIONS: Transitions = {
-  all: true,
+  aggregation: 'ALL',
   pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
 };
@@ -166,7 +166,7 @@ const DEFAULT_TRANSITIONS: Transitions = {
  * Both pass and fail use DEFER to propagate results upward for aggregation.
  */
 const DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS: Transitions = {
-  all: true,
+  aggregation: 'ALL',
   pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
 };
@@ -177,7 +177,7 @@ const DEFAULT_RUNBOOK_SUBSTEP_TRANSITIONS: Transitions = {
  * aggregation state for ALL/ANY evaluation (enables fail-fast).
  */
 const DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS: Transitions = {
-  all: true,
+  aggregation: 'ALL',
   pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
 };
@@ -187,7 +187,7 @@ const DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS: Transitions = {
  * Both pass and fail use DEFER to propagate results to parent aggregation.
  */
 const DEFAULT_FOR_SUBSTEP_TRANSITIONS: Transitions = {
-  all: true,
+  aggregation: 'ALL',
   pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
 };
@@ -561,7 +561,7 @@ function appendDeferredResult(result: 'pass' | 'fail') {
  * DEFER loops back and accumulates iteration results for step-level aggregation.
  */
 const DEFAULT_FOR_TRANSITIONS: Transitions = {
-  all: true,
+  aggregation: 'ALL',
   pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
 };
@@ -785,7 +785,9 @@ function buildParentStateConfig(
     const results = context.deferredResults ?? [];
     const hasFailed = results.some((r) => r === 'fail');
     const passCount = results.filter((r) => r === 'pass').length;
-    return shouldAggregationPass(hasFailed, passCount, forTransitions.all) ? 'pass' : 'fail';
+    return shouldAggregationPass(hasFailed, passCount, forTransitions.aggregation)
+      ? 'pass'
+      : 'fail';
   };
 
   const getIterationTransition = (
@@ -994,7 +996,7 @@ function buildParentStateConfig(
         : baseResults;
       const hasFailed = allResults.some((r) => r === 'fail');
       const passCount = allResults.filter((r) => r === 'pass').length;
-      return shouldAggregationPass(hasFailed, passCount, parentTransitions.all);
+      return shouldAggregationPass(hasFailed, passCount, parentTransitions.aggregation);
     };
 
     const passBranchGuard: GuardFn = aggregationPasses;

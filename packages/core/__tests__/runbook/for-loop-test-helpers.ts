@@ -135,7 +135,7 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
     name: '2',
     description: 'Terminal',
     transitions: {
-      all: true,
+      aggregation: 'ALL',
       pass: makeTransitionObject('pass', 'COMPLETE'),
       fail: makeTransitionObject('fail', 'STOP'),
     },

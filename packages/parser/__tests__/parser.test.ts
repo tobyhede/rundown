@@ -362,7 +362,7 @@ Do check two.
       retry: 0,
       action: { type: 'STOP', message: 'A check failed' },
     });
-    expect(steps[0].transitions?.all).toBe(true);
+    expect(steps[0].transitions?.aggregation).toBe('ALL');
     // Substeps should NOT have the step-level transitions
     expect(steps[0].substeps?.[0].transitions).toBeUndefined();
     expect(steps[0].substeps?.[1].transitions).toBeUndefined();
@@ -868,7 +868,7 @@ echo check
       const steps = parseRunbook(markdown);
       expect(steps[0].forClause).toBeDefined();
       expect(steps[0].forClause?.transitions).toBeDefined();
-      expect(steps[0].forClause?.transitions?.all).toBe(true);
+      expect(steps[0].forClause?.transitions?.aggregation).toBe('ALL');
       expect(steps[0].forClause?.transitions?.pass).toEqual({
         kind: 'pass',
         retry: 0,
@@ -940,7 +940,7 @@ echo check
       const steps = parseRunbook(markdown);
       expect(steps[0].forClause).toBeDefined();
       expect(steps[0].forClause?.transitions).toBeDefined();
-      expect(steps[0].forClause?.transitions?.all).toBe(false);
+      expect(steps[0].forClause?.transitions?.aggregation).toBe('ANY');
       expect(steps[0].forClause?.transitions?.pass).toEqual({
         kind: 'pass',
         retry: 0,

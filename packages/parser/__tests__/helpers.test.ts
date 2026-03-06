@@ -953,7 +953,7 @@ describe('convertToTransitions aggregation conflicts', () => {
     ];
     const result = convertToTransitions(conditionals);
     expect(result).not.toBeNull();
-    expect(result?.all).toBe(true);
+    expect(result?.aggregation).toBe('ALL');
   });
 
   it('accepts valid PASS ANY + FAIL ALL (optimistic)', () => {
@@ -963,43 +963,43 @@ describe('convertToTransitions aggregation conflicts', () => {
     ];
     const result = convertToTransitions(conditionals);
     expect(result).not.toBeNull();
-    expect(result?.all).toBe(false);
+    expect(result?.aggregation).toBe('ANY');
   });
 
-  it('defaults to all=true with only PASS modifier ALL', () => {
+  it('defaults to ALL with only PASS modifier ALL', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.all).toBe(true);
+    expect(result?.aggregation).toBe('ALL');
   });
 
-  it('defaults to all=false with only PASS modifier ANY', () => {
+  it('defaults to ANY with only PASS modifier ANY', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ANY', raw: 'CONTINUE' },
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.all).toBe(false);
+    expect(result?.aggregation).toBe('ANY');
   });
 
-  it('defaults to all=true with only FAIL modifier ANY', () => {
+  it('defaults to ALL with only FAIL modifier ANY', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.all).toBe(true);
+    expect(result?.aggregation).toBe('ALL');
   });
 
-  it('defaults to all=false with only FAIL modifier ALL', () => {
+  it('defaults to ANY with only FAIL modifier ALL', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ALL', raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.all).toBe(false);
+    expect(result?.aggregation).toBe('ANY');
   });
 
   it('returns null for empty conditionals array', () => {
@@ -1024,47 +1024,47 @@ describe('convertToTransitions aggregation conflicts', () => {
     expect(result?.pass.action).toEqual({ type: 'CONTINUE' });
   });
 
-  it('sets modifierImplicit when both modifiers are null', () => {
+  it('sets aggregation to none when both modifiers are null', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.modifierImplicit).toBe(true);
+    expect(result?.aggregation).toBe('none');
   });
 
-  it('sets modifierImplicit when only pass provided with null modifier', () => {
+  it('sets aggregation to none when only pass provided with null modifier', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', retry: 0, action: { type: 'COMPLETE' }, modifier: null, raw: 'COMPLETE' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.modifierImplicit).toBe(true);
+    expect(result?.aggregation).toBe('none');
   });
 
-  it('sets modifierImplicit when only fail provided with null modifier', () => {
+  it('sets aggregation to none when only fail provided with null modifier', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.modifierImplicit).toBe(true);
+    expect(result?.aggregation).toBe('none');
   });
 
-  it('does not set modifierImplicit when explicit ALL modifier present', () => {
+  it('sets aggregation to ALL when explicit ALL modifier present', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: 'ANY', raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.modifierImplicit).toBeUndefined();
+    expect(result?.aggregation).toBe('ALL');
   });
 
-  it('does not set modifierImplicit when one modifier is explicit', () => {
+  it('sets aggregation to ALL when one modifier is explicit ALL', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: 'ALL', raw: 'CONTINUE' },
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];
     const result = convertToTransitions(conditionals);
-    expect(result?.modifierImplicit).toBeUndefined();
+    expect(result?.aggregation).toBe('ALL');
   });
 });
 

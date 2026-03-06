@@ -219,13 +219,13 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         }
       }
 
-      // For non-FOR steps: parent transitions use deferredResults for aggregation.
-      // Only DEFER populates deferredResults — CONTINUE/NEXT/BREAK are flow control only.
-      // Substeps without explicit transitions auto-DEFER, so only error when every substep
-      // has explicit non-DEFER transitions (making aggregation vacuous: ALL always passes,
-      // ANY always fails). FOR steps are excluded because their parent transitions aggregate
-      // iteration results (fed by iteration-level DEFER), not substep deferredResults directly.
-      if (step.transitions && step.kind !== 'for') {
+      // For non-FOR steps with explicit aggregation (ALL/ANY): parent transitions use
+      // deferredResults for aggregation. Only DEFER populates deferredResults —
+      // CONTINUE/NEXT/BREAK are flow control only. Substeps without explicit transitions
+      // auto-DEFER, so only error when every substep has explicit non-DEFER transitions
+      // (making aggregation vacuous). Steps with aggregation: 'none' use sequential flow
+      // control, not aggregation, so the check does not apply.
+      if (step.transitions && step.transitions.aggregation !== 'none' && step.kind !== 'for') {
         const allSubstepsExplicitNonDefer = step.substeps.every((sub) => {
           if (!sub.transitions) return false; // no explicit transitions → will auto-DEFER
           const passIsDefer = sub.transitions.pass.action.type === 'DEFER';

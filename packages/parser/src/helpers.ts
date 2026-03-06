@@ -619,22 +619,22 @@ export function parseConditional(text: string): ParseConditionalResult {
 function resolveAggregationMode(
   passModifier: AggregationModifier,
   failModifier: AggregationModifier,
-): boolean {
+): 'ALL' | 'ANY' | 'none' {
   if (passModifier && failModifier) {
-    if (passModifier === 'ALL' && failModifier === 'ANY') return true;
-    if (passModifier === 'ANY' && failModifier === 'ALL') return false;
+    if (passModifier === 'ALL' && failModifier === 'ANY') return 'ALL';
+    if (passModifier === 'ANY' && failModifier === 'ALL') return 'ANY';
     throw new RunbookSyntaxError(
       `Invalid aggregation combination: PASS ${passModifier} + FAIL ${failModifier}. ` +
         `Valid: PASS ALL + FAIL ANY (pessimistic) or PASS ANY + FAIL ALL (optimistic)`,
     );
   }
 
-  if (passModifier === 'ALL') return true;
-  if (passModifier === 'ANY') return false;
-  if (failModifier === 'ANY') return true;
-  if (failModifier === 'ALL') return false;
+  if (passModifier === 'ALL') return 'ALL';
+  if (passModifier === 'ANY') return 'ANY';
+  if (failModifier === 'ANY') return 'ALL';
+  if (failModifier === 'ALL') return 'ANY';
 
-  return true;
+  return 'none';
 }
 
 /**
@@ -700,14 +700,9 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
     }
   }
 
-  const all = resolveAggregationMode(passModifier, failModifier);
-  const modifierImplicit =
-    passModifier === null && failModifier === null ? (true as const) : undefined;
+  const aggregation = resolveAggregationMode(passModifier, failModifier);
 
-  const base = {
-    all,
-    ...(modifierImplicit && { modifierImplicit }),
-  };
+  const base = { aggregation };
 
   if (passAction && failAction) {
     return {

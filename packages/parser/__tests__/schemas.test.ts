@@ -11,7 +11,7 @@ import {
 describe('TransitionsSchema with kind', () => {
   it('should validate transitions with kind', () => {
     const input = {
-      all: true,
+      aggregation: 'ALL',
       pass: { kind: 'yes', action: { type: 'CONTINUE' } },
       fail: { kind: 'no', action: { type: 'STOP' } },
     };
@@ -21,7 +21,7 @@ describe('TransitionsSchema with kind', () => {
 
   it('should reject invalid kind', () => {
     const input = {
-      all: true,
+      aggregation: 'ALL',
       pass: { kind: 'invalid', action: { type: 'CONTINUE' } },
       fail: { kind: 'no', action: { type: 'STOP' } },
     };
@@ -94,9 +94,9 @@ describe('TransitionObjectSchema', () => {
 });
 
 describe('TransitionsSchema validation', () => {
-  it('should validate all: true transitions', () => {
+  it('should validate ALL aggregation transitions', () => {
     const input = {
-      all: true,
+      aggregation: 'ALL',
       pass: { kind: 'pass', action: { type: 'CONTINUE' } },
       fail: { kind: 'fail', action: { type: 'STOP' } },
     };
@@ -104,9 +104,9 @@ describe('TransitionsSchema validation', () => {
     expect(result.success).toBe(true);
   });
 
-  it('should validate all: false transitions', () => {
+  it('should validate ANY aggregation transitions', () => {
     const input = {
-      all: false,
+      aggregation: 'ANY',
       pass: { kind: 'yes', action: { type: 'COMPLETE' } },
       fail: { kind: 'no', action: { type: 'CONTINUE' } },
     };
@@ -125,7 +125,7 @@ describe('TransitionsSchema validation', () => {
 
   it('should reject transitions without pass field', () => {
     const input = {
-      all: true,
+      aggregation: 'ALL',
       fail: { kind: 'fail', action: { type: 'STOP' } },
     };
     const result = TransitionsSchema.safeParse(input);
@@ -134,7 +134,7 @@ describe('TransitionsSchema validation', () => {
 
   it('should reject transitions without fail field', () => {
     const input = {
-      all: true,
+      aggregation: 'ALL',
       pass: { kind: 'pass', action: { type: 'CONTINUE' } },
     };
     const result = TransitionsSchema.safeParse(input);

@@ -16,7 +16,7 @@ describe('GOTO NEXT action handling', () => {
       description: 'Test',
 
       transitions: {
-        all: true as const,
+        aggregation: 'ALL' as const,
         pass: {
           kind: 'pass' as const,
           retry: 0,
@@ -37,7 +37,7 @@ describe('GOTO NEXT action handling', () => {
       description: 'Test',
 
       transitions: {
-        all: true as const,
+        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: {
           kind: 'fail' as const,
@@ -66,7 +66,7 @@ describe('evaluatePassCondition', () => {
           action: { type: 'COMPLETE' as const, message: 'Success message' },
         },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-        all: true as const,
+        aggregation: 'ALL' as const,
       },
     };
     const result = evaluatePassCondition(step);
@@ -76,9 +76,9 @@ describe('evaluatePassCondition', () => {
 });
 
 describe('evaluateSubstepAggregation', () => {
-  // PASS ALL mode (all: true)
+  // PASS ALL mode (aggregation: 'ALL')
   const passAllTransitions = {
-    all: true,
+    aggregation: 'ALL',
     pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
     fail: {
       kind: 'fail' as const,
@@ -87,9 +87,9 @@ describe('evaluateSubstepAggregation', () => {
     },
   };
 
-  // PASS ANY mode (all: false)
+  // PASS ANY mode (aggregation: 'ANY')
   const passAnyTransitions = {
-    all: false,
+    aggregation: 'ANY',
     pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
     fail: {
       kind: 'fail' as const,
@@ -160,7 +160,7 @@ describe('evaluateFailCondition', () => {
       description: 'Test',
 
       transitions: {
-        all: true,
+        aggregation: 'ALL',
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: {
           kind: 'fail',
@@ -207,7 +207,7 @@ describe('evaluatePassCondition edge cases', () => {
       description: 'Test',
 
       transitions: {
-        all: true,
+        aggregation: 'ALL',
         pass: { kind: 'pass', retry: 0, action: { type: 'STOP', message: 'Halted on pass' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },
@@ -221,7 +221,7 @@ describe('evaluatePassCondition edge cases', () => {
 
 describe('evaluateSubstepAggregation edge cases', () => {
   const passAnyTransitions = {
-    all: false,
+    aggregation: 'ANY',
     pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
     fail: {
       kind: 'fail' as const,
@@ -251,7 +251,7 @@ describe('evaluateFailCondition with retry property', () => {
 
       description: 'Test',
       transitions: {
-        all: true,
+        aggregation: 'ALL',
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: {
           kind: 'fail' as const,
@@ -273,7 +273,7 @@ describe('evaluateFailCondition with retry property', () => {
 
       description: 'Test',
       transitions: {
-        all: true,
+        aggregation: 'ALL',
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: {
           kind: 'fail' as const,
@@ -296,7 +296,7 @@ describe('evaluateSubstepAggregation with retry property', () => {
       { id: 'b', status: 'done' as const, result: 'pass' as const },
     ];
     const transitions = {
-      all: true,
+      aggregation: 'ALL',
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       fail: { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } },
     };
@@ -312,7 +312,7 @@ describe('evaluateSubstepAggregation with retry property', () => {
       { id: 'b', status: 'done' as const, result: 'pass' as const },
     ];
     const transitions = {
-      all: true,
+      aggregation: 'ALL',
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       fail: { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } },
     };
@@ -325,8 +325,8 @@ describe('evaluateSubstepAggregation with retry property', () => {
 describe('evaluateIterationAggregation', () => {
   const passAction = { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } };
   const failAction = { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } };
-  const allTransitions = { all: true, pass: passAction, fail: failAction };
-  const anyTransitions = { all: false, pass: passAction, fail: failAction };
+  const allTransitions = { aggregation: 'ALL', pass: passAction, fail: failAction };
+  const anyTransitions = { aggregation: 'ANY', pass: passAction, fail: failAction };
 
   it('returns null for empty iteration results', () => {
     expect(evaluateIterationAggregation([], allTransitions)).toBeNull();
@@ -368,7 +368,7 @@ describe('evaluateIterationAggregation', () => {
 
   describe('with retry', () => {
     const failWithRetry = { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } };
-    const retryTransitions = { all: true, pass: passAction, fail: failWithRetry };
+    const retryTransitions = { aggregation: 'ALL', pass: passAction, fail: failWithRetry };
 
     it('returns retry when under retry limit', () => {
       const result = evaluateIterationAggregation(['pass', 'fail'], retryTransitions, 0);

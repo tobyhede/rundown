@@ -85,7 +85,7 @@ describe('Substep interface', () => {
       id: '1',
       description: 'Test substep',
       transitions: {
-        all: true,
+        aggregation: 'ALL',
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'BLOCKED' } },
       },
