@@ -6,13 +6,15 @@ import { renderCodeFence, renderHeading } from './primitives.js';
 /**
  * Render an Action to DSL string.
  *
- * @param action - The action to render (CONTINUE, COMPLETE, STOP, GOTO, NEXT, BREAK)
+ * @param action - The action to render (CONTINUE, DEFER, COMPLETE, STOP, GOTO, NEXT, BREAK)
  * @returns The DSL string representation of the action
  */
 export function renderAction(action: Action): string {
   switch (action.type) {
     case 'CONTINUE':
       return 'CONTINUE';
+    case 'DEFER':
+      return 'DEFER';
     case 'COMPLETE':
       return action.message ? `COMPLETE "${action.message}"` : 'COMPLETE';
     case 'STOP':

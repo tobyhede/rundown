@@ -45,9 +45,19 @@ const SEARCH_PLACES = [
   'package.json',
 ];
 
+/**
+ * Error thrown when an executable policy config (JS/CJS/MJS) is discovered
+ * without explicit trust authorization.
+ *
+ * JavaScript policy files are not auto-discovered to prevent arbitrary code
+ * execution. Users must explicitly pass `--policy` with `--trust-js-policy`.
+ */
 export class PolicyConfigTrustRequiredError extends Error {
   readonly filepath: string;
 
+  /**
+   * @param filepath - Path to the executable policy config that requires trust
+   */
   constructor(filepath: string) {
     super(
       `Executable policy config requires trust: ${filepath}. ` +
@@ -210,7 +220,10 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
  * Load policy configuration from a specific file.
  *
  * @param filepath - Path to the configuration file
+ * @param options - Load options
+ * @param options.trustJsPolicy - Whether to allow loading executable JS config files (default: false)
  * @returns Policy load result
+ * @throws {PolicyConfigTrustRequiredError} When a JS config is loaded without `trustJsPolicy`
  */
 export async function loadPolicyFromFile(
   filepath: string,
@@ -365,7 +378,10 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
  * Synchronously load policy from a specific file.
  *
  * @param filepath - Path to the configuration file
+ * @param options - Load options
+ * @param options.trustJsPolicy - Whether to allow loading executable JS config files (default: false)
  * @returns Policy load result
+ * @throws {PolicyConfigTrustRequiredError} When a JS config is loaded without `trustJsPolicy`
  */
 export function loadPolicyFromFileSync(
   filepath: string,

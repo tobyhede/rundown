@@ -71,6 +71,10 @@ The CLI is an orchestration and control interface. Claude executes the actual wo
                               [CLI Commands] <---- [Persisted JSON]
 ```
 
+### Design Principles
+
+**Type-driven dispatch:** The state machine uses types and events to drive logic. Steps raise typed events; parent states dispatch on event type via `on:` handlers. Guards express domain conditions (e.g., "has more iterations"), never action-type checks. If a guard inspects `lastAction.type` to decide routing, that is a code smell — the event type system should handle the dispatch instead. `if` statements checking action types indicate missing structure in the state graph.
+
 ---
 
 ## Installation
@@ -600,7 +604,7 @@ In `prompted` mode (default), Rundown:
 | `--no-sandbox` | Disable sandbox enforcement |
 | `--sandbox-strict` | Fail if sandbox is unavailable |
 
-Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, or `package.json`. Executable `rundown.config.js/.cjs/.mjs` files are only loaded when passed via `--policy` together with `--trust-js-policy`.
+Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, or the `rundown` field in `package.json`. Executable `rundown.config.js/.cjs/.mjs` files are only loaded when passed via `--policy` together with `--trust-js-policy`.
 
 ### Examples
 

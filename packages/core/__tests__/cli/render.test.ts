@@ -60,18 +60,17 @@ describe('renderStepForCLI', () => {
   });
 
   it('omits transitions and substeps', () => {
-    const step = {
-      kind: 'command',
+    const step: Step = {
+      kind: 'substeps',
       name: '1',
       description: 'With extras',
-      command: { code: 'npm test' },
       transitions: {
         all: true,
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },
       substeps: [{ id: '1', description: 'Substep' }],
-    } as any as Step;
+    };
 
     const result = renderForTest(step);
 

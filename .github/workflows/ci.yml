@@ -26,13 +26,13 @@ jobs:
         run: npm ci
 
       - name: Format check
-        run: npm run format:check
+        run: npm run check:format
 
       - name: Spell check
-        run: npm run spellcheck
+        run: npm run check:spell
 
       - name: Fast lint (Biome)
-        run: npm run lint:fast
+        run: npm run check:lint:fast
 
   setup-build:
     runs-on: ubuntu-latest
@@ -95,7 +95,7 @@ jobs:
           path: packages
 
       - name: Type-checked lint (ESLint)
-        run: npm run lint:typed
+        run: npm run check:lint:typed
 
   test:
     runs-on: ubuntu-latest

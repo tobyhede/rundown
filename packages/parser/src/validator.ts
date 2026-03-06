@@ -124,12 +124,12 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
       // FOR iteration-level transitions allow full loop control and terminal routing.
       if (step.forClause.transitions) {
-        const allowedActions = ['CONTINUE', 'BREAK', 'GOTO', 'STOP', 'COMPLETE'];
+        const allowedActions = ['CONTINUE', 'DEFER', 'BREAK', 'GOTO', 'STOP', 'COMPLETE'];
         if (!allowedActions.includes(step.forClause.transitions.pass.action.type)) {
           diagnostics.push(
             error(
               step.line,
-              `FOR-level PASS transition in step "${step.name}" uses ${step.forClause.transitions.pass.action.type}; allowed actions are CONTINUE, BREAK, GOTO, STOP, COMPLETE`,
+              `FOR-level PASS transition in step "${step.name}" uses ${step.forClause.transitions.pass.action.type}; allowed actions are ${allowedActions.join(', ')}`,
             ),
           );
         }
@@ -137,7 +137,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
           diagnostics.push(
             error(
               step.line,
-              `FOR-level FAIL transition in step "${step.name}" uses ${step.forClause.transitions.fail.action.type}; allowed actions are CONTINUE, BREAK, GOTO, STOP, COMPLETE`,
+              `FOR-level FAIL transition in step "${step.name}" uses ${step.forClause.transitions.fail.action.type}; allowed actions are ${allowedActions.join(', ')}`,
             ),
           );
         }

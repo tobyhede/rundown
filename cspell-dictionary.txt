@@ -5,10 +5,10 @@ runbook
 runbooks
 rundown
 frontmatter
+preamble
 promptable
 substep
 substeps
-preamble
 microstep
 workpath
 worktree
@@ -45,6 +45,7 @@ autobuild
 bashisms
 centralise
 coreutils
+delegatable
 deserialized
 idempotently
 esac
@@ -164,9 +165,10 @@ behaviour
 categorises
 
 # Test fixture words
-émoji
 aindex
 ancvar
+dotdot
+émoji
 NOTVALID
 notavar
 pindex

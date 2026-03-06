@@ -66,17 +66,37 @@ export interface ResolvedVariables {
   readonly sources: Readonly<Record<string, DataSource>>;
 }
 
+/**
+ * Security context for file-backed variable resolution.
+ *
+ * When provided, file data sources are checked against the active policy
+ * before reading. If a prompter is available and the policy denies access,
+ * the user is prompted for explicit permission.
+ */
 export interface VariableSecurityContext {
+  /** Policy evaluator for checking file read permissions. */
   readonly evaluator?: PolicyEvaluator;
+  /** Interactive prompter for requesting user permission on denied paths. */
   readonly prompter?: PolicyPrompter;
 }
 
+/**
+ * Error thrown when a file-backed data source is blocked by security policy.
+ *
+ * Contains structured metadata (variable name, file path, denial reason)
+ * for programmatic handling by the CLI pipeline.
+ */
 export class FileSourcePolicyError extends Error {
   readonly code = 'POLICY_DENIED';
   readonly variable: string;
   readonly filePath: string;
   readonly reason: string;
 
+  /**
+   * @param variable - The variable name that referenced the blocked file source
+   * @param filePath - The resolved file path that was blocked
+   * @param reason - Human-readable denial reason from the policy engine
+   */
   constructor(variable: string, filePath: string, reason: string) {
     super(`File source "${variable}" blocked by policy: ${reason}`);
     this.name = 'FileSourcePolicyError';
@@ -517,7 +537,9 @@ async function enforceFileSourcePolicy(
  *
  * @param options - Variable sources from CLI flags, var-file, and frontmatter
  * @param cwd - Current working directory for resolving relative paths
+ * @param security - Optional security context for file source policy enforcement
  * @returns ResolvedVariables with vars and sources maps
+ * @throws {FileSourcePolicyError} When a file-backed data source is blocked by security policy
  */
 export async function resolveVariables(
   options: {

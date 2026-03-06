@@ -68,7 +68,7 @@ where substep-identifier is:
 
 where name is:
   [A-Za-z_][A-Za-z0-9_]*
-  (case-sensitive; must not be a reserved word: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY, BREAK, FOR, IN, TO, AT)
+  (case-sensitive; must not be a reserved word: NEXT, CONTINUE, DEFER, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY, BREAK, FOR, IN, TO, AT)
 
 where code_block is:
   "```" [ info_string ]
@@ -91,7 +91,7 @@ where transition is:
 
 Transitions must appear as list items with the `-` bullet prefix (a dash followed by a space). Paragraph-style transitions (without prefix) are not valid.
 
-### AWAIT modifier
+## AWAIT modifier
 
 `AWAIT` defers aggregation evaluation until all substeps complete (like `Promise.allSettled`).
 Without `AWAIT`, `ANY` short-circuits as soon as the outcome is determined (like `Promise.all` / `Promise.any`).
@@ -104,12 +104,12 @@ where result is:
   action | RETRY [ count ] [ action ]
 
 where action is:
-  CONTINUE | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK
+  CONTINUE | DEFER | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK
 
 Context constraints:
 - `NEXT` is only valid inside substeps of a FOR step
 - `BREAK` is valid inside substeps of a FOR step and FOR-level nested transitions
-- FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions: `CONTINUE` (advance to next iteration), `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
+- FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions: `CONTINUE` (advance to next iteration), `DEFER`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
 
 where message is:
   name | "\"" text "\""

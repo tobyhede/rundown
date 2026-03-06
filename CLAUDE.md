@@ -235,13 +235,16 @@ npm run test:unit     # Same as npm test
 npm run test:integration  # Integration tests in parallel
 npm run test:all      # Full suite: unit → integration → property → perf
 npm run test:coverage # Test coverage across all packages
+npm run verify        # Pre-PR: format, spell, lint, test (MUST run before push)
 npm run lint          # Lint all packages (biome + eslint)
-npm run lint:fast     # Fast lint (biome only)
-npm run lint:typed    # Typed lint (eslint only)
-npm run lint:fix      # Auto-fix lint issues
+npm run check:lint:fast   # Fast lint (biome only)
+npm run check:lint:typed  # Typed lint (eslint only)
+npm run fix:lint      # Auto-fix lint issues
+npm run fix:lint:fast # Auto-fix biome lint issues
+npm run fix:lint:typed # Auto-fix eslint lint issues
 npm run format        # Format all packages
-npm run format:check  # Check formatting
-npm run spellcheck    # Check spelling across all packages
+npm run check:format  # Check formatting
+npm run check:spell   # Check spelling across all packages
 npm run test:mutate   # Mutation testing (all packages, sequential)
 npm run test:mutate:parser  # Mutation testing for parser only
 npm run test:mutate:core    # Mutation testing for core only
