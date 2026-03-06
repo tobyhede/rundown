@@ -37,3 +37,6 @@ export interface ParsedConditional {
   /** The raw action string as it appeared in the source */
   raw: string;
 }
+
+/** Return type for parseConditional: single conditional, array (for DEFER shorthand), or null */
+export type ParseConditionalResult = ParsedConditional | ParsedConditional[] | null;

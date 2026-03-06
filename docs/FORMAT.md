@@ -88,6 +88,7 @@ If prompt text appears before a step-level `runbooks` shorthand body, it is atta
 
 where transition is:
   - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result
+  | - DEFER                         -- shorthand for PASS: DEFER + FAIL: DEFER
 
 Transitions must appear as list items with the `-` bullet prefix (a dash followed by a space). Paragraph-style transitions (without prefix) are not valid.
 
@@ -102,7 +103,7 @@ where action is:
 Context constraints:
 - `NEXT` is only valid inside substeps of a FOR step
 - `BREAK` is valid inside substeps of a FOR step and FOR-level nested transitions
-- FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions: `CONTINUE` (advance to next iteration), `DEFER`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
+- FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions: `CONTINUE` (advance to next iteration), `DEFER`, `NEXT` (loop back without accumulation), `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
 
 where message is:
   name | "\"" text "\""

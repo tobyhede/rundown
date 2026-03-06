@@ -1854,3 +1854,65 @@ Clean up.
     expect(() => parseRunbook(md)).toThrow(/Invalid FOR clause/);
   });
 });
+
+describe('DEFER shorthand', () => {
+  it('standalone DEFER on substep produces both pass and fail DEFER transitions', () => {
+    const md = `## 1. Validate
+
+- PASS ALL: COMPLETE
+- FAIL ANY: STOP
+
+### 1.1 Check
+
+- DEFER
+
+\`\`\`bash
+echo "check"
+\`\`\`
+`;
+    const steps = parseRunbook(md);
+    const substep = steps[0].substeps?.[0];
+    expect(substep).toBeDefined();
+    expect(substep!.transitions).toBeDefined();
+    expect(substep!.transitions!.pass.action).toEqual({ type: 'DEFER' });
+    expect(substep!.transitions!.fail.action).toEqual({ type: 'DEFER' });
+  });
+
+  it('standalone DEFER under FOR clause produces iteration-level DEFER transitions', () => {
+    const md = `## 1. Process
+
+- FOR item IN 1 TO 3
+  - DEFER
+- PASS ALL: COMPLETE
+- FAIL ANY: STOP
+
+### 1.1 Do {{item}}
+
+\`\`\`bash
+echo "{{item}}"
+\`\`\`
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('for');
+    if (steps[0].kind === 'for') {
+      expect(steps[0].forClause.transitions).toBeDefined();
+      expect(steps[0].forClause.transitions!.pass.action).toEqual({ type: 'DEFER' });
+      expect(steps[0].forClause.transitions!.fail.action).toEqual({ type: 'DEFER' });
+    }
+  });
+
+  it('standalone DEFER on step-level produces both pass and fail DEFER transitions', () => {
+    const md = `## 1. Check
+
+- DEFER
+
+\`\`\`bash
+echo "check"
+\`\`\`
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].transitions).toBeDefined();
+    expect(steps[0].transitions!.pass.action).toEqual({ type: 'DEFER' });
+    expect(steps[0].transitions!.fail.action).toEqual({ type: 'DEFER' });
+  });
+});

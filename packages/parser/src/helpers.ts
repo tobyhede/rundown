@@ -1,4 +1,9 @@
-import { RunbookSyntaxError, type ParsedConditional, type AggregationModifier } from './types.js';
+import {
+  RunbookSyntaxError,
+  type ParsedConditional,
+  type ParseConditionalResult,
+  type AggregationModifier,
+} from './types.js';
 import type { Action, Transitions } from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
 import {
@@ -559,13 +564,22 @@ function parseConditionalPrefix(
  * - PASS/YES: triggers on step success (e.g., "PASS: CONTINUE", "YES → GOTO 2")
  * - FAIL/NO: triggers on step failure (e.g., "FAIL: STOP", "NO → RETRY 3")
  * - With aggregation: "PASS ALL: CONTINUE", "FAIL ANY: STOP"
+ * - Standalone DEFER: shorthand for PASS: DEFER + FAIL: DEFER
  *
  * @param text - The conditional line to parse
- * @returns Parsed conditional with type, action, and optional modifier, or null if not a conditional
+ * @returns Parsed conditional (single or array for DEFER shorthand), or null if not a conditional
  * @throws {RunbookSyntaxError} If the line starts with PASS/FAIL/YES/NO but has invalid action
  */
-export function parseConditional(text: string): ParsedConditional | null {
+export function parseConditional(text: string): ParseConditionalResult {
   const trimmed = text.trim();
+
+  // Standalone DEFER shorthand: expands to PASS: DEFER + FAIL: DEFER
+  if (trimmed === 'DEFER') {
+    return [
+      { type: 'pass', retry: 0, action: { type: 'DEFER' }, modifier: null, raw: 'DEFER' },
+      { type: 'fail', retry: 0, action: { type: 'DEFER' }, modifier: null, raw: 'DEFER' },
+    ];
+  }
 
   if (trimmed.startsWith('PASS')) {
     const result = parseConditionalPrefix(trimmed.slice(4), 'pass');

@@ -141,6 +141,8 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 | `NEXT` | FOR Substep, FOR Iteration-Level | Skip to next iteration (no result accumulation). |
 | `BREAK` | FOR Substep, FOR Iteration-Level | Exit loop immediately. |
 
+> **Shorthand:** A standalone `- DEFER` bullet (without PASS/FAIL prefix) expands to `- PASS: DEFER` + `- FAIL: DEFER`. This is convenient for substeps where both outcomes should propagate to parent aggregation.
+
 GOTO targeting the containing step (self-reference) without an AT qualifier may create an infinite loop. Use RETRY for bounded re-execution.
 
 **GOTO Syntax**:

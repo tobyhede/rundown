@@ -882,6 +882,35 @@ describe('parseAction error cases', () => {
   });
 });
 
+describe('parseConditional DEFER shorthand', () => {
+  it('returns array of two ParsedConditionals for standalone DEFER', () => {
+    const result = parseConditional('DEFER');
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toEqual([
+      { type: 'pass', retry: 0, action: { type: 'DEFER' }, modifier: null, raw: 'DEFER' },
+      { type: 'fail', retry: 0, action: { type: 'DEFER' }, modifier: null, raw: 'DEFER' },
+    ]);
+  });
+
+  it('returns array of length 2', () => {
+    const result = parseConditional('DEFER');
+    expect(result).toHaveLength(2);
+  });
+
+  it('does not match DEFER with trailing text', () => {
+    // "DEFER something" should not match the shorthand — it would fall through
+    // to the normal parsing path which returns null
+    const result = parseConditional('DEFER something');
+    expect(result).toBeNull();
+  });
+
+  it('trims whitespace around standalone DEFER', () => {
+    const result = parseConditional('  DEFER  ');
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(2);
+  });
+});
+
 describe('parseConditional error cases', () => {
   it('throws for PASS with invalid action', () => {
     expect(() => parseConditional('PASS: UNKNOWN')).toThrow('Invalid PASS transition');
