@@ -779,7 +779,7 @@ describe('validator strict rules', () => {
   });
 
   describe('parent transition reachability', () => {
-    it('warns when all substeps have explicit non-DEFER transitions', () => {
+    it('errors when all substeps have explicit non-DEFER transitions', () => {
       const steps = [
         mockStep({
           name: '1',
@@ -811,11 +811,11 @@ describe('validator strict rules', () => {
         }),
       ];
       const diagnostics = validateRunbook(steps);
-      const errors = filterErrors(diagnostics);
-      expect(errors).toHaveLength(0);
-      const warnings = filterWarnings(diagnostics);
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0].message).toContain('no substep uses DEFER');
+      const deferErrors = filterErrors(diagnostics).filter((d) =>
+        d.message.includes('no substep uses DEFER'),
+      );
+      expect(deferErrors).toHaveLength(1);
+      expect(deferErrors[0].message).toContain('no substep uses DEFER');
     });
 
     it('passes when at least one substep uses DEFER', () => {
@@ -898,8 +898,10 @@ describe('validator strict rules', () => {
         }),
       ];
       const diagnostics = validateRunbook(steps);
-      const errors = filterErrors(diagnostics);
-      expect(errors).toHaveLength(0);
+      const deferErrors = diagnostics.filter((d) =>
+        d.message.includes('no substep uses DEFER'),
+      );
+      expect(deferErrors).toHaveLength(0);
     });
 
     it('does not fire when step has no parent transitions', () => {
@@ -920,10 +922,10 @@ describe('validator strict rules', () => {
         }),
       ];
       const diagnostics = validateRunbook(steps);
-      const deferDiagnostics = diagnostics.filter((d) =>
+      const deferErrors = diagnostics.filter((d) =>
         d.message.includes('no substep uses DEFER'),
       );
-      expect(deferDiagnostics).toHaveLength(0);
+      expect(deferErrors).toHaveLength(0);
     });
   });
 });

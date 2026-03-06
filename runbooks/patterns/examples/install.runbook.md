@@ -17,7 +17,7 @@ scenarios:
       - rd pass  # 3.2 Run first runbook
     result: COMPLETE
   minimal-install:
-    description: Installation only, skip getting started
+    description: Full installation with getting started
     commands:
       - rd run --prompted install.runbook.md
       - rd pass  # 1.1 Verify Node.js

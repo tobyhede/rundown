@@ -1565,6 +1565,7 @@ function checkedStateInsert(states: Record<string, unknown>, id: string, config:
  * @param steps - The parsed runbook steps to compile
  * @param options - Optional compilation options including data sources
  * @returns An XState state machine definition
+ * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function compileRunbookToMachine(

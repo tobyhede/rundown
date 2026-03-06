@@ -221,7 +221,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
       // For non-FOR steps: parent transitions use deferredResults for aggregation.
       // Only DEFER populates deferredResults — CONTINUE/NEXT/BREAK are flow control only.
-      // Substeps without explicit transitions auto-DEFER, so only warn when every substep
+      // Substeps without explicit transitions auto-DEFER, so only error when every substep
       // has explicit non-DEFER transitions (making aggregation vacuous: ALL always passes,
       // ANY always fails). FOR steps are excluded because their parent transitions aggregate
       // iteration results (fed by iteration-level DEFER), not substep deferredResults directly.
@@ -235,11 +235,10 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
         if (allSubstepsExplicitNonDefer && step.substeps.length > 0) {
           diagnostics.push(
-            warning(
+            error(
               step.line,
-              `Step "${step.name}" has parent transitions but no substep uses DEFER — ` +
-                `aggregation will be vacuous (ALL always passes, ANY always fails). ` +
-                `Use DEFER on at least one substep to propagate results to parent aggregation.`,
+              `Step "${step.name}" has substeps but no substep uses DEFER. ` +
+                `Use DEFER on at least one substep to propagate results to parent.`,
             ),
           );
         }

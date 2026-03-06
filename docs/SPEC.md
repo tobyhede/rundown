@@ -133,7 +133,7 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 | Action | Context | Effect |
 | :--- | :--- | :--- |
 | `CONTINUE` | Any | Proceed to next sequential unit. At FOR iteration level: exit loop. |
-| `DEFER` | Substep, FOR Iteration-Level | Pass result up one level for aggregation. |
+| `DEFER` | Substep, FOR Iteration-Level, Step-Level | Pass result up one level for aggregation. |
 | `STOP [msg]` | Any | Terminate execution immediately (failure). |
 | `COMPLETE [msg]` | Any | Terminate execution immediately (success). |
 | `GOTO {Target}` | Any | Jump to step/substep (e.g., `1`, `Error`). |
@@ -141,7 +141,7 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 | `NEXT` | FOR Substep, FOR Iteration-Level | Skip to next iteration (no result accumulation). |
 | `BREAK` | FOR Substep, FOR Iteration-Level | Exit loop immediately. |
 
-> **Shorthand:** A standalone `- DEFER` bullet (without PASS/FAIL prefix) expands to `- PASS: DEFER` + `- FAIL: DEFER`. This is convenient for substeps where both outcomes should propagate to parent aggregation.
+> **Shorthand:** A standalone `- DEFER` bullet (without PASS/FAIL prefix) expands to `- PASS: DEFER` + `- FAIL: DEFER`. This is convenient for substeps and steps where both outcomes should propagate to parent aggregation.
 
 GOTO targeting the containing step (self-reference) without an AT qualifier may create an infinite loop. Use RETRY for bounded re-execution.
 
