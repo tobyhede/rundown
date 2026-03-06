@@ -281,33 +281,28 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
       // Iteration retry loop
       let iterResult: 'pass' | 'fail' = 'fail';
       for (let iterRetry = 0; iterRetry <= config.iterationFailRetry; iterRetry++) {
-        const substepResults: ('pass' | 'fail')[] = [];
+        const deferredResults: ('pass' | 'fail')[] = [];
         let earlyExit: 'BREAK' | 'NEXT' | 'STOP' | 'COMPLETE' | null = null;
 
         // Substep loop
         for (let sub = 0; sub < config.numSubsteps; sub++) {
           let event = nextEvent();
           let substepAction: SubstepAction = config.substepFailAction;
+          let kind: 'pass' | 'fail' = 'fail';
 
           if (event === 'PASS') {
             substepAction = config.substepPassAction;
-            substepResults.push('pass');
+            kind = 'pass';
           } else {
             // Handle substep fail retry
-            let retried = false;
             for (let r = 0; r < config.substepFailRetry; r++) {
               // Retry: consume next event
               event = nextEvent();
               if (event === 'PASS') {
                 substepAction = config.substepPassAction;
-                substepResults.push('pass');
-                retried = true;
+                kind = 'pass';
                 break;
               }
-            }
-            if (!retried) {
-              substepAction = config.substepFailAction;
-              substepResults.push('fail');
             }
           }
 
@@ -322,12 +317,15 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
             earlyExit = 'NEXT';
             break;
           }
-          // CONTINUE or DEFER: advance to next substep (DEFER propagates result to parent)
+          // Only DEFER contributes to aggregation; CONTINUE is flow control only
+          if (substepAction === 'DEFER') {
+            deferredResults.push(kind);
+          }
         }
 
-        // Aggregate substep results for this iteration using iteration-level aggregation
-        const hasFailed = substepResults.some((r) => r === 'fail');
-        const passCount = substepResults.filter((r) => r === 'pass').length;
+        // Aggregate deferred results for this iteration using iteration-level aggregation
+        const hasFailed = deferredResults.some((r) => r === 'fail');
+        const passCount = deferredResults.filter((r) => r === 'pass').length;
         iterResult = shouldAggregationPass(hasFailed, passCount, config.iterationAggMode)
           ? 'pass'
           : 'fail';
