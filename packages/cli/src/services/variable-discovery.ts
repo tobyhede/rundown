@@ -92,6 +92,11 @@ export class FileSourcePolicyError extends Error {
   readonly filePath: string;
   readonly reason: string;
 
+  /**
+   * @param variable - The variable name that referenced the blocked file source
+   * @param filePath - The resolved file path that was blocked
+   * @param reason - Human-readable denial reason from the policy engine
+   */
   constructor(variable: string, filePath: string, reason: string) {
     super(`File source "${variable}" blocked by policy: ${reason}`);
     this.name = 'FileSourcePolicyError';
@@ -532,7 +537,9 @@ async function enforceFileSourcePolicy(
  *
  * @param options - Variable sources from CLI flags, var-file, and frontmatter
  * @param cwd - Current working directory for resolving relative paths
+ * @param security - Optional security context for file source policy enforcement
  * @returns ResolvedVariables with vars and sources maps
+ * @throws {FileSourcePolicyError} When a file-backed data source is blocked by security policy
  */
 export async function resolveVariables(
   options: {

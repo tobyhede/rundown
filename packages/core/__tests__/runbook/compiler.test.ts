@@ -6260,7 +6260,7 @@ echo "processing"
   });
 
   describe('aggregation substep default transitions', () => {
-    it('substeps default to CONTINUE on fail — advance to next substep under PASS ANY', () => {
+    it('substeps default to DEFER on fail — advance to next substep under PASS ANY', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -6283,7 +6283,7 @@ echo "processing"
 
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
-      // Substep 1 fails — DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS FAIL: CONTINUE → routes to parent
+      // Substep 1 fails — DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS FAIL: DEFER → routes to parent
       // PASS ANY: first fail doesn't determine outcome → advance to substep 2
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::1::2');

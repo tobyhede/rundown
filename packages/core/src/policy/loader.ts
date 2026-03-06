@@ -55,6 +55,9 @@ const SEARCH_PLACES = [
 export class PolicyConfigTrustRequiredError extends Error {
   readonly filepath: string;
 
+  /**
+   * @param filepath - Path to the executable policy config that requires trust
+   */
   constructor(filepath: string) {
     super(
       `Executable policy config requires trust: ${filepath}. ` +

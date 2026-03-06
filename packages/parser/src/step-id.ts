@@ -4,7 +4,7 @@ import type { StepId } from './schemas.js';
  * Reserved words that cannot be used as named step or substep identifiers.
  *
  * These keywords have special meaning in the Rundown runbook syntax:
- * - Flow control: NEXT, CONTINUE, COMPLETE, STOP, GOTO, RETRY
+ * - Flow control: NEXT, CONTINUE, DEFER, COMPLETE, STOP, GOTO, RETRY
  * - FOR loop: FOR, IN, TO, AT, BREAK
  * - Conditionals: PASS, FAIL, YES, NO
  * - Aggregation: ALL, ANY, AWAIT

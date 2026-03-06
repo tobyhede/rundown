@@ -9,6 +9,7 @@ import type { Step, SubstepState, Action, StepId, Transitions } from './types.js
  * - goto: Jump to a specific step
  * - continue: Proceed to the next step
  * - complete: Mark the runbook as complete
+ * - defer: Defer to parent aggregation state
  */
 export interface ConditionResult {
   /** The action to take based on the condition evaluation */
