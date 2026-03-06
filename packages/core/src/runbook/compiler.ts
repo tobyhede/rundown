@@ -1165,14 +1165,12 @@ function buildTerminalTransition(
  * @param actionType - The loop control action ('NEXT' or 'BREAK')
  * @param stepName - The current step name
  * @param steps - The full array of runbook steps
- * @param kind - Whether this is a 'pass' or 'fail' transition
  * @returns XState transition configuration
  */
 function buildLoopControlTransition(
   actionType: 'NEXT' | 'BREAK',
   stepName: string,
   steps: Step[],
-  kind: 'pass' | 'fail',
 ): TransitionConfig {
   const currentStep = steps.find((s) => s.name === stepName);
   if (currentStep?.kind !== 'for') {
@@ -1261,14 +1259,12 @@ function buildDeferTransition(
  * @param stepName - The current step name
  * @param substepId - The current substep ID within the step
  * @param steps - The full array of runbook steps
- * @param kind - Whether this is a 'pass' or 'fail' transition
  * @returns XState transition configuration
  */
 function buildContinueTransition(
   stepName: string,
   substepId: string | undefined,
   steps: Step[],
-  kind: 'pass' | 'fail',
 ): TransitionConfig {
   const currentStep = steps.find((s) => s.name === stepName);
 
@@ -1443,7 +1439,7 @@ function buildActionTransition(
 
   switch (action.type) {
     case 'CONTINUE':
-      return buildContinueTransition(stepName, substepId, steps, resultKind);
+      return buildContinueTransition(stepName, substepId, steps);
     case 'DEFER':
       return buildDeferTransition(stepName, substepId, steps, resultKind);
     case 'COMPLETE':
@@ -1453,9 +1449,9 @@ function buildActionTransition(
     case 'GOTO':
       return buildGotoTransition(action.target, stepName, substepId, steps, sources);
     case 'NEXT':
-      return buildLoopControlTransition('NEXT', stepName, steps, resultKind);
+      return buildLoopControlTransition('NEXT', stepName, steps);
     case 'BREAK':
-      return buildLoopControlTransition('BREAK', stepName, steps, resultKind);
+      return buildLoopControlTransition('BREAK', stepName, steps);
   }
 }
 

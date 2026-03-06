@@ -2106,15 +2106,17 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 3 },
           description: 'FOR step',
-          substeps: [{
-            id: '1',
-            description: 'Sub',
-            transitions: {
-              all: true,
-              pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
-              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
             },
-          }],
+          ],
         },
         {
           name: '2',
@@ -4744,15 +4746,17 @@ echo "processing"
           description: 'FOR loop',
           forClause: { start: 1, end: 3 },
           transitions: DEFAULT_TRANSITIONS,
-          substeps: [{
-            id: '1',
-            description: 'Sub 1',
-            transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+              },
             },
-          }],
+          ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
       ]);
@@ -6467,32 +6471,29 @@ echo "processing"
         ['DEFER', 'FAIL', ['fail'], 'STOPPED'],
         ['CONTINUE', 'PASS', [], 'COMPLETE'],
         ['CONTINUE', 'FAIL', [], 'COMPLETE'],
-      ])(
-        'substep %s on %s → deferredResults=%j, final=%s (PASS ALL)',
-        (action, event, expectedDeferred, expectedState) => {
-          const steps = inferSteps([
-            {
-              name: '1',
-              description: 'Parent',
-              transitions: PASS_ALL_TRANSITIONS,
-              substeps: [
-                {
-                  id: '1',
-                  description: 'Only substep',
-                  transitions: makeSubstepTransitions(action, action),
-                },
-              ],
-            },
-          ]);
-          const machine = compileRunbookToMachine(steps);
-          const actor = createActor(machine);
-          actor.start();
-          actor.send({ type: event as 'PASS' | 'FAIL' });
-          const ctx = actor.getSnapshot().context;
-          expect(ctx.deferredResults).toEqual(expectedDeferred);
-          expect(actor.getSnapshot().value).toBe(expectedState);
-        },
-      );
+      ])('substep %s on %s → deferredResults=%j, final=%s (PASS ALL)', (action, event, expectedDeferred, expectedState) => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Only substep',
+                transitions: makeSubstepTransitions(action, action),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: event as 'PASS' | 'FAIL' });
+        const ctx = actor.getSnapshot().context;
+        expect(ctx.deferredResults).toEqual(expectedDeferred);
+        expect(actor.getSnapshot().value).toBe(expectedState);
+      });
     });
 
     describe('non-FOR: two substeps, PASS ALL', () => {
@@ -6509,38 +6510,35 @@ echo "processing"
         ['CONTINUE', 'CONTINUE', 'PASS', 'PASS', [], 'COMPLETE'],
         ['CONTINUE', 'CONTINUE', 'FAIL', 'FAIL', [], 'COMPLETE'],
         ['CONTINUE', 'CONTINUE', 'PASS', 'FAIL', [], 'COMPLETE'],
-      ])(
-        'sub1=%s sub2=%s events=%s,%s → deferredResults=%j, final=%s',
-        (sub1Action, sub2Action, event1, event2, expectedDeferred, expectedState) => {
-          const steps = inferSteps([
-            {
-              name: '1',
-              description: 'Parent',
-              transitions: PASS_ALL_TRANSITIONS,
-              substeps: [
-                {
-                  id: '1',
-                  description: 'Sub 1',
-                  transitions: makeSubstepTransitions(sub1Action, sub1Action),
-                },
-                {
-                  id: '2',
-                  description: 'Sub 2',
-                  transitions: makeSubstepTransitions(sub2Action, sub2Action),
-                },
-              ],
-            },
-          ]);
-          const machine = compileRunbookToMachine(steps);
-          const actor = createActor(machine);
-          actor.start();
-          actor.send({ type: event1 as 'PASS' | 'FAIL' });
-          actor.send({ type: event2 as 'PASS' | 'FAIL' });
-          const ctx = actor.getSnapshot().context;
-          expect(ctx.deferredResults).toEqual(expectedDeferred);
-          expect(actor.getSnapshot().value).toBe(expectedState);
-        },
-      );
+      ])('sub1=%s sub2=%s events=%s,%s → deferredResults=%j, final=%s', (sub1Action, sub2Action, event1, event2, expectedDeferred, expectedState) => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions(sub1Action, sub1Action),
+              },
+              {
+                id: '2',
+                description: 'Sub 2',
+                transitions: makeSubstepTransitions(sub2Action, sub2Action),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: event1 as 'PASS' | 'FAIL' });
+        actor.send({ type: event2 as 'PASS' | 'FAIL' });
+        const ctx = actor.getSnapshot().context;
+        expect(ctx.deferredResults).toEqual(expectedDeferred);
+        expect(actor.getSnapshot().value).toBe(expectedState);
+      });
     });
 
     describe('non-FOR: two substeps, PASS ANY', () => {
@@ -6553,38 +6551,35 @@ echo "processing"
         ['CONTINUE', 'CONTINUE', 'FAIL', 'FAIL', [], 'STOPPED'],
         ['CONTINUE', 'DEFER', 'FAIL', 'PASS', ['pass'], 'COMPLETE'],
         ['CONTINUE', 'DEFER', 'FAIL', 'FAIL', ['fail'], 'STOPPED'],
-      ])(
-        'sub1=%s sub2=%s events=%s,%s → deferredResults=%j, final=%s (PASS ANY)',
-        (sub1Action, sub2Action, event1, event2, expectedDeferred, expectedState) => {
-          const steps = inferSteps([
-            {
-              name: '1',
-              description: 'Parent',
-              transitions: PASS_ANY_TRANSITIONS,
-              substeps: [
-                {
-                  id: '1',
-                  description: 'Sub 1',
-                  transitions: makeSubstepTransitions(sub1Action, sub1Action),
-                },
-                {
-                  id: '2',
-                  description: 'Sub 2',
-                  transitions: makeSubstepTransitions(sub2Action, sub2Action),
-                },
-              ],
-            },
-          ]);
-          const machine = compileRunbookToMachine(steps);
-          const actor = createActor(machine);
-          actor.start();
-          actor.send({ type: event1 as 'PASS' | 'FAIL' });
-          actor.send({ type: event2 as 'PASS' | 'FAIL' });
-          const ctx = actor.getSnapshot().context;
-          expect(ctx.deferredResults).toEqual(expectedDeferred);
-          expect(actor.getSnapshot().value).toBe(expectedState);
-        },
-      );
+      ])('sub1=%s sub2=%s events=%s,%s → deferredResults=%j, final=%s (PASS ANY)', (sub1Action, sub2Action, event1, event2, expectedDeferred, expectedState) => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ANY_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions(sub1Action, sub1Action),
+              },
+              {
+                id: '2',
+                description: 'Sub 2',
+                transitions: makeSubstepTransitions(sub2Action, sub2Action),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: event1 as 'PASS' | 'FAIL' });
+        actor.send({ type: event2 as 'PASS' | 'FAIL' });
+        const ctx = actor.getSnapshot().context;
+        expect(ctx.deferredResults).toEqual(expectedDeferred);
+        expect(actor.getSnapshot().value).toBe(expectedState);
+      });
     });
 
     describe('non-FOR: BREAK substep in multi-substep step', () => {
@@ -6723,42 +6718,39 @@ echo "processing"
         ['CONTINUE', 'FAIL', 'PASS', ['pass'], 'COMPLETE'],
         ['CONTINUE', 'PASS', 'FAIL', ['pass'], 'COMPLETE'],
         ['CONTINUE', 'FAIL', 'FAIL', ['pass'], 'COMPLETE'],
-      ])(
-        'substep %s: iter1=%s iter2=%s → iterationResults=%j, final=%s (PASS ALL, 2 iters)',
-        (action, event1, event2, expectedIterResults, expectedState) => {
-          const steps = inferSteps([
-            {
-              name: '1',
-              forClause: { start: 1, end: 2, transitions: FOR_DEFER_TRANSITIONS },
-              description: 'FOR loop',
-              transitions: PASS_ALL_TRANSITIONS,
-              substeps: [
-                {
-                  id: '1',
-                  description: 'Single substep',
-                  transitions: makeSubstepTransitions(action, action),
-                },
-              ],
-            },
-            {
-              name: '2',
-              description: 'Done',
-              transitions: {
-                ...DEFAULT_TRANSITIONS,
-                pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+      ])('substep %s: iter1=%s iter2=%s → iterationResults=%j, final=%s (PASS ALL, 2 iters)', (action, event1, event2, expectedIterResults, expectedState) => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 2, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Single substep',
+                transitions: makeSubstepTransitions(action, action),
               },
+            ],
+          },
+          {
+            name: '2',
+            description: 'Done',
+            transitions: {
+              ...DEFAULT_TRANSITIONS,
+              pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             },
-          ]);
-          const machine = compileRunbookToMachine(steps);
-          const actor = createActor(machine);
-          actor.start();
-          actor.send({ type: event1 as 'PASS' | 'FAIL' }); // iteration 1
-          actor.send({ type: event2 as 'PASS' | 'FAIL' }); // iteration 2
-          const ctx = actor.getSnapshot().context;
-          expect(ctx.iterationResults).toEqual(expectedIterResults);
-          expect(actor.getSnapshot().value).toBe(expectedState);
-        },
-      );
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: event1 as 'PASS' | 'FAIL' }); // iteration 1
+        actor.send({ type: event2 as 'PASS' | 'FAIL' }); // iteration 2
+        const ctx = actor.getSnapshot().context;
+        expect(ctx.iterationResults).toEqual(expectedIterResults);
+        expect(actor.getSnapshot().value).toBe(expectedState);
+      });
     });
 
     describe('FOR: mixed substep actions in multi-substep iteration', () => {
