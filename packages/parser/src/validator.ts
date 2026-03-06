@@ -20,6 +20,10 @@ function error(line: number | undefined, message: string): ValidationDiagnostic 
   return { severity: 'error', line, message };
 }
 
+function warning(line: number | undefined, message: string): ValidationDiagnostic {
+  return { severity: 'warning', line, message };
+}
+
 function warn(line: number | undefined, message: string): ValidationDiagnostic {
   return { severity: 'warning', line, message };
 }
@@ -215,11 +219,12 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         }
       }
 
-      // For non-FOR steps: parent transitions require at least one substep to DEFER
-      // results upward. Substeps without explicit transitions auto-DEFER, so only warn
-      // when every substep has explicit non-DEFER transitions (making parent transitions
-      // unreachable). FOR steps are excluded because their parent transitions aggregate
-      // iteration results (fed by iteration-level DEFER), not substep results directly.
+      // For non-FOR steps: parent transitions use deferredResults for aggregation.
+      // Only DEFER populates deferredResults — CONTINUE/NEXT/BREAK are flow control only.
+      // Substeps without explicit transitions auto-DEFER, so only warn when every substep
+      // has explicit non-DEFER transitions (making aggregation vacuous: ALL always passes,
+      // ANY always fails). FOR steps are excluded because their parent transitions aggregate
+      // iteration results (fed by iteration-level DEFER), not substep deferredResults directly.
       if (step.transitions && step.kind !== 'for') {
         const allSubstepsExplicitNonDefer = step.substeps.every((sub) => {
           if (!sub.transitions) return false; // no explicit transitions → will auto-DEFER
@@ -230,9 +235,10 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
         if (allSubstepsExplicitNonDefer && step.substeps.length > 0) {
           diagnostics.push(
-            error(
+            warning(
               step.line,
-              `Step "${step.name}" has parent transitions but no substep uses DEFER — parent transitions are unreachable. ` +
+              `Step "${step.name}" has parent transitions but no substep uses DEFER — ` +
+                `aggregation will be vacuous (ALL always passes, ANY always fails). ` +
                 `Use DEFER on at least one substep to propagate results to parent aggregation.`,
             ),
           );
