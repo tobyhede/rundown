@@ -1608,6 +1608,8 @@ function checkedStateInsert(states: Record<string, unknown>, id: string, config:
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
+// Return type validated via `satisfies RunbookMachine` at the return site.
+// Explicit annotation would erase XState's inferred event types, breaking actor.send() downstream.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function compileRunbookToMachine(
   steps: Step[],
@@ -1932,5 +1934,5 @@ export function compileRunbookToMachine(
         }),
       },
     },
-  });
+  }) satisfies RunbookMachine;
 }
