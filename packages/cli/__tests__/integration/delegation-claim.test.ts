@@ -28,9 +28,6 @@ describe('Delegation claim integration', () => {
 ### 1.1 Code review
 Do code review.
 
-### 1.2 Security review
-Do security review.
-
 ## 2. Done
 - PASS: COMPLETE
 
@@ -263,12 +260,10 @@ rd echo --result pass
       result = runCli(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // After claim, parent should have advanced to substep 1.2
-      // (because child completed and propagated PASS to parent substep 1.1)
+      // After claim, parent should have advanced past step 1 (single substep → PASS ALL → CONTINUE)
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(updatedParent!.step).toBe('1');
-      expect(updatedParent!.substep).toBe('2');
+      expect(updatedParent!.step).toBe('2');
     });
 
     it('auto-propagates fail when child stops during claim', async () => {

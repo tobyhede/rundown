@@ -29,9 +29,6 @@ describe('claim command', () => {
 ### 1.1 Code review
 Do code review.
 
-### 1.2 Security review
-Do security review.
-
 ## 2. Done
 - PASS: COMPLETE
 
@@ -276,10 +273,10 @@ rd echo --result pass
       result = runCli(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parent should advance past 1.1
+      // Parent should advance past step 1 (single substep → PASS ALL → CONTINUE to step 2)
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(updatedParent!.substep).toBe('2');
+      expect(updatedParent!.step).toBe('2');
     });
 
     it('propagates fail when child auto-stops during claim', async () => {

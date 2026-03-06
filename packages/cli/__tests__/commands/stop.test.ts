@@ -138,9 +138,6 @@ Do work.
 ### 1.1 Code review
 Do code review.
 
-### 1.2 Security review
-Do security review.
-
 ## 2. Done
 - PASS: COMPLETE
 
@@ -284,9 +281,6 @@ Run the child task.
 
 ### 1.1 Deploy
 Deploy step.
-
-### 1.2 Verify
-Verify step.
 `;
       await writeFile(join(workspace.cwd, 'grandparent.runbook.md'), grandparentContent);
 

@@ -29,9 +29,6 @@ describe('Delegation propagation integration', () => {
 ### 1.1 Code review
 Do code review.
 
-### 1.2 Security review
-Do security review.
-
 ## 2. Done
 - PASS: COMPLETE
 
@@ -120,15 +117,10 @@ Run the child task.
       expect(finalChildState).not.toBeNull();
       expect(getVariables(finalChildState!).completed).toBe(true);
 
-      // Verify: parent should have advanced past substep 1.1 to substep 1.2
-      // (the completion was consumed by the drain, so resolvedCompletions is empty,
-      // but the parent state should reflect the advancement)
+      // Verify: parent should have advanced past step 1 (single substep → PASS ALL → CONTINUE)
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      // Parent should still be on step 1 (only 1 of 2 substeps resolved)
-      expect(updatedParent!.step).toBe('1');
-      // Parent should have advanced to substep 2 (1.2)
-      expect(updatedParent!.substep).toBe('2');
+      expect(updatedParent!.step).toBe('2');
     });
   });
 
@@ -279,7 +271,23 @@ Review the deployment.
 
   describe('out-of-order completion', () => {
     it('substep 1.2 completes before 1.1 — completion stored but parent waits', async () => {
-      await writeParentRunbook();
+      // This test needs 2 substeps for out-of-order completion testing
+      const twoSubstepParent = `## 1. Review
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+### 1.1 Code review
+Do code review.
+
+### 1.2 Security review
+Do security review.
+
+## 2. Done
+- PASS: COMPLETE
+
+Final step.
+`;
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), twoSubstepParent);
       await writeChildRunbook();
 
       // Start parent
@@ -386,7 +394,23 @@ Do the task.
     });
 
     it('handles concurrent delegation completions gracefully', async () => {
-      await writeParentRunbook();
+      // This test needs 2 substeps for concurrent delegation
+      const twoSubstepParent = `## 1. Review
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+### 1.1 Code review
+Do code review.
+
+### 1.2 Security review
+Do security review.
+
+## 2. Done
+- PASS: COMPLETE
+
+Final step.
+`;
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), twoSubstepParent);
       await writeChildRunbook();
 
       // Start parent

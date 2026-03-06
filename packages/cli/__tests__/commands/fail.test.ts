@@ -224,16 +224,13 @@ Do work.
     });
 
     it('fail on substep with PASS ALL transition', async () => {
-      // Create runbook with substeps and PASS ALL
+      // Create runbook with single substep and FAIL ANY
       const substepRunbook = `## 1. Process
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP
 
 ### 1.1 First substep
 Do first task.
-
-### 1.2 Second substep
-Do second task.
 
 ## 2. Done
 - PASS: COMPLETE
