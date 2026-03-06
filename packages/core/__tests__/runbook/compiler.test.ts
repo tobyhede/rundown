@@ -6449,7 +6449,7 @@ echo "processing"
       expect(() => compileRunbookToMachine(steps)).not.toThrow();
     });
 
-    it('routes GOTO to nonexistent step to COMPLETE instead of dangling', () => {
+    it('throws on GOTO to nonexistent step instead of silently routing', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -6466,13 +6466,59 @@ echo "processing"
         },
       ]);
 
-      // Compiler guards against dangling targets by routing to COMPLETE
-      const machine = compileRunbookToMachine(steps);
-      const actor = createActor(machine);
-      actor.start();
+      expect(() => compileRunbookToMachine(steps)).toThrow(
+        /GOTO target step .* does not exist/,
+      );
+    });
 
-      actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('COMPLETE');
+    it('throws when NEXT appears as parent-step action', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Step with substeps',
+          substeps: [
+            { id: '1', description: 'Sub 1' },
+            { id: '2', description: 'Sub 2' },
+          ],
+          transitions: {
+            all: true,
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'NEXT' as const },
+            },
+            fail: DEFAULT_TRANSITIONS.fail,
+          },
+        },
+        {
+          name: '2',
+          description: 'Second step',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      expect(() => compileRunbookToMachine(steps)).toThrow(
+        /invariant violation/,
+      );
+    });
+
+    it('throws on duplicate state IDs', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'First step',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+        {
+          name: '1',
+          description: 'Duplicate step name',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      expect(() => compileRunbookToMachine(steps)).toThrow(
+        /duplicate state ID/,
+      );
     });
   });
 });

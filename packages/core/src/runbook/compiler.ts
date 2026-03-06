@@ -28,6 +28,15 @@ export const runbookSetup = setup({
 /** Machine type produced by {@link compileRunbookToMachine}. */
 export type RunbookMachine = ReturnType<typeof runbookSetup.createMachine>;
 
+/** Reference to the named `setLastAction` action declared in {@link runbookSetup}. */
+type SetLastActionRef = {
+  type: 'setLastAction';
+  params: { action: LastAction; msg?: string };
+};
+
+/** Union of all action types the compiler emits into XState transitions. */
+type CompilerAction = ReturnType<typeof runbookSetup.assign> | SetLastActionRef;
+
 /**
  * Safety limit for file-backed data sources with open iteration windows.
  *
@@ -92,7 +101,7 @@ export type RunbookEvent =
  */
 interface TransitionEntry {
   target?: string | null;
-  actions?: unknown;
+  actions?: CompilerAction | CompilerAction[];
   guard?: (args: { context: RunbookContext; event: RunbookEvent }) => boolean;
 }
 
@@ -100,7 +109,7 @@ interface TransitionEntry {
 interface AlwaysTransition {
   guard?: (args: { context: RunbookContext }) => boolean;
   target?: string | null;
-  actions?: unknown;
+  actions?: CompilerAction | CompilerAction[];
 }
 
 type TransitionConfig = TransitionEntry | TransitionEntry[];
@@ -1110,7 +1119,11 @@ function resolveActionTarget(action: Action, stepName: string, steps: Step[]): s
       return 'STOPPED';
     case 'GOTO': {
       const targetStep = steps.find((s) => s.name === action.target.step);
-      if (!targetStep) return 'COMPLETE';
+      if (!targetStep) {
+        throw new Error(
+          `Compiler error: GOTO target step "${action.target.step}" does not exist`,
+        );
+      }
       const substep =
         targetStep.kind === 'substeps' || targetStep.kind === 'for'
           ? (action.target.substep ?? targetStep.substeps[0]?.id)
@@ -1119,10 +1132,10 @@ function resolveActionTarget(action: Action, stepName: string, steps: Step[]): s
     }
     case 'NEXT':
     case 'BREAK':
-      // Defensive: NEXT/BREAK are substep-level loop control actions and should
-      // never appear as parent-step aggregation actions. The parser's validateNEXTUsage
-      // prevents this, so this branch is unreachable in well-formed runbooks.
-      return 'STOPPED';
+      throw new Error(
+        `Compiler invariant violation: ${action.type} appeared as parent-step action. ` +
+          `This should be caught by parser validateNEXTUsage.`,
+      );
   }
 }
 
@@ -1333,8 +1346,9 @@ function buildGotoTransition(
   // Named/numeric step target (both are strings now)
   const targetStepObj = steps.find((s) => s.name === targetStep);
   if (!targetStepObj) {
-    // Invalid target - go to COMPLETE
-    return { target: 'COMPLETE' };
+    throw new Error(
+      `Compiler error: GOTO target step "${targetStep}" does not exist`,
+    );
   }
 
   // Handle GOTO to step with substeps (explicit FOR or implicit 1..1)
@@ -1527,6 +1541,24 @@ function validateGraph(
 }
 
 /**
+ * Insert a state config into the states record, throwing on duplicate IDs.
+ *
+ * @param states - The mutable states record
+ * @param id - The state ID to insert
+ * @param config - The state configuration
+ */
+function checkedStateInsert(
+  states: Record<string, unknown>,
+  id: string,
+  config: unknown,
+): void {
+  if (id in states) {
+    throw new Error(`Compiler error: duplicate state ID "${id}"`);
+  }
+  states[id] = config;
+}
+
+/**
  * Compile runbook steps into an XState state machine.
  *
  * Generates a finite state machine from the runbook definition with:
@@ -1538,7 +1570,6 @@ function validateGraph(
  * @param options - Optional compilation options including data sources
  * @returns An XState state machine definition
  */
-// XState snapshot type is not fully typed
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function compileRunbookToMachine(
   steps: Step[],
@@ -1547,9 +1578,9 @@ export function compileRunbookToMachine(
   const states: Record<
     string,
     {
-      on?: Record<string, TransitionConfig | unknown[]>;
+      on?: Record<string, TransitionConfig | TransitionEntry[]>;
       always?: AlwaysTransition[];
-      entry?: unknown;
+      entry?: CompilerAction | CompilerAction[];
     }
   > = {};
 
@@ -1602,7 +1633,7 @@ export function compileRunbookToMachine(
   // Build the machine states
   allStates.forEach((config) => {
     if (config.isParentState) {
-      states[config.id] = buildParentStateConfig(config, steps, options?.sources);
+      checkedStateInsert(states, config.id, buildParentStateConfig(config, steps, options?.sources));
       return;
     }
 
@@ -1741,7 +1772,7 @@ export function compileRunbookToMachine(
       };
     });
 
-    states[config.id] = {
+    checkedStateInsert(states, config.id, {
       ...entryActions,
       on: {
         PASS: buildTransition(
@@ -1771,11 +1802,11 @@ export function compileRunbookToMachine(
         },
         GOTO: buildGotoTransitionsForState,
       },
-    };
+    });
 
     // Register retry states for transitions with retry > 0
     if (config.transitions.pass.retry > 0) {
-      states[`${config.id}::pass-retry`] = buildRetryStateConfig(
+      checkedStateInsert(states, `${config.id}::pass-retry`, buildRetryStateConfig(
         config.transitions.pass,
         config.id,
         config.stepName,
@@ -1783,10 +1814,10 @@ export function compileRunbookToMachine(
         steps,
         'pass',
         options?.sources,
-      );
+      ));
     }
     if (config.transitions.fail.retry > 0) {
-      states[`${config.id}::fail-retry`] = buildRetryStateConfig(
+      checkedStateInsert(states, `${config.id}::fail-retry`, buildRetryStateConfig(
         config.transitions.fail,
         config.id,
         config.stepName,
@@ -1794,7 +1825,7 @@ export function compileRunbookToMachine(
         steps,
         'fail',
         options?.sources,
-      );
+      ));
     }
   });
 
