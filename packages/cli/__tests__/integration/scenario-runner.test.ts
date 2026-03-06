@@ -4,7 +4,7 @@ import {
   getAllStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { join, dirname, basename, delimiter } from 'node:path';
+import { join, dirname, basename, delimiter, isAbsolute, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractRawFrontmatter } from '../../src/helpers/extract-raw-frontmatter.js';
 import {
@@ -202,8 +202,21 @@ function copyPatternWithDependencies(
   const patternSubdir = dirname(filename);
   const varFileDirs = extractVarFileDirs(scenario);
   for (const dir of varFileDirs) {
+    // Reject absolute paths and path traversal
+    if (isAbsolute(dir) || normalize(dir).startsWith('..')) {
+      throw new Error(`Unsafe var-file directory in scenario: ${dir}`);
+    }
     const srcDir = join(patternsDir, patternSubdir, dir);
     const destDir = join(workspace.cwd, dir);
+    const resolvedSrc = resolve(srcDir);
+    const resolvedDest = resolve(destDir);
+    const srcRoot = resolve(patternsDir, patternSubdir);
+    if (!resolvedSrc.startsWith(srcRoot + sep) && resolvedSrc !== srcRoot) {
+      throw new Error(`Var-file source escapes pattern root: ${dir}`);
+    }
+    if (!resolvedDest.startsWith(workspace.cwd + sep) && resolvedDest !== workspace.cwd) {
+      throw new Error(`Var-file destination escapes workspace root: ${dir}`);
+    }
     try {
       copyDirSync(srcDir, destDir);
     } catch (err) {

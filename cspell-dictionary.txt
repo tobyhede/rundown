@@ -42,10 +42,10 @@ zod
 
 # Technical terms
 autobuild
-delegatable
 bashisms
 centralise
 coreutils
+delegatable
 deserialized
 idempotently
 esac
@@ -165,10 +165,10 @@ behaviour
 categorises
 
 # Test fixture words
-dotdot
-émoji
 aindex
 ancvar
+dotdot
+émoji
 NOTVALID
 notavar
 pindex
