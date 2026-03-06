@@ -5,9 +5,12 @@ tags:
   - for-loops
 scenarios:
   completed:
-    description: FAIL NEXT skips failed iterations at iteration level
+    description: Iteration 1 fails (NEXT skips), iterations 2-3 pass, PASS ANY fires COMPLETE
     commands:
-      - rd run for-next-at-iteration.runbook.md
+      - rd run --prompted for-next-at-iteration.runbook.md
+      - rd fail
+      - rd pass
+      - rd pass
     result: COMPLETE
 ---
 
@@ -16,6 +19,7 @@ scenarios:
 ## 1. Process items
 
 - FOR item IN 1 TO 3
+  - PASS: DEFER
   - FAIL: NEXT
 - PASS ANY: COMPLETE
 - FAIL ALL: STOP
@@ -23,5 +27,5 @@ scenarios:
 ### 1.1 Attempt {{item}}
 
 ```bash
-rd echo --result fail --result pass --result pass
+rd echo "item={{item}}"
 ```

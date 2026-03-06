@@ -911,8 +911,7 @@ function buildParentStateConfig(
       if (
         transition.action.type !== 'GOTO' &&
         transition.action.type !== 'STOP' &&
-        transition.action.type !== 'COMPLETE' &&
-        transition.action.type !== 'CONTINUE'
+        transition.action.type !== 'COMPLETE'
       ) {
         return;
       }
@@ -938,6 +937,33 @@ function buildParentStateConfig(
     // 3. Iteration-level direct actions bypass parent aggregation.
     pushDirectIterationExit('pass', forTransitions.pass);
     pushDirectIterationExit('fail', forTransitions.fail);
+
+    // 3b. Iteration-level CONTINUE: exit loop + route to parent aggregation.
+    // Unlike GOTO/STOP/COMPLETE (which bypass aggregation), CONTINUE exits the loop
+    // and lets step-level aggregation evaluate over accumulated iteration results.
+    const pushIterationContinueExit = (
+      kind: 'pass' | 'fail',
+      transition: { retry: number; action: Action },
+    ): void => {
+      if (transition.action.type !== 'CONTINUE') return;
+
+      always.push({
+        guard: ({ context }: { context: RunbookContext }) => {
+          if (context.substep !== undefined) return false;
+          if (context.forStack.length === 0) return false; // Already exited loop
+          const selected = getIterationTransition(context);
+          if (selected.result !== kind) return false;
+          return transition.retry <= 0 || context.iterationRetryCount >= transition.retry;
+        },
+        target: formatStateId(stepName),
+        actions: runbookSetup.assign({
+          forStack: [] as readonly ForContext[],
+          lastAction: { type: 'CONTINUE' as const },
+        }),
+      });
+    };
+    pushIterationContinueExit('pass', forTransitions.pass);
+    pushIterationContinueExit('fail', forTransitions.fail);
 
     // 4. Loop-back: advance to next iteration (DEFER accumulates, NEXT skips accumulation)
     always.push({

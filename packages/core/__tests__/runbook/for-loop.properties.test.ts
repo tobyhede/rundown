@@ -57,11 +57,11 @@ const fullConfigArb: fc.Arbitrary<ForLoopConfig> = fc.record({
   substepFailRetry: fc.integer({ min: 0, max: 2 }),
   iterationPassAction: iterationActionArb,
   iterationFailAction: iterationActionArb,
-  iterationAggMode: fc.boolean(),
+  iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
   iterationFailRetry: fc.integer({ min: 0, max: 2 }),
   parentPassAction: parentActionArb,
   parentFailAction: parentActionArb,
-  parentAggMode: fc.boolean(),
+  parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
   parentFailRetry: fc.integer({ min: 0, max: 2 }),
 });
 
@@ -96,11 +96,11 @@ describe('FOR loop properties', () => {
       substepFailRetry: fc.integer({ min: 0, max: 2 }),
       iterationPassAction: fc.constantFrom('CONTINUE' as const, 'BREAK' as const),
       iterationFailAction: fc.constantFrom('CONTINUE' as const, 'BREAK' as const),
-      iterationAggMode: fc.boolean(),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       iterationFailRetry: fc.integer({ min: 0, max: 2 }),
       parentPassAction: fc.constantFrom('CONTINUE' as const, 'COMPLETE' as const),
       parentFailAction: fc.constantFrom('STOP' as const, 'COMPLETE' as const),
-      parentAggMode: fc.boolean(),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       parentFailRetry: fc.integer({ min: 0, max: 2 }),
     });
     fc.assert(
@@ -124,11 +124,11 @@ describe('FOR loop properties', () => {
       substepFailRetry: fc.constant(0),
       iterationPassAction: fc.constant<IterationAction>('CONTINUE'),
       iterationFailAction: fc.constant<IterationAction>('CONTINUE'),
-      iterationAggMode: fc.constant(true), // ALL
+      iterationAggMode: fc.constant('ALL' as const), // ALL
       iterationFailRetry: fc.constant(0),
       parentPassAction: fc.constant<ParentAction>('CONTINUE'),
       parentFailAction: fc.constant<ParentAction>('STOP'),
-      parentAggMode: fc.constant(true), // ALL
+      parentAggMode: fc.constant('ALL' as const), // ALL
       parentFailRetry: fc.constant(0),
     });
 
@@ -154,11 +154,11 @@ describe('FOR loop properties', () => {
       substepFailRetry: fc.constant(0),
       iterationPassAction: fc.constant<IterationAction>('CONTINUE'),
       iterationFailAction: fc.constant<IterationAction>('CONTINUE'),
-      iterationAggMode: fc.constant(true), // ALL — iteration aggregation passes each iter individually
+      iterationAggMode: fc.constant('ALL' as const), // ALL — iteration aggregation passes each iter individually
       iterationFailRetry: fc.constant(0),
       parentPassAction: fc.constant<ParentAction>('CONTINUE'),
       parentFailAction: fc.constant<ParentAction>('STOP'),
-      parentAggMode: fc.constant(false), // ANY
+      parentAggMode: fc.constant('ANY' as const), // ANY
       parentFailRetry: fc.constant(0),
     });
 
@@ -187,11 +187,11 @@ describe('FOR loop properties', () => {
       substepFailRetry: fc.constant(0),
       iterationPassAction: iterationActionArb,
       iterationFailAction: iterationActionArb,
-      iterationAggMode: fc.boolean(),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       iterationFailRetry: fc.constant(0),
       parentPassAction: parentActionArb,
       parentFailAction: parentActionArb,
-      parentAggMode: fc.boolean(),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       parentFailRetry: fc.constant(0),
     });
 
@@ -214,11 +214,11 @@ describe('FOR loop properties', () => {
       substepFailRetry: fc.constant(0),
       iterationPassAction: iterationActionArb,
       iterationFailAction: iterationActionArb,
-      iterationAggMode: fc.boolean(),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       iterationFailRetry: fc.constant(0),
       parentPassAction: parentActionArb,
       parentFailAction: parentActionArb,
-      parentAggMode: fc.boolean(),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       parentFailRetry: fc.constant(0),
     });
 
@@ -241,11 +241,11 @@ describe('FOR loop properties', () => {
       substepFailRetry: fc.constant(0),
       iterationPassAction: fc.constant<IterationAction>('CONTINUE'),
       iterationFailAction: fc.constant<IterationAction>('CONTINUE'),
-      iterationAggMode: fc.boolean(),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       iterationFailRetry: fc.constant(0),
       parentPassAction: parentActionArb,
       parentFailAction: parentActionArb,
-      parentAggMode: fc.boolean(),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       parentFailRetry: fc.constant(0),
     });
 
@@ -281,11 +281,11 @@ describe('FOR loop properties', () => {
       substepFailRetry: fc.constant(0),
       iterationPassAction: fc.constant<IterationAction>('CONTINUE'),
       iterationFailAction: fc.constant<IterationAction>('CONTINUE'),
-      iterationAggMode: fc.boolean(),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       iterationFailRetry: fc.constant(0),
       parentPassAction: fc.constant<ParentAction>('CONTINUE'),
       parentFailAction: fc.constant<ParentAction>('CONTINUE'),
-      parentAggMode: fc.boolean(),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       parentFailRetry: fc.constant(0),
     });
 

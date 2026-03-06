@@ -23,13 +23,12 @@ scenarios:
 ## 1. Validate items
 
 - FOR item IN 1 TO 3
+  - PASS: DEFER
+  - FAIL: BREAK
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP
 
 ### 1.1 Check {{item}}
-
-- PASS: CONTINUE
-- FAIL: BREAK
 
 ```bash
 rd echo "item={{item}}"

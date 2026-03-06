@@ -223,14 +223,19 @@ Do work.
       expect(result.exitCode).toBe(1);
     });
 
-    it('fail on substep with PASS ALL transition', async () => {
-      // Create runbook with single substep and FAIL ANY
+    it('fail on substep with PASS ALL transition defers until all substeps complete', async () => {
+      // Two substeps exercise DEFER "wait for all" semantics:
+      // failing substep 1.1 must NOT stop immediately; aggregation
+      // fires only after substep 1.2 also completes.
       const substepRunbook = `## 1. Process
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP
 
 ### 1.1 First substep
 Do first task.
+
+### 1.2 Second substep
+Do second task.
 
 ## 2. Done
 - PASS: COMPLETE
@@ -242,8 +247,12 @@ Final step.
 
       runCli('run --prompted runbooks/substep-fail-any.md', workspace);
 
-      // Fail on first substep - should trigger FAIL ANY: STOP
-      const result = runCli('fail', workspace);
+      // Fail substep 1.1 -- result is deferred, machine advances to 1.2
+      runCli('fail', workspace);
+
+      // Pass substep 1.2 -- all substeps now complete, aggregation fires
+      // FAIL ANY: STOP triggers because substep 1.1 was failed
+      const result = runCli('pass', workspace);
 
       expect(result.exitCode).toBe(1);
       const states = await getAllStates(workspace);

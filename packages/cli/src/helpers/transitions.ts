@@ -85,7 +85,7 @@ export function createPassTransitionConfig(): TransitionConfig {
       actionType !== 'RETRY' && actionType !== 'STOP',
     policy: {
       onStopped: {
-        popRunbook: false,
+        popRunbook: true,
       },
       onComplete: {
         popRunbook: true,

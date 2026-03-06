@@ -29,6 +29,9 @@ describe('Delegation propagation integration', () => {
 ### 1.1 Code review
 Do code review.
 
+### 1.2 Security review
+Do security review.
+
 ## 2. Done
 - PASS: COMPLETE
 
@@ -105,7 +108,8 @@ Run the child task.
       expect(childState!.delegation).toBeDefined();
       expect((childState!.delegation as Record<string, unknown>).parentRunId).toBe(parentRunId);
 
-      // Pass the child step — should trigger propagation to parent
+      // Pass the child step — propagates pass to parent substep 1.1
+      // DEFER model: parent advances to 1.2
       result = runCli('pass', workspace);
       if (result.exitCode !== 0) {
         throw new Error(`rd pass failed: ${result.stdout}\n${result.stderr}`);
@@ -117,7 +121,10 @@ Run the child task.
       expect(finalChildState).not.toBeNull();
       expect(getVariables(finalChildState!).completed).toBe(true);
 
-      // Verify: parent should have advanced past step 1 (single substep → PASS ALL → CONTINUE)
+      // Parent is now at substep 1.2 — complete it to trigger aggregation
+      // PASS ALL (both passed) → CONTINUE → step 2
+      result = runCli('pass', workspace);
+
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect(updatedParent!.step).toBe('2');
@@ -145,11 +152,15 @@ Run the child task.
       result = runCli(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Fail the child step — should trigger fail propagation
+      // Fail the child step — propagates fail to parent substep 1.1
+      // DEFER model: parent advances to 1.2
       result = runCli('fail', workspace);
       expect(result.exitCode).toBe(1);
 
-      // After child fails, parent should be stopped (FAIL ANY: STOP)
+      // Parent is now at substep 1.2 — complete it to trigger aggregation
+      // FAIL ANY (1.1 failed) → STOP
+      result = runCli('pass', workspace);
+
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect(getVariables(updatedParent!).stopped).toBe(true);
@@ -177,11 +188,15 @@ Run the child task.
       result = runCli(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Stop the child — should propagate fail to parent
+      // Stop the child — propagates fail to parent substep 1.1
+      // DEFER model: parent advances to 1.2
       result = runCli('stop', workspace);
       expect(result.exitCode).toBe(0);
 
-      // After child is stopped, parent should be stopped (FAIL ANY: STOP)
+      // Parent is now at substep 1.2 — complete it to trigger aggregation
+      // FAIL ANY (1.1 failed) → STOP
+      result = runCli('pass', workspace);
+
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect(getVariables(updatedParent!).stopped).toBe(true);
@@ -190,7 +205,7 @@ Run the child task.
 
   describe('3-level chain propagation', () => {
     it('child completion cascades through parent to grandparent', async () => {
-      // Grandparent with substeps
+      // Grandparent with 2 substeps
       const grandparentContent = `## 1. Pipeline
 - PASS ALL: COMPLETE
 - FAIL ANY: STOP
@@ -203,17 +218,19 @@ Verify step.
 `;
       await writeFile(join(workspace.cwd, 'grandparent.runbook.md'), grandparentContent);
 
-      // Parent with a substep (required for completion/drain model)
+      // Parent with 2 substeps
       const parentContent = `## 1. Review
 - PASS ALL: COMPLETE
 - FAIL ANY: STOP
 
 ### 1.1 Task
 Review the deployment.
+
+### 1.2 Approve
+Approve the deployment.
 `;
       await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
 
-      // Child with a single step
       await writeChildRunbook();
 
       // Start grandparent
@@ -228,11 +245,9 @@ Review the deployment.
       expect(result.exitCode).toBe(0);
       const token1 = extractToken(result.stdout);
 
-      // Claim — launches parent runbook (becomes active state)
       result = runCli(`claim ${token1}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Get parent run ID (now the active state after claim)
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
       expect(parentState!.delegation).toBeDefined();
@@ -243,29 +258,33 @@ Review the deployment.
       expect(result.exitCode).toBe(0);
       const token2 = extractToken(result.stdout);
 
-      // Claim — launches child runbook
       result = runCli(`claim ${token2}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Pass the child — should cascade:
-      // child passes → parent substep 1.1 resolves → parent COMPLETE
-      // → grandparent substep 1.1 resolves with pass
+      // Pass the child — propagates pass to parent substep 1.1
+      // DEFER model: parent advances to 1.2
       result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Verify: parent should have completed (cascaded from child)
+      // Parent is at substep 1.2 — complete it
+      // PASS ALL (both passed) → COMPLETE → propagates pass to grandparent 1.1
+      // DEFER model: grandparent advances to 1.2
+      result = runCli('pass', workspace);
+
+      // Verify parent completed
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect(getVariables(updatedParent!).completed).toBe(true);
 
-      // Verify: grandparent was affected by the cascade.
-      // The delegation completion for substep 1.1 was applied and consumed.
-      // The grandparent either completed or advanced past substep 1.1.
+      // Grandparent is at substep 1.2 — complete it
+      // PASS ALL (both passed) → COMPLETE
+      result = runCli('pass', workspace);
+
+      // Verify grandparent completed
       const updatedGrandparent = await readRunbookState(workspace, grandparentRunId);
       expect(updatedGrandparent).not.toBeNull();
       const gpCompleted = getVariables(updatedGrandparent!).completed === true;
-      const gpAdvanced = updatedGrandparent!.substep !== '1';
-      expect(gpCompleted || gpAdvanced).toBe(true);
+      expect(gpCompleted).toBe(true);
     });
   });
 

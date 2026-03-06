@@ -10,6 +10,8 @@ scenarios:
       - rd run --prompted goto-at-template-variable.runbook.md
       - rd fail
       - rd pass
+      - rd pass
+      - rd pass
     result: COMPLETE
 ---
 
@@ -22,7 +24,7 @@ scenarios:
 
 ### 1.1 Handle {{item}}
 
-- PASS: CONTINUE
+- PASS: DEFER
 - FAIL: GOTO 1 AT {{Index}}
 
 ```bash

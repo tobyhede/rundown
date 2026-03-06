@@ -78,7 +78,7 @@ describe('evaluatePassCondition', () => {
 describe('evaluateSubstepAggregation', () => {
   // PASS ALL mode (aggregation: 'ALL')
   const passAllTransitions = {
-    aggregation: 'ALL',
+    aggregation: 'ALL' as const,
     pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
     fail: {
       kind: 'fail' as const,
@@ -89,7 +89,7 @@ describe('evaluateSubstepAggregation', () => {
 
   // PASS ANY mode (aggregation: 'ANY')
   const passAnyTransitions = {
-    aggregation: 'ANY',
+    aggregation: 'ANY' as const,
     pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
     fail: {
       kind: 'fail' as const,
@@ -221,7 +221,7 @@ describe('evaluatePassCondition edge cases', () => {
 
 describe('evaluateSubstepAggregation edge cases', () => {
   const passAnyTransitions = {
-    aggregation: 'ANY',
+    aggregation: 'ANY' as const,
     pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
     fail: {
       kind: 'fail' as const,
@@ -296,7 +296,7 @@ describe('evaluateSubstepAggregation with retry property', () => {
       { id: 'b', status: 'done' as const, result: 'pass' as const },
     ];
     const transitions = {
-      aggregation: 'ALL',
+      aggregation: 'ALL' as const,
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       fail: { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } },
     };
@@ -312,7 +312,7 @@ describe('evaluateSubstepAggregation with retry property', () => {
       { id: 'b', status: 'done' as const, result: 'pass' as const },
     ];
     const transitions = {
-      aggregation: 'ALL',
+      aggregation: 'ALL' as const,
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       fail: { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } },
     };
@@ -325,8 +325,8 @@ describe('evaluateSubstepAggregation with retry property', () => {
 describe('evaluateIterationAggregation', () => {
   const passAction = { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } };
   const failAction = { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } };
-  const allTransitions = { aggregation: 'ALL', pass: passAction, fail: failAction };
-  const anyTransitions = { aggregation: 'ANY', pass: passAction, fail: failAction };
+  const allTransitions = { aggregation: 'ALL' as const, pass: passAction, fail: failAction };
+  const anyTransitions = { aggregation: 'ANY' as const, pass: passAction, fail: failAction };
 
   it('returns null for empty iteration results', () => {
     expect(evaluateIterationAggregation([], allTransitions)).toBeNull();
@@ -368,7 +368,7 @@ describe('evaluateIterationAggregation', () => {
 
   describe('with retry', () => {
     const failWithRetry = { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } };
-    const retryTransitions = { aggregation: 'ALL', pass: passAction, fail: failWithRetry };
+    const retryTransitions = { aggregation: 'ALL' as const, pass: passAction, fail: failWithRetry };
 
     it('returns retry when under retry limit', () => {
       const result = evaluateIterationAggregation(['pass', 'fail'], retryTransitions, 0);
@@ -384,26 +384,26 @@ describe('evaluateIterationAggregation', () => {
 
 describe('shouldAggregationPass', () => {
   it('returns true in ALL mode when no failures exist', () => {
-    expect(shouldAggregationPass(false, 3, true)).toBe(true);
+    expect(shouldAggregationPass(false, 3, 'ALL')).toBe(true);
   });
 
   it('returns false in ALL mode when a failure exists', () => {
-    expect(shouldAggregationPass(true, 2, true)).toBe(false);
+    expect(shouldAggregationPass(true, 2, 'ALL')).toBe(false);
   });
 
   it('returns true in ANY mode when some iterations passed', () => {
-    expect(shouldAggregationPass(false, 2, false)).toBe(true);
+    expect(shouldAggregationPass(false, 2, 'ANY')).toBe(true);
   });
 
   it('returns false in ANY mode when none passed', () => {
-    expect(shouldAggregationPass(true, 0, false)).toBe(false);
+    expect(shouldAggregationPass(true, 0, 'ANY')).toBe(false);
   });
 
   it('returns true in ALL mode with zero pass count and no failures (vacuous truth)', () => {
-    expect(shouldAggregationPass(false, 0, true)).toBe(true);
+    expect(shouldAggregationPass(false, 0, 'ALL')).toBe(true);
   });
 
   it('returns true in ANY mode when has failure but also has passes', () => {
-    expect(shouldAggregationPass(true, 1, false)).toBe(true);
+    expect(shouldAggregationPass(true, 1, 'ANY')).toBe(true);
   });
 });

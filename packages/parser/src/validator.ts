@@ -20,10 +20,6 @@ function error(line: number | undefined, message: string): ValidationDiagnostic 
   return { severity: 'error', line, message };
 }
 
-function warning(line: number | undefined, message: string): ValidationDiagnostic {
-  return { severity: 'warning', line, message };
-}
-
 function warn(line: number | undefined, message: string): ValidationDiagnostic {
   return { severity: 'warning', line, message };
 }

@@ -39,13 +39,13 @@ export interface ForLoopConfig {
   // Layer 2: iteration transitions (forClause.transitions)
   iterationPassAction: IterationAction;
   iterationFailAction: IterationAction;
-  iterationAggMode: boolean; // true=ALL, false=ANY
+  iterationAggMode: 'ALL' | 'ANY' | 'none'; // aggregation discriminant
   iterationFailRetry: number; // 0–2
 
   // Layer 3: parent aggregation (step.transitions)
   parentPassAction: ParentAction;
   parentFailAction: ParentAction;
-  parentAggMode: boolean; // true=ALL, false=ANY
+  parentAggMode: 'ALL' | 'ANY' | 'none'; // aggregation discriminant
   parentFailRetry: number; // 0–2
 }
 
@@ -77,13 +77,13 @@ function makeTransitionObject(kind: 'pass' | 'fail', action: string, retry = 0):
 }
 
 function makeTransitions(
-  all: boolean,
+  aggregation: 'ALL' | 'ANY' | 'none',
   passAction: string,
   failAction: string,
   failRetry = 0,
 ): Transitions {
   return {
-    all,
+    aggregation,
     pass: makeTransitionObject('pass', passAction),
     fail: makeTransitionObject('fail', failAction, failRetry),
   };
@@ -99,7 +99,7 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
       id: String(i),
       description: `Substep ${String(i)}`,
       transitions: makeTransitions(
-        true,
+        'ALL',
         config.substepPassAction,
         config.substepFailAction,
         config.substepFailRetry,

@@ -36,10 +36,10 @@ const factors: Record<string, unknown[]> = {
   substepPassAction: ['CONTINUE', 'NEXT'],
   substepFailAction: ['CONTINUE', 'BREAK', 'STOP'],
   substepFailRetry: [0, 1],
-  iterationAggMode: [true, false],
+  iterationAggMode: ['ALL', 'ANY'],
   iterationFailAction: ['DEFER', 'BREAK'],
   iterationFailRetry: [0, 1],
-  parentAggMode: [true, false],
+  parentAggMode: ['ALL', 'ANY'],
   parentPassAction: ['CONTINUE', 'COMPLETE'],
   parentFailAction: ['STOP', 'COMPLETE'],
   parentFailRetry: [0, 1],
@@ -52,10 +52,10 @@ interface PairwiseRow {
   substepPassAction: string;
   substepFailAction: string;
   substepFailRetry: number;
-  iterationAggMode: boolean;
+  iterationAggMode: 'ALL' | 'ANY' | 'none';
   iterationFailAction: string;
   iterationFailRetry: number;
-  parentAggMode: boolean;
+  parentAggMode: 'ALL' | 'ANY' | 'none';
   parentPassAction: string;
   parentFailAction: string;
   parentFailRetry: number;

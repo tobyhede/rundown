@@ -58,8 +58,8 @@ ${iterLines ? `${iterLines}\n` : ''}- PASS ${stepPassMod}: ${stepPass}
 - FAIL ${stepFailMod}: ${stepFail}
 
 ### 1.1 Check
-- PASS: CONTINUE
-- FAIL: CONTINUE
+- PASS: DEFER
+- FAIL: DEFER
 
 Do the check.
 
@@ -90,7 +90,7 @@ describe('FOR loop transitions integration', () => {
     it('PASS ALL — all iterations pass → CONTINUE to next step', async () => {
       await writeForRunbook(workspace, 'agg-all-pass.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: BREAK`,
+        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -99,11 +99,12 @@ describe('FOR loop transitions integration', () => {
       let result = runCli('run --prompted agg-all-pass.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Iteration 1: pass substep 1.1
+      // Iteration 1: pass substep 1.1 → DEFER feeds 'pass' → iteration DEFER → loop back
       result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Iteration 2: pass substep 1.1
+      // Iteration 2: pass substep 1.1 → DEFER feeds 'pass' → last iteration
+      // Parent aggregation: [pass, pass] → PASS ALL → CONTINUE to step 2
       result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
 
@@ -116,7 +117,7 @@ describe('FOR loop transitions integration', () => {
     it('PASS ALL — one iteration fails → STOP', async () => {
       await writeForRunbook(workspace, 'agg-one-fail.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: BREAK`,
+        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -124,10 +125,11 @@ describe('FOR loop transitions integration', () => {
       // Start runbook in prompted mode
       expect(runCli('run --prompted agg-one-fail.runbook.md', workspace).exitCode).toBe(0);
 
-      // Iteration 1: pass
+      // Iteration 1: pass → DEFER feeds 'pass' → iteration DEFER → loop back to iteration 2
       expect(runCli('pass', workspace).exitCode).toBe(0);
 
-      // Iteration 2: fail → BREAK at iteration level → step-level PASS ALL fails → STOP
+      // Iteration 2: fail → DEFER feeds 'fail' → BREAK at iteration level
+      // Parent aggregation: [pass, fail] → PASS ALL fails → FAIL ANY: STOP
       const result = runCli('fail', workspace);
       expect(result.exitCode).toBe(1);
     });
@@ -135,7 +137,7 @@ describe('FOR loop transitions integration', () => {
     it('PASS ANY — one pass suffices', async () => {
       await writeForRunbook(workspace, 'agg-any-pass.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: CONTINUE`,
+        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: DEFER`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
         stepPassMod: 'ANY',
@@ -145,11 +147,11 @@ describe('FOR loop transitions integration', () => {
       // Start runbook
       expect(runCli('run --prompted agg-any-pass.runbook.md', workspace).exitCode).toBe(0);
 
-      // Iteration 1: fail → iteration-level CONTINUE (no BREAK)
+      // Iteration 1: fail → DEFER feeds 'fail' → iteration DEFER → loop back
       expect(runCli('fail', workspace).exitCode).toBe(0);
 
-      // Iteration 2: pass → iteration-level CONTINUE → loop ends
-      // Step-level PASS ANY: [fail, pass] → at least one passed → CONTINUE to step 2
+      // Iteration 2: pass → DEFER feeds 'pass' → last iteration
+      // Parent aggregation: [fail, pass] → PASS ANY → at least one passed → CONTINUE to step 2
       let result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Final step');
@@ -162,7 +164,7 @@ describe('FOR loop transitions integration', () => {
     it('FAIL ANY: BREAK at iteration level — early exit skips remaining iterations', async () => {
       await writeForRunbook(workspace, 'agg-break.runbook.md', {
         iterations: 3,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: BREAK`,
+        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -170,11 +172,11 @@ describe('FOR loop transitions integration', () => {
       // Start runbook
       expect(runCli('run --prompted agg-break.runbook.md', workspace).exitCode).toBe(0);
 
-      // Iteration 1: pass
+      // Iteration 1: pass → DEFER feeds 'pass' → iteration DEFER → loop back
       expect(runCli('pass', workspace).exitCode).toBe(0);
 
-      // Iteration 2: fail → BREAK (skips iteration 3)
-      // Only 2 rd commands needed before terminal state
+      // Iteration 2: fail → DEFER feeds 'fail' → BREAK (skips iteration 3)
+      // Parent aggregation: [pass, fail] → PASS ALL fails → FAIL ANY: STOP
       const result = runCli('fail', workspace);
       expect(result.exitCode).toBe(1);
     });
@@ -187,7 +189,7 @@ describe('FOR loop transitions integration', () => {
     it('RETRY 2 BREAK — exhausts retries then breaks', async () => {
       await writeForRunbook(workspace, 'retry-break.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: RETRY 2 BREAK`,
+        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: RETRY 2 BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -195,43 +197,44 @@ describe('FOR loop transitions integration', () => {
       // Start runbook
       expect(runCli('run --prompted retry-break.runbook.md', workspace).exitCode).toBe(0);
 
-      // Iteration 1, attempt 1: fail → RETRY (1/2)
+      // Iteration 1, attempt 1: fail → substep DEFER feeds 'fail' → RETRY (1/2)
       let result = runCli('fail', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('RETRY');
 
-      // Iteration 1, attempt 2: fail → RETRY (2/2)
+      // Iteration 1, attempt 2: fail → substep DEFER feeds 'fail' → RETRY (2/2)
       result = runCli('fail', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('RETRY');
 
-      // Iteration 1, attempt 3: fail → retries exhausted → BREAK → STOP
+      // Iteration 1, attempt 3: fail → retries exhausted → BREAK
+      // Parent aggregation: [fail] → PASS ALL fails → FAIL ANY: STOP
       result = runCli('fail', workspace);
       expect(result.exitCode).toBe(1);
     });
 
-    it('RETRY 1 CONTINUE — retries then continues to next iteration', async () => {
-      await writeForRunbook(workspace, 'retry-continue.runbook.md', {
+    it('RETRY 1 DEFER — retries then defers to next iteration', async () => {
+      await writeForRunbook(workspace, 'retry-defer.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: RETRY 1 CONTINUE`,
+        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: RETRY 1 DEFER`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
 
       // Start runbook
-      expect(runCli('run --prompted retry-continue.runbook.md', workspace).exitCode).toBe(0);
+      expect(runCli('run --prompted retry-defer.runbook.md', workspace).exitCode).toBe(0);
 
-      // Iteration 1, attempt 1: fail → RETRY (1/1)
+      // Iteration 1, attempt 1: fail → substep DEFER feeds 'fail' → RETRY (1/1)
       let result = runCli('fail', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('RETRY');
 
-      // Iteration 1, attempt 2: fail → retry exhausted → CONTINUE to iteration 2
+      // Iteration 1, attempt 2: fail → retry exhausted → DEFER (loop back with 'fail' accumulated)
       result = runCli('fail', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Iteration 2: pass → loop ends
-      // Step-level PASS ALL: [fail, pass] → not all passed → STOP
+      // Iteration 2: pass → substep DEFER feeds 'pass' → last iteration
+      // Parent aggregation: [fail, pass] → PASS ALL fails → FAIL ANY: STOP
       result = runCli('pass', workspace);
       expect(result.exitCode).toBe(1);
     });
@@ -239,7 +242,7 @@ describe('FOR loop transitions integration', () => {
     it('RETRY succeeds on second attempt', async () => {
       await writeForRunbook(workspace, 'retry-success.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: CONTINUE\n- FAIL ANY: RETRY 2 BREAK`,
+        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: RETRY 2 BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -247,16 +250,18 @@ describe('FOR loop transitions integration', () => {
       // Start runbook
       expect(runCli('run --prompted retry-success.runbook.md', workspace).exitCode).toBe(0);
 
-      // Iteration 1, attempt 1: fail → RETRY
+      // Iteration 1, attempt 1: fail → substep DEFER feeds 'fail' → RETRY
       let result = runCli('fail', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('RETRY');
 
-      // Iteration 1, attempt 2: pass → iteration 1 passes, advance to iteration 2
+      // Iteration 1, attempt 2: pass → substep DEFER feeds 'pass' → iteration passes
+      // Iteration DEFER → loop back to iteration 2
       result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Iteration 2: pass → all iterations pass → CONTINUE to step 2
+      // Iteration 2: pass → substep DEFER feeds 'pass' → last iteration
+      // Parent aggregation: [pass, pass] → PASS ALL → CONTINUE to step 2
       result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Final step');
