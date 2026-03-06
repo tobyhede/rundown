@@ -233,7 +233,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
             error(
               step.line,
               `Step "${step.name}" has parent transitions but no substep uses DEFER — parent transitions are unreachable. ` +
-              `Use DEFER on at least one substep to propagate results to parent aggregation.`,
+                `Use DEFER on at least one substep to propagate results to parent aggregation.`,
             ),
           );
         }

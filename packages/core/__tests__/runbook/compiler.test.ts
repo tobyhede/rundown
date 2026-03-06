@@ -6418,9 +6418,7 @@ echo "processing"
         },
       ]);
 
-      expect(() => compileRunbookToMachine(steps)).toThrow(
-        /GOTO target step .* does not exist/,
-      );
+      expect(() => compileRunbookToMachine(steps)).toThrow(/GOTO target step .* does not exist/);
     });
 
     it('throws when NEXT appears as parent-step action', () => {
@@ -6449,9 +6447,7 @@ echo "processing"
         },
       ]);
 
-      expect(() => compileRunbookToMachine(steps)).toThrow(
-        /invariant violation/,
-      );
+      expect(() => compileRunbookToMachine(steps)).toThrow(/invariant violation/);
     });
 
     it('throws on duplicate state IDs', () => {
@@ -6468,9 +6464,7 @@ echo "processing"
         },
       ]);
 
-      expect(() => compileRunbookToMachine(steps)).toThrow(
-        /duplicate state ID/,
-      );
+      expect(() => compileRunbookToMachine(steps)).toThrow(/duplicate state ID/);
     });
   });
 });

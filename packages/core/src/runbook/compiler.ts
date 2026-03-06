@@ -1099,9 +1099,7 @@ function resolveActionTarget(action: Action, stepName: string, steps: Step[]): s
     case 'GOTO': {
       const targetStep = steps.find((s) => s.name === action.target.step);
       if (!targetStep) {
-        throw new Error(
-          `Compiler error: GOTO target step "${action.target.step}" does not exist`,
-        );
+        throw new Error(`Compiler error: GOTO target step "${action.target.step}" does not exist`);
       }
       const substep =
         targetStep.kind === 'substeps' || targetStep.kind === 'for'
@@ -1325,9 +1323,7 @@ function buildGotoTransition(
   // Named/numeric step target (both are strings now)
   const targetStepObj = steps.find((s) => s.name === targetStep);
   if (!targetStepObj) {
-    throw new Error(
-      `Compiler error: GOTO target step "${targetStep}" does not exist`,
-    );
+    throw new Error(`Compiler error: GOTO target step "${targetStep}" does not exist`);
   }
 
   // Handle GOTO to step with substeps (explicit FOR or implicit 1..1)
@@ -1498,7 +1494,10 @@ function extractTargets(config: {
  * @throws {Error} If any structural invariant is violated
  */
 function validateGraph(
-  states: Record<string, { on?: Record<string, TransitionConfig | unknown[]>; always?: AlwaysTransition[] }>,
+  states: Record<
+    string,
+    { on?: Record<string, TransitionConfig | unknown[]>; always?: AlwaysTransition[] }
+  >,
   initialState: string,
   terminalStates: Set<string>,
 ): void {
@@ -1526,11 +1525,7 @@ function validateGraph(
  * @param id - The state ID to insert
  * @param config - The state configuration
  */
-function checkedStateInsert(
-  states: Record<string, unknown>,
-  id: string,
-  config: unknown,
-): void {
+function checkedStateInsert(states: Record<string, unknown>, id: string, config: unknown): void {
   if (id in states) {
     throw new Error(`Compiler error: duplicate state ID "${id}"`);
   }
@@ -1612,7 +1607,11 @@ export function compileRunbookToMachine(
   // Build the machine states
   allStates.forEach((config) => {
     if (config.isParentState) {
-      checkedStateInsert(states, config.id, buildParentStateConfig(config, steps, options?.sources));
+      checkedStateInsert(
+        states,
+        config.id,
+        buildParentStateConfig(config, steps, options?.sources),
+      );
       return;
     }
 
@@ -1785,26 +1784,34 @@ export function compileRunbookToMachine(
 
     // Register retry states for transitions with retry > 0
     if (config.transitions.pass.retry > 0) {
-      checkedStateInsert(states, `${config.id}::pass-retry`, buildRetryStateConfig(
-        config.transitions.pass,
-        config.id,
-        config.stepName,
-        config.substepId,
-        steps,
-        'pass',
-        options?.sources,
-      ));
+      checkedStateInsert(
+        states,
+        `${config.id}::pass-retry`,
+        buildRetryStateConfig(
+          config.transitions.pass,
+          config.id,
+          config.stepName,
+          config.substepId,
+          steps,
+          'pass',
+          options?.sources,
+        ),
+      );
     }
     if (config.transitions.fail.retry > 0) {
-      checkedStateInsert(states, `${config.id}::fail-retry`, buildRetryStateConfig(
-        config.transitions.fail,
-        config.id,
-        config.stepName,
-        config.substepId,
-        steps,
-        'fail',
-        options?.sources,
-      ));
+      checkedStateInsert(
+        states,
+        `${config.id}::fail-retry`,
+        buildRetryStateConfig(
+          config.transitions.fail,
+          config.id,
+          config.stepName,
+          config.substepId,
+          steps,
+          'fail',
+          options?.sources,
+        ),
+      );
     }
   });
 
