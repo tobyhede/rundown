@@ -777,4 +777,151 @@ describe('validator strict rules', () => {
       });
     });
   });
+
+  describe('parent transition reachability', () => {
+    it('errors when all substeps have explicit non-DEFER transitions', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+            {
+              id: '2',
+              description: 'Sub 2',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toContain('no substep uses DEFER');
+    });
+
+    it('passes when at least one substep uses DEFER', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
+              },
+            },
+            {
+              id: '2',
+              description: 'Sub 2',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('passes when substeps have no explicit transitions (auto-DEFER)', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [
+            { id: '1', description: 'Sub 1' },
+            { id: '2', description: 'Sub 2' },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('does not fire for FOR steps (iteration results feed parent)', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          transitions: {
+            all: true,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('does not fire when step has no parent transitions', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                all: true,
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics).filter((e) =>
+        e.message.includes('no substep uses DEFER'),
+      );
+      expect(errors).toHaveLength(0);
+    });
+  });
 });
