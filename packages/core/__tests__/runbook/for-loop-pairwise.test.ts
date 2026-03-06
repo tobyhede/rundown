@@ -37,7 +37,7 @@ const factors: Record<string, unknown[]> = {
   substepFailAction: ['CONTINUE', 'BREAK', 'STOP'],
   substepFailRetry: [0, 1],
   iterationAggMode: [true, false],
-  iterationFailAction: ['CONTINUE', 'BREAK'],
+  iterationFailAction: ['DEFER', 'BREAK'],
   iterationFailRetry: [0, 1],
   parentAggMode: [true, false],
   parentPassAction: ['CONTINUE', 'COMPLETE'],
@@ -79,8 +79,8 @@ function rowToConfig(row: PairwiseRow): ForLoopConfig {
     substepPassAction: row.substepPassAction as SubstepAction,
     substepFailAction: row.substepFailAction as SubstepAction,
     substepFailRetry: row.substepFailRetry,
-    // Iteration pass action defaults to CONTINUE (not varied in pairwise)
-    iterationPassAction: 'CONTINUE' as IterationAction,
+    // Iteration pass action defaults to DEFER (loops back with accumulation)
+    iterationPassAction: 'DEFER' as IterationAction,
     iterationFailAction: row.iterationFailAction as IterationAction,
     iterationAggMode: row.iterationAggMode,
     iterationFailRetry: row.iterationFailRetry,

@@ -162,16 +162,12 @@ export const TransitionsSchema = z.union([
   z.object({
     all: z.literal(true),
     modifierImplicit: z.literal(true).optional(),
-    /** When true, defers aggregation evaluation until all substeps complete (allSettled semantics). */
-    await: z.literal(true).optional(),
     pass: TransitionObjectSchema,
     fail: TransitionObjectSchema,
   }),
   z.object({
     all: z.literal(false),
     modifierImplicit: z.literal(true).optional(),
-    /** When true, defers aggregation evaluation until all substeps complete (allSettled semantics). */
-    await: z.literal(true).optional(),
     pass: TransitionObjectSchema,
     fail: TransitionObjectSchema,
   }),

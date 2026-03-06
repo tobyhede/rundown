@@ -367,7 +367,13 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
           return aggregateParent(config, allIterationResults, iterResult);
         }
 
-        // CONTINUE: record result and proceed to next iteration
+        // CONTINUE exits the loop (goes to next step)
+        if (iterAction === 'CONTINUE') {
+          allIterationResults.push(iterResult);
+          return aggregateParent(config, allIterationResults, iterResult);
+        }
+
+        // DEFER: record result and proceed to next iteration (loop back with accumulation)
         break; // break out of iteration retry loop
       }
 

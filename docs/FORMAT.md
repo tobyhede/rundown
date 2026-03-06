@@ -87,18 +87,11 @@ Step-level `runbooks` syntax is shorthand for implicit sequential substeps (`###
 If prompt text appears before a step-level `runbooks` shorthand body, it is attached to the first generated implicit substep only.
 
 where transition is:
-  - { PASS | FAIL | YES | NO } [ { ALL | ANY [ AWAIT ] } ]: result
+  - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result
 
 Transitions must appear as list items with the `-` bullet prefix (a dash followed by a space). Paragraph-style transitions (without prefix) are not valid.
 
-## AWAIT modifier
-
-`AWAIT` defers aggregation evaluation until all substeps complete (like `Promise.allSettled`).
-Without `AWAIT`, `ANY` short-circuits as soon as the outcome is determined (like `Promise.all` / `Promise.any`).
-
-- `AWAIT` is only valid after `ANY`: `FAIL ANY AWAIT: STOP`, `PASS ANY AWAIT: CONTINUE`
-- `ALL AWAIT` is invalid (`ALL` already waits for all substeps)
-- `AWAIT` on the `ANY` side defers both transitions of the complementary pair
+Aggregation always waits for all DEFER'd results before evaluating. `ALL`/`ANY` evaluates over the count of DEFER'd results.
 
 where result is:
   action | RETRY [ count ] [ action ]

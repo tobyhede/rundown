@@ -124,7 +124,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
       // FOR iteration-level transitions allow full loop control and terminal routing.
       if (step.forClause.transitions) {
-        const allowedActions = ['CONTINUE', 'DEFER', 'BREAK', 'GOTO', 'STOP', 'COMPLETE'];
+        const allowedActions = ['CONTINUE', 'DEFER', 'NEXT', 'BREAK', 'GOTO', 'STOP', 'COMPLETE'];
         if (!allowedActions.includes(step.forClause.transitions.pass.action.type)) {
           diagnostics.push(
             error(
@@ -212,6 +212,30 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         if (substep.transitions) {
           validateAction(substep.transitions.pass.action, substep.id, steps, step, diagnostics);
           validateAction(substep.transitions.fail.action, substep.id, steps, step, diagnostics);
+        }
+      }
+
+      // For non-FOR steps: parent transitions require at least one substep to DEFER
+      // results upward. Substeps without explicit transitions auto-DEFER, so only warn
+      // when every substep has explicit non-DEFER transitions (making parent transitions
+      // unreachable). FOR steps are excluded because their parent transitions aggregate
+      // iteration results (fed by iteration-level DEFER), not substep results directly.
+      if (step.transitions && step.kind !== 'for') {
+        const allSubstepsExplicitNonDefer = step.substeps.every((sub) => {
+          if (!sub.transitions) return false; // no explicit transitions → will auto-DEFER
+          const passIsDefer = sub.transitions.pass.action.type === 'DEFER';
+          const failIsDefer = sub.transitions.fail.action.type === 'DEFER';
+          return !passIsDefer && !failIsDefer;
+        });
+
+        if (allSubstepsExplicitNonDefer && step.substeps.length > 0) {
+          diagnostics.push(
+            error(
+              step.line,
+              `Step "${step.name}" has parent transitions but no substep uses DEFER — parent transitions are unreachable. ` +
+              `Use DEFER on at least one substep to propagate results to parent aggregation.`,
+            ),
+          );
         }
       }
     }

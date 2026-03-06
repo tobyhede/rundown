@@ -556,13 +556,13 @@ function appendSubstepResult(result: 'pass' | 'fail') {
 }
 
 /**
- * Default FOR iteration-level transitions: PASS ALL / FAIL ANY: CONTINUE.
- * Used when no nested transitions are specified on a FOR clause.
+ * Default FOR iteration-level transitions: PASS ALL / FAIL ANY: DEFER.
+ * DEFER loops back and accumulates iteration results for step-level aggregation.
  */
 const DEFAULT_FOR_TRANSITIONS: Transitions = {
   all: true,
-  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-  fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+  pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
 };
 
 /**
@@ -905,7 +905,8 @@ function buildParentStateConfig(
       if (
         transition.action.type !== 'GOTO' &&
         transition.action.type !== 'STOP' &&
-        transition.action.type !== 'COMPLETE'
+        transition.action.type !== 'COMPLETE' &&
+        transition.action.type !== 'CONTINUE'
       ) {
         return;
       }
@@ -932,13 +933,13 @@ function buildParentStateConfig(
     pushDirectIterationExit('pass', forTransitions.pass);
     pushDirectIterationExit('fail', forTransitions.fail);
 
-    // 4. Loop-back: advance to next iteration
+    // 4. Loop-back: advance to next iteration (DEFER accumulates, NEXT skips accumulation)
     always.push({
       guard: ({ context }: { context: RunbookContext }) => {
         if (context.substep !== undefined) return false; // mid-iteration — not ready
         // BREAK clears forStack, so peekForStack returns undefined → naturally prevents loop-back
         const selected = getIterationTransition(context).transition;
-        if (selected.action.type !== 'CONTINUE') return false;
+        if (selected.action.type !== 'DEFER' && selected.action.type !== 'NEXT') return false;
         const top = peekForStack(context.forStack);
         return top !== undefined && hasMoreIterations(top);
       },
@@ -951,7 +952,12 @@ function buildParentStateConfig(
         },
         iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] => {
           const results = context.iterationResults ?? [];
-          return [...results, computeIterationResult(context)];
+          const selected = getIterationTransition(context).transition;
+          // DEFER accumulates iteration result; NEXT skips accumulation
+          if (selected.action.type === 'DEFER') {
+            return [...results, computeIterationResult(context)];
+          }
+          return results;
         },
         substepResults: [] as ('pass' | 'fail')[],
         retryCount: 0,
@@ -980,33 +986,6 @@ function buildParentStateConfig(
 
     const passBranchGuard: GuardFn = aggregationPasses;
     const failBranchGuard: GuardFn = ({ context }) => !aggregationPasses({ context });
-
-    // Fail-fast: ANY without AWAIT — outcome determined before all substeps complete.
-    //    For FAIL ANY (all=true): first fail → outcome determined.
-    //    For PASS ANY (all=false): first pass → outcome determined.
-    if (!hasFor && !parentTransitions.await) {
-      const isOutcomeDetermined: GuardFn = ({ context }) => {
-        const results = context.substepResults ?? [];
-        if (results.length === 0 || results.length >= substeps.length) return false;
-        const hasFailed = results.some((r) => r === 'fail');
-        const hasPass = results.some((r) => r === 'pass');
-        // all=true means FAIL ANY: first fail determines. all=false means PASS ANY: first pass determines.
-        return parentTransitions.all ? hasFailed : hasPass;
-      };
-
-      always.push(
-        ...buildOutcomeEntries(
-          ({ context }) => isOutcomeDetermined({ context }) && !aggregationPasses({ context }),
-          parentTransitions.fail,
-          failTarget,
-        ),
-        ...buildOutcomeEntries(
-          ({ context }) => isOutcomeDetermined({ context }) && aggregationPasses({ context }),
-          parentTransitions.pass,
-          passTarget,
-        ),
-      );
-    }
 
     // Advance to next substep (both FOR and non-FOR — substep === undefined prevents
     // advance guards from firing on completed iterations or loop control)
