@@ -108,7 +108,7 @@ export function shouldAggregationPass(
   passCount: number,
   aggregation: 'ALL' | 'ANY' | 'none',
 ): boolean {
-  return aggregation !== 'ANY' ? !hasFailed : passCount > 0;
+  return aggregation !== 'ANY' ? !hasFailed : passCount > 0; // 'none' defaults to ALL (pessimistic)
 }
 
 /**
