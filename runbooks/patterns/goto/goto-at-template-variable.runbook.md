@@ -5,7 +5,7 @@ tags:
   - goto
 scenarios:
   completed:
-    description: GOTO AT {{Index}} re-enters the FOR step at the current iteration
+    description: GOTO AT re-enters the FOR step at the current iteration index
     commands:
       - rd run --prompted goto-at-template-variable.runbook.md
       - rd fail

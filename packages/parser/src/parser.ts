@@ -424,7 +424,7 @@ export function parseRunbookDocument(
               const nestedParagraph = nestedItem.children.find((c) => c.type === 'paragraph');
               if (!nestedParagraph) {
                 throw new RunbookSyntaxError(
-                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL) are allowed`,
+                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed`,
                 );
               }
               const nestedText = extractText(
@@ -433,7 +433,7 @@ export function parseRunbookDocument(
               const cond = parseConditional(nestedText);
               if (!cond) {
                 throw new RunbookSyntaxError(
-                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL) are allowed`,
+                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed`,
                 );
               }
               if (Array.isArray(cond)) {
