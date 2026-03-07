@@ -20,6 +20,7 @@ scenarios:
         - from: "1.3.1"
           action: CONTINUE
           result: PASS
+          aggregated: true
         - from: "2"
           action: COMPLETE
           result: PASS

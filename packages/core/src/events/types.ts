@@ -101,6 +101,8 @@ export interface StepTransitionedPayload {
   readonly forIndex?: number;
   /** FOR loop upper bound (inclusive). Undefined for open-ended sources. */
   readonly forEnd?: number;
+  /** Whether this transition resulted from evaluating accumulated deferred results (aggregation terminal). */
+  readonly aggregated?: boolean;
 }
 
 export interface PolicyDeniedPayload {

@@ -2830,7 +2830,12 @@ describe('runbook compiler', () => {
       // PASS ALL succeeds → GOTO 3 AT 1
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3::1');
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', at: 1 });
+      expect(snapshot.context.lastAction).toEqual({
+        type: 'GOTO',
+        target: '3',
+        at: 1,
+        aggregated: true,
+      });
       expect(snapshot.context.forStack).toEqual([
         {
           stepId: '3',
@@ -2890,7 +2895,7 @@ describe('runbook compiler', () => {
       // PASS ALL with one failure → aggregation fails → COMPLETE
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE', aggregated: true });
     });
 
     it('PASS ALL with STOP action records STOP lastAction', () => {
@@ -2937,7 +2942,7 @@ describe('runbook compiler', () => {
       // PASS ALL succeeds → STOP
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.lastAction).toEqual({ type: 'STOP' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'STOP', aggregated: true });
     });
 
     it('PASS ALL failure triggers fail-path GOTO to non-FOR step', () => {
@@ -2991,7 +2996,7 @@ describe('runbook compiler', () => {
       // PASS ALL with one failure → aggregation fails → GOTO 3
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3');
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
       expect(snapshot.context.iterationResults).toEqual(['pass']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
       expect(snapshot.context.forStack).toEqual([]);
@@ -3056,7 +3061,12 @@ describe('runbook compiler', () => {
       // PASS ALL with one failure → aggregation fails → GOTO 3 AT 2
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3::1');
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', at: 2 });
+      expect(snapshot.context.lastAction).toEqual({
+        type: 'GOTO',
+        target: '3',
+        at: 2,
+        aggregated: true,
+      });
       expect(snapshot.context.forStack).toEqual([
         {
           stepId: '3',
@@ -3123,7 +3133,7 @@ describe('runbook compiler', () => {
       // PASS ANY with one pass → aggregation passes → GOTO 3
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3');
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
       expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
       expect(snapshot.context.forStack).toEqual([]);
@@ -3192,7 +3202,7 @@ describe('runbook compiler', () => {
       // PASS ALL: no failures → aggregation passes → GOTO 3
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3');
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
       expect(snapshot.context.iterationResults).toEqual([]);
       expect(snapshot.context.deferredResults).toEqual(['pass']);
       expect(snapshot.context.forStack).toEqual([]);
@@ -5161,7 +5171,10 @@ echo "processing"
       actor.send({ type: 'PASS' }); // 1.1 passes -> parent -> PASS ALL -> COMPLETE
 
       expect(actor.getSnapshot().value).toBe('COMPLETE');
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({
+        type: 'COMPLETE',
+        aggregated: true,
+      });
     });
 
     describe('2-substep delegation bug scenarios', () => {
@@ -5249,7 +5262,10 @@ echo "processing"
         actor.send({ type: 'PASS' }); // 1.2 passes -> parent -> PASS ALL -> COMPLETE
 
         expect(actor.getSnapshot().value).toBe('COMPLETE');
-        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'COMPLETE' });
+        expect(actor.getSnapshot().context.lastAction).toEqual({
+          type: 'COMPLETE',
+          aggregated: true,
+        });
       });
 
       it('Test C: explicit DEFER substeps with PASS ALL: COMPLETE parent — PASS then FAIL stops', () => {

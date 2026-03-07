@@ -15,8 +15,9 @@ scenarios:
           action: DEFER
           result: PASS
         - from: "1.2"
-          action: DEFER
+          action: COMPLETE
           result: PASS
+          aggregated: true
 ---
 
 # Substep DEFER Shorthand

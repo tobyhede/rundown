@@ -23,6 +23,8 @@ export interface CapturedTransition {
   result?: 'PASS' | 'FAIL';
   /** The CLI command string that triggered this transition, if any. */
   command?: string;
+  /** Whether this transition resulted from aggregation (deferred result evaluation). */
+  aggregated?: boolean;
 }
 
 /** Result of matching a single step assertion against the event stream. */
@@ -175,6 +177,7 @@ function processJsonObject(
       at: obj.at as string,
       result: obj.result as 'PASS' | 'FAIL',
       command: obj.command as string | undefined,
+      aggregated: obj.aggregated === true ? true : undefined,
     });
   } else if (obj.type === 'runbook_completed') {
     terminal = 'COMPLETE';
@@ -268,6 +271,7 @@ function eventMatchesAssertion(event: CapturedTransition, assertion: StepAsserti
   if (assertion.action !== undefined && event.action !== assertion.action) return false;
   if (assertion.result !== undefined && event.result !== assertion.result) return false;
   if (assertion.command !== undefined && event.command !== assertion.command) return false;
+  if (assertion.aggregated !== undefined && event.aggregated !== assertion.aggregated) return false;
   return true;
 }
 
@@ -322,6 +326,8 @@ export function formatStepAssertionDescription(sa: StepAssertionResult): string 
   if (sa.assertion.action !== undefined) parts.push(`action=${sa.assertion.action}`);
   if (sa.assertion.result !== undefined) parts.push(`result=${sa.assertion.result}`);
   if (sa.assertion.command !== undefined) parts.push(`command=${sa.assertion.command}`);
+  if (sa.assertion.aggregated !== undefined)
+    parts.push(`aggregated=${String(sa.assertion.aggregated)}`);
   const desc = parts.length > 0 ? parts.join(' ') : '(empty assertion)';
   return `step ${desc}: ${sa.matched ? 'matched' : 'no match'}`;
 }

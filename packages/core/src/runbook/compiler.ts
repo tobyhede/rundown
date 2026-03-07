@@ -644,6 +644,10 @@ function findNextStateId(stepName: string, substepId: string | undefined, steps:
  * the substep level). Records the parent step's transition action as lastAction and
  * initializes forStack when the target is a FOR step.
  *
+ * All actions produced by parent-exit aggregation carry `aggregated: true` on their
+ * `lastAction`, allowing consumers to distinguish aggregation-terminal transitions
+ * from direct step transitions.
+ *
  * @param parentAction - The parent step's transition action
  * @param exitTarget - The resolved XState target state ID
  * @param steps - The full steps array (for GOTO target lookup)
@@ -683,7 +687,7 @@ function buildParentExitAssign(
           iterationResults: [] as ('pass' | 'fail')[],
           substepCompletedCount: 0,
           deferredResults: [] as ('pass' | 'fail')[],
-          lastAction: buildGotoLastAction(parentAction.target),
+          lastAction: { ...buildGotoLastAction(parentAction.target), aggregated: true },
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
         });
       }
@@ -701,42 +705,42 @@ function buildParentExitAssign(
               deferredResults: [] as ('pass' | 'fail')[],
             }
           : {}),
-        lastAction: buildGotoLastAction(parentAction.target),
+        lastAction: { ...buildGotoLastAction(parentAction.target), aggregated: true },
       });
     }
     case 'STOP':
       return runbookSetup.assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
-        lastAction: { type: 'STOP' as const },
+        lastAction: { type: 'STOP' as const, aggregated: true },
         lastMessage: parentAction.message,
       });
     case 'COMPLETE':
       return runbookSetup.assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
-        lastAction: { type: 'COMPLETE' as const },
+        lastAction: { type: 'COMPLETE' as const, aggregated: true },
         lastMessage: parentAction.message,
       });
     case 'CONTINUE':
       return runbookSetup.assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
-        lastAction: { type: 'CONTINUE' as const },
+        lastAction: { type: 'CONTINUE' as const, aggregated: true },
         lastMessage: undefined as string | undefined,
       });
     case 'DEFER':
       return runbookSetup.assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
-        lastAction: { type: 'DEFER' as const },
+        lastAction: { type: 'DEFER' as const, aggregated: true },
         lastMessage: undefined as string | undefined,
       });
     default:
       return runbookSetup.assign({
         ...baseAssign,
         forStack: [] as readonly ForContext[],
-        lastAction: { type: parentAction.type },
+        lastAction: { type: parentAction.type, aggregated: true },
         lastMessage: undefined as string | undefined,
       });
   }
@@ -1232,6 +1236,15 @@ function buildLoopControlTransition(
  * accumulation, enabling fail-fast ALL/ANY evaluation. For non-last substeps,
  * the parent's advance guards handle routing to the next sibling.
  * At the step level (no substep), DEFER acts like CONTINUE.
+ *
+ * **Aggregation and `lastAction` reporting:**
+ * - Non-last substeps: DEFER routes to parent, the advance guard advances to the
+ *   next sibling. The transition reports `action=DEFER`.
+ * - Last substep: DEFER routes to parent, the aggregation guard fires, and
+ *   `lastAction` is overwritten by the parent's resolved action (COMPLETE, STOP,
+ *   CONTINUE, etc.) with `aggregated: true`. The transition reports the **parent's
+ *   action**, not DEFER. This is expected — the DEFER was accumulated and resolved
+ *   by aggregation.
  *
  * @param stepName - The current step name
  * @param substepId - The current substep ID within the step

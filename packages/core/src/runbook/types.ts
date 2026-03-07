@@ -100,21 +100,34 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
  * Replaces the previous string-based representation to preserve full transition
  * information (e.g., GOTO target) through persistence without lossy conversion.
  */
+type LastActionBase = {
+  /**
+   * Marks this transition as the terminal point of a deferred aggregation sequence.
+   *
+   * Set to `true` when the `lastAction` was produced by parent-exit aggregation logic
+   * (e.g., FOR loop completion, non-FOR substep aggregation, or BREAK). In these cases
+   * the action type reflects the **parent's** resolved outcome (COMPLETE, STOP, CONTINUE,
+   * etc.), not the child's original action (typically DEFER). Consumers can use this flag
+   * to distinguish aggregation-terminal transitions from direct step transitions.
+   */
+  readonly aggregated?: boolean;
+};
+
 export type LastAction =
-  | { readonly type: 'START' }
-  | { readonly type: 'CONTINUE' }
-  | { readonly type: 'DEFER' }
-  | {
+  | (LastActionBase & { readonly type: 'START' })
+  | (LastActionBase & { readonly type: 'CONTINUE' })
+  | (LastActionBase & { readonly type: 'DEFER' })
+  | (LastActionBase & {
       readonly type: 'GOTO';
       readonly target: string;
       readonly substep?: string;
       readonly at?: number | `{{${string}}}`;
-    }
-  | { readonly type: 'COMPLETE' }
-  | { readonly type: 'STOP' }
-  | { readonly type: 'RETRY' }
-  | { readonly type: 'NEXT' }
-  | { readonly type: 'BREAK' };
+    })
+  | (LastActionBase & { readonly type: 'COMPLETE' })
+  | (LastActionBase & { readonly type: 'STOP' })
+  | (LastActionBase & { readonly type: 'RETRY' })
+  | (LastActionBase & { readonly type: 'NEXT' })
+  | (LastActionBase & { readonly type: 'BREAK' });
 
 /**
  * Runtime state of a substep within a step

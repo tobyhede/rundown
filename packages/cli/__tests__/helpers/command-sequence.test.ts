@@ -19,6 +19,7 @@ describe('parseJsonLines', () => {
       at: '2',
       result: 'PASS',
       command: undefined,
+      aggregated: undefined,
     });
   });
 
