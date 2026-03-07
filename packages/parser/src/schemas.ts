@@ -136,18 +136,14 @@ export const ActionSchema = z.union([
   z.object({ type: z.literal('BREAK') }),
 ]);
 
-/**
- *
- */
+/** Terminal action type (CONTINUE, STOP, COMPLETE, GOTO, DEFER, NEXT, BREAK) inferred from ActionSchema. */
 export type Action = Readonly<z.output<typeof ActionSchema>>;
 
 /**
  * Valid transition kinds
  */
 export const TransitionKindSchema = z.enum(['pass', 'fail', 'yes', 'no']);
-/**
- *
- */
+/** Transition kind ('pass', 'fail', 'yes', 'no') inferred from TransitionKindSchema. */
 export type TransitionKind = z.output<typeof TransitionKindSchema>;
 
 /**
@@ -159,9 +155,7 @@ export const TransitionObjectSchema = z.object({
   action: ActionSchema,
 });
 
-/**
- *
- */
+/** Single transition with kind, retry count, and action, inferred from TransitionObjectSchema. */
 export type TransitionObject = Readonly<z.output<typeof TransitionObjectSchema>>;
 
 /**
@@ -173,9 +167,7 @@ export const TransitionsSchema = z.object({
   fail: TransitionObjectSchema,
 });
 
-/**
- *
- */
+/** Pass/fail transition pair with aggregation mode, inferred from TransitionsSchema. */
 export type Transitions = Readonly<z.output<typeof TransitionsSchema>>;
 
 /**

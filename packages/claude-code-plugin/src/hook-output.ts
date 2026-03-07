@@ -19,10 +19,15 @@ interface HookSpecificOutput {
  * Output structure written to stdout for Claude Code hook responses.
  */
 export interface ClaudeHookOutput {
+  /** Whether processing should continue (false = halt Claude). */
   continue?: boolean;
+  /** Machine-friendly reason for halting when continue is false. */
   stopReason?: string;
+  /** Enforced action — 'block' prevents the tool use from proceeding. */
   decision?: 'block';
+  /** Human-readable explanation for the block decision. */
   reason?: string;
+  /** Hook-specific payload with event name, context, and permission decisions. */
   hookSpecificOutput?: HookSpecificOutput;
 }
 

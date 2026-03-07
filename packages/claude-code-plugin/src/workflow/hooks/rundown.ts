@@ -22,6 +22,7 @@ export function setExecSync(fn: typeof nodeExecFileSync): void {
  * Get the path to the rundown CLI entry point.
  * Uses require.resolve to find the installed `@rundown-org/cli` package.
  * @returns Absolute path to the CLI entry point module
+ * @throws {Error} If `@rundown-org/cli` package cannot be resolved
  */
 export function getRundownCliPath(): string {
   return require.resolve('@rundown-org/cli');

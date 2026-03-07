@@ -17,7 +17,9 @@ const execAsync = promisify(exec);
  * Result of executing a shell command within a gate.
  */
 export interface ShellResult {
+  /** Process exit code (0 = success, 124 = timeout). */
   exitCode: number;
+  /** Combined stdout and stderr output, untrimmed. */
   output: string;
 }
 
@@ -122,6 +124,7 @@ export async function executeShellCommand(
  * @param gateName - Kebab-case gate name to look up in built-in modules
  * @param input - Hook input to pass to the gate's execute function
  * @returns Gate result from the built-in gate module
+ * @throws {Error} If gate module not found or missing execute function
  */
 export async function executeBuiltinGate(gateName: string, input: HookInput): Promise<GateResult> {
   try {
@@ -161,6 +164,7 @@ const MAX_PLUGIN_DEPTH = 10;
  * @param input - Hook input to pass to the gate
  * @param pluginStack - Stack of plugin gate references for circular dependency detection
  * @returns Object with passed flag and gate result
+ * @throws {Error} If circular gate reference detected or max plugin depth exceeded
  */
 export async function executeGate(
   gateName: string,
@@ -239,7 +243,9 @@ export async function executeGate(
  * Result of loading a gate definition from an external plugin.
  */
 export interface PluginGateResult {
+  /** Gate configuration loaded from the plugin's rundown-plugin.json. */
   gateConfig: GateConfig;
+  /** Absolute path to the plugin's root directory, used as cwd for command execution. */
   pluginRoot: string;
 }
 
@@ -256,6 +262,7 @@ export interface PluginGateResult {
  * @param pluginName - Name of the plugin (e.g., 'cipherpowers')
  * @param gateName - Name of the gate within the plugin
  * @returns The gate config and the plugin root path for execution context
+ * @throws {Error} If plugin config not found, invalid structure, or gate not defined
  */
 export async function loadPluginGate(
   pluginName: string,

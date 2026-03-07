@@ -50,9 +50,7 @@ export const HookInputSchema = z
   })
   .strict();
 
-/**
- *
- */
+/** Validated hook input type inferred from HookInputSchema. */
 export type HookInput = z.infer<typeof HookInputSchema>;
 
 /**

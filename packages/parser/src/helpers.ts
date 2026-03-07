@@ -72,20 +72,14 @@ export interface ParsedSubstepHeader {
   description: string;
 }
 
-/**
- * Strip common separators and whitespace from the beginning of text.
- *
- * Removes leading punctuation (periods, colons, dashes, arrows, parentheses)
- * and whitespace that commonly separate step numbers from descriptions.
- *
- * @param text - The text to strip separators from
- * @returns The text with leading separators and whitespace removed
- */
 /** Characters to strip from trailing position of named step identifiers. */
 const TRAILING_SEPARATORS = new Set(['.', ':', '\u2014', '\u2192', ')', '-']);
 
 /**
  * Strip common separators and whitespace from the beginning of text.
+ *
+ * Removes leading punctuation (periods, colons, dashes, arrows, parentheses)
+ * and whitespace that commonly separate step numbers from descriptions.
  *
  * @param text - The text to strip leading separators from
  * @returns The text with leading separators and whitespace removed

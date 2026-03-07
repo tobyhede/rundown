@@ -38,9 +38,10 @@ export class Session {
   }
 
   /**
-   * Set a session state value
+   * Set a session state value.
    * @param key - Session state key to update
    * @param value - New value to persist
+   * @throws {Error} If persistence fails (mkdir/write/rename errors from save)
    */
   async set<K extends keyof SessionState>(key: K, value: SessionState[K]): Promise<void> {
     const state = await this.load();
@@ -49,9 +50,10 @@ export class Session {
   }
 
   /**
-   * Append value to array field (deduplicated)
+   * Append value to array field (deduplicated).
    * @param key - Array-typed session state key
    * @param value - String value to append if not already present
+   * @throws {Error} If persistence fails (mkdir/write/rename errors from save)
    */
   async append(key: SessionStateArrayKey, value: string): Promise<void> {
     const state = await this.load();
