@@ -207,7 +207,7 @@ describe('handleDelegationCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -284,7 +284,7 @@ describe('handleDelegationCompletion', () => {
       step: '1',
       activeEntry: 1,
       activeFrameKey: '1|',
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -318,7 +318,7 @@ describe('handleDelegationCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -349,7 +349,7 @@ describe('handleDelegationCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -382,7 +382,7 @@ describe('handleDelegationCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -412,11 +412,11 @@ describe('handleDelegationCompletion', () => {
       parentStepId: '2',
     });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
       delegation: grandparentDelegation,
     });
     const grandparentState = makeState('grandparent-run-id', {
-      substepStates: [{ id: '2', status: 'pending', delegation: null }],
+      substepStates: [{ id: '2', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([
@@ -461,7 +461,7 @@ describe('handleDelegationCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -494,7 +494,7 @@ describe('handleDelegationCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -522,7 +522,7 @@ describe('handleDelegationCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -550,7 +550,7 @@ describe('handleDelegationCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -577,7 +577,7 @@ describe('handleDelegationCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
 
     const states = new Map([[parentState.id, parentState]]);

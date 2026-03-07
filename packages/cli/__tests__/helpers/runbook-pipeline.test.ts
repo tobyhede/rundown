@@ -14,8 +14,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     .fn()
     .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1' }),
   getActiveForContext: jest.fn().mockReturnValue(null),
-  buildFrameKey: (step: string, iteration?: number) =>
-    `${step}|${iteration !== undefined ? String(iteration) : ''}`,
+  buildFrameKey: jest.fn(
+    (step: string, iteration?: number) =>
+      `${step}|${iteration !== undefined ? String(iteration) : ''}`,
+  ),
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',
   DELEGATION_TOKEN_PREFIX: 'rdtk_',

@@ -16,11 +16,7 @@ export class ConsoleWriter implements OutputWriter {
   }
 
   writeLine(text = '', stream: OutputStream = 'stdout'): void {
-    if (stream === 'stderr') {
-      process.stderr.write(`${text}\n`);
-    } else {
-      process.stdout.write(`${text}\n`);
-    }
+    this.write(`${text}\n`, stream);
   }
 
   writeLines(lines: string[], stream: OutputStream = 'stdout'): void {

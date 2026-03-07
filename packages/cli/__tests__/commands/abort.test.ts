@@ -70,7 +70,7 @@ Run the child task.
     });
 
     it('rejects empty token', async () => {
-      const result = await runCliInProcess('abort ""', workspace);
+      const result = await runCliInProcess(['abort', ''], workspace);
       expect(result.exitCode).toBe(1);
     });
 

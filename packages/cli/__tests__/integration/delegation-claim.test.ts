@@ -266,6 +266,7 @@ rd echo --result pass
 
       // Complete parent substep 1.2 → aggregation → PASS ALL → CONTINUE → step 2
       result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(0);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();

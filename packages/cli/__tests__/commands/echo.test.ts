@@ -48,7 +48,7 @@ describe('echo command', () => {
 
   describe('error handling', () => {
     it('fails when no active runbook', async () => {
-      const result = await runCliInProcess('echo "hello"', workspace);
+      const result = await runCliInProcess(['echo', 'hello'], workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('No active runbook');

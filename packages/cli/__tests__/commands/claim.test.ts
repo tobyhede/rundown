@@ -342,12 +342,12 @@ rd echo --result fail
     });
 
     it('handles claim with empty token string', async () => {
-      const result = await runCliInProcess('claim ""', workspace);
+      const result = await runCliInProcess(['claim', ''], workspace);
       expect(result.exitCode).toBe(1);
     });
 
     it('handles claim with whitespace token', async () => {
-      const result = await runCliInProcess('claim "  "', workspace);
+      const result = await runCliInProcess(['claim', '  '], workspace);
       expect(result.exitCode).toBe(1);
     });
 

@@ -129,6 +129,7 @@ class ExitSignal extends Error {
  *
  * @param args - Command arguments as string or array
  * @param workspace - Test workspace with cwd and binPath
+ * @returns CLI result with stdout, stderr, and exitCode
  */
 export async function runCliInProcess(
   args: string | string[],

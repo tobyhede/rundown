@@ -1,5 +1,6 @@
 // packages/cli/__tests__/commands/ls.test.ts
 
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { createTestWorkspace, runCliInProcess } from '../helpers/test-utils.js';
 
 describe('rd ls', () => {

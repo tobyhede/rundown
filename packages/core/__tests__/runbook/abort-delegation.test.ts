@@ -122,6 +122,37 @@ describe('abortDelegation', () => {
     ).toThrow(/step not found/i);
   });
 
+  it('only cancels delegation in the targeted frame (cross-frame isolation)', () => {
+    const delegation = makeDelegation();
+    const otherDelegation = makeDelegation({ childRunId: 'other-child' });
+    const state = makeState([
+      { id: '1', frameKey: buildFrameKey('1', 1), status: 'pending', delegation },
+      { id: '1', frameKey: buildFrameKey('1', 2), status: 'pending', delegation: otherDelegation },
+    ]);
+
+    const result = abortDelegation({
+      parentState: state,
+      substepId: '1',
+      frameKey: buildFrameKey('1', 1),
+    });
+
+    expect(result.status).toBe('cancelled');
+    if (result.status === 'cancelled') {
+      // Targeted substep in frame 1|1 is cancelled
+      const targeted = result.updatedSubstepStates.find(
+        (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1', 1),
+      );
+      expect(targeted?.delegation?.cancelledAt).toBeDefined();
+
+      // Same substep ID in different frame 1|2 is untouched
+      const other = result.updatedSubstepStates.find(
+        (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1', 2),
+      );
+      expect(other?.delegation?.cancelledAt).toBeNull();
+      expect(other?.delegation?.childRunId).toBe('other-child');
+    }
+  });
+
   it('throws RD-801 for substep without delegation', () => {
     const state = makeState([{ id: '1', frameKey: buildFrameKey('1'), status: 'pending' }]);
 
