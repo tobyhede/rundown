@@ -1,9 +1,4 @@
-import {
-  createTestWorkspace,
-  runCli,
-  runCliInProcess,
-  type TestWorkspace,
-} from '../helpers/test-utils.js';
+import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -206,16 +201,17 @@ cases:
   });
 
   describe('run subcommand', () => {
-    // scenario-suite run spawns child processes internally, so these tests
-    // must use runCli (subprocess) rather than runCliInProcess.
-    it('runs single passing case successfully', () => {
-      const result = runCli('scenario-suite run test.scenario-suite.yaml happy-path -q', workspace);
+    it('runs single passing case successfully', async () => {
+      const result = await runCliInProcess(
+        'scenario-suite run test.scenario-suite.yaml happy-path -q',
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
     }, 30000);
 
-    it('runs case where actual differs from expected with exit code 1', () => {
-      const result = runCli(
+    it('runs case where actual differs from expected with exit code 1', async () => {
+      const result = await runCliInProcess(
         'scenario-suite run test.scenario-suite.yaml wrong-expectation -q',
         workspace,
       );
@@ -223,32 +219,40 @@ cases:
       expect(result.exitCode).toBe(1);
     }, 30000);
 
-    it('outputs JSON for single case with --json', () => {
-      const result = runCli(
+    it('outputs JSON for single case with --json', async () => {
+      const result = await runCliInProcess(
         'scenario-suite run test.scenario-suite.yaml happy-path --json',
         workspace,
       );
 
       expect(result.exitCode).toBe(0);
-      const parsed = JSON.parse(result.stdout.trim());
+      const jsonLines = result.stdout.trim().split(/\n(?=\{)/);
+      const parsed = JSON.parse(jsonLines[0]);
       expect(parsed.result).toBe(true);
       expect(parsed.scenario).toBe('happy-path');
       expect(parsed.expected).toBe('COMPLETE');
       expect(parsed.actual).toBe('COMPLETE');
     }, 30000);
 
-    it('runs all cases with --all', () => {
-      const result = runCli('scenario-suite run test.scenario-suite.yaml --all -q', workspace);
+    it('runs all cases with --all', async () => {
+      const result = await runCliInProcess(
+        'scenario-suite run test.scenario-suite.yaml --all -q',
+        workspace,
+      );
 
       // Suite has a failing case so exit code is 1
       expect(result.exitCode).toBe(1);
     }, 60000);
 
-    it('outputs summary JSON with --all --json', () => {
-      const result = runCli('scenario-suite run test.scenario-suite.yaml --all --json', workspace);
+    it('outputs summary JSON with --all --json', async () => {
+      const result = await runCliInProcess(
+        'scenario-suite run test.scenario-suite.yaml --all --json',
+        workspace,
+      );
 
       expect(result.exitCode).toBe(1);
-      const parsed = JSON.parse(result.stdout.trim());
+      const jsonLines = result.stdout.trim().split(/\n(?=\{)/);
+      const parsed = JSON.parse(jsonLines[0]);
       expect(parsed.total).toBe(3);
       expect(parsed.passed).toBe(2);
       expect(parsed.failed).toBe(1);
