@@ -1,6 +1,7 @@
 // @ts-check
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
+import jsdoc from 'eslint-plugin-jsdoc';
 
 export default tseslint.config(
   // Ignore patterns (replaces .eslintignore)
@@ -24,6 +25,9 @@ export default tseslint.config(
   ...tseslint.configs.strictTypeCheckedOnly,
   ...tseslint.configs.stylisticTypeCheckedOnly,
 
+  // TSDoc coverage (warn level until coverage reaches ~95%)
+  jsdoc.configs['flat/recommended-typescript'],
+
   // Global settings for all TypeScript files
   {
     files: ['**/*.ts'],
@@ -37,6 +41,33 @@ export default tseslint.config(
       },
     },
     rules: {
+      // TSDoc coverage for exported symbols
+      'jsdoc/require-jsdoc': [
+        'warn',
+        {
+          publicOnly: true,
+          require: {
+            FunctionDeclaration: true,
+            MethodDefinition: true,
+            ClassDeclaration: true,
+            ArrowFunctionExpression: true,
+            FunctionExpression: true,
+          },
+          contexts: ['TSInterfaceDeclaration', 'TSTypeAliasDeclaration', 'TSEnumDeclaration'],
+          exemptEmptyConstructors: true,
+        },
+      ],
+      'jsdoc/require-description': 'warn',
+      'jsdoc/require-param': 'warn',
+      'jsdoc/require-param-description': 'warn',
+      'jsdoc/require-returns': 'warn',
+      'jsdoc/require-returns-description': 'warn',
+      'jsdoc/require-throws': 'warn',
+      'jsdoc/require-property': 'warn',
+      'jsdoc/require-property-description': 'warn',
+      'jsdoc/check-values': 'off',
+      'jsdoc/tag-lines': 'off',
+
       // Explicit return types for public API clarity
       '@typescript-eslint/explicit-function-return-type': [
         'error',
@@ -77,6 +108,15 @@ export default tseslint.config(
   {
     files: ['**/__tests__/**/*.ts', '**/*.test.ts', '**/*.spec.ts'],
     rules: {
+      'jsdoc/require-jsdoc': 'off',
+      'jsdoc/require-description': 'off',
+      'jsdoc/require-param': 'off',
+      'jsdoc/require-param-description': 'off',
+      'jsdoc/require-returns': 'off',
+      'jsdoc/require-returns-description': 'off',
+      'jsdoc/require-throws': 'off',
+      'jsdoc/require-property': 'off',
+      'jsdoc/require-property-description': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',

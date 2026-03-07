@@ -82,6 +82,7 @@ synchronisation
 synchronise
 syscalls
 tcsh
+jsdoc
 tsdoc
 tsconfig
 tsconfigRootDir
