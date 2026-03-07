@@ -26,7 +26,11 @@ export default tseslint.config(
   ...tseslint.configs.stylisticTypeCheckedOnly,
 
   // TSDoc coverage (warn level until coverage reaches ~95%)
-  jsdoc.configs['flat/recommended-typescript'],
+  // Exclude test files — tests don't need JSDoc enforcement
+  {
+    ...jsdoc.configs['flat/recommended-typescript'],
+    ignores: ['**/__tests__/**/*.ts', '**/*.test.ts', '**/*.spec.ts'],
+  },
 
   // Global settings for all TypeScript files
   {
@@ -108,6 +112,7 @@ export default tseslint.config(
   {
     files: ['**/__tests__/**/*.ts', '**/*.test.ts', '**/*.spec.ts'],
     rules: {
+      // Disable jsdoc/require-* rules set in the main **/*.ts block
       'jsdoc/require-jsdoc': 'off',
       'jsdoc/require-description': 'off',
       'jsdoc/require-param': 'off',
