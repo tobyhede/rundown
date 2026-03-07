@@ -162,35 +162,31 @@ describe('Substep aggregation properties', () => {
   // Property 5: CONTINUE substeps don't feed deferredResults
   it('only DEFER substeps contribute to deferredResults count', () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 2, max: 4 }),
-        fc.integer({ min: 1, max: 3 }),
-        (numSubsteps, numDefer) => {
-          const adjustedNumDefer = Math.min(numDefer, numSubsteps);
-          const substepActions = Array.from({ length: numSubsteps }, (_, i) =>
-            i < adjustedNumDefer ? ('DEFER' as const) : ('CONTINUE' as const),
-          );
-          // With mixed DEFER/CONTINUE substeps, only DEFER substeps feed deferredResults
-          // Parent transitions need to be set so we can observe the deferredResults
-          const steps = inferSteps(
-            buildAggregationSteps({
-              numSubsteps,
-              aggregationMode: 'ALL',
-              substepActions,
-              parentPassAction: 'CONTINUE',
-              parentFailAction: 'STOP',
-            }),
-          );
-          const events = Array.from({ length: numSubsteps + 5 }, () => 'PASS' as const);
-          const result = runMachine(steps, events);
-          // Machine reached terminal — deferredResults in terminal context
-          // reflects accumulated DEFER substep count
-          // Note: deferredResults may be reset by parent exit, but the aggregation
-          // correctly counted only DEFER substeps. We verify by outcome:
-          // ALL aggregation with only PASS results from DEFER substeps → parent passes
-          expect(result.terminalState).toBe('COMPLETE');
-        },
-      ),
+      fc.property(fc.integer({ min: 2, max: 4 }), (numSubsteps) => {
+        // First substep is DEFER, rest are CONTINUE
+        const substepActions = Array.from({ length: numSubsteps }, (_, i) =>
+          i === 0 ? ('DEFER' as const) : ('CONTINUE' as const),
+        );
+        const steps = inferSteps(
+          buildAggregationSteps({
+            numSubsteps,
+            aggregationMode: 'ANY',
+            substepActions,
+            parentPassAction: 'CONTINUE',
+            parentFailAction: 'STOP',
+          }),
+        );
+        // FAIL the DEFER substep (index 0), PASS all CONTINUE substeps
+        const events: ('PASS' | 'FAIL')[] = [
+          'FAIL',
+          ...Array.from({ length: numSubsteps - 1 }, () => 'PASS' as const),
+        ];
+        const result = runMachine(steps, events);
+        // ANY aggregation: if CONTINUE substeps leaked into deferredResults,
+        // their PASS results would satisfy ANY and fire parent PASS → COMPLETE.
+        // Only DEFER substep's FAIL should be in deferredResults → parent FAIL → STOPPED.
+        expect(result.terminalState).toBe('STOPPED');
+      }),
       { numRuns: 200 },
     );
   });

@@ -2,7 +2,7 @@
  * Property tests for three-level retry exhaustion.
  *
  * Tests substep retry, parent retry, and iteration retry independently.
- * Five properties at 300 runs each (1,500 total).
+ * Seven properties at 300 runs each (2,100 total).
  */
 
 import fc from 'fast-check';
@@ -202,6 +202,99 @@ describe('Retry exhaustion properties', () => {
         expect(result.retryCount).toBe(1);
         expect(result.parentRetryCount).toBe(0);
         expect(result.iterationRetryCount).toBe(0);
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  // Property 5b: Parent retry resets iteration retry counter
+  // After parent retry fires, iteration retry must be available again.
+  // If iterationRetryCount leaked across parent retry, the second round of
+  // iteration FAILs would exhaust immediately → premature STOPPED.
+  it('parent retry resets iteration retry counter', () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 2 }), (retry) => {
+        const substeps: Substep[] = [
+          { id: '1', description: 'Sub 1', transitions: DEFER_TRANSITIONS },
+        ];
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'FOR step with both retry levels',
+            forClause: {
+              start: 1,
+              end: 1,
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: makeTransitionObject('pass', 'DEFER'),
+                fail: makeTransitionObject('fail', 'DEFER', retry),
+              },
+            },
+            transitions: {
+              aggregation: 'ALL' as const,
+              pass: makeTransitionObject('pass', 'COMPLETE'),
+              fail: makeTransitionObject('fail', 'STOP', retry),
+            },
+            substeps,
+          },
+        ]);
+        // Round 1: (retry+1) FAILs exhaust iteration → parent FAIL → parent retry
+        // Round 2: retry FAILs use iteration retries (proves counter was reset) then PASS
+        const events: ('PASS' | 'FAIL')[] = [
+          ...Array.from({ length: retry + 1 }, () => 'FAIL' as const),
+          ...Array.from({ length: retry }, () => 'FAIL' as const),
+          'PASS',
+        ];
+        const result = runMachine(steps, events);
+        // If iterationRetryCount was NOT reset by parent retry,
+        // the retry-th FAIL in round 2 would exhaust immediately → STOPPED.
+        expect(result.terminalState).toBe('COMPLETE');
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  // Property 5c: Iteration retry does not increment parent retry counter
+  // After iteration retries fire, parent retry must still be fully available.
+  // If iterationRetryCount leaked into parentRetryCount, parent retry would
+  // exhaust prematurely → STOPPED instead of recovery.
+  it('iteration retry does not increment parent retry counter', () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 2 }), (retry) => {
+        const substeps: Substep[] = [
+          { id: '1', description: 'Sub 1', transitions: DEFER_TRANSITIONS },
+        ];
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'FOR step with both retry levels',
+            forClause: {
+              start: 1,
+              end: 1,
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: makeTransitionObject('pass', 'DEFER'),
+                fail: makeTransitionObject('fail', 'DEFER', retry),
+              },
+            },
+            transitions: {
+              aggregation: 'ALL' as const,
+              pass: makeTransitionObject('pass', 'COMPLETE'),
+              fail: makeTransitionObject('fail', 'STOP', retry),
+            },
+            substeps,
+          },
+        ]);
+        // (retry+1) FAILs exhaust iteration retries → parent FAIL → parent retry
+        // Then PASS → COMPLETE
+        // If iteration retry leaked into parentRetryCount, parent retry would
+        // already be at `retry` → exhausted → STOPPED instead of recovery.
+        const events: ('PASS' | 'FAIL')[] = [
+          ...Array.from({ length: retry + 1 }, () => 'FAIL' as const),
+          'PASS',
+        ];
+        const result = runMachine(steps, events);
+        expect(result.terminalState).toBe('COMPLETE');
       }),
       { numRuns: 300 },
     );
