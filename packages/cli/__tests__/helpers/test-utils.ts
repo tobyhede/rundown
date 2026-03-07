@@ -208,10 +208,10 @@ export async function runCliInProcess(
     // Console that bypasses process.stderr/stdout.write, so we route them
     // into the capture buffers explicitly.
     console.error = (...args: unknown[]) => {
-      stderrBuf += args.map(String).join(' ') + '\n';
+      stderrBuf += `${args.map(String).join(' ')}\n`;
     };
     console.log = (...args: unknown[]) => {
-      stdoutBuf += args.map(String).join(' ') + '\n';
+      stdoutBuf += `${args.map(String).join(' ')}\n`;
     };
 
     // Intercept process.exit
