@@ -80,8 +80,8 @@ Run the child task.
 
     it('rejects claim with unknown token', async () => {
       // Valid format but no matching delegation
-      // cspell:disable-next-line
       const result = await runCliInProcess(
+        // cspell:disable-next-line
         'claim rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
         workspace,
       );
