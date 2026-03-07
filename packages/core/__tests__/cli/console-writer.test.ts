@@ -5,26 +5,16 @@ describe('ConsoleWriter', () => {
   let writer: ConsoleWriter;
   let stdoutWriteSpy: jest.SpiedFunction<typeof process.stdout.write>;
   let stderrWriteSpy: jest.SpiedFunction<typeof process.stderr.write>;
-  let consoleLogSpy: jest.SpiedFunction<typeof console.log>;
-  let consoleErrorSpy: jest.SpiedFunction<typeof console.error>;
 
   beforeEach(() => {
     writer = new ConsoleWriter();
     stdoutWriteSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
     stderrWriteSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {
-      /* noop */
-    });
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {
-      /* noop */
-    });
   });
 
   afterEach(() => {
     stdoutWriteSpy.mockRestore();
     stderrWriteSpy.mockRestore();
-    consoleLogSpy.mockRestore();
-    consoleErrorSpy.mockRestore();
   });
 
   describe('write', () => {
@@ -47,55 +37,55 @@ describe('ConsoleWriter', () => {
   });
 
   describe('writeLine', () => {
-    it('uses console.log for stdout', () => {
+    it('writes to stdout with newline', () => {
       writer.writeLine('hello line');
-      expect(consoleLogSpy).toHaveBeenCalledWith('hello line');
+      expect(stdoutWriteSpy).toHaveBeenCalledWith('hello line\n');
     });
 
     it('defaults to empty string', () => {
       writer.writeLine();
-      expect(consoleLogSpy).toHaveBeenCalledWith('');
+      expect(stdoutWriteSpy).toHaveBeenCalledWith('\n');
     });
 
-    it('uses console.error for stderr', () => {
+    it('writes to stderr with newline when specified', () => {
       writer.writeLine('error line', 'stderr');
-      expect(consoleErrorSpy).toHaveBeenCalledWith('error line');
-      expect(consoleLogSpy).not.toHaveBeenCalled();
+      expect(stderrWriteSpy).toHaveBeenCalledWith('error line\n');
+      expect(stdoutWriteSpy).not.toHaveBeenCalled();
     });
   });
 
   describe('writeLines', () => {
     it('iterates over array', () => {
       writer.writeLines(['line 1', 'line 2', 'line 3']);
-      expect(consoleLogSpy).toHaveBeenCalledTimes(3);
-      expect(consoleLogSpy).toHaveBeenNthCalledWith(1, 'line 1');
-      expect(consoleLogSpy).toHaveBeenNthCalledWith(2, 'line 2');
-      expect(consoleLogSpy).toHaveBeenNthCalledWith(3, 'line 3');
+      expect(stdoutWriteSpy).toHaveBeenCalledTimes(3);
+      expect(stdoutWriteSpy).toHaveBeenNthCalledWith(1, 'line 1\n');
+      expect(stdoutWriteSpy).toHaveBeenNthCalledWith(2, 'line 2\n');
+      expect(stdoutWriteSpy).toHaveBeenNthCalledWith(3, 'line 3\n');
     });
 
     it('routes to stderr when specified', () => {
       writer.writeLines(['err 1', 'err 2'], 'stderr');
-      expect(consoleErrorSpy).toHaveBeenCalledTimes(2);
-      expect(consoleLogSpy).not.toHaveBeenCalled();
+      expect(stderrWriteSpy).toHaveBeenCalledTimes(2);
+      expect(stdoutWriteSpy).not.toHaveBeenCalled();
     });
   });
 
   describe('writeError', () => {
     it('routes to stderr', () => {
       writer.writeError('error message');
-      expect(consoleErrorSpy).toHaveBeenCalledWith('error message');
+      expect(stderrWriteSpy).toHaveBeenCalledWith('error message\n');
     });
   });
 
   describe('writeJson', () => {
     it('writes pretty JSON by default', () => {
       writer.writeJson({ key: 'value' });
-      expect(consoleLogSpy).toHaveBeenCalledWith(JSON.stringify({ key: 'value' }, null, 2));
+      expect(stdoutWriteSpy).toHaveBeenCalledWith(`${JSON.stringify({ key: 'value' }, null, 2)}\n`);
     });
 
     it('writes compact JSON when pretty is false', () => {
       writer.writeJson({ key: 'value' }, false);
-      expect(consoleLogSpy).toHaveBeenCalledWith('{"key":"value"}');
+      expect(stdoutWriteSpy).toHaveBeenCalledWith('{"key":"value"}\n');
     });
   });
 });

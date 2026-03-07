@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createTestWorkspace,
-  runCli,
+  runCliInProcess,
   getActiveState,
   readRunbookState,
   type TestWorkspace,
@@ -85,7 +85,7 @@ Run the child task.
       await writeChildRunbook();
 
       // Start parent in prompted mode
-      let result = runCli('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       // Get parent run ID
@@ -94,12 +94,12 @@ Run the child task.
       const parentRunId = parentState!.id as string;
 
       // Delegate substep 1.1 to child runbook
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token = extractToken(result.stdout);
 
       // Claim the token — launches child runbook in prompted mode
-      result = runCli(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Verify child state has delegation linkage
@@ -110,7 +110,7 @@ Run the child task.
 
       // Pass the child step — propagates pass to parent substep 1.1
       // DEFER model: parent advances to 1.2
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
       if (result.exitCode !== 0) {
         throw new Error(`rd pass failed: ${result.stdout}\n${result.stderr}`);
       }
@@ -123,7 +123,7 @@ Run the child task.
 
       // Parent is now at substep 1.2 — complete it to trigger aggregation
       // PASS ALL (both passed) → CONTINUE → step 2
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -138,29 +138,29 @@ Run the child task.
       await writeChildRunbook();
 
       // Start parent in prompted mode
-      let result = runCli('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
       // Delegate substep 1.1
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token = extractToken(result.stdout);
 
       // Claim
-      result = runCli(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Fail the child step — propagates fail to parent substep 1.1
       // DEFER model: parent advances to 1.2
-      result = runCli('fail', workspace);
+      result = await runCliInProcess('fail', workspace);
       expect(result.exitCode).toBe(1);
 
       // Parent is now at substep 1.2 — complete it to trigger aggregation
       // FAIL ANY (1.1 failed) → STOP
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -174,29 +174,29 @@ Run the child task.
       await writeChildRunbook();
 
       // Start parent in prompted mode
-      let result = runCli('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
       // Delegate substep 1.1
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token = extractToken(result.stdout);
 
       // Claim
-      result = runCli(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Stop the child — propagates fail to parent substep 1.1
       // DEFER model: parent advances to 1.2
-      result = runCli('stop', workspace);
+      result = await runCliInProcess('stop', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent is now at substep 1.2 — complete it to trigger aggregation
       // FAIL ANY (1.1 failed) → STOP
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -235,18 +235,18 @@ Approve the deployment.
       await writeChildRunbook();
 
       // Start grandparent
-      let result = runCli('run --prompted grandparent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted grandparent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const grandparentState = await getActiveState(workspace);
       const grandparentRunId = grandparentState!.id as string;
 
       // Delegate grandparent 1.1 to parent runbook
-      result = runCli('delegate parent.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate parent.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token1 = extractToken(result.stdout);
 
-      result = runCli(`claim ${token1}`, workspace);
+      result = await runCliInProcess(`claim ${token1}`, workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -255,22 +255,22 @@ Approve the deployment.
       const parentRunId = parentState!.id as string;
 
       // Delegate parent substep 1.1 to child runbook
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token2 = extractToken(result.stdout);
 
-      result = runCli(`claim ${token2}`, workspace);
+      result = await runCliInProcess(`claim ${token2}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Pass the child — propagates pass to parent substep 1.1
       // DEFER model: parent advances to 1.2
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent is at substep 1.2 — complete it
       // PASS ALL (both passed) → COMPLETE → propagates pass to grandparent 1.1
       // DEFER model: grandparent advances to 1.2
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
 
       // Verify parent completed
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -279,7 +279,7 @@ Approve the deployment.
 
       // Grandparent is at substep 1.2 — complete it
       // PASS ALL (both passed) → COMPLETE
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
 
       // Verify grandparent completed
       const updatedGrandparent = await readRunbookState(workspace, grandparentRunId);
@@ -296,27 +296,27 @@ Approve the deployment.
       await writeChildRunbook();
 
       // Start parent
-      let result = runCli('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
       // Delegate BOTH substeps
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token1 = extractToken(result.stdout);
 
-      result = runCli('delegate child.runbook.md --step 1.2', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.2', workspace);
       expect(result.exitCode).toBe(0);
       const token2 = extractToken(result.stdout);
 
       // Claim 1.2 first
-      result = runCli(`claim ${token2}`, workspace);
+      result = await runCliInProcess(`claim ${token2}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Pass 1.2 first
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent cursor is at substep 1.1 (not yet resolved), so drain couldn't
@@ -331,10 +331,10 @@ Approve the deployment.
       expect(updatedParent!.substep).toBe('1');
 
       // Now claim and complete 1.1
-      result = runCli(`claim ${token1}`, workspace);
+      result = await runCliInProcess(`claim ${token1}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // After both substeps resolve, parent should advance past step 1
@@ -363,7 +363,7 @@ Do the task.
 
       // This scenario shouldn't normally happen with delegation, but test defensive handling
       // Start a simple parent that completes immediately
-      const result = runCli('run simple-parent.runbook.md', workspace);
+      const result = await runCliInProcess('run simple-parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
     });
 
@@ -372,28 +372,28 @@ Do the task.
       await writeChildRunbook();
 
       // Start parent
-      let result = runCli('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
 
       // Delegate substep 1.1
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token = extractToken(result.stdout);
 
       // Manually complete the parent before claiming
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
       expect(result.exitCode).toBe(0);
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // Now claim and complete child - parent already done
-      result = runCli(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
       // Should succeed even though parent is already done
       expect(result.exitCode).toBe(0);
     });
@@ -404,32 +404,32 @@ Do the task.
       await writeChildRunbook();
 
       // Start parent
-      let result = runCli('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       // Delegate both substeps
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token1 = extractToken(result.stdout);
 
-      result = runCli('delegate child.runbook.md --step 1.2', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.2', workspace);
       expect(result.exitCode).toBe(0);
       const token2 = extractToken(result.stdout);
 
       // Claim both
-      result = runCli(`claim ${token1}`, workspace);
+      result = await runCliInProcess(`claim ${token1}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      result = runCli(`claim ${token2}`, workspace);
+      result = await runCliInProcess(`claim ${token2}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Complete both in quick succession
       // First completion
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // Second completion
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // Both should complete successfully
@@ -439,7 +439,7 @@ Do the task.
       await writeChildRunbook();
 
       // Start a standalone child runbook (no parent)
-      let result = runCli('run --prompted child.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted child.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const childState = await getActiveState(workspace);
@@ -447,7 +447,7 @@ Do the task.
       const childRunId = childState!.id as string;
 
       // Pass should work normally without propagation
-      result = runCli('pass', workspace);
+      result = await runCliInProcess('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // Runbook completed and was deactivated — read state by ID
@@ -460,7 +460,7 @@ Do the task.
       await writeChildRunbook();
 
       // Start a standalone child runbook (no parent)
-      let result = runCli('run --prompted child.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted child.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const childState = await getActiveState(workspace);
@@ -468,7 +468,7 @@ Do the task.
       const childRunId = childState!.id as string;
 
       // Fail triggers STOP transition → exit code 1
-      result = runCli('fail', workspace);
+      result = await runCliInProcess('fail', workspace);
       expect(result.exitCode).toBe(1);
 
       // Runbook stopped and was deactivated — read state by ID
@@ -481,11 +481,11 @@ Do the task.
       await writeChildRunbook();
 
       // Start a standalone child runbook (no parent)
-      let result = runCli('run --prompted child.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted child.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       // Stop should work normally without propagation
-      result = runCli(['stop', 'User cancelled'], workspace);
+      result = await runCliInProcess(['stop', 'User cancelled'], workspace);
       expect(result.exitCode).toBe(0);
 
       // State should be deleted
