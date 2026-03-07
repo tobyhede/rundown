@@ -316,22 +316,34 @@ export class RunbookStateManager {
    * Initialize substep tracking state for a runbook step.
    *
    * Creates SubstepState entries for all substeps with 'pending' status.
+   * When `frameKey` is provided, entries from other frames are preserved
+   * (append semantics for FOR loop iterations).
    *
    * @param id - The runbook state ID
    * @param substeps - The substep definitions from the step
+   * @param frameKey - Optional frame key scoping these entries to a FOR iteration
    * @throws Error if the runbook with the given ID is not found
    */
-  async initializeSubsteps(id: string, substeps: readonly Substep[]): Promise<void> {
+  async initializeSubsteps(
+    id: string,
+    substeps: readonly Substep[],
+    frameKey?: string,
+  ): Promise<void> {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);
 
-    const substepStates: SubstepState[] = substeps.map((s) => ({
+    const newEntries: SubstepState[] = substeps.map((s) => ({
       id: s.id,
+      ...(frameKey !== undefined ? { frameKey } : {}),
       status: 'pending',
       result: undefined,
     }));
 
-    await this.update(id, { substepStates });
+    const existing = state.substepStates ?? [];
+    const preserved =
+      frameKey !== undefined ? existing.filter((ss) => ss.frameKey !== frameKey) : [];
+
+    await this.update(id, { substepStates: [...preserved, ...newEntries] });
   }
 
   /**
@@ -371,19 +383,21 @@ export class RunbookStateManager {
    * @param runbookId - The runbook state ID
    * @param substepId - The substep ID to complete
    * @param result - The substep result ('pass' or 'fail')
+   * @param frameKey - Optional frame key to scope the match
    * @throws Error if the runbook with the given ID is not found
    */
   async completeSubstep(
     runbookId: string,
     substepId: string,
     result: 'pass' | 'fail',
+    frameKey?: string,
   ): Promise<void> {
     const state = await this.load(runbookId);
     if (!state) throw new Error(`Runbook ${runbookId} not found`);
 
     const substepStates = state.substepStates ?? [];
     const updated = substepStates.map((s) =>
-      s.id === substepId ? { ...s, status: 'done' as const, result } : s,
+      s.id === substepId && s.frameKey === frameKey ? { ...s, status: 'done' as const, result } : s,
     );
 
     await this.update(runbookId, { substepStates: updated });

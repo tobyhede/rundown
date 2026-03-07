@@ -406,11 +406,18 @@ describe('startRunbook', () => {
 
     runExecutionLoop.mockResolvedValue('done');
 
+    const mockLoad = jest.fn<any>().mockResolvedValue({
+      id: 'sub-id',
+      step: '1',
+      activeFrameKey: '1|',
+    });
+
     const ctx = {
       output: { flush: jest.fn() } as any,
       manager: {
         create: mockCreate,
         update: mockUpdate,
+        load: mockLoad,
         initializeSubsteps: mockInitSubsteps,
       } as any,
       actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
@@ -431,7 +438,7 @@ describe('startRunbook', () => {
     const result = await startRunbook(ctx as any, prepared, { file: 'runbook.md' });
 
     expect(result.ok).toBe(true);
-    expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps);
+    expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps, '1|');
     expect(mockUpdate).toHaveBeenCalledWith('sub-id', { substep: 'a' });
   });
 });

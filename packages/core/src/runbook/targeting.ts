@@ -1,5 +1,5 @@
 import type { StepPosition } from '../cli/types.js';
-import type { ForContext, ResolvedCompletion, RunbookState } from './types.js';
+import type { ForContext, ResolvedCompletion, RunbookState, SubstepState } from './types.js';
 
 /**
  * Derive execution location notation for runtime targets.
@@ -193,4 +193,42 @@ export function buildResolvedCompletion(fields: {
     targetEntry: fields.targetEntry,
     completedAt: fields.completedAt ?? new Date().toISOString(),
   };
+}
+
+/**
+ * Find a SubstepState by `(id, frameKey)`.
+ *
+ * Strict match: both `id` and `frameKey` must equal.
+ *
+ * @param substepStates - Array of substep states to search
+ * @param substepId - Substep ID to match
+ * @param frameKey - Frame key to match
+ * @returns The matching SubstepState, or undefined
+ */
+export function findSubstepState(
+  substepStates: readonly SubstepState[],
+  substepId: string,
+  frameKey?: string,
+): SubstepState | undefined {
+  return substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
+}
+
+/**
+ * Map over substep states, applying a transform to entries matching `(id, frameKey)`.
+ *
+ * @param substepStates - Array of substep states
+ * @param substepId - Substep ID to match
+ * @param frameKey - Frame key to match
+ * @param transform - Transform function applied to matching entries
+ * @returns New array with transformed matching entries
+ */
+export function mapSubstepState(
+  substepStates: readonly SubstepState[],
+  substepId: string,
+  frameKey: string | undefined,
+  transform: (ss: SubstepState) => SubstepState,
+): SubstepState[] {
+  return substepStates.map((ss) =>
+    ss.id === substepId && ss.frameKey === frameKey ? transform(ss) : ss,
+  );
 }

@@ -104,6 +104,70 @@ describe('RunbookStateManager', () => {
         result: undefined,
       });
     });
+
+    it('initializes substepStates with frameKey', async () => {
+      const substeps = [
+        { id: '1', description: 'First', prompts: [] },
+        { id: '2', description: 'Second', prompts: [] },
+      ];
+
+      const state = await manager.create('test.runbook.md', mockRunbook, {
+        runbookPath: 'test.runbook.md',
+      });
+      await manager.initializeSubsteps(state.id, substeps, '1|1');
+
+      const updated = await manager.load(state.id);
+      expect(updated?.substepStates).toHaveLength(2);
+      expect(updated?.substepStates?.[0]).toEqual({
+        id: '1',
+        frameKey: '1|1',
+        status: 'pending',
+        result: undefined,
+      });
+    });
+
+    it('preserves entries from other frames when frameKey is provided', async () => {
+      const substeps = [{ id: '1', description: 'First', prompts: [] }];
+
+      const state = await manager.create('test.runbook.md', mockRunbook, {
+        runbookPath: 'test.runbook.md',
+      });
+
+      // Initialize iteration 1
+      await manager.initializeSubsteps(state.id, substeps, '1|1');
+      // Initialize iteration 2 — should preserve iteration 1 entries
+      await manager.initializeSubsteps(state.id, substeps, '1|2');
+
+      const updated = await manager.load(state.id);
+      expect(updated?.substepStates).toHaveLength(2);
+      expect(updated?.substepStates?.[0]).toEqual({
+        id: '1',
+        frameKey: '1|1',
+        status: 'pending',
+        result: undefined,
+      });
+      expect(updated?.substepStates?.[1]).toEqual({
+        id: '1',
+        frameKey: '1|2',
+        status: 'pending',
+        result: undefined,
+      });
+    });
+
+    it('replaces entries from same frame on re-initialization', async () => {
+      const substeps = [{ id: '1', description: 'First', prompts: [] }];
+
+      const state = await manager.create('test.runbook.md', mockRunbook, {
+        runbookPath: 'test.runbook.md',
+      });
+
+      await manager.initializeSubsteps(state.id, substeps, '1|1');
+      // Re-initialize same frame — should replace, not duplicate
+      await manager.initializeSubsteps(state.id, substeps, '1|1');
+
+      const updated = await manager.load(state.id);
+      expect(updated?.substepStates).toHaveLength(1);
+    });
   });
 
   describe('RunbookStateManager substep lifecycle', () => {

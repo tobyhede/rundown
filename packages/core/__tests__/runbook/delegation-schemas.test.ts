@@ -169,6 +169,37 @@ describe('SubstepStateSchema backward compatibility', () => {
     expect(result.success).toBe(true);
   });
 
+  it('accepts substep state with frameKey field', () => {
+    const state = {
+      id: '1',
+      frameKey: '1|2',
+      status: 'pending' as const,
+    };
+    const runbookState = createMinimalRunbookState({
+      substepStates: [state],
+    });
+    const result = RunbookStateSchema.safeParse(runbookState);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.substepStates?.[0]?.frameKey).toBe('1|2');
+    }
+  });
+
+  it('accepts substep state without frameKey (backward compat)', () => {
+    const state = {
+      id: '1',
+      status: 'pending' as const,
+    };
+    const runbookState = createMinimalRunbookState({
+      substepStates: [state],
+    });
+    const result = RunbookStateSchema.safeParse(runbookState);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.substepStates?.[0]?.frameKey).toBeUndefined();
+    }
+  });
+
   it('accepts substep state with delegation field', () => {
     const state = {
       id: '1',

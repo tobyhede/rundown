@@ -10,7 +10,7 @@
 import type { Step, Substep } from '@rundown-org/parser';
 import { stepHasSubsteps, hasRunbooks } from '@rundown-org/parser';
 import type { RunbookState, SubstepState } from '@rundown-org/core';
-import { Errors } from '@rundown-org/core';
+import { Errors, findSubstepState, deriveActiveFrame } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 
 /**
@@ -28,14 +28,16 @@ export interface InferredDelegation {
  *
  * @param substepId - The substep ID to check
  * @param substepStates - Current substep states from persisted state
+ * @param frameKey - Frame key to scope the lookup
  * @returns True if the substep has a delegation with `cancelledAt === null`
  */
 function hasActiveDelegation(
   substepId: string,
   substepStates: readonly SubstepState[] | undefined,
+  frameKey?: string,
 ): boolean {
   if (!substepStates) return false;
-  const ss = substepStates.find((s) => s.id === substepId);
+  const ss = findSubstepState(substepStates, substepId, frameKey);
   return ss?.delegation?.cancelledAt === null;
 }
 
@@ -61,10 +63,12 @@ export function inferDelegationTarget(
     throw Errors.delegationNoDelegatableSubstep(state.step);
   }
 
+  const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+
   for (const substep of currentStep.substeps) {
     if (!hasRunbooks(substep)) continue;
-    if (hasActiveDelegation(substep.id, state.substepStates)) continue;
-    if (isSubstepDone(substep.id, state.substepStates)) continue;
+    if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) continue;
+    if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
 
     return {
       runbookRef: substep.runbooks[0],
@@ -114,8 +118,9 @@ export function inferRunbookFromStep(
 function isSubstepDone(
   substepId: string,
   substepStates: readonly SubstepState[] | undefined,
+  frameKey?: string,
 ): boolean {
   if (!substepStates) return false;
-  const ss = substepStates.find((s) => s.id === substepId);
+  const ss = findSubstepState(substepStates, substepId, frameKey);
   return ss?.status === 'done';
 }

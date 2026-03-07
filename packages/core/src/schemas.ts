@@ -169,6 +169,7 @@ export const StepDelegationSchema = z.object({
  */
 const SubstepStateSchema = z.object({
   id: z.string(),
+  frameKey: z.string().optional(),
   status: z.enum(['pending', 'running', 'done']),
   result: z.enum(['pass', 'fail']).optional(),
   delegation: StepDelegationSchema.optional(),

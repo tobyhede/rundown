@@ -590,7 +590,7 @@ describe('claimAndLaunch', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('RD-808');
-      expect(result.error).toContain('mismatch');
+      expect(result.error).toContain('no longer exists');
     }
   });
 

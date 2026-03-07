@@ -18,6 +18,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     step: state.step,
     iteration: state.activeForContext?.iteration,
   })),
+  findSubstepState: jest.fn((substepStates: any[], substepId: string, frameKey?: string) =>
+    substepStates.find((ss: any) => ss.id === substepId && ss.frameKey === frameKey),
+  ),
 }));
 
 // Mock runbook-loader
@@ -162,6 +165,10 @@ beforeEach(() => {
     step: state.step,
     iteration: state.activeForContext?.iteration,
   }));
+  (core.findSubstepState as jest.Mock).mockImplementation(
+    (substepStates: any[], substepId: string, frameKey?: string) =>
+      substepStates.find((ss: any) => ss.id === substepId && ss.frameKey === frameKey),
+  );
   (getRunbookFromState as jest.Mock).mockReturnValue([
     {
       name: '1',
@@ -242,6 +249,7 @@ describe('handleDelegationCompletion', () => {
       substepStates: [
         {
           id: '1',
+          frameKey: '1|',
           status: 'pending',
           delegation: {
             tokenHash: 'sha256:abc123',

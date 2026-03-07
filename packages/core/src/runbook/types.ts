@@ -120,6 +120,7 @@ export type LastAction =
  */
 export interface SubstepState {
   readonly id: string; // Matches Substep.id ("1", "2", or dynamic instance)
+  readonly frameKey?: string; // From buildFrameKey(step, iteration?) — scopes identity in FOR loops
   readonly status: 'pending' | 'running' | 'done';
   readonly result?: 'pass' | 'fail'; // Result when done
   readonly delegation?: StepDelegation; // Delegation attached to this substep

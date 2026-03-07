@@ -21,6 +21,7 @@ import {
   buildCompletionKey,
   buildResolvedCompletion,
   deriveActiveFrame,
+  findSubstepState,
   type RunbookState,
 } from '@rundown-org/core';
 import { getRunbookFromState } from './runbook-loader.js';
@@ -92,15 +93,15 @@ export async function handleDelegationCompletion(
       return 'not-applicable';
     }
 
-    // 3. Check if delegation was cancelled
-    const substepState = parentState.substepStates?.find((s) => s.id === parentStepId);
+    // 3. Check if delegation was cancelled (frame-scoped lookup)
+    const frameKey = parentFrameKey ?? deriveActiveFrame(parentState).frameKey;
+    const substepState = findSubstepState(parentState.substepStates ?? [], parentStepId, frameKey);
     if (substepState?.delegation?.cancelledAt) {
       // Abort wins — skip propagation
       return 'handled';
     }
 
     // 4. Build completion key from stored parent frame identity
-    const frameKey = parentFrameKey ?? deriveActiveFrame(parentState).frameKey;
     const entry =
       parentEntry ??
       (frameKey === parentState.activeFrameKey ? parentState.activeEntry : undefined) ??

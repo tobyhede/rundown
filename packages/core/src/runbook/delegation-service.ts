@@ -1,7 +1,7 @@
 import { parseStepIdFromString, stepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
 import { generateDelegationToken, hashDelegationToken } from './delegation-token.js';
-import { deriveExecutionAt, getActiveForContext } from './targeting.js';
+import { deriveExecutionAt, findSubstepState, getActiveForContext } from './targeting.js';
 import type {
   AncestorSnapshot,
   ContextSnapshot,
@@ -21,6 +21,8 @@ export interface AbortDelegationOptions {
   readonly substepId: string;
   /** Force cancel even if a child run has claimed the token. */
   readonly force?: boolean;
+  /** Frame key scoping the lookup to a specific FOR iteration. */
+  readonly frameKey?: string;
 }
 
 /** Delegation was cancelled; caller must persist updated substep states. */
@@ -64,6 +66,8 @@ export interface DelegateOptions {
   readonly extraVars?: Readonly<Record<string, string>>;
   /** Ancestor chain built by the caller. */
   readonly ancestors?: readonly AncestorSnapshot[];
+  /** Frame key scoping this delegation to a FOR iteration. */
+  readonly frameKey?: string;
 }
 
 /**
@@ -96,7 +100,7 @@ export interface DelegateResult {
  * @throws {RundownError} RD-805 if substep specified but step has no substeps
  */
 export function createDelegation(options: DelegateOptions, steps: readonly Step[]): DelegateResult {
-  const { state, stepId, childRunbookPath, extraVars, ancestors } = options;
+  const { state, stepId, childRunbookPath, extraVars, ancestors, frameKey } = options;
 
   // 1. Parse step ID
   const parsed = parseStepIdFromString(stepId);
@@ -137,9 +141,9 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
   // 5. Determine the substep ID for delegation attachment
   const substepId = parsed.substep ?? parsed.step;
 
-  // 6. Check for existing active delegation on this substep
+  // 6. Check for existing active delegation on this substep (frame-scoped)
   const existingStates = state.substepStates ?? [];
-  const targetSubstep = existingStates.find((ss) => ss.id === substepId);
+  const targetSubstep = findSubstepState(existingStates, substepId, frameKey);
 
   const existingDelegation = targetSubstep?.delegation;
   if (existingDelegation?.cancelledAt === null && existingDelegation.childRunId === null) {
@@ -178,22 +182,21 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
     cancelledAt: null,
   };
 
-  // 10. Produce updated substepStates
+  // 10. Produce updated substepStates (frame-scoped)
   let updatedSubstepStates: readonly SubstepState[];
 
-  if (existingStates.length > 0) {
-    // Update existing substep states, attaching delegation to the target substep
-    updatedSubstepStates = existingStates.map((ss) => {
-      if (ss.id === substepId) {
-        return { ...ss, delegation };
-      }
-      return ss;
-    });
+  if (targetSubstep) {
+    // Update existing entry for this frame
+    updatedSubstepStates = existingStates.map((ss) =>
+      ss === targetSubstep ? { ...ss, delegation } : ss,
+    );
   } else {
-    // No existing substep states (simple step) — create a synthetic one
+    // Append new entry for this frame (new iteration or simple step)
     updatedSubstepStates = [
+      ...existingStates,
       {
         id: substepId,
+        ...(frameKey !== undefined ? { frameKey } : {}),
         status: 'pending' as const,
         delegation,
       },
@@ -219,11 +222,11 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
  * @throws {RundownError} RD-801 if substep not found or has no delegation
  */
 export function abortDelegation(options: AbortDelegationOptions): AbortDelegationResult {
-  const { parentState, substepId, force } = options;
+  const { parentState, substepId, force, frameKey } = options;
 
-  // 1. Find substep
+  // 1. Find substep (frame-scoped)
   const existingStates = parentState.substepStates ?? [];
-  const targetSubstep = existingStates.find((ss) => ss.id === substepId);
+  const targetSubstep = findSubstepState(existingStates, substepId, frameKey);
 
   if (!targetSubstep?.delegation) {
     throw Errors.delegationStepNotFound(substepId);
@@ -247,12 +250,9 @@ export function abortDelegation(options: AbortDelegationOptions): AbortDelegatio
     cancelledAt: new Date().toISOString(),
   };
 
-  const updatedSubstepStates = existingStates.map((ss) => {
-    if (ss.id === substepId) {
-      return { ...ss, delegation: updatedDelegation };
-    }
-    return ss;
-  });
+  const updatedSubstepStates = existingStates.map((ss) =>
+    ss === targetSubstep ? { ...ss, delegation: updatedDelegation } : ss,
+  );
 
   return { status: 'cancelled', updatedSubstepStates };
 }

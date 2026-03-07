@@ -198,6 +198,7 @@ export function buildActiveStatus(
 
   const delegations = (activeState.substepStates ?? [])
     .filter((ss) => ss.delegation != null)
+    .filter((ss) => !activeFrameKey || !ss.frameKey || ss.frameKey === activeFrameKey)
     .map((ss) => ({
       substep: ss.id,
       runbook: ss.delegation!.childRunbookPath,

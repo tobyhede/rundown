@@ -345,7 +345,13 @@ async function launchRunbook(
   await sessionService.pushRunbook(state.id);
 
   if (stepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
-    await manager.initializeSubsteps(state.id, runbook.steps[0].substeps);
+    const freshState = await manager.load(state.id);
+    const frame = freshState ? deriveActiveFrame(freshState) : { frameKey: undefined };
+    await manager.initializeSubsteps(
+      state.id,
+      runbook.steps[0].substeps,
+      freshState?.activeFrameKey ?? frame.frameKey,
+    );
     await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
   }
 
@@ -409,11 +415,13 @@ function inferEntryFromState(state: RunbookState, frameKey: string): number | un
  *
  * Loads the parent state, locates the delegation on the specified substep, and
  * patches the `childRunId` field to link parent and child runs.
+ * Uses tokenHash for precise matching when available (unique per delegation).
  *
  * @param manager - State manager for loading and persisting runbook state
  * @param runId - Parent run ID whose delegation to update
  * @param substepId - Substep ID (or bare step ID) that owns the delegation
  * @param childRunId - The newly created child run ID to set
+ * @param tokenHash - Optional token hash for precise matching
  * @throws Error if the parent run is not found
  */
 async function updateStepDelegationChildRunId(
@@ -421,6 +429,7 @@ async function updateStepDelegationChildRunId(
   runId: string,
   substepId: string,
   childRunId: string,
+  tokenHash?: string,
 ): Promise<void> {
   const state = await manager.load(runId);
   if (!state) throw new Error(`Parent run ${runId} not found`);
@@ -428,6 +437,8 @@ async function updateStepDelegationChildRunId(
   const substepStates = state.substepStates ?? [];
   const updated = substepStates.map((ss) => {
     if (ss.id === substepId && ss.delegation) {
+      // When tokenHash is provided, match precisely; otherwise fall back to id match
+      if (tokenHash && ss.delegation.tokenHash !== tokenHash) return ss;
       return {
         ...ss,
         delegation: { ...ss.delegation, childRunId },
@@ -518,9 +529,11 @@ export async function claimAndLaunch(
       };
     }
 
-    // Re-locate delegation on fresh state
+    // Re-locate delegation on fresh state (match by tokenHash for precision)
     const freshSubstep = (freshParent.substepStates ?? []).find(
-      (ss) => ss.id === (substepId ?? stepId),
+      (ss) =>
+        ss.id === (substepId ?? stepId) &&
+        ss.delegation?.tokenHash === hashDelegationToken(rawToken),
     );
     const freshDelegation = freshSubstep?.delegation;
 
@@ -569,7 +582,13 @@ export async function claimAndLaunch(
     const orphan = await scanner.findOrphanedChild(tokenHash);
     if (orphan) {
       // Adopt the orphan — set childRunId on parent
-      await updateStepDelegationChildRunId(manager, freshParent.id, substepId ?? stepId, orphan.id);
+      await updateStepDelegationChildRunId(
+        manager,
+        freshParent.id,
+        substepId ?? stepId,
+        orphan.id,
+        tokenHash,
+      );
       return {
         ok: true,
         childRunId: orphan.id,
@@ -616,12 +635,13 @@ export async function claimAndLaunch(
       prompted: parentPrompted,
       delegationLinkage,
       afterInit: async (childStateId) => {
-        // Set childRunId on parent delegation
+        // Set childRunId on parent delegation (tokenHash for precise matching)
         await updateStepDelegationChildRunId(
           manager,
           freshParent.id,
           substepId ?? stepId,
           childStateId,
+          tokenHash,
         );
         capturedChildRunId = childStateId;
       },
