@@ -20,14 +20,20 @@ import { validateRunbook } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
 
 /**
- * Type guard to narrow Node to Heading
+ * Type guard to narrow Node to Heading.
+ *
+ * @param node - The mdast node to check
+ * @returns True if the node is a Heading with a depth property
  */
 function isHeading(node: Node): node is Heading {
   return node.type === 'heading' && 'depth' in node;
 }
 
 /**
- * Extract plain text from mdast node
+ * Extract plain text from an mdast node, recursing into children.
+ *
+ * @param node - The mdast node to extract text from
+ * @returns Concatenated plain text content of the node and its children
  */
 function extractText(node: PhrasingContent | Heading | Paragraph | ListItem): string {
   if (node.type === 'text') {

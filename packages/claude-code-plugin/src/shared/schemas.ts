@@ -50,6 +50,9 @@ export const HookInputSchema = z
   })
   .strict();
 
+/**
+ *
+ */
 export type HookInput = z.infer<typeof HookInputSchema>;
 
 /**

@@ -136,12 +136,18 @@ export const ActionSchema = z.union([
   z.object({ type: z.literal('BREAK') }),
 ]);
 
+/**
+ *
+ */
 export type Action = Readonly<z.output<typeof ActionSchema>>;
 
 /**
  * Valid transition kinds
  */
 export const TransitionKindSchema = z.enum(['pass', 'fail', 'yes', 'no']);
+/**
+ *
+ */
 export type TransitionKind = z.output<typeof TransitionKindSchema>;
 
 /**
@@ -153,6 +159,9 @@ export const TransitionObjectSchema = z.object({
   action: ActionSchema,
 });
 
+/**
+ *
+ */
 export type TransitionObject = Readonly<z.output<typeof TransitionObjectSchema>>;
 
 /**
@@ -164,6 +173,9 @@ export const TransitionsSchema = z.object({
   fail: TransitionObjectSchema,
 });
 
+/**
+ *
+ */
 export type Transitions = Readonly<z.output<typeof TransitionsSchema>>;
 
 /**

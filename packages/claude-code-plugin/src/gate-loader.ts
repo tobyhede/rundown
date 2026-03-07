@@ -13,6 +13,9 @@ import * as builtinGates from './gates/index.js';
 
 const execAsync = promisify(exec);
 
+/**
+ * Result of executing a shell command within a gate.
+ */
 export interface ShellResult {
   exitCode: number;
   output: string;
@@ -31,8 +34,10 @@ interface ExecError extends Error {
 }
 
 /**
- * Type guard to safely access error properties
- * Returns the error cast to ExecError, handling both CommonJS and ESM error objects
+ * Type guard to safely access error properties.
+ * Returns the error cast to ExecError, handling both CommonJS and ESM error objects.
+ * @param error - The caught error value to normalize
+ * @returns Normalized ExecError with safe property access
  */
 function asExecError(error: unknown): ExecError {
   // Check if error is an object with Error-like properties
@@ -72,6 +77,10 @@ function asExecError(error: unknown): ExecError {
  * This is equivalent to package.json scripts or Makefile targets - trusted project configuration.
  *
  * ERROR HANDLING: Commands timeout after 30 seconds to prevent hung gates.
+ * @param command - Shell command string to execute
+ * @param cwd - Working directory for command execution
+ * @param timeoutMs - Maximum execution time in milliseconds (default 30000)
+ * @returns Shell result with exit code and combined stdout/stderr output
  */
 export async function executeShellCommand(
   command: string,
@@ -110,6 +119,9 @@ export async function executeShellCommand(
  * Gate names use kebab-case and are mapped to camelCase module names:
  * - "plugin-path" → pluginPath
  * - "custom-gate" → customGate
+ * @param gateName - Kebab-case gate name to look up in built-in modules
+ * @param input - Hook input to pass to the gate's execute function
+ * @returns Gate result from the built-in gate module
  */
 export async function executeBuiltinGate(gateName: string, input: HookInput): Promise<GateResult> {
   try {
@@ -142,6 +154,14 @@ export async function executeBuiltinGate(gateName: string, input: HookInput): Pr
 // Track plugin gate call stack to detect circular references
 const MAX_PLUGIN_DEPTH = 10;
 
+/**
+ * Execute a gate by its configuration, supporting shell commands, built-in gates, and plugin references.
+ * @param gateName - Name of the gate being executed
+ * @param gateConfig - Gate configuration specifying command, plugin reference, or built-in type
+ * @param input - Hook input to pass to the gate
+ * @param pluginStack - Stack of plugin gate references for circular dependency detection
+ * @returns Object with passed flag and gate result
+ */
 export async function executeGate(
   gateName: string,
   gateConfig: GateConfig,
@@ -215,6 +235,9 @@ export async function executeGate(
   }
 }
 
+/**
+ * Result of loading a gate definition from an external plugin.
+ */
 export interface PluginGateResult {
   gateConfig: GateConfig;
   pluginRoot: string;

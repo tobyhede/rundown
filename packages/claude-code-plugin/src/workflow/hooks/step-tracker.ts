@@ -2,6 +2,9 @@
 import type { HookInput } from '../../shared/index.js';
 import { rundown } from './rundown.js';
 
+/**
+ * Result of processing a Step/Task tool dispatch for workflow tracking.
+ */
 export interface StepDispatchResult {
   violation?: string;
 }
@@ -20,6 +23,8 @@ const PREFIXED_STEP_ID = new RegExp(`^\\s*(${STEP_ID_PATTERN})\\s*[-–—:]\\s+
  * - "NamedStep"
  * - "1.1 - Description"
  * - "NamedStep: Description"
+ * @param description - Raw Step/Task tool description text
+ * @returns Normalized step identifier, or null if no valid identifier found
  */
 function extractStepId(description: string): string | null {
   const trimmed = description.trim();
@@ -39,6 +44,8 @@ function extractStepId(description: string): string | null {
 
 /**
  * Track Step tool dispatches in workflow state
+ * @param input - Hook input containing tool name and description
+ * @returns Result with optional violation message if step identifier is invalid
  */
 export function trackStepDispatch(input: HookInput): StepDispatchResult {
   // Handle both Step and Task tool (Task for backward compatibility/LLM training)

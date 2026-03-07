@@ -37,7 +37,7 @@ export function isPathInside(base: string, target: string): boolean {
  * @param base - The base directory (jail root)
  * @param segments - Path segments to join
  * @returns The absolute joined path if safe
- * @throws Error if the resulting path escapes the base directory
+ * @throws {Error} if the resulting path escapes the base directory
  */
 export function safeJoin(base: string, ...segments: string[]): string {
   const joined = path.join(base, ...segments);

@@ -249,6 +249,8 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
  * Validate that a GOTO AT target has a FOR clause.
  *
  * @param action - The GOTO action with target StepId
+ * @param action.target - The target step reference containing step, substep, and optional AT
+ * @param action.target.at - Optional iteration index for GOTO AT targeting a FOR step
  * @param targetStepObj - The resolved target step
  * @param targetStep - The target step name (for error messages)
  * @param currentStepObj - The step containing the GOTO (for error line)

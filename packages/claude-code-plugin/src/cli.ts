@@ -37,6 +37,8 @@ async function main(): Promise<void> {
 
 /**
  * Type guard for SessionState keys
+ * @param key - The string to check against known session state keys
+ * @returns True if the key is a valid SessionState key
  */
 function isSessionStateKey(key: string): key is keyof SessionState {
   return (SESSION_STATE_KEYS as readonly string[]).includes(key);
@@ -44,6 +46,8 @@ function isSessionStateKey(key: string): key is keyof SessionState {
 
 /**
  * Type guard for array keys
+ * @param key - The string to check against known array-typed session keys
+ * @returns True if the key is an array-valued session state key
  */
 function isArrayKey(key: string): key is SessionStateArrayKey {
   return key === 'edited_files' || key === 'file_extensions';
@@ -51,6 +55,7 @@ function isArrayKey(key: string): key is SessionStateArrayKey {
 
 /**
  * Handle session management commands with proper type safety
+ * @param args - CLI arguments following the "session" subcommand
  */
 async function handleSessionCommand(args: string[]): Promise<void> {
   if (args.length < 1) {

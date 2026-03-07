@@ -80,6 +80,9 @@ const MAX_GATES_PER_DISPATCH = 10;
  * can say "let's test this" or "testing the feature" and both will match.
  * If word-boundary matching is needed in the future, consider using regex like:
  * /\b${keyword}\b/i.test(message)
+ * @param gateConfig - Gate configuration containing optional keywords list
+ * @param userMessage - The user prompt text to match against
+ * @returns True if the gate should run (no keywords configured or a keyword matches)
  */
 export function gateMatchesKeywords(
   gateConfig: GateConfig,
@@ -247,7 +250,7 @@ async function updateSessionState(input: HookInput): Promise<void> {
  *
  * @param input - Hook input describing the event and its metadata
  * @returns Dispatch result with accumulated context and optional block/stop directives
- * @throws Error if gate execution fails unexpectedly
+ * @throws {Error} if gate execution fails unexpectedly
  */
 export async function dispatch(input: HookInput): Promise<DispatchResult> {
   const hookEvent = input.hook_event_name;

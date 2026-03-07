@@ -15,6 +15,9 @@ interface HookSpecificOutput {
   permissionDecisionReason?: string;
 }
 
+/**
+ * Output structure written to stdout for Claude Code hook responses.
+ */
 export interface ClaudeHookOutput {
   continue?: boolean;
   stopReason?: string;
@@ -39,6 +42,9 @@ function makeContextOutput(
 
 /**
  * Build Claude Code hook JSON output using the modern hookSpecificOutput contract.
+ * @param input - Hook input with event name and metadata
+ * @param result - Dispatch result containing context, block, or stop directives
+ * @returns Formatted hook output object for Claude Code consumption
  */
 export function buildHookOutput(input: HookInput, result: DispatchResult): ClaudeHookOutput {
   const hookEventName = input.hook_event_name;

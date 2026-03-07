@@ -57,6 +57,9 @@ export function execute(input: HookInput): Promise<GateResult> {
 
 /**
  * Format successful runbook start output with instructions
+ * @param runbook - Path or name of the started runbook
+ * @param output - CLI output from the runbook start command
+ * @returns Formatted markdown string with runbook status and usage instructions
  */
 function formatRunbookOutput(runbook: string, output: string): string {
   return `
@@ -83,6 +86,9 @@ ${output.trim()}
 
 /**
  * Format runbook error with recovery instructions
+ * @param runbook - Path or name of the failed runbook
+ * @param error - Error output from the failed runbook start
+ * @returns Formatted markdown string with error details and recovery command
  */
 function formatRunbookError(runbook: string, error: string): string {
   return `

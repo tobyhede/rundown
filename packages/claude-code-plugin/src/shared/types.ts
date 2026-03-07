@@ -4,6 +4,9 @@
 import type { HookInput as SchemaHookInput } from './schemas.js';
 
 // Re-export for consumers
+/**
+ *
+ */
 export type HookInput = SchemaHookInput;
 
 /**
@@ -29,6 +32,9 @@ export interface GateResult {
  */
 export type GateExecute = (input: HookInput) => Promise<GateResult>;
 
+/**
+ *
+ */
 export interface GateConfig {
   /** Reference gate from another plugin (requires gate field) */
   plugin?: string;
@@ -89,6 +95,9 @@ export interface RundownPluginConfig {
 }
 
 // Session state interface
+/**
+ *
+ */
 export interface SessionState {
   /** Unique session identifier (timestamp-based) */
   session_id: string;

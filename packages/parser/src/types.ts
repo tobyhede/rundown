@@ -13,6 +13,11 @@ export type AggregationModifier = 'ALL' | 'ANY' | null;
  * or malformed transitions.
  */
 export class RunbookSyntaxError extends Error {
+  /**
+   * Create a new RunbookSyntaxError with the given message.
+   *
+   * @param message - Description of the syntax violation encountered
+   */
   constructor(message: string) {
     super(message);
     this.name = 'RunbookSyntaxError';
