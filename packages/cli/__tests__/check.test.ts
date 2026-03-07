@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli, type TestWorkspace } from './helpers/test-utils.js';
+import { createTestWorkspace, runCliInProcess, type TestWorkspace } from './helpers/test-utils.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -14,7 +14,7 @@ describe('rd check', () => {
     await workspace.cleanup();
   });
 
-  it('outputs PASS with step count for valid runbook', () => {
+  it('outputs PASS with step count for valid runbook', async () => {
     const runbookPath = path.join(workspace.cwd, 'valid.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -30,14 +30,14 @@ Do another thing.
 `,
     );
 
-    const result = runCli(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS:');
     expect(result.stdout).toContain('2 steps');
   });
 
-  it('outputs FAIL with all errors for invalid runbook', () => {
+  it('outputs FAIL with all errors for invalid runbook', async () => {
     const runbookPath = path.join(workspace.cwd, 'invalid.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -53,7 +53,7 @@ Do another thing.
 `,
     );
 
-    const result = runCli(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
 
     expect(result.exitCode).toBe(1);
     // Check both stdout and stderr since validate uses both console.log and console.error
@@ -63,7 +63,7 @@ Do another thing.
     expect(output).toMatch(/sequentially|sequential/i);
   });
 
-  it('includes line numbers in error output', () => {
+  it('includes line numbers in error output', async () => {
     const runbookPath = path.join(workspace.cwd, 'invalid.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -79,7 +79,7 @@ Missing step 2.
 `,
     );
 
-    const result = runCli(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
 
     expect(result.exitCode).toBe(1);
     // Check both stdout and stderr since validate uses console.error for failures
@@ -90,7 +90,7 @@ Missing step 2.
     expect(output).toMatch(/sequentially|sequential/i);
   });
 
-  it('outputs PASS with warnings for GOTO self runbook', () => {
+  it('outputs PASS with warnings for GOTO self runbook', async () => {
     const runbookPath = path.join(workspace.cwd, 'goto-self.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -101,22 +101,22 @@ Do something.
 `,
     );
 
-    const result = runCli(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS:');
     expect(result.stdout).toContain('GOTO self');
   });
 
-  it('outputs FAIL for non-existent file', () => {
-    const result = runCli('check /nonexistent/path/runbook.md', workspace);
+  it('outputs FAIL for non-existent file', async () => {
+    const result = await runCliInProcess('check /nonexistent/path/runbook.md', workspace);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr || result.stdout).toContain('FAIL');
     expect(result.stderr || result.stdout).toMatch(/not found|does not exist/i);
   });
 
-  it('outputs FAIL for frontmatter var using reserved name Step', () => {
+  it('outputs FAIL for frontmatter var using reserved name Step', async () => {
     const runbookPath = path.join(workspace.cwd, 'reserved.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -131,7 +131,7 @@ Hello.
 `,
     );
 
-    const result = runCli(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
 
     expect(result.exitCode).toBe(1);
     const output = result.stdout + result.stderr;
@@ -139,7 +139,7 @@ Hello.
     expect(output).toMatch(/reserved/i);
   });
 
-  it('outputs FAIL for frontmatter var using reserved name Index (case-insensitive)', () => {
+  it('outputs FAIL for frontmatter var using reserved name Index (case-insensitive)', async () => {
     const runbookPath = path.join(workspace.cwd, 'reserved-index.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -154,7 +154,7 @@ Hello.
 `,
     );
 
-    const result = runCli(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
 
     expect(result.exitCode).toBe(1);
     const output = result.stdout + result.stderr;
@@ -162,7 +162,7 @@ Hello.
     expect(output).toMatch(/reserved/i);
   });
 
-  it('outputs PASS for frontmatter var using overridable built-in Date', () => {
+  it('outputs PASS for frontmatter var using overridable built-in Date', async () => {
     const runbookPath = path.join(workspace.cwd, 'builtin.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -177,7 +177,7 @@ Hello.
 `,
     );
 
-    const result = runCli(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS:');

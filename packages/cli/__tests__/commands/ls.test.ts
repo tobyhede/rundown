@@ -1,6 +1,6 @@
 // packages/cli/__tests__/commands/ls.test.ts
 
-import { createTestWorkspace, runCli } from '../helpers/test-utils.js';
+import { createTestWorkspace, runCliInProcess } from '../helpers/test-utils.js';
 
 describe('rd ls', () => {
   let workspace: Awaited<ReturnType<typeof createTestWorkspace>>;
@@ -13,22 +13,22 @@ describe('rd ls', () => {
     await workspace.cleanup();
   });
 
-  it('shows correct step count for naturally completed runbook', () => {
+  it('shows correct step count for naturally completed runbook', async () => {
     // Run in prompted mode to manually step through
-    runCli('run --prompted runbooks/simple.runbook.md', workspace);
-    runCli('pass', workspace); // Step 1 -> 2
-    runCli('pass', workspace); // Step 2 -> DONE
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('pass', workspace); // Step 1 -> 2
+    await runCliInProcess('pass', workspace); // Step 2 -> DONE
 
     // Now, run `ls`
-    const result = runCli('ls', workspace);
+    const result = await runCliInProcess('ls', workspace);
 
     // It should show 2/2
     expect(result.stdout).toContain('complete');
     expect(result.stdout).toContain('2/2');
   });
 
-  it('shows available runbooks with --all flag', () => {
-    const result = runCli('ls --all', workspace);
+  it('shows available runbooks with --all flag', async () => {
+    const result = await runCliInProcess('ls --all', workspace);
     expect(result.stdout).toContain('NAME');
     expect(result.stdout).toContain('DESCRIPTION');
     expect(result.stdout).toContain('simple');

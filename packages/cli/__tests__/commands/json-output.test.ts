@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -15,14 +15,14 @@ describe('JSON output integration tests', () => {
   });
 
   describe('ls --json', () => {
-    it('outputs empty array when no runbooks', () => {
-      const result = runCli('ls --json', workspace);
+    it('outputs empty array when no runbooks', async () => {
+      const result = await runCliInProcess('ls --json', workspace);
       const output = JSON.parse(result.stdout);
       expect(Array.isArray(output)).toBe(true);
       expect(output).toHaveLength(0);
     });
 
-    it('outputs array of active runbooks', () => {
+    it('outputs array of active runbooks', async () => {
       // Start a runbook
       // For run command, file can be in root
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
@@ -35,9 +35,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      runCli('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md', workspace);
 
-      const result = runCli('ls --json', workspace);
+      const result = await runCliInProcess('ls --json', workspace);
       const output = JSON.parse(result.stdout);
 
       expect(Array.isArray(output)).toBe(true);
@@ -49,7 +49,7 @@ prompt: Wait
       expect(output[0]).not.toHaveProperty('_status');
     });
 
-    it('outputs array of available runbooks with --all', () => {
+    it('outputs array of available runbooks with --all', async () => {
       // discovery requires runbooks to be in specific dirs
       const runbooksDir = path.join(workspace.cwd, '.claude', 'rundown', 'runbooks');
       fs.mkdirSync(runbooksDir, { recursive: true });
@@ -66,7 +66,7 @@ echo hello
 `,
       );
 
-      const result = runCli('ls --all --json', workspace);
+      const result = await runCliInProcess('ls --all --json', workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
 
@@ -80,8 +80,8 @@ echo hello
   });
 
   describe('status --json', () => {
-    it('outputs inactive status when empty', () => {
-      const result = runCli('status --json', workspace);
+    it('outputs inactive status when empty', async () => {
+      const result = await runCliInProcess('status --json', workspace);
       const output = JSON.parse(result.stdout);
 
       expect(output).toEqual({
@@ -91,7 +91,7 @@ echo hello
       });
     });
 
-    it('outputs active status details', () => {
+    it('outputs active status details', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -102,9 +102,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      runCli('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md', workspace);
 
-      const result = runCli('status --json', workspace);
+      const result = await runCliInProcess('status --json', workspace);
       const output = JSON.parse(result.stdout);
 
       expect(output.active).toBe(true);
@@ -117,7 +117,7 @@ prompt: Wait
   });
 
   describe('check --json', () => {
-    it('outputs valid status for correct runbook', () => {
+    it('outputs valid status for correct runbook', async () => {
       const runbookPath = path.join(workspace.cwd, 'valid.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -126,7 +126,7 @@ echo hello
 `,
       );
 
-      const result = runCli(`check ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`check ${runbookPath} --json`, workspace);
       const output = JSON.parse(result.stdout);
 
       expect(output.valid).toBe(true);
@@ -134,7 +134,7 @@ echo hello
       expect(output.stats).toEqual({ steps: 1, substeps: 0 });
     });
 
-    it('outputs errors for invalid runbook', () => {
+    it('outputs errors for invalid runbook', async () => {
       const runbookPath = path.join(workspace.cwd, 'invalid.runbook.md');
       // Invalid transition to non-existent step
       fs.writeFileSync(
@@ -145,7 +145,7 @@ echo hello
 `,
       );
 
-      const result = runCli(`check ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`check ${runbookPath} --json`, workspace);
       // Exit code should be 1
       expect(result.exitCode).toBe(1);
 
@@ -155,7 +155,7 @@ echo hello
       expect(output.errors[0]).toHaveProperty('message');
     });
 
-    it('counts step-level runbook-list shorthand as one substep', () => {
+    it('counts step-level runbook-list shorthand as one substep', async () => {
       const runbookPath = path.join(workspace.cwd, 'runbook-shorthand.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -167,15 +167,15 @@ echo hello
 `,
       );
 
-      const result = runCli(`check ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`check ${runbookPath} --json`, workspace);
       const output = JSON.parse(result.stdout);
 
       expect(output.valid).toBe(true);
       expect(output.stats).toEqual({ steps: 1, substeps: 1 });
     });
 
-    it('outputs error for non-existent file', () => {
-      const result = runCli('check non-existent.md --json', workspace);
+    it('outputs error for non-existent file', async () => {
+      const result = await runCliInProcess('check non-existent.md --json', workspace);
       expect(result.exitCode).toBe(1);
 
       const output = JSON.parse(result.stdout);
@@ -185,15 +185,15 @@ echo hello
   });
 
   describe('prune --json', () => {
-    it('outputs empty array when nothing to prune', () => {
-      const result = runCli('prune --dry-run --json', workspace);
+    it('outputs empty array when nothing to prune', async () => {
+      const result = await runCliInProcess('prune --dry-run --json', workspace);
       const output = JSON.parse(result.stdout);
       expect(output).toEqual([]);
     });
   });
 
   describe('scenario --json', () => {
-    it('ls outputs scenarios list', () => {
+    it('ls outputs scenarios list', async () => {
       const runbookPath = path.join(workspace.cwd, 'scenarios.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -211,7 +211,7 @@ echo hello
 `,
       );
 
-      const result = runCli(`scenario ls ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`scenario ls ${runbookPath} --json`, workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
 
@@ -225,7 +225,7 @@ echo hello
       });
     });
 
-    it('show outputs structured error for non-existent scenario', () => {
+    it('show outputs structured error for non-existent scenario', async () => {
       const runbookPath = path.join(workspace.cwd, 'scenarios.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -243,9 +243,15 @@ echo hello
 `,
       );
 
-      const result = runCli(`scenario show ${runbookPath} non-existent --json`, workspace);
+      const result = await runCliInProcess(
+        `scenario show ${runbookPath} non-existent --json`,
+        workspace,
+      );
       expect(result.exitCode).toBe(1);
-      const output = JSON.parse(result.stdout);
+      // In-process mode may append a process.exit error object after the real output;
+      // parse the first complete JSON object from stdout
+      const jsonBlocks = result.stdout.trim().split(/\n(?=\{)/);
+      const output = JSON.parse(jsonBlocks[0]);
 
       // Uses standard error format from output.error()
       expect(output).toEqual({

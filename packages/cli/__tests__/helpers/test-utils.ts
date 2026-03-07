@@ -143,6 +143,8 @@ export async function runCliInProcess(
   const origStdoutWrite = process.stdout.write.bind(process.stdout);
   const origStderrWrite = process.stderr.write.bind(process.stderr);
   const origExit = process.exit.bind(process);
+  const origConsoleError = console.error.bind(console);
+  const origConsoleLog = console.log.bind(console);
   const envKeys = ['NO_COLOR', 'RUNDOWN_LOG', 'CLAUDE_PLUGIN_ROOT', 'PATH', 'FORCE_COLOR'] as const;
   const origEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]])) as Record<
     string,
@@ -157,8 +159,6 @@ export async function runCliInProcess(
     // Reset global state before each invocation
     resetPolicyContext();
     resetColorCache();
-    // Ensure a fresh ConsoleWriter — guards against other tests polluting globalWriter
-    setWriter(new ConsoleWriter());
 
     // Change real cwd — covers process.cwd() everywhere
     process.chdir(workspace.cwd);
@@ -199,6 +199,20 @@ export async function runCliInProcess(
       return true;
     }) as typeof process.stderr.write;
 
+    // Create ConsoleWriter AFTER monkey-patching stdout/stderr so it
+    // captures output into the buffers above (not the original streams)
+    setWriter(new ConsoleWriter());
+
+    // Intercept console.error/log — Jest may replace these with its own
+    // Console that bypasses process.stderr/stdout.write, so we route them
+    // into the capture buffers explicitly.
+    console.error = (...args: unknown[]) => {
+      stderrBuf += args.map(String).join(' ') + '\n';
+    };
+    console.log = (...args: unknown[]) => {
+      stdoutBuf += args.map(String).join(' ') + '\n';
+    };
+
     // Intercept process.exit
     process.exit = ((code?: number) => {
       throw new ExitSignal(code ?? 0);
@@ -226,6 +240,8 @@ export async function runCliInProcess(
     process.stdout.write = origStdoutWrite;
     process.stderr.write = origStderrWrite;
     process.exit = origExit;
+    console.error = origConsoleError;
+    console.log = origConsoleLog;
     process.exitCode = undefined;
 
     // Restore cwd

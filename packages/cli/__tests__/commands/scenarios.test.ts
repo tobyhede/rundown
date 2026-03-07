@@ -1,4 +1,4 @@
-import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -50,7 +50,7 @@ scenarios:
 
   describe('list subcommand', () => {
     it('lists available scenarios', async () => {
-      const result = runCli('scenario ls test-runbook.runbook.md', workspace);
+      const result = await runCliInProcess('scenario ls test-runbook.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('NAME');
@@ -78,7 +78,7 @@ name: no-scenarios
         noScenarios,
       );
 
-      const result = runCli('scenario ls no-scenarios.runbook.md', workspace);
+      const result = await runCliInProcess('scenario ls no-scenarios.runbook.md', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('No scenarios');
@@ -87,7 +87,10 @@ name: no-scenarios
 
   describe('show subcommand', () => {
     it('shows details for a specific scenario', async () => {
-      const result = runCli('scenario show test-runbook.runbook.md success', workspace);
+      const result = await runCliInProcess(
+        'scenario show test-runbook.runbook.md success',
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Name:        success');
@@ -98,7 +101,10 @@ name: no-scenarios
     });
 
     it('shows error for non-existent scenario', async () => {
-      const result = runCli('scenario show test-runbook.runbook.md nonexistent', workspace);
+      const result = await runCliInProcess(
+        'scenario show test-runbook.runbook.md nonexistent',
+        workspace,
+      );
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('not found');

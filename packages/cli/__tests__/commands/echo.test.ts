@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
 
 describe('echo command', () => {
   let workspace: TestWorkspace;
@@ -12,31 +12,31 @@ describe('echo command', () => {
     await workspace.cleanup();
   });
 
-  it('exists and shows help', () => {
-    const result = runCli('echo --help', workspace);
+  it('exists and shows help', async () => {
+    const result = await runCliInProcess('echo --help', workspace);
     expect(result.stdout).toContain('Echo command');
   });
 
   describe('result sequence', () => {
     beforeEach(async () => {
       // Start a runbook first (prompted mode to keep it active)
-      runCli('run --prompted runbooks/retry.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/retry.runbook.md', workspace);
     });
 
-    it('returns pass by default (no flags)', () => {
-      const result = runCli('echo npm install', workspace);
+    it('returns pass by default (no flags)', async () => {
+      const result = await runCliInProcess('echo npm install', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('npm install');
     });
 
-    it('returns pass with explicit --result pass', () => {
-      const result = runCli('echo --result pass npm install', workspace);
+    it('returns pass with explicit --result pass', async () => {
+      const result = await runCliInProcess('echo --result pass npm install', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('npm install');
     });
 
-    it('returns fail with --result fail', () => {
-      const result = runCli('echo --result fail npm install', workspace);
+    it('returns fail with --result fail', async () => {
+      const result = await runCliInProcess('echo --result fail npm install', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toContain('npm install');
     });
@@ -47,17 +47,17 @@ describe('echo command', () => {
   });
 
   describe('error handling', () => {
-    it('fails when no active runbook', () => {
-      const result = runCli('echo "hello"', workspace);
+    it('fails when no active runbook', async () => {
+      const result = await runCliInProcess('echo "hello"', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('No active runbook');
     });
 
-    it('fails with invalid result value', () => {
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+    it('fails with invalid result value', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
 
-      const result = runCli('echo --result maybe npm install', workspace);
+      const result = await runCliInProcess('echo --result maybe npm install', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('Invalid result');
     });

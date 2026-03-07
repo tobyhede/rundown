@@ -3,7 +3,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
-  runCli,
+  runCliInProcess,
   getActiveState,
   readSession,
   getAllStates,
@@ -25,11 +25,11 @@ describe('pass command', () => {
 
   describe('PASS: CONTINUE', () => {
     beforeEach(async () => {
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
     });
 
     it('advances to next step', async () => {
-      const result = runCli('pass', workspace);
+      const result = await runCliInProcess('pass', workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
@@ -39,25 +39,25 @@ describe('pass command', () => {
 
   describe('PASS: COMPLETE', () => {
     beforeEach(async () => {
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
-      runCli('pass', workspace); // Advance to step 2 which has PASS: COMPLETE
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('pass', workspace); // Advance to step 2 which has PASS: COMPLETE
     });
 
     it('marks runbook complete', async () => {
-      const result = runCli('pass', workspace);
+      const result = await runCliInProcess('pass', workspace);
 
       expect(result.stdout).toContain('COMPLETE');
     });
 
     it('clears active runbook', async () => {
-      runCli('pass', workspace);
+      await runCliInProcess('pass', workspace);
 
       const session = await readSession(workspace);
       expect(session.active).toBeNull();
     });
 
     it('should set variables.completed=true when completing runbook', async () => {
-      runCli('pass', workspace);
+      await runCliInProcess('pass', workspace);
 
       const states = await getAllStates(workspace);
       const state = states.find((s) => s.runbook === 'runbooks/simple.runbook.md');
@@ -67,11 +67,11 @@ describe('pass command', () => {
 
   describe('PASS: GOTO N', () => {
     beforeEach(async () => {
-      runCli('run --prompted runbooks/goto.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/goto.runbook.md', workspace);
     });
 
     it('jumps to specified step', async () => {
-      const result = runCli('pass', workspace);
+      const result = await runCliInProcess('pass', workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
@@ -79,7 +79,7 @@ describe('pass command', () => {
     });
 
     it('skips intermediate steps', async () => {
-      runCli('pass', workspace);
+      await runCliInProcess('pass', workspace);
 
       const state = await getActiveState(workspace);
       expect(state?.stepName).toContain('Jump target');
@@ -88,11 +88,11 @@ describe('pass command', () => {
 
   describe('PASS: RETRY N', () => {
     beforeEach(async () => {
-      runCli('run --prompted runbooks/pass-retry.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/pass-retry.runbook.md', workspace);
     });
 
     it('increments retryCount if under max', async () => {
-      runCli('pass', workspace);
+      await runCliInProcess('pass', workspace);
 
       const state = await getActiveState(workspace);
       expect(state?.retryCount).toBe(1);
@@ -100,16 +100,16 @@ describe('pass command', () => {
     });
 
     it('outputs retry info', async () => {
-      const result = runCli('pass', workspace);
+      const result = await runCliInProcess('pass', workspace);
 
       expect(result.stdout).toContain('Retry');
     });
 
     it('advances after max retries', async () => {
-      runCli('pass', workspace); // Retry 1 (count 0→1)
-      runCli('pass', workspace); // Retry 2 (count 1→2)
-      runCli('pass', workspace); // Retry 3 (count 2→3)
-      runCli('pass', workspace); // Count 3 >= 3, CONTINUE to step 2
+      await runCliInProcess('pass', workspace); // Retry 1 (count 0→1)
+      await runCliInProcess('pass', workspace); // Retry 2 (count 1→2)
+      await runCliInProcess('pass', workspace); // Retry 3 (count 2→3)
+      await runCliInProcess('pass', workspace); // Count 3 >= 3, CONTINUE to step 2
 
       const state = await getActiveState(workspace);
       expect(state?.step).toBe('2'); // Advanced to step 2
@@ -125,27 +125,25 @@ describe('pass command', () => {
 
 This step stops on pass.
 `;
-      return mkdir(join(workspace.cwd, 'runbooks'), { recursive: true })
-        .then(() =>
-          writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass.md'), stopOnPassRunbook),
-        )
-        .then(() => runCli('run --prompted runbooks/stop-on-pass.md', workspace));
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass.md'), stopOnPassRunbook);
+      await runCliInProcess('run --prompted runbooks/stop-on-pass.md', workspace);
     });
 
     it('blocks runbook', async () => {
-      const result = runCli('pass', workspace);
+      const result = await runCliInProcess('pass', workspace);
 
       expect(result.exitCode).toBe(1);
     });
 
     it('outputs stop message', async () => {
-      const result = runCli('pass', workspace);
+      const result = await runCliInProcess('pass', workspace);
 
       expect(result.stdout).toContain('STOP');
     });
 
     it('should set variables.stopped=true when STOP action triggered', async () => {
-      runCli('pass', workspace);
+      await runCliInProcess('pass', workspace);
 
       const states = await getAllStates(workspace);
       const state = states.find((s) => s.runbook === 'runbooks/stop-on-pass.md');
@@ -171,18 +169,18 @@ Do child work.
       await writeFile(join(workspace.cwd, 'runbooks', 'child-nest.md'), childRunbook);
 
       // Start parent runbook (prompted mode to keep it active)
-      runCli('run --prompted runbooks/parent-nest.md', workspace);
+      await runCliInProcess('run --prompted runbooks/parent-nest.md', workspace);
       const session1 = await readSession(workspace);
       const parentId = session1.active;
 
       // Start child runbook in same stack (nested)
-      runCli('run --prompted runbooks/child-nest.md', workspace);
+      await runCliInProcess('run --prompted runbooks/child-nest.md', workspace);
       const session2 = await readSession(workspace);
       expect(session2.active).not.toBe(parentId); // Child is now active
       expect(session2.defaultStack).toContain(parentId); // Parent still in stack
 
       // Complete child runbook
-      runCli('pass', workspace); // Child step 1: DONE -> complete
+      await runCliInProcess('pass', workspace); // Child step 1: DONE -> complete
 
       // Parent should now be active (child popped from stack)
       const session3 = await readSession(workspace);
@@ -208,17 +206,17 @@ Do work.
       await writeFile(join(workspace.cwd, 'runbooks', 'child.md'), childRunbook);
 
       // Start parent (prompted to prevent auto-completion)
-      runCli('run --prompted runbooks/parent.md', workspace);
+      await runCliInProcess('run --prompted runbooks/parent.md', workspace);
 
       // Start child in same stack (prompted to prevent auto-completion)
-      runCli('run --prompted runbooks/child.md', workspace);
+      await runCliInProcess('run --prompted runbooks/child.md', workspace);
 
       // Complete child
-      let result = runCli('pass', workspace);
+      let result = await runCliInProcess('pass', workspace);
       expect(result.stdout).toContain('COMPLETE');
 
       // Should now be on parent
-      result = runCli('status', workspace);
+      result = await runCliInProcess('status', workspace);
       expect(result.stdout).toContain('parent.md');
     });
   });
@@ -235,8 +233,8 @@ This step stops on pass.
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass.md'), stopOnPassRunbook);
 
-      runCli('run --prompted runbooks/stop-on-pass.md', workspace);
-      runCli('pass', workspace);
+      await runCliInProcess('run --prompted runbooks/stop-on-pass.md', workspace);
+      await runCliInProcess('pass', workspace);
 
       const states = await getAllStates(workspace);
       const state = states.find((s) => s.runbook === 'runbooks/stop-on-pass.md');
@@ -249,10 +247,10 @@ This step stops on pass.
   describe('JSON action result semantics', () => {
     it('reports result: true for CONTINUE transitions', async () => {
       // Start runbook in prompted mode
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
 
       // Pass should trigger CONTINUE to next step
-      const result = runCli('pass --json', workspace);
+      const result = await runCliInProcess('pass --json', workspace);
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -285,7 +283,7 @@ rd echo --result fail
       await writeFile(join(workspace.cwd, 'runbooks', 'retry-test.md'), retryRunbook);
 
       // Start runbook (not prompted - will execute command which fails, triggering RETRY)
-      const result = runCli('run runbooks/retry-test.md --json', workspace);
+      const result = await runCliInProcess('run runbooks/retry-test.md --json', workspace);
       const lines = result.stdout.trim().split('\n');
 
       // Find the STEP_TRANSITIONED JSONL event with RETRY action
@@ -311,12 +309,12 @@ rd echo --result fail
 
     it('reports result: true for COMPLETE transitions', async () => {
       // Start runbook in prompted mode
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
-      runCli('pass', workspace); // Advance to step 2
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('pass', workspace); // Advance to step 2
 
       // Pass on step 2 should trigger COMPLETE
       // The action is 'complete' (lowercase) for completion events
-      const result = runCli('pass --json', workspace);
+      const result = await runCliInProcess('pass --json', workspace);
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -326,10 +324,10 @@ rd echo --result fail
 
     it('reports result: true for GOTO transitions', async () => {
       // Start goto runbook in prompted mode
-      runCli('run --prompted runbooks/goto.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/goto.runbook.md', workspace);
 
       // Pass should trigger GOTO 3
-      const result = runCli('pass --json', workspace);
+      const result = await runCliInProcess('pass --json', workspace);
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -339,11 +337,11 @@ rd echo --result fail
 
     it('reports result: true and stepResult FAIL for RETRY transitions', async () => {
       // Start pass-retry runbook in prompted mode
-      runCli('run --prompted runbooks/pass-retry.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/pass-retry.runbook.md', workspace);
 
       // Pass should trigger RETRY (since PASS: RETRY 3)
       // result is true (operation non-terminal), stepResult is FAIL (RETRY = not yet passing)
-      const result = runCli('pass --json', workspace);
+      const result = await runCliInProcess('pass --json', workspace);
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -368,10 +366,10 @@ This step stops on pass.
       await writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass-json.md'), stopOnPassRunbook);
 
       // Start runbook in prompted mode
-      runCli('run --prompted runbooks/stop-on-pass-json.md', workspace);
+      await runCliInProcess('run --prompted runbooks/stop-on-pass-json.md', workspace);
 
       // Pass should trigger STOP
-      const result = runCli('pass --json', workspace);
+      const result = await runCliInProcess('pass --json', workspace);
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
