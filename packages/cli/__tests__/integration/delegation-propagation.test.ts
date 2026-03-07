@@ -128,6 +128,7 @@ Run the child task.
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect(updatedParent!.step).toBe('2');
+      expect(updatedParent!.substep).toBeUndefined();
     });
   });
 
@@ -291,22 +292,7 @@ Approve the deployment.
   describe('out-of-order completion', () => {
     it('substep 1.2 completes before 1.1 — completion stored but parent waits', async () => {
       // This test needs 2 substeps for out-of-order completion testing
-      const twoSubstepParent = `## 1. Review
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
-
-### 1.1 Code review
-Do code review.
-
-### 1.2 Security review
-Do security review.
-
-## 2. Done
-- PASS: COMPLETE
-
-Final step.
-`;
-      await writeFile(join(workspace.cwd, 'parent.runbook.md'), twoSubstepParent);
+      await writeParentRunbook();
       await writeChildRunbook();
 
       // Start parent
@@ -414,22 +400,7 @@ Do the task.
 
     it('handles concurrent delegation completions gracefully', async () => {
       // This test needs 2 substeps for concurrent delegation
-      const twoSubstepParent = `## 1. Review
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
-
-### 1.1 Code review
-Do code review.
-
-### 1.2 Security review
-Do security review.
-
-## 2. Done
-- PASS: COMPLETE
-
-Final step.
-`;
-      await writeFile(join(workspace.cwd, 'parent.runbook.md'), twoSubstepParent);
+      await writeParentRunbook();
       await writeChildRunbook();
 
       // Start parent
