@@ -163,16 +163,16 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
   const baseVars = { ...(state.templateVars ?? {}) };
   const mergedVars = extraVars ? { ...baseVars, ...extraVars } : baseVars;
 
-  // Capture structural fields from current execution position
+  // Capture structural fields from the delegation target, not the cursor
   const activeFor = getActiveForContext(state.forStack, state.step);
   const iteration = activeFor?.iteration;
-  const at = deriveExecutionAt(state.step, state.substep, iteration);
+  const at = deriveExecutionAt(state.step, parsed.substep, iteration);
 
   const contextSnapshot: ContextSnapshot = {
     vars: mergedVars,
     ancestors: ancestors ?? [],
     step: state.step,
-    substep: state.substep,
+    substep: parsed.substep,
     at,
     ...(iteration !== undefined ? { index: iteration } : {}),
   };

@@ -304,6 +304,9 @@ describe('Memory Usage', () => {
         cwd: testDir.path,
       });
 
+      // Warm one-time allocations/caches before the baseline measurement
+      await dispatch(input);
+
       // Force GC if available
       if (global.gc) {
         global.gc();
@@ -324,9 +327,9 @@ describe('Memory Usage', () => {
       const afterMemory = process.memoryUsage().heapUsed;
       const memoryGrowth = afterMemory - beforeMemory;
 
-      // Memory growth should be minimal (less than 30MB)
+      // Memory growth should be minimal (less than 20MB)
       // Note: Node.js memory measurement can be variable due to GC timing
-      expect(memoryGrowth).toBeLessThan(30 * 1024 * 1024);
+      expect(memoryGrowth).toBeLessThan(20 * 1024 * 1024);
     } finally {
       await testDir.cleanup();
     }

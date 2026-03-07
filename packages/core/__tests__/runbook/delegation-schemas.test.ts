@@ -187,20 +187,16 @@ describe('SubstepStateSchema backward compatibility', () => {
     }
   });
 
-  it('accepts substep state without frameKey (backward compat)', () => {
+  it('rejects substep state without frameKey', () => {
     const state = {
       id: '1',
-      frameKey: buildFrameKey('1'),
       status: 'pending' as const,
     };
     const runbookState = createMinimalRunbookState({
-      substepStates: [state],
+      substepStates: [state as any],
     });
     const result = RunbookStateSchema.safeParse(runbookState);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.substepStates?.[0]?.frameKey).toBeDefined();
-    }
+    expect(result.success).toBe(false);
   });
 
   it('accepts substep state with delegation field', () => {

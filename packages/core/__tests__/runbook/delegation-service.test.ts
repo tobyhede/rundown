@@ -352,6 +352,22 @@ describe('createDelegation', () => {
     expect(result.delegation.contextSnapshot.index).toBe(3);
   });
 
+  it('snapshot uses delegation target substep, not cursor', () => {
+    const state = makeState({
+      step: '1',
+      substep: '1', // cursor is on substep 1
+    });
+    const steps = makeSteps();
+    const result = createDelegation(
+      { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
+
+    // snapshot should reflect the delegation target (substep 2), not cursor (substep 1)
+    expect(result.delegation.contextSnapshot.substep).toBe('2');
+    expect(result.delegation.contextSnapshot.at).toBe('1.2');
+  });
+
   it('omits index from snapshot when not in a FOR loop', () => {
     const state = makeState();
     const steps = makeSteps();
@@ -547,7 +563,7 @@ describe('createDelegation', () => {
     expect(result.delegation.contextSnapshot.index).toBeUndefined();
   });
 
-  it('handles null substep in state', () => {
+  it('snapshot substep reflects delegation target even when cursor has no substep', () => {
     const state = makeState({ substep: undefined });
     const steps = makeSteps();
     const result = createDelegation(
@@ -555,7 +571,8 @@ describe('createDelegation', () => {
       steps,
     );
 
-    expect(result.delegation.contextSnapshot.substep).toBeUndefined();
+    // snapshot should reflect the delegation target substep, not the cursor
+    expect(result.delegation.contextSnapshot.substep).toBe('1');
   });
 
   it('handles ancestors with empty vars', () => {
