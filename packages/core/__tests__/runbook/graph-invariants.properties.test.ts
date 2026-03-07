@@ -12,7 +12,6 @@ import {
   inferSteps,
   makeTransitions,
   DEFER_TRANSITIONS,
-  DEFAULT_TRANSITIONS,
   type StepInput,
 } from './compiler-property-helpers.js';
 import type { Substep } from '../../src/runbook/types.js';
@@ -49,7 +48,7 @@ function buildStepsFromShapes(shapes: StepShape[]): StepInput[] {
 
     const substeps: Substep[] = Array.from({ length: shape.numSubsteps }, (_, i) => ({
       id: String(i + 1),
-      description: `Substep ${i + 1}`,
+      description: `Substep ${String(i + 1)}`,
       transitions: DEFER_TRANSITIONS,
     }));
 

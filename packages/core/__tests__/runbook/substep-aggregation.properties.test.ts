@@ -30,7 +30,7 @@ function buildAggregationSteps(opts: {
 }): StepInput[] {
   const substeps: Substep[] = Array.from({ length: opts.numSubsteps }, (_, i) => ({
     id: String(i + 1),
-    description: `Substep ${i + 1}`,
+    description: `Substep ${String(i + 1)}`,
     transitions: opts.substepActions[i] === 'DEFER' ? DEFER_TRANSITIONS : DEFAULT_TRANSITIONS,
   }));
 

@@ -43,7 +43,7 @@ const linearConfigArb: fc.Arbitrary<LinearConfig> = fc
 function buildLinearSteps(config: LinearConfig): StepInput[] {
   return Array.from({ length: config.numSteps }, (_, i) => ({
     name: String(i + 1),
-    description: `Step ${i + 1}`,
+    description: `Step ${String(i + 1)}`,
     transitions: makeTransitions('ALL', config.passActions[i], config.failActions[i]),
   }));
 }
@@ -142,7 +142,7 @@ describe('Linear sequence properties', () => {
 
           // Steps after the early COMPLETE step should not be visited
           for (let i = adjustedIdx + 2; i <= numSteps; i++) {
-            expect(result.statesVisited).not.toContain(`step::${i}`);
+            expect(result.statesVisited).not.toContain(`step::${String(i)}`);
           }
         },
       ),

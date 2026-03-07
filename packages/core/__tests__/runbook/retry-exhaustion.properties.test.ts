@@ -12,7 +12,6 @@ import {
   makeTransitionObject,
   runMachine,
   DEFER_TRANSITIONS,
-  type StepInput,
 } from './compiler-property-helpers.js';
 import type { Substep, Transitions } from '../../src/runbook/types.js';
 
@@ -95,7 +94,7 @@ describe('Retry exhaustion properties', () => {
         (numSubsteps, parentRetry) => {
           const substeps: Substep[] = Array.from({ length: numSubsteps }, (_, i) => ({
             id: String(i + 1),
-            description: `Sub ${i + 1}`,
+            description: `Sub ${String(i + 1)}`,
             transitions: DEFER_TRANSITIONS,
           }));
 

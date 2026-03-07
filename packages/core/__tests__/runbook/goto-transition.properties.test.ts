@@ -17,7 +17,7 @@ import { inferSteps, makeTransitions, type StepInput } from './compiler-property
 function buildLinearBaseSteps(numSteps: number): StepInput[] {
   return Array.from({ length: numSteps }, (_, i) => ({
     name: String(i + 1),
-    description: `Step ${i + 1}`,
+    description: `Step ${String(i + 1)}`,
     transitions: makeTransitions('ALL', i === numSteps - 1 ? 'COMPLETE' : 'CONTINUE', 'STOP'),
   }));
 }
@@ -93,7 +93,7 @@ describe('GOTO transition properties', () => {
           ]);
 
           // The target step's state ID should appear in visited states
-          expect(result.statesVisited).toContain(`step::${targetStep}`);
+          expect(result.statesVisited).toContain(`step::${String(targetStep)}`);
         },
       ),
       { numRuns: 200 },
@@ -120,7 +120,7 @@ describe('GOTO transition properties', () => {
 
           // Steps between 1 and target should not be visited
           for (let i = 2; i < targetStep; i++) {
-            expect(result.statesVisited).not.toContain(`step::${i}`);
+            expect(result.statesVisited).not.toContain(`step::${String(i)}`);
           }
         },
       ),
