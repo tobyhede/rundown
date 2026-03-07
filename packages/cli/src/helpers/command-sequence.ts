@@ -10,7 +10,6 @@
 import { spawn } from 'node:child_process';
 import { parse as shellParse } from 'shell-quote';
 import type { StepAssertion } from '../schemas/scenarios.js';
-import { isInternalRdCommand, executeRdCommandInternal } from '../services/internal-commands.js';
 
 /** A captured step transition from JSON output. */
 export interface CapturedTransition {
@@ -117,17 +116,6 @@ async function runCommandWithTee(
     env?: Record<string, string | undefined>;
   },
 ): Promise<{ stdout: string; exitCode: number }> {
-  // Try internal execution for supported rd commands (echo, prompt) before spawning
-  if (command.kind === 'rd') {
-    const fullCmd = `rd ${command.args.join(' ')}`;
-    if (isInternalRdCommand(fullCmd)) {
-      const internalResult = await executeRdCommandInternal(fullCmd, options.cwd);
-      if (internalResult !== null) {
-        return { stdout: '', exitCode: internalResult.exitCode };
-      }
-    }
-  }
-
   return new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
     const spawnEnv = { ...process.env, ...(options.env ?? {}), RUNDOWN_LOG: '0' };
