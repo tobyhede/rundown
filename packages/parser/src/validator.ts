@@ -95,6 +95,18 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
     }
   }
 
+  // Step-name uniqueness: detect duplicate step names/numbers
+  const seenNames = new Map<string, number | undefined>();
+  for (const step of steps) {
+    if (seenNames.has(step.name)) {
+      const firstLine = seenNames.get(step.name);
+      const suffix = firstLine !== undefined ? ` (first defined at line ${String(firstLine)})` : '';
+      diagnostics.push(error(step.line, `Duplicate step name "${step.name}"${suffix}`));
+    } else {
+      seenNames.set(step.name, step.line);
+    }
+  }
+
   for (const step of steps) {
     // Conformance Rule 4: Exclusivity (Step level)
     // The discriminated union enforces exclusivity by design:

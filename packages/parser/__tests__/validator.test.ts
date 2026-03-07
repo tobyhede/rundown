@@ -778,6 +778,76 @@ describe('validator strict rules', () => {
     });
   });
 
+  describe('step-name uniqueness', () => {
+    it('rejects two numeric steps with same number', () => {
+      const steps = [
+        mockStep({ name: '1', line: 5, description: 'First' }),
+        mockStep({ name: '1', line: 10, description: 'Duplicate' }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics);
+      expect(errors.some((e) => e.message.includes('Duplicate step name "1"'))).toBe(true);
+      expect(errors.some((e) => e.message.includes('first defined at line 5'))).toBe(true);
+    });
+
+    it('rejects two named steps with same name', () => {
+      const steps = [
+        mockStep({ name: 'Setup', line: 3, description: 'First setup' }),
+        mockStep({ name: 'Setup', line: 20, description: 'Duplicate setup' }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics);
+      expect(errors.some((e) => e.message.includes('Duplicate step name "Setup"'))).toBe(true);
+    });
+
+    it('reports multiple errors for three+ duplicates', () => {
+      const steps = [
+        mockStep({ name: 'Deploy', line: 1, description: 'First' }),
+        mockStep({ name: 'Deploy', line: 10, description: 'Second' }),
+        mockStep({ name: 'Deploy', line: 20, description: 'Third' }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const dupeErrors = filterErrors(diagnostics).filter((e) =>
+        e.message.includes('Duplicate step name "Deploy"'),
+      );
+      expect(dupeErrors).toHaveLength(2);
+    });
+
+    it('allows mixed numeric and named steps with no conflicts', () => {
+      const steps = [
+        mockStep({ name: '1', description: 'First' }),
+        mockStep({ name: '2', description: 'Second' }),
+        mockStep({ name: 'Cleanup', description: 'Named step' }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const dupeErrors = filterErrors(diagnostics).filter((e) =>
+        e.message.includes('Duplicate step name'),
+      );
+      expect(dupeErrors).toHaveLength(0);
+    });
+
+    it('omits line reference when first occurrence has no line', () => {
+      const steps = [
+        mockStep({ name: 'X', description: 'No line' }),
+        mockStep({ name: 'X', line: 15, description: 'With line' }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const dupeErrors = filterErrors(diagnostics).filter((e) =>
+        e.message.includes('Duplicate step name "X"'),
+      );
+      expect(dupeErrors).toHaveLength(1);
+      expect(dupeErrors[0].message).not.toContain('first defined at line');
+    });
+  });
+
+  describe('step-name uniqueness integration', () => {
+    it('parseRunbookDocument rejects duplicate named steps', async () => {
+      const { parseRunbookDocument } = await import('../src/index.js');
+      const markdown = `# My Runbook\n\n## Setup\nFirst setup\n\n## Setup\nDuplicate setup\n`;
+      expect(() => parseRunbookDocument(markdown)).toThrow(/Duplicate step name "Setup"/);
+    });
+  });
+
   describe('parent transition reachability', () => {
     it('errors when all substeps have explicit non-DEFER transitions', () => {
       const steps = [
