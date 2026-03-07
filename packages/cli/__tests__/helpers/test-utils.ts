@@ -143,7 +143,11 @@ export async function runCliInProcess(
   const origStdoutWrite = process.stdout.write.bind(process.stdout);
   const origStderrWrite = process.stderr.write.bind(process.stderr);
   const origExit = process.exit.bind(process);
-  const origEnv = { ...process.env };
+  const envKeys = ['NO_COLOR', 'RUNDOWN_LOG', 'CLAUDE_PLUGIN_ROOT', 'PATH', 'FORCE_COLOR'] as const;
+  const origEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]])) as Record<
+    string,
+    string | undefined
+  >;
 
   let stdoutBuf = '';
   let stderrBuf = '';
@@ -168,14 +172,32 @@ export async function runCliInProcess(
 
     // Capture stdout/stderr via process.stdout/stderr.write
     // ConsoleWriter consistently uses these (not console.log/error)
-    process.stdout.write = (chunk: string | Uint8Array): boolean => {
-      stdoutBuf += typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+    process.stdout.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      stdoutBuf +=
+        typeof chunk === 'string'
+          ? chunk
+          : chunk instanceof Uint8Array
+            ? new TextDecoder().decode(chunk)
+            : String(chunk);
+      const cb = rest.find((a) => typeof a === 'function') as
+        | ((err?: Error | null) => void)
+        | undefined;
+      cb?.();
       return true;
-    };
-    process.stderr.write = (chunk: string | Uint8Array): boolean => {
-      stderrBuf += typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      stderrBuf +=
+        typeof chunk === 'string'
+          ? chunk
+          : chunk instanceof Uint8Array
+            ? new TextDecoder().decode(chunk)
+            : String(chunk);
+      const cb = rest.find((a) => typeof a === 'function') as
+        | ((err?: Error | null) => void)
+        | undefined;
+      cb?.();
       return true;
-    };
+    }) as typeof process.stderr.write;
 
     // Intercept process.exit
     process.exit = ((code?: number) => {
@@ -209,13 +231,14 @@ export async function runCliInProcess(
     // Restore cwd
     process.chdir(origCwd);
 
-    // Restore env
-    for (const key of Object.keys(process.env)) {
-      if (!(key in origEnv)) {
+    // Restore env (only the keys we modified)
+    for (const key of envKeys) {
+      if (origEnv[key] === undefined) {
         delete process.env[key];
+      } else {
+        process.env[key] = origEnv[key];
       }
     }
-    Object.assign(process.env, origEnv);
 
     // Reset globals again for clean state
     resetPolicyContext();
