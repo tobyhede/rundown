@@ -79,6 +79,8 @@ function runWithEvents(
 
 describe('GOTO transition properties', () => {
   // Property 1: GOTO lands on correct state
+  // Assert the immediate post-GOTO state (no PASS padding) to avoid masking
+  // routing regressions where linear progression could reach the target anyway.
   it('GOTO transitions to the correct target state', () => {
     fc.assert(
       fc.property(
@@ -88,12 +90,16 @@ describe('GOTO transition properties', () => {
           const targetStep = ((rawTarget - 1) % numSteps) + 1;
           const steps = buildLinearBaseSteps(numSteps);
 
-          const result = runWithEvents(steps, [
-            { type: 'GOTO', target: { step: String(targetStep) } },
-          ]);
+          const compiled = inferSteps(steps);
+          const machine = compileRunbookToMachine(compiled);
+          const actor = createActor(machine as AnyStateMachine);
+          actor.start();
 
-          // The target step's state ID should appear in visited states
-          expect(result.statesVisited).toContain(`step::${String(targetStep)}`);
+          actor.send({ type: 'GOTO', target: { step: String(targetStep) } });
+          const snap = actor.getSnapshot();
+
+          // Immediate state after GOTO must be the target (no padding involved)
+          expect(String(snap.value)).toBe(`step::${String(targetStep)}`);
         },
       ),
       { numRuns: 200 },
