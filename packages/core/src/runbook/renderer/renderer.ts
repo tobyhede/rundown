@@ -30,6 +30,9 @@ export function renderAction(action: Action): string {
 
 /**
  * Render a single transition with its retry prefix if configured.
+ *
+ * @param transition - The transition object to render
+ * @returns DSL string with optional RETRY prefix
  */
 function renderTransitionAction(transition: TransitionObject): string {
   const actionStr = renderAction(transition.action);
@@ -44,6 +47,10 @@ function renderTransitionAction(transition: TransitionObject): string {
  *
  * Pass and fail use inverted modifiers: when aggregation is ALL,
  * PASS shows ALL but FAIL shows ANY (and vice-versa).
+ *
+ * @param aggregation - The aggregation mode (ALL, ANY, or none)
+ * @param kind - Whether this is for a pass or fail transition
+ * @returns The modifier suffix string (e.g., " ALL", " ANY", or empty)
  */
 function aggregationModifier(aggregation: 'ALL' | 'ANY' | 'none', kind: 'pass' | 'fail'): string {
   if (aggregation === 'none') return '';

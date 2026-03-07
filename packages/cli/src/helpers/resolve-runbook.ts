@@ -136,7 +136,7 @@ function isPathIdentifier(identifier: string): boolean {
  * @param cwd - Current working directory
  * @param identifier - Runbook filename, name, or namespaced name to find
  * @returns Absolute path to runbook file, or null if not found
- * @throws May throw filesystem errors if directory access fails unexpectedly
+ * @throws {Error} May throw filesystem errors if directory access fails unexpectedly
  */
 export async function resolveRunbookFile(cwd: string, identifier: string): Promise<string | null> {
   // Parse namespace from identifier

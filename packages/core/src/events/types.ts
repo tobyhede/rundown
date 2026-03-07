@@ -36,6 +36,9 @@ export interface EventEnvelope {
 
 // ─── Payload Types ───────────────────────────────────────────────────────────
 
+/**
+ *
+ */
 export interface RunbookStartedPayload {
   readonly title?: string;
   readonly description?: string;
@@ -44,6 +47,9 @@ export interface RunbookStartedPayload {
   readonly statePath: string;
 }
 
+/**
+ *
+ */
 export interface StepEnteredPayload {
   readonly position: StepPosition;
   readonly stepName: string;
@@ -59,12 +65,18 @@ export interface StepEnteredPayload {
   readonly prompted: boolean;
 }
 
+/**
+ *
+ */
 export interface CommandStartedPayload {
   readonly command: string;
   readonly displayCommand: string;
   readonly position: StepPosition;
 }
 
+/**
+ *
+ */
 export interface CommandCompletedPayload {
   readonly command: string;
   readonly success: boolean;
@@ -105,23 +117,35 @@ export interface StepTransitionedPayload {
   readonly aggregated?: boolean;
 }
 
+/**
+ *
+ */
 export interface PolicyDeniedPayload {
   readonly command: string;
   readonly reason: string;
   readonly position: StepPosition;
 }
 
+/**
+ *
+ */
 export interface RunbookCompletedPayload {
   readonly message?: string;
   readonly finalPosition: StepPosition;
 }
 
+/**
+ *
+ */
 export interface RunbookStoppedPayload {
   readonly message?: string;
   readonly position: StepPosition;
   readonly reason?: 'policy_denied' | 'fail_transition' | 'user_abort';
 }
 
+/**
+ *
+ */
 export interface ErrorOccurredPayload {
   readonly message: string;
   readonly code?: string;
@@ -130,6 +154,9 @@ export interface ErrorOccurredPayload {
 
 // ─── Event Union ─────────────────────────────────────────────────────────────
 
+/**
+ *
+ */
 export type RunbookEventV1 =
   | (EventEnvelope & { type: 'RUNBOOK_STARTED'; payload: RunbookStartedPayload })
   | (EventEnvelope & { type: 'STEP_ENTERED'; payload: StepEnteredPayload })

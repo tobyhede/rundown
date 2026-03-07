@@ -9,7 +9,7 @@
  * no `templateVars`) continue to work — the expanded content is parsed directly.
  *
  * @module
- * @throws Error if runbookSrc is missing (indicates corrupted state)
+ * @throws {Error} if runbookSrc is missing (indicates corrupted state)
  */
 
 import { parseRunbookDocument, type Step } from '@rundown-org/core';
@@ -25,7 +25,7 @@ import {
  * @param state - Runbook state containing runbookSrc and optionally templateVars
  * @param _cwd - Unused, kept for signature compatibility
  * @returns Parsed steps from runbookSrc (with variables substituted if templateVars present)
- * @throws Error if runbookSrc is missing (corrupted state)
+ * @throws {Error} if runbookSrc is missing (corrupted state)
  * @throws {RunbookSyntaxError} if runbookSrc fails to parse as a runbook document
  *         (thrown by parseRunbookDocument)
  *

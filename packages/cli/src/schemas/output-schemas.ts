@@ -1,7 +1,7 @@
 /**
  * CLI output schemas using Zod.
  *
- * Re-exports schemas from @rundown-org/core (single source of truth) and
+ * Re-exports schemas from `@rundown-org/core` (single source of truth) and
  * defines CLI-specific schemas and command mappings.
  *
  * @module schemas/output-schemas

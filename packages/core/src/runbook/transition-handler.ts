@@ -28,6 +28,8 @@ export interface ConditionResult {
  * Common logic for handling retry on any transition (pass or fail, step or substep).
  *
  * @param transition - The transition object with retry and action
+ * @param transition.retry - Maximum retry attempts allowed
+ * @param transition.action - Action to take when retries are exhausted
  * @param currentRetryCount - Current retry count
  * @returns A ConditionResult indicating the action to take
  */

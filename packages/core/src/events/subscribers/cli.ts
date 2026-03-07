@@ -45,6 +45,7 @@ export class CLISubscriber {
    * Handle an event and render it to the terminal.
    *
    * @param event - The event to handle
+   * @throws {Error} If the event type is not recognized (exhaustiveness check)
    */
   handle = (event: RunbookEventV1): void => {
     switch (event.type) {

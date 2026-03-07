@@ -19,7 +19,7 @@ const requireFromModule = createRequire(import.meta.url);
 /**
  * YAML loader for lilconfig.
  *
- * @param filepath - Path to the YAML file
+ * @param _filepath - Path to the YAML file (unused)
  * @param content - File content
  * @returns Parsed YAML object
  */
@@ -56,6 +56,8 @@ export class PolicyConfigTrustRequiredError extends Error {
   readonly filepath: string;
 
   /**
+   * Create a trust-required error for an executable policy config.
+   *
    * @param filepath - Path to the executable policy config that requires trust
    */
   constructor(filepath: string) {
@@ -280,6 +282,7 @@ export async function loadPolicyFromFile(
  *
  * @param options - Loading options
  * @returns Policy load result
+ * @throws {Error} When configuration is invalid and defaults are disabled, or no config is found
  */
 export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResult {
   const {

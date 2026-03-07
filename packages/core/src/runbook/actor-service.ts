@@ -49,6 +49,8 @@ export interface ActorSyncResult {
  */
 export class RunbookActorService {
   /**
+   * Create a new RunbookActorService.
+   *
    * @param manager - State manager for persisting runbook state to disk
    */
   constructor(private readonly manager: RunbookStateManager) {}

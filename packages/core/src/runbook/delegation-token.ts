@@ -11,6 +11,9 @@ const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
  *
  * Processes 5 bits at a time from the input buffer.
  * For 20 input bytes (160 bits), produces exactly 32 characters.
+ *
+ * @param buf - The buffer to encode
+ * @returns Base32-encoded string without padding
  */
 function encodeBase32(buf: Buffer): string {
   let bits = 0;

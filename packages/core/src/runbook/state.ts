@@ -128,7 +128,7 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID (e.g., 'wf-2025-01-12-abc123')
    * @returns The loaded RunbookState, or null if not found or invalid
-   * @throws Error if the runbook state uses deprecated dynamic-step snapshots
+   * @throws {Error} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
     try {
@@ -198,7 +198,7 @@ export class RunbookStateManager {
    * @param id - The runbook state ID to update
    * @param updates - Partial state updates to apply (id and startedAt cannot be changed)
    * @returns The updated runbook state
-   * @throws Error if the runbook with the given ID is not found
+   * @throws {Error} If the runbook with the given ID is not found
    */
   async update(
     id: string,
@@ -323,7 +323,7 @@ export class RunbookStateManager {
    * @param id - The runbook state ID
    * @param substeps - The substep definitions from the step
    * @param frameKey - Frame key scoping these entries to a FOR iteration
-   * @throws Error if the runbook with the given ID is not found
+   * @throws {Error} If the runbook with the given ID is not found
    */
   async initializeSubsteps(
     id: string,
@@ -349,13 +349,13 @@ export class RunbookStateManager {
   /**
    * Update the FOR loop context for a runbook.
    *
-   * @internal Used by {@link ForIterationService} — external consumers should
-   * use {@link ForIterationService.prepareIteration} instead of calling this directly.
+   * Use {@link ForIterationService.prepareIteration} instead of calling this directly.
    *
+   * @internal
    * @param id - The runbook state ID
    * @param forStack - The updated FOR loop stack
    * @returns The updated runbook state
-   * @throws Error if the runbook with the given ID is not found
+   * @throws {Error} If the runbook with the given ID is not found
    */
   async updateForContext(id: string, forStack: ForContext[]): Promise<RunbookState> {
     const state = await this.load(id);
@@ -384,7 +384,7 @@ export class RunbookStateManager {
    * @param substepId - The substep ID to complete
    * @param result - The substep result ('pass' or 'fail')
    * @param frameKey - Frame key to scope the match
-   * @throws Error if the runbook with the given ID is not found
+   * @throws {Error} If the runbook with the given ID is not found
    */
   async completeSubstep(
     runbookId: string,

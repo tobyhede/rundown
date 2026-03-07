@@ -25,7 +25,7 @@ export default tseslint.config(
   ...tseslint.configs.strictTypeCheckedOnly,
   ...tseslint.configs.stylisticTypeCheckedOnly,
 
-  // TSDoc coverage (warn level until coverage reaches ~95%)
+  // TSDoc coverage enforcement
   // Exclude test files — tests don't need JSDoc enforcement
   {
     ...jsdoc.configs['flat/recommended-typescript'],
@@ -47,7 +47,7 @@ export default tseslint.config(
     rules: {
       // TSDoc coverage for exported symbols
       'jsdoc/require-jsdoc': [
-        'warn',
+        'error',
         {
           publicOnly: true,
           require: {
@@ -61,14 +61,14 @@ export default tseslint.config(
           exemptEmptyConstructors: true,
         },
       ],
-      'jsdoc/require-description': 'warn',
-      'jsdoc/require-param': 'warn',
-      'jsdoc/require-param-description': 'warn',
-      'jsdoc/require-returns': 'warn',
-      'jsdoc/require-returns-description': 'warn',
-      'jsdoc/require-throws': 'warn',
-      'jsdoc/require-property': 'warn',
-      'jsdoc/require-property-description': 'warn',
+      'jsdoc/require-description': 'error',
+      'jsdoc/require-param': 'error',
+      'jsdoc/require-param-description': 'error',
+      'jsdoc/require-returns': 'error',
+      'jsdoc/require-returns-description': 'error',
+      'jsdoc/require-throws': 'error',
+      'jsdoc/require-property': 'error',
+      'jsdoc/require-property-description': 'error',
       'jsdoc/check-values': 'off',
       'jsdoc/tag-lines': 'off',
 

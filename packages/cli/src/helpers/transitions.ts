@@ -151,8 +151,8 @@ export interface TransitionContext {
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
  * @returns TransitionContext or null if no active runbook
- * @throws Error if state is missing runbookSrc (corrupted state)
- * @throws Error if runbook engine fails to initialize
+ * @throws {Error} if state is missing runbookSrc (corrupted state)
+ * @throws {Error} if runbook engine fails to initialize
  */
 export async function buildTransitionContext(
   output: OutputEmitter,
@@ -238,7 +238,7 @@ function activeCursorTarget(state: RunbookState): RuntimeTarget {
  * @param ctx - Transition context
  * @param config - Transition configuration
  * @returns `'continue'` for normal flow including completed/done paths, `'stopped'` if it reached a terminal state
- * @throws Error from `findStepOrThrow` if the active step is missing (state corruption),
+ * @throws {Error} from `findStepOrThrow` if the active step is missing (state corruption),
  *   from `ensureActiveEntry` on lifecycle violations, or from orchestration failures
  */
 export async function executeTransition(

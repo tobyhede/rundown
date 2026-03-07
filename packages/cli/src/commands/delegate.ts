@@ -18,6 +18,8 @@ import { collect } from './echo.js';
 
 /**
  * Parse `--var key=value` entries into a record.
+ * @param vars - Array of `key=value` strings from CLI flags
+ * @returns Record mapping variable names to their string values
  */
 function parseVarFlags(vars: string[]): Record<string, string> {
   const result: Record<string, string> = {};

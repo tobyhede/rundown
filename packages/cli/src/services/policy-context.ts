@@ -254,6 +254,8 @@ export function getSandboxOptions(): { sandbox: boolean; sandboxStrict: boolean 
 
 /**
  * Parse a value that may be a string or string array.
+ * @param value - Raw value to parse (string, string array, or other)
+ * @returns Parsed string array, or undefined if value is falsy or unsupported type
  */
 function parseStringArray(value: unknown): string[] | undefined {
   if (!value) return undefined;

@@ -20,6 +20,8 @@ import type { ResolvedCompletion, RunbookState } from './types.js';
  */
 export class ExecutionLifecycleService {
   /**
+   * Create a new ExecutionLifecycleService.
+   *
    * @param manager - State manager for raw state persistence
    */
   constructor(private readonly manager: RunbookStateManager) {}
@@ -29,7 +31,7 @@ export class ExecutionLifecycleService {
    *
    * @param id - The runbook state ID
    * @param result - The result to record ('pass' or 'fail')
-   * @throws Error if the runbook with the given ID is not found
+   * @throws {Error} If the runbook with the given ID is not found
    */
   async setLastResult(id: string, result: 'pass' | 'fail'): Promise<void> {
     await this.manager.update(id, { lastResult: result });

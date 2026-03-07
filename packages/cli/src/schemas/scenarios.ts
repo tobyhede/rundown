@@ -96,6 +96,9 @@ export type ScenarioExpect = z.infer<typeof ScenarioExpectSchema>;
  * scenarios, but this function performs a runtime check for safety.
  *
  * @param scenario - A validated scenario or structural type with result/expect.result
+ * @param scenario.result - Top-level expected terminal result
+ * @param scenario.expect - Rich assertion block with optional result and step assertions
+ * @param scenario.expect.result - Expected terminal result within the expect block
  * @returns The effective terminal result ('COMPLETE' or 'STOP')
  * @throws {Error} When neither `scenario.result` nor `scenario.expect?.result` is defined
  */

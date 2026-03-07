@@ -164,7 +164,7 @@ export function printCommandExec(command: string, writer: OutputWriter = getWrit
  *
  * Outputs a message indicating the runbook has completed successfully.
  *
- * @param message - Optional completion message to display
+ * @param _message - Optional completion message (unused)
  * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printRunbookComplete(_message?: string, writer: OutputWriter = getWriter()): void {
@@ -176,7 +176,7 @@ export function printRunbookComplete(_message?: string, writer: OutputWriter = g
  *
  * Outputs a message indicating the runbook has been stopped.
  *
- * @param message - Optional stop message to display
+ * @param _message - Optional stop message (unused)
  * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printRunbookStopped(_message?: string, writer: OutputWriter = getWriter()): void {
@@ -188,8 +188,8 @@ export function printRunbookStopped(_message?: string, writer: OutputWriter = ge
  *
  * Outputs a message indicating the runbook was stopped at a specific step.
  *
- * @param pos - The step position where the runbook was stopped
- * @param message - Optional stop message to display
+ * @param _pos - The step position where the runbook was stopped (unused)
+ * @param _message - Optional stop message (unused)
  * @param writer - OutputWriter to use (defaults to global writer)
  */
 export function printRunbookStoppedAtStep(

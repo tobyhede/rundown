@@ -51,6 +51,12 @@ function validateRelativePath(relPath: string): void {
 
 /**
  * Execute a single suite case in an isolated temp workspace.
+ * @param caseName - Name of the suite case being executed
+ * @param suiteCase - Suite case definition with file, commands, and expectations
+ * @param suiteDir - Directory containing the suite file (for resolving relative paths)
+ * @param quiet - Whether to suppress child process output
+ * @param output - Output emitter for rendering progress messages
+ * @returns Result with pass/fail status, expected vs actual outcome, and optional step assertions
  */
 async function executeSuiteCase(
   caseName: string,

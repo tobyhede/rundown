@@ -51,7 +51,7 @@ const MAX_PROPAGATION_DEPTH = 32;
  * @param depth - Current recursion depth (default 0)
  * @returns 'handled' if propagation succeeded, 'stopped' if parent stopped,
  *          'not-applicable' if no delegation linkage exists
- * @throws If delegation lock acquisition fails, parent state I/O errors,
+ * @throws {Error} If delegation lock acquisition fails, parent state I/O errors,
  *         drain execution fails, or recursive propagation throws
  */
 export async function handleDelegationCompletion(

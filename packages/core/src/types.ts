@@ -4,6 +4,9 @@
 import type { HookInput as SchemaHookInput } from './schemas.js';
 
 // Re-export for consumers
+/**
+ *
+ */
 export type HookInput = SchemaHookInput;
 
 /**

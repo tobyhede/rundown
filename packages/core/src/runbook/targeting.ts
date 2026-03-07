@@ -31,6 +31,10 @@ export function deriveExecutionAt(step: string, substep?: string, iteration?: nu
  * Derive execution location notation for a position payload.
  *
  * @param position - Position object with current step, optional substep and FOR context
+ * @param position.current - Current step identifier
+ * @param position.substep - Optional substep identifier
+ * @param position.for - Optional FOR loop context
+ * @param position.for.index - Iteration index within the FOR loop
  * @returns Dot-separated location string
  */
 export function derivePositionAt(position: {
@@ -180,6 +184,14 @@ export function buildStepPosition(
  * Build a ResolvedCompletion with conditional optional fields and defaulted completedAt.
  *
  * @param fields - Completion fields; `targetSubstep`, `targetIteration`, and `completedAt` are optional
+ * @param fields.agentId - Identifier of the agent that produced the completion
+ * @param fields.result - Whether the completion passed or failed
+ * @param fields.targetStep - Step name this completion targets
+ * @param fields.targetSubstep - Optional substep ID within the target step
+ * @param fields.targetIteration - Optional FOR loop iteration number
+ * @param fields.targetFrameKey - Frame key identifying the step+iteration context
+ * @param fields.targetEntry - Monotonic entry counter within the frame
+ * @param fields.completedAt - ISO 8601 timestamp (defaults to current time)
  * @returns A fully-formed ResolvedCompletion
  */
 export function buildResolvedCompletion(fields: {

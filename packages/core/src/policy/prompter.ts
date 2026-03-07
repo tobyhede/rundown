@@ -262,6 +262,9 @@ export class PolicyPrompter {
 
   /**
    * Get human-readable label for permission type.
+   *
+   * @param type - The permission type to label
+   * @returns Human-readable description of the permission type
    */
   private getTypeLabel(type: PermissionType): string {
     switch (type) {
@@ -278,6 +281,10 @@ export class PolicyPrompter {
 
   /**
    * Format the subject for display.
+   *
+   * @param type - The permission type for context-specific formatting
+   * @param subject - The subject (command, path, or env var) to format
+   * @returns Formatted and colorized subject string
    */
   private formatSubject(type: PermissionType, subject: string): string {
     switch (type) {

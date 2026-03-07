@@ -34,7 +34,7 @@ import { getRunbookFromState } from './runbook-loader.js';
  * Both text and JSON modes use this same structure — the renderer
  * decides how to format it.
  *
- * @see StatusResponse in @rundown-org/core for the public API contract
+ * @see StatusResponse in `@rundown-org/core` for the public API contract
  */
 export interface StatusOutputData {
   /** Whether a runbook is currently active */
@@ -75,6 +75,11 @@ export interface StatusOutputData {
 
 /**
  * Count substeps that have no resolved completion for the active frame+entry.
+ * @param substeps - Array of substeps to check for resolution
+ * @param resolvedCompletions - Map of completion keys to resolved completions
+ * @param activeFrameKey - Current active frame key for scoping lookups
+ * @param activeEntry - Current active entry number for scoping lookups
+ * @returns Number of substeps without a resolved completion
  */
 function countUnresolvedSubsteps(
   substeps: ReadonlyArray<{ id: string }>,

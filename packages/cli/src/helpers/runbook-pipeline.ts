@@ -142,7 +142,7 @@ export type ClaimResult =
  *
  * @param steps - Parsed runbook steps
  * @param sources - Resolved data sources
- * @throws Error if any step references an undefined source
+ * @throws {Error} if any step references an undefined source
  */
 export function validateSources(
   steps: readonly Step[],
@@ -163,6 +163,9 @@ export function validateSources(
 
 /**
  * Emit RUNBOOK_STARTED event with metadata.
+ * @param emitter - Event emitter for publishing execution events
+ * @param runbookState - Current runbook state with title and description
+ * @param prompted - Whether the runbook is running in prompted mode
  */
 function emitRunbookStarted(
   emitter: ExecutionEventEmitter,
@@ -200,6 +203,7 @@ function buildContextVars(vars: Readonly<Record<string, string>>): Record<string
  * @param varOpts - Variable options from CLI flags
  * @param cwd - Current working directory
  * @param options - Optional settings including inherited context variables from parent runbook
+ * @param options.inheritedContextVars - Context variables inherited from a parent delegation
  * @returns PreparedRunbook or error result
  */
 export async function prepareRunbook(
@@ -310,6 +314,10 @@ export async function prepareRunbook(
  * @param ctx - Pipeline context
  * @param prepared - Prepared runbook data
  * @param options - Launch options including optional parent context
+ * @param options.runbookName - Name identifier for the runbook being launched
+ * @param options.prompted - Whether to run in prompted mode (no auto-execution)
+ * @param options.delegationLinkage - Optional parent delegation linkage for child runs
+ * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @returns RunbookStartResult
  */
 async function launchRunbook(
@@ -383,6 +391,8 @@ async function launchRunbook(
  * @param ctx - Pipeline context
  * @param prepared - Prepared runbook data
  * @param options - Start options
+ * @param options.file - Runbook file path or name
+ * @param options.prompted - Whether to run in prompted mode
  * @returns RunbookStartResult
  */
 export async function startRunbook(
@@ -422,7 +432,7 @@ function inferEntryFromState(state: RunbookState, frameKey: FrameKey): number | 
  * @param substepId - Substep ID (or bare step ID) that owns the delegation
  * @param childRunId - The newly created child run ID to set
  * @param tokenHash - Optional token hash for precise matching
- * @throws Error if the parent run is not found
+ * @throws {Error} if the parent run is not found
  */
 async function updateStepDelegationChildRunId(
   manager: RunbookStateManager,

@@ -177,6 +177,8 @@ export class OutputEmitter {
    *
    * @param block - The action block data
    * @param options - Additional options
+   * @param options.complete - Whether this action completes the runbook
+   * @param options.stopped - Whether this action stops the runbook
    */
   action(block: ActionBlockData, options?: { complete?: boolean; stopped?: boolean }): void {
     const event: ActionOutput = {

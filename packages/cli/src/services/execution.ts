@@ -76,9 +76,10 @@ export type TemplateVariables = Record<string, string>;
  * @param forStack - Current FOR loop stack from persisted state
  * @param forClause - FOR clause from the step definition (bootstrap fallback)
  * @param sources - Data-source bindings for sourced FOR clauses
+ * @param templateVars - Static template variables for context-aware expansion
  * @returns Variable map with `Step` and optional `Index` / named variable
- * @throws Error if a sourced FOR clause references a missing data source
- * @throws Error if an unexpected source kind is encountered
+ * @throws {Error} if a sourced FOR clause references a missing data source
+ * @throws {Error} if an unexpected source kind is encountered
  */
 export function buildStepVariables(
   stepId: string,
@@ -182,7 +183,7 @@ export function buildStepVariables(
  * @param steps - Parsed runbook steps
  * @param stepName - Step name to find
  * @returns The matching step
- * @throws Error if step is not found (indicates state corruption)
+ * @throws {Error} if step is not found (indicates state corruption)
  */
 export function findStepOrThrow(steps: Step[], stepName: string): Step {
   const step = steps.find((s) => s.name === stepName);
@@ -322,6 +323,17 @@ export type DrainResolvedCompletionsResult =
  * Applies completions in substep order and stops at the first unresolved substep.
  *
  * @param args - Drain arguments including state manager, services, and current state
+ * @param args.manager - State manager for raw state persistence
+ * @param args.actorService - Actor service for sending events to the runbook machine
+ * @param args.sessionService - Session service for active runbook tracking
+ * @param args.lifecycleService - Lifecycle service for completion read/write operations
+ * @param args.emitter - Event emitter for execution progress notifications
+ * @param args.runbookId - ID of the runbook being drained
+ * @param args.steps - Parsed step definitions for the runbook
+ * @param args.currentState - Current persisted runbook state
+ * @param args.transitionPolicy - Policy governing transition orchestration
+ * @param args.computeActionResult - Optional function to compute action result for transitions
+ * @param args.command - Optional command string for event context
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  */
 export async function drainResolvedCompletions({

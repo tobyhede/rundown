@@ -181,6 +181,8 @@ export class ExecutionEventEmitter {
   /**
    * Get the current number of subscribers.
    * Useful for testing.
+   *
+   * @returns The number of active subscribers
    */
   get subscriberCount(): number {
     return this.subscribers.size;

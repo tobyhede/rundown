@@ -80,6 +80,8 @@ export interface ForActorOperations {
  */
 export class ForIterationService {
   /**
+   * Create a new ForIterationService.
+   *
    * @param manager - State reader for loading/updating runbook state
    * @param actorService - Actor operations for XState event dispatch
    */

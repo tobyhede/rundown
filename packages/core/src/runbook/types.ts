@@ -8,7 +8,7 @@ import type { FrameKey } from './targeting.js';
  *
  * Discriminated union on `kind`: `'base'` | `'command'` | `'substeps'` | `'for'`.
  * Steps can be numeric ("1", "2") or named ("ErrorHandler").
- * @see {@link @rundown-org/parser!Step}
+ * @see `@rundown-org/parser` Step
  */
 export type { Step } from '@rundown-org/parser';
 
@@ -31,7 +31,7 @@ export type { StepHavingSubsteps } from '@rundown-org/parser';
  * A substep within a step (H3 header section).
  *
  * Substeps represent smaller units of work within a parent step.
- * @see {@link @rundown-org/parser!Substep}
+ * @see `@rundown-org/parser` Substep
  */
 export type { Substep } from '@rundown-org/parser';
 
@@ -39,7 +39,7 @@ export type { Substep } from '@rundown-org/parser';
  * A transition action defining what happens after a step completes.
  *
  * Actions include CONTINUE, COMPLETE, STOP, GOTO, NEXT, and BREAK with optional targets.
- * @see {@link @rundown-org/parser!Action}
+ * @see `@rundown-org/parser` Action
  */
 export type { Action } from '@rundown-org/parser';
 
@@ -47,19 +47,19 @@ export type { Action } from '@rundown-org/parser';
  * Step transition configuration for pass/fail outcomes.
  *
  * Can be a simple TransitionObject or separate pass/fail configurations.
- * @see {@link @rundown-org/parser!Transitions}
+ * @see `@rundown-org/parser` Transitions
  */
 export type { Transitions } from '@rundown-org/parser';
 
 /**
  * A single transition configuration with kind, retry count, and action.
- * @see {@link @rundown-org/parser!TransitionObject}
+ * @see `@rundown-org/parser` TransitionObject
  */
 export type { TransitionObject } from '@rundown-org/parser';
 
 /**
  * A complete parsed runbook definition with metadata and steps.
- * @see {@link @rundown-org/parser!Runbook}
+ * @see `@rundown-org/parser` Runbook
  */
 export type { Runbook } from '@rundown-org/parser';
 
@@ -67,7 +67,7 @@ export type { Runbook } from '@rundown-org/parser';
  * Identifies a step within a runbook by name and optional instance.
  *
  * Used to reference steps in transitions and state tracking.
- * @see {@link @rundown-org/parser!StepId}
+ * @see `@rundown-org/parser` StepId
  */
 export type { StepId } from '@rundown-org/parser';
 
@@ -113,6 +113,9 @@ type LastActionBase = {
   readonly aggregated?: boolean;
 };
 
+/**
+ * Discriminated union representing the last transition action taken by the state machine.
+ */
 export type LastAction =
   | (LastActionBase & { readonly type: 'START' })
   | (LastActionBase & { readonly type: 'CONTINUE' })

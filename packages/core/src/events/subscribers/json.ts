@@ -15,6 +15,8 @@ export class JSONSubscriber {
 
   /**
    * Handle an execution event by collecting it.
+   *
+   * @param event - The event to collect
    */
   handle = (event: RunbookEventV1): void => {
     this.events.push(event);
@@ -24,6 +26,8 @@ export class JSONSubscriber {
    * Get all collected events.
    *
    * Returns a defensive copy to prevent mutation of internal state.
+   *
+   * @returns Defensive copy of collected events
    */
   getEvents(): readonly RunbookEventV1[] {
     return [...this.events];
@@ -31,6 +35,9 @@ export class JSONSubscriber {
 
   /**
    * Get events of a specific type.
+   *
+   * @param type - The event type to filter by
+   * @returns Array of events matching the specified type
    */
   getEventsByType<T extends RunbookEventV1['type']>(
     type: T,
@@ -47,6 +54,8 @@ export class JSONSubscriber {
 
   /**
    * Build execution summary from collected events.
+   *
+   * @returns Aggregated summary of the runbook execution
    */
   getSummary(): ExecutionSummary {
     const transitions = this.getEventsByType('STEP_TRANSITIONED');

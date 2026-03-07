@@ -23,6 +23,11 @@ const CLI_PATH = (() => {
 
 /**
  * Emit a load-failure result to the output and exit.
+ * @param result - Load failure result containing error information
+ * @param result.error - Human-readable error message
+ * @param result.code - Machine-readable error code
+ * @param result.details - Optional detailed validation messages
+ * @param output - Output emitter for rendering the error
  */
 function emitLoadError(
   result: { error: string; code: string; details?: string[] },
