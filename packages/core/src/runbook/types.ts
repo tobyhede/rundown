@@ -122,8 +122,11 @@ export type LastAction =
   | (LastActionBase & { readonly type: 'DEFER' })
   | (LastActionBase & {
       readonly type: 'GOTO';
+      /** Target step name to jump to. */
       readonly target: string;
+      /** Optional substep ID within the target step. */
       readonly substep?: string;
+      /** Optional entry number or unresolved template variable for FOR-loop position. */
       readonly at?: number | `{{${string}}}`;
     })
   | (LastActionBase & { readonly type: 'COMPLETE' })

@@ -205,6 +205,7 @@ function buildContextVars(vars: Readonly<Record<string, string>>): Record<string
  * @param options - Optional settings including inherited context variables from parent runbook
  * @param options.inheritedContextVars - Context variables inherited from a parent delegation
  * @returns PreparedRunbook or error result
+ * @throws {Error} On unexpected errors during variable resolution or parsing
  */
 export async function prepareRunbook(
   file: string,
@@ -394,6 +395,7 @@ async function launchRunbook(
  * @param options.file - Runbook file path or name
  * @param options.prompted - Whether to run in prompted mode
  * @returns RunbookStartResult
+ * @throws {Error} On state persistence or machine initialization failures
  */
 export async function startRunbook(
   ctx: RunPipelineContext,

@@ -216,21 +216,23 @@ export function mergeVariables(
  * Load variables from a YAML file.
  *
  * @param filePath - Absolute path to the YAML file
- * @param options - Optional: set normalize=false to preserve raw types (arrays, multiline strings)
+ * @param options - Optional: set normalize=false to preserve raw types, optional=false to throw on errors
  * @param options.normalize - When false, preserves raw YAML types; when true/omitted, converts to strings
+ * @param options.optional - When true (default), silently returns `{}` on errors; when false, throws
  * @returns Variable record (string values when normalized, unknown values when raw)
+ * @throws {Error} When optional is false and the file cannot be read or parsed
  */
 export async function loadVariablesFromFile(
   filePath: string,
-  options: { normalize: false },
+  options: { normalize: false; optional?: boolean },
 ): Promise<Record<string, unknown>>;
 export async function loadVariablesFromFile(
   filePath: string,
-  options?: { normalize?: true },
+  options?: { normalize?: true; optional?: boolean },
 ): Promise<Record<string, string>>;
 export async function loadVariablesFromFile(
   filePath: string,
-  options?: { normalize?: boolean },
+  options?: { normalize?: boolean; optional?: boolean },
 ): Promise<Record<string, unknown>> {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
@@ -245,7 +247,10 @@ export async function loadVariablesFromFile(
       return raw;
     }
     return normalizeVariables(raw);
-  } catch {
+  } catch (error) {
+    if (options?.optional === false) {
+      throw error;
+    }
     return {};
   }
 }
@@ -479,7 +484,7 @@ async function collectRawLayers(
     const varFilePath = path.isAbsolute(options.varFile)
       ? options.varFile
       : path.join(cwd, options.varFile);
-    fromFile = await loadVariablesFromFile(varFilePath, { normalize: false });
+    fromFile = await loadVariablesFromFile(varFilePath, { normalize: false, optional: false });
   }
 
   // 5. CLI flags (highest)

@@ -252,7 +252,7 @@ describe('Plugin Gate Loading', () => {
     );
   });
 
-  test('throws when plugin gate has no command', async () => {
+  test('falls through to built-in gate when plugin gate has no command', async () => {
     const emptyDir = path.join(mockPluginDir, 'empty');
     await fs.mkdir(emptyDir, { recursive: true });
     await fs.writeFile(
@@ -275,8 +275,10 @@ describe('Plugin Gate Loading', () => {
       cwd: '/test',
     };
 
+    // With no command or plugin ref, it recurses into executeGate which
+    // falls through to built-in gate lookup (which fails for unknown gates)
     await expect(executeGate('test-gate', gateConfig, mockInput)).rejects.toThrow(
-      "Plugin gate 'empty:empty-gate' has no command",
+      /Failed to load built-in gate/,
     );
   });
 });

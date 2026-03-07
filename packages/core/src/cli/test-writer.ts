@@ -72,7 +72,9 @@ export class TestWriter implements OutputWriter {
    */
   writeJson(data: unknown, pretty = true): void {
     const json = pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data);
-    this.writeLine(json);
+    // JSON.stringify can return undefined at runtime for functions/symbols,
+    // but TypeScript types it as string. Cast to handle this safely.
+    this.writeLine((json as string | undefined) ?? 'null');
   }
 
   // Test helper methods

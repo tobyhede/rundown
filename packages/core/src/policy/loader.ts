@@ -282,7 +282,9 @@ export async function loadPolicyFromFile(
  *
  * @param options - Loading options
  * @returns Policy load result
- * @throws {Error} When configuration is invalid and defaults are disabled, or no config is found
+ * @throws {PolicyConfigTrustRequiredError} When a JS config is loaded without `trustJsPolicy`
+ * @throws {Error} When config file has an unsupported extension or cannot be parsed
+ * @throws {Error} When configuration is invalid and `useDefaults` is false
  */
 export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResult {
   const {

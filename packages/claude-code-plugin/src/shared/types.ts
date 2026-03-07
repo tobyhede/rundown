@@ -61,7 +61,9 @@ export interface GateConfig {
    */
   file_patterns?: string[];
 
+  /** Message to inject into conversation when the gate passes. */
   on_pass?: string;
+  /** Message to inject into conversation when the gate fails. */
   on_fail?: string;
 }
 

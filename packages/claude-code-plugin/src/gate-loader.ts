@@ -208,11 +208,9 @@ export async function executeGate(
           additionalContext: shellResult.output,
         },
       };
-    } else if (pluginGateConfig.plugin && pluginGateConfig.gate) {
-      // Plugin gate references another plugin gate - recurse
-      return executeGate(gateRef, pluginGateConfig, input, newStack);
     } else {
-      throw new Error(`Plugin gate '${gateConfig.plugin}:${gateConfig.gate}' has no command`);
+      // Plugin reference or built-in gate — recurse with updated stack
+      return executeGate(gateRef, pluginGateConfig, input, newStack);
     }
   }
 

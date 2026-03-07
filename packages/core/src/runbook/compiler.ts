@@ -1200,6 +1200,7 @@ function buildRetryStateConfig(
  * @param stepName - The parent step name (for CONTINUE target resolution)
  * @param steps - The full steps array
  * @returns The target state ID string
+ * @throws {Error} If GOTO target step does not exist in the steps array
  * @throws {Error} If NEXT or BREAK appears as a parent-step action (compiler invariant violation)
  */
 function resolveActionTarget(action: Action, stepName: string, steps: Step[]): string {

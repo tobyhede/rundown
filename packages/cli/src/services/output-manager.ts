@@ -3,9 +3,7 @@ import { ConsoleWriter } from '@rundown-org/core';
 import type { Column } from '../helpers/table-formatter.js';
 import { formatTable } from '../helpers/table-formatter.js';
 
-/**
- *
- */
+/** Options for constructing an OutputManager instance. */
 export interface OutputManagerOptions {
   /** Whether to output in JSON format */
   json?: boolean;

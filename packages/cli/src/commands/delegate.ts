@@ -111,7 +111,7 @@ export function registerDelegateCommand(program: Command): void {
               const varFilePath = path.isAbsolute(options.varFile)
                 ? options.varFile
                 : path.join(cwd, options.varFile);
-              extraVars = await loadVariablesFromFile(varFilePath);
+              extraVars = await loadVariablesFromFile(varFilePath, { optional: false });
             }
             if (options.var.length > 0) {
               const flagVars = parseVarFlags(options.var);

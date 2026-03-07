@@ -103,7 +103,7 @@ export class ForIterationService {
    * @param id - Runbook instance ID
    * @param steps - Parsed step definitions for actor creation
    * @returns An IterationResult indicating next action for the caller
-   * @throws {Error} When state has no current step
+   * @throws {Error} When runbook state is not found (null)
    */
   async prepareIteration(id: string, steps: Step[]): Promise<IterationResult> {
     const state = await this.manager.load(id);

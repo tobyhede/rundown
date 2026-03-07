@@ -45,6 +45,7 @@ export interface FileProvider {
  * @param options - Optional resume configuration
  * @param options.skipLines - Number of non-empty lines to skip for resume
  * @returns A FileProvider that streams non-empty lines
+ * @throws {Error} On I/O errors (ENOENT, EACCES) during file open or line skipping
  */
 export async function createFileProvider(
   filePath: string,

@@ -51,9 +51,7 @@ export const HookInputSchema = z.object({
   subagent_type: z.string().optional(),
 });
 
-/**
- *
- */
+/** Validated hook input payload. Inferred from {@link HookInputSchema}. */
 export type HookInput = z.infer<typeof HookInputSchema>;
 
 /**
@@ -116,9 +114,7 @@ export const CommandSchema = z.object({
   lang: z.string().optional(),
 });
 
-/**
- *
- */
+/** Validated session state. Inferred from {@link SessionStateSchema}. */
 export type ValidatedSessionState = z.infer<typeof SessionStateSchema>;
 
 // Re-export parser schemas needed by consumers
@@ -355,7 +351,5 @@ export const RunbookStateSchema = z
   // persisted state files. They are simply ignored in the typed result.
   .passthrough();
 
-/**
- *
- */
+/** Validated runbook state. Inferred from {@link RunbookStateSchema}. */
 export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;
