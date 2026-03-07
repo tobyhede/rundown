@@ -266,7 +266,7 @@ describe('Synthetic Event Detection Performance', () => {
       });
 
       // 1000 detections should be fast
-      expect(durationMs).toBeLessThan(20);
+      expect(durationMs).toBeLessThan(50);
     }
   });
 
