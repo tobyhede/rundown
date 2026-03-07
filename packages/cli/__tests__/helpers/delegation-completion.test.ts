@@ -18,7 +18,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     step: state.step,
     iteration: state.activeForContext?.iteration,
   })),
-  findSubstepState: jest.fn((substepStates: any[], substepId: string, frameKey?: string) =>
+  findSubstepState: jest.fn((substepStates: any[], substepId: string, frameKey: string) =>
     substepStates.find((ss: any) => ss.id === substepId && ss.frameKey === frameKey),
   ),
 }));
@@ -166,7 +166,7 @@ beforeEach(() => {
     iteration: state.activeForContext?.iteration,
   }));
   (core.findSubstepState as jest.Mock).mockImplementation(
-    (substepStates: any[], substepId: string, frameKey?: string) =>
+    (substepStates: any[], substepId: string, frameKey: string) =>
       substepStates.find((ss: any) => ss.id === substepId && ss.frameKey === frameKey),
   );
   (getRunbookFromState as jest.Mock).mockReturnValue([

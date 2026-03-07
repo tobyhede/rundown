@@ -300,9 +300,11 @@ rd echo --result fail
       // Claim — child auto-fails and propagates fail to parent 1.1
       // DEFER model: parent advances to 1.2
       result = runCli(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(1);
 
       // Complete parent substep 1.2 → aggregation → FAIL ANY: STOP
       result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(1);
 
       // Parent should be stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);

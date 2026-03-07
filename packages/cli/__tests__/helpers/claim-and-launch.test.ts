@@ -12,7 +12,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ),
   deriveActiveFrame: jest
     .fn()
-    .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1' }),
+    .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1|' }),
   getActiveForContext: jest.fn().mockReturnValue(null),
   buildFrameKey: jest.fn(
     (step: string, iteration?: number) =>
@@ -156,7 +156,7 @@ beforeEach(() => {
     step: '1',
     substep: undefined,
     iteration: undefined,
-    frameKey: '1',
+    frameKey: '1|',
   });
 });
 
