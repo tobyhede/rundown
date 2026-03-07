@@ -8,6 +8,7 @@ import {
   hashDelegationToken,
   generateDelegationToken,
 } from '../../src/runbook/delegation-token.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, StepDelegation, DelegationLinkage } from '../../src/runbook/types.js';
 
 describe('DelegationScanService', () => {
@@ -68,8 +69,8 @@ describe('DelegationScanService', () => {
 
       const state = makeState('run-parent', {
         substepStates: [
-          { id: '1', status: 'pending', delegation },
-          { id: '2', status: 'pending' },
+          { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation },
+          { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
         ],
       });
       await writeState(state);
@@ -88,7 +89,14 @@ describe('DelegationScanService', () => {
       // Write a state with a different token
       const otherToken = generateDelegationToken();
       const state = makeState('run-other', {
-        substepStates: [{ id: '1', status: 'pending', delegation: makeDelegation(otherToken) }],
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('1'),
+            status: 'pending',
+            delegation: makeDelegation(otherToken),
+          },
+        ],
       });
       await writeState(state);
 
@@ -111,7 +119,7 @@ describe('DelegationScanService', () => {
 
       const state = makeState('run-parent', {
         step: '3',
-        substepStates: [{ id: '1', status: 'pending', delegation }],
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation }],
       });
       await writeState(state);
 
@@ -130,7 +138,7 @@ describe('DelegationScanService', () => {
 
       const state = makeState('run-parent', {
         step: '3',
-        substepStates: [{ id: '1', status: 'pending', delegation }],
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation }],
       });
       await writeState(state);
 
@@ -230,8 +238,8 @@ describe('DelegationScanService', () => {
       const token = generateDelegationToken();
       const state = makeState('run-no-delegation', {
         substepStates: [
-          { id: '1', status: 'pending' },
-          { id: '2', status: 'pending' },
+          { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
+          { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
         ],
       });
       await writeState(state);
@@ -245,11 +253,25 @@ describe('DelegationScanService', () => {
       const token2 = generateDelegationToken();
 
       const state1 = makeState('run-1', {
-        substepStates: [{ id: '1', status: 'pending', delegation: makeDelegation(token1) }],
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('1'),
+            status: 'pending',
+            delegation: makeDelegation(token1),
+          },
+        ],
       });
 
       const state2 = makeState('run-2', {
-        substepStates: [{ id: '1', status: 'pending', delegation: makeDelegation(token2) }],
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('1'),
+            status: 'pending',
+            delegation: makeDelegation(token2),
+          },
+        ],
       });
 
       await writeState(state1);
@@ -271,14 +293,28 @@ describe('DelegationScanService', () => {
       for (let i = 0; i < 50; i++) {
         const otherToken = generateDelegationToken();
         const state = makeState(`run-${String(i)}`, {
-          substepStates: [{ id: '1', status: 'pending', delegation: makeDelegation(otherToken) }],
+          substepStates: [
+            {
+              id: '1',
+              frameKey: buildFrameKey('1'),
+              status: 'pending',
+              delegation: makeDelegation(otherToken),
+            },
+          ],
         });
         await writeState(state);
       }
 
       // Write one state with the target token
       const targetState = makeState('run-target', {
-        substepStates: [{ id: '1', status: 'pending', delegation: makeDelegation(targetToken) }],
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('1'),
+            status: 'pending',
+            delegation: makeDelegation(targetToken),
+          },
+        ],
       });
       await writeState(targetState);
 
@@ -306,9 +342,9 @@ describe('DelegationScanService', () => {
       const state = makeState('run-context-step', {
         step: '5',
         substepStates: [
-          { id: 'a', status: 'pending' },
-          { id: 'b', status: 'pending', delegation },
-          { id: 'c', status: 'pending' },
+          { id: 'a', frameKey: buildFrameKey('5'), status: 'pending' },
+          { id: 'b', frameKey: buildFrameKey('5'), status: 'pending', delegation },
+          { id: 'c', frameKey: buildFrameKey('5'), status: 'pending' },
         ],
       });
       await writeState(state);
@@ -324,10 +360,12 @@ describe('DelegationScanService', () => {
       const token = generateDelegationToken();
       const substeps: Array<{
         id: string;
+        frameKey: ReturnType<typeof buildFrameKey>;
         status: 'pending' | 'running' | 'done';
         delegation?: ReturnType<typeof makeDelegation>;
       }> = Array.from({ length: 100 }, (_, i) => ({
         id: String(i + 1),
+        frameKey: buildFrameKey('1'),
         status: 'pending' as const,
       }));
       // Add delegation to the 50th substep

@@ -191,19 +191,13 @@ export function registerAbortCommand(program: Command): void {
             }
 
             // Re-locate delegation on fresh state by tokenHash (precise match)
+            const tokenHash = hashDelegationToken(token);
             const freshSubstep = (freshParent.substepStates ?? []).find(
-              (ss) =>
-                ss.id === targetSubstepId &&
-                ss.delegation?.tokenHash === hashDelegationToken(token),
+              (ss) => ss.id === targetSubstepId && ss.delegation?.tokenHash === tokenHash,
             );
             const freshDelegation = freshSubstep?.delegation;
 
             if (!freshDelegation) {
-              throw Errors.tokenNotFound(token);
-            }
-
-            const tokenHash = hashDelegationToken(token);
-            if (freshDelegation.tokenHash !== tokenHash) {
               throw Errors.tokenNotFound(token);
             }
 

@@ -1,4 +1,5 @@
 // src/runbook/types.ts
+import type { FrameKey } from './targeting.js';
 
 // Re-export parser types needed by core package consumers
 
@@ -120,7 +121,7 @@ export type LastAction =
  */
 export interface SubstepState {
   readonly id: string; // Matches Substep.id ("1", "2", or dynamic instance)
-  readonly frameKey?: string; // From buildFrameKey(step, iteration?) — scopes identity in FOR loops
+  readonly frameKey: FrameKey; // From buildFrameKey(step, iteration?) — scopes identity in FOR loops
   readonly status: 'pending' | 'running' | 'done';
   readonly result?: 'pass' | 'fail'; // Result when done
   readonly delegation?: StepDelegation; // Delegation attached to this substep
@@ -142,7 +143,7 @@ export interface ResolvedCompletion {
   /** FOR loop iteration number this completion applies to. */
   readonly targetIteration?: number;
   /** Frame key identifying the step+iteration context (e.g. "1|", "1|2"). */
-  readonly targetFrameKey: string;
+  readonly targetFrameKey: FrameKey;
   /** Monotonic entry counter within the frame, distinguishing repeated visits. */
   readonly targetEntry: number;
   /** ISO 8601 timestamp when the agent completed. */
@@ -194,7 +195,7 @@ export interface DelegationLinkage {
   /** Parent's step name at claim time (e.g., "1"). */
   readonly parentStep?: string;
   /** Parent's frame key at claim time for completion key construction. */
-  readonly parentFrameKey?: string;
+  readonly parentFrameKey?: FrameKey;
   /** Parent's entry counter at claim time for completion key construction. */
   readonly parentEntry?: number;
 }
@@ -387,9 +388,9 @@ export interface RunbookState {
   // Orchestration fields
   readonly resolvedCompletions?: Readonly<Record<string, ResolvedCompletion>>;
   /** Monotonic entry counter by frame key (`step|iteration`). */
-  readonly frameEntries?: Readonly<Record<string, number>>;
+  readonly frameEntries?: Readonly<Record<FrameKey, number>>;
   /** Active frame key (`step|iteration`). */
-  readonly activeFrameKey?: string;
+  readonly activeFrameKey?: FrameKey;
   /** Active frame entry (monotonic per frame). */
   readonly activeEntry?: number;
 

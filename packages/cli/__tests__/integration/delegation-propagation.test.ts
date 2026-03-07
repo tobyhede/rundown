@@ -350,6 +350,78 @@ Approve the deployment.
     });
   });
 
+  describe('3-child concurrent out-of-order completion', () => {
+    it('3 delegated substeps completed in reverse order — parent completes after all resolve', async () => {
+      // Parent with 3 substeps
+      const tripleParentContent = `## 1. Pipeline
+- PASS ALL: COMPLETE
+- FAIL ANY: STOP
+
+### 1.1 Task A
+Task A.
+
+### 1.2 Task B
+Task B.
+
+### 1.3 Task C
+Task C.
+`;
+      await writeFile(join(workspace.cwd, 'triple-parent.runbook.md'), tripleParentContent);
+      await writeChildRunbook();
+
+      // Start parent
+      let result = await runCliInProcess('run --prompted triple-parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      // Delegate all 3 substeps
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token1 = extractToken(result.stdout);
+
+      result = await runCliInProcess('delegate child.runbook.md --step 1.2', workspace);
+      expect(result.exitCode).toBe(0);
+      const token2 = extractToken(result.stdout);
+
+      result = await runCliInProcess('delegate child.runbook.md --step 1.3', workspace);
+      expect(result.exitCode).toBe(0);
+      const token3 = extractToken(result.stdout);
+
+      // Complete children in reverse order: 3, 2, 1
+      result = await runCliInProcess(`claim ${token3}`, workspace);
+      expect(result.exitCode).toBe(0);
+      result = await runCliInProcess('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Parent should still be waiting (1.1 not yet resolved)
+      const parentAfter3 = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter3).not.toBeNull();
+      expect(parentAfter3!.step).toBe('1');
+
+      result = await runCliInProcess(`claim ${token2}`, workspace);
+      expect(result.exitCode).toBe(0);
+      result = await runCliInProcess('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Parent should still be waiting (1.1 not yet resolved)
+      const parentAfter2 = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter2).not.toBeNull();
+      expect(parentAfter2!.step).toBe('1');
+
+      result = await runCliInProcess(`claim ${token1}`, workspace);
+      expect(result.exitCode).toBe(0);
+      result = await runCliInProcess('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // After all 3 resolve, parent should complete (PASS ALL: COMPLETE)
+      const finalParent = await readRunbookState(workspace, parentRunId);
+      expect(finalParent).not.toBeNull();
+      expect(getVariables(finalParent!).completed).toBe(true);
+    });
+  });
+
   describe('edge cases', () => {
     it('handles completion when parent has no substep states', async () => {
       // Create a parent runbook without substeps

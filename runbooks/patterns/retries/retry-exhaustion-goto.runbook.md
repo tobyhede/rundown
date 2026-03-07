@@ -25,6 +25,20 @@ scenarios:
     commands:
       - rd run retry-exhaustion-goto.runbook.md
     result: COMPLETE
+    expect:
+      steps:
+        - from: "1"
+          action: RETRY
+          result: FAIL
+        - from: "1"
+          action: RETRY
+          result: FAIL
+        - from: "1"
+          action: GOTO
+          result: FAIL
+        - from: "2"
+          action: COMPLETE
+          result: PASS
 ---
 
 # RETRY Exhaustion GOTO

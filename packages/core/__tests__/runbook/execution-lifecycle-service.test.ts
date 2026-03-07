@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Runbook, Step } from '../../src/runbook/types.js';
 
 const mockSteps: Step[] = [
@@ -166,7 +167,7 @@ describe('ExecutionLifecycleService', () => {
         agentId: 'agent-1',
         result: 'pass' as const,
         targetStep: '1',
-        targetFrameKey: '1|',
+        targetFrameKey: buildFrameKey('1'),
         targetEntry: 1,
         completedAt: new Date().toISOString(),
       };
@@ -186,7 +187,7 @@ describe('ExecutionLifecycleService', () => {
         agentId: 'agent-1',
         result: 'pass' as const,
         targetStep: '1',
-        targetFrameKey: '1|',
+        targetFrameKey: buildFrameKey('1'),
         targetEntry: 1,
         completedAt: new Date().toISOString(),
       };
@@ -195,7 +196,7 @@ describe('ExecutionLifecycleService', () => {
         agentId: 'agent-2',
         result: 'fail' as const,
         targetStep: '1',
-        targetFrameKey: '1|',
+        targetFrameKey: buildFrameKey('1'),
         targetEntry: 1,
         completedAt: new Date().toISOString(),
       };
@@ -217,7 +218,7 @@ describe('ExecutionLifecycleService', () => {
         agentId: 'agent-1',
         result: 'pass' as const,
         targetStep: '1',
-        targetFrameKey: '1|',
+        targetFrameKey: buildFrameKey('1'),
         targetEntry: 1,
         completedAt: new Date().toISOString(),
       };
@@ -257,7 +258,7 @@ describe('ExecutionLifecycleService', () => {
         agentId: 'agent-1',
         result: 'pass' as const,
         targetStep: '1',
-        targetFrameKey: '1|',
+        targetFrameKey: buildFrameKey('1'),
         targetEntry: 1,
         completedAt: new Date().toISOString(),
       };
@@ -296,7 +297,7 @@ describe('ExecutionLifecycleService', () => {
         agentId: 'agent-1',
         result: 'pass' as const,
         targetStep: '1',
-        targetFrameKey: '1|',
+        targetFrameKey: buildFrameKey('1'),
         targetEntry: 1,
         completedAt: new Date().toISOString(),
       };
@@ -318,7 +319,7 @@ describe('ExecutionLifecycleService', () => {
         runbookPath: 'test.md',
       });
 
-      const frameKey = '1|';
+      const frameKey = buildFrameKey('1');
       const entry = 1;
 
       const completion1 = {
@@ -359,7 +360,7 @@ describe('ExecutionLifecycleService', () => {
         agentId: 'agent-1',
         result: 'pass' as const,
         targetStep: '1',
-        targetFrameKey: '1|',
+        targetFrameKey: buildFrameKey('1'),
         targetEntry: 1,
         completedAt: new Date().toISOString(),
       };
@@ -368,7 +369,7 @@ describe('ExecutionLifecycleService', () => {
         agentId: 'agent-2',
         result: 'pass' as const,
         targetStep: '2',
-        targetFrameKey: '2|',
+        targetFrameKey: buildFrameKey('2'),
         targetEntry: 2,
         completedAt: new Date().toISOString(),
       };
@@ -376,7 +377,7 @@ describe('ExecutionLifecycleService', () => {
       await service.upsertResolvedCompletion(state.id, '1||1|sub1', completion1);
       await service.upsertResolvedCompletion(state.id, '2||2|sub1', completion2);
 
-      const listed = await service.listResolvedCompletions(state.id, '1|', 1);
+      const listed = await service.listResolvedCompletions(state.id, buildFrameKey('1'), 1);
       expect(listed).toHaveLength(1);
       expect(listed[0].completion.agentId).toBe('agent-1');
     });
@@ -386,12 +387,16 @@ describe('ExecutionLifecycleService', () => {
         runbookPath: 'test.md',
       });
 
-      const listed = await service.listResolvedCompletions(state.id, 'nonexistent|', 1);
+      const listed = await service.listResolvedCompletions(
+        state.id,
+        buildFrameKey('nonexistent'),
+        1,
+      );
       expect(listed).toEqual([]);
     });
 
     it('returns empty array for missing runbook', async () => {
-      const listed = await service.listResolvedCompletions('nonexistent-id', '1|', 1);
+      const listed = await service.listResolvedCompletions('nonexistent-id', buildFrameKey('1'), 1);
       expect(listed).toEqual([]);
     });
   });

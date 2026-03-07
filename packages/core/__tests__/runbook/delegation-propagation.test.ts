@@ -139,7 +139,7 @@ describe('frame identity derivation for propagation', () => {
       parentStepId: '1',
       tokenHash: `sha256:${'a'.repeat(64)}`,
       parentStep: '1',
-      parentFrameKey: '1|',
+      parentFrameKey: buildFrameKey('1'),
       parentEntry: 1,
     };
 

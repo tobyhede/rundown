@@ -5,6 +5,7 @@ import {
   deriveActiveFrame,
   buildFrameKey,
   parseCompletionKey,
+  type FrameKey,
 } from './targeting.js';
 import type { ResolvedCompletion, RunbookState } from './types.js';
 
@@ -61,7 +62,7 @@ export class ExecutionLifecycleService {
     id: string,
     previousState?: RunbookState,
     nextState?: RunbookState,
-  ): Promise<{ state: RunbookState; frameKey: string; entry: number }> {
+  ): Promise<{ state: RunbookState; frameKey: FrameKey; entry: number }> {
     const base = nextState ?? (await this.manager.load(id));
     if (!base) throw new Error(`Runbook ${id} not found`);
 
@@ -193,7 +194,7 @@ export class ExecutionLifecycleService {
    */
   async listResolvedCompletions(
     id: string,
-    frameKey: string,
+    frameKey: FrameKey,
     entry: number,
   ): Promise<ReadonlyArray<{ key: string; completion: ResolvedCompletion }>> {
     const state = await this.manager.load(id);
@@ -225,7 +226,7 @@ export class ExecutionLifecycleService {
    * @param targetIteration - Optional FOR loop iteration number
    * @returns Pipe-delimited frame key
    */
-  buildTargetFrameKey(targetStep: string, targetIteration?: number): string {
+  buildTargetFrameKey(targetStep: string, targetIteration?: number): FrameKey {
     return buildFrameKey(targetStep, targetIteration);
   }
 
@@ -235,7 +236,7 @@ export class ExecutionLifecycleService {
    * @param key - Pipe-delimited completion key to parse
    * @returns Parsed components, or null if the key format is invalid
    */
-  parseCompletionKey(key: string): { frameKey: string; entry: number; substep?: string } | null {
+  parseCompletionKey(key: string): { frameKey: FrameKey; entry: number; substep?: string } | null {
     return parseCompletionKey(key);
   }
 

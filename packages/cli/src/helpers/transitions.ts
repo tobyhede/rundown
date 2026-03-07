@@ -22,6 +22,7 @@ import {
   buildResolvedCompletion,
   deriveExecutionAt,
   deriveActiveFrame,
+  type FrameKey,
   type AnyActorRef,
   type Step,
   type RunbookState,
@@ -191,7 +192,7 @@ interface RuntimeTarget {
   step: string;
   substep?: string;
   iteration?: number;
-  frameKey: string;
+  frameKey: FrameKey;
   entry: number;
   completionKey: string;
   at: string;
@@ -202,7 +203,7 @@ function toRuntimeTarget(
   substep: string | undefined,
   iteration: number | undefined,
   entry: number,
-  frameKey?: string,
+  frameKey?: FrameKey,
 ): RuntimeTarget {
   const resolvedFrameKey = frameKey ?? buildFrameKey(step, iteration);
   return {

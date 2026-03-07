@@ -12,6 +12,14 @@ scenarios:
       - rd delegate
       - rd claim ${TOKEN}
     result: COMPLETE
+    expect:
+      steps:
+        - from: "1"
+          action: COMPLETE
+          result: PASS
+        - from: "1.1"
+          action: COMPLETE
+          result: PASS
 ---
 
 # Basic Delegation

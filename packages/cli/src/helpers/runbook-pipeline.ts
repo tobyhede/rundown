@@ -15,6 +15,8 @@ import {
   type SessionService,
   type ExecutionLifecycleService,
   deriveActiveFrame,
+  buildFrameKey,
+  type FrameKey,
   parseRunbookDocument,
   type RunbookState,
   type ExecutionEventEmitter,
@@ -346,12 +348,10 @@ async function launchRunbook(
 
   if (stepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
     const freshState = await manager.load(state.id);
-    const frame = freshState ? deriveActiveFrame(freshState) : { frameKey: undefined };
-    await manager.initializeSubsteps(
-      state.id,
-      runbook.steps[0].substeps,
-      freshState?.activeFrameKey ?? frame.frameKey,
-    );
+    const frame = freshState ? deriveActiveFrame(freshState) : undefined;
+    const frameKey =
+      freshState?.activeFrameKey ?? frame?.frameKey ?? buildFrameKey(runbook.steps[0].name);
+    await manager.initializeSubsteps(state.id, runbook.steps[0].substeps, frameKey);
     await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
   }
 
@@ -403,7 +403,7 @@ export async function startRunbook(
  * @param frameKey - Frame key to look up (`step|iteration` format)
  * @returns The inferred entry number, or undefined if no history exists
  */
-function inferEntryFromState(state: RunbookState, frameKey: string): number | undefined {
+function inferEntryFromState(state: RunbookState, frameKey: FrameKey): number | undefined {
   const known = state.frameEntries?.[frameKey];
   if (state.activeFrameKey === frameKey && state.activeEntry) return state.activeEntry;
   if (known && known > 0) return known;
@@ -530,10 +530,9 @@ export async function claimAndLaunch(
     }
 
     // Re-locate delegation on fresh state (match by tokenHash for precision)
+    const tokenHash = hashDelegationToken(rawToken);
     const freshSubstep = (freshParent.substepStates ?? []).find(
-      (ss) =>
-        ss.id === (substepId ?? stepId) &&
-        ss.delegation?.tokenHash === hashDelegationToken(rawToken),
+      (ss) => ss.id === (substepId ?? stepId) && ss.delegation?.tokenHash === tokenHash,
     );
     const freshDelegation = freshSubstep?.delegation;
 
@@ -543,17 +542,6 @@ export async function claimAndLaunch(
         error: 'Delegation no longer exists on parent step.',
         code: ErrorCodes.TOKEN_NOT_FOUND.code,
         details: { parentRunId: parentState.id, stepId },
-      };
-    }
-
-    // Verify token hash still matches
-    const tokenHash = hashDelegationToken(rawToken);
-    if (freshDelegation.tokenHash !== tokenHash) {
-      return {
-        ok: false,
-        error: 'Token hash mismatch after re-load.',
-        code: ErrorCodes.TOKEN_NOT_FOUND.code,
-        details: { parentRunId: parentState.id },
       };
     }
 

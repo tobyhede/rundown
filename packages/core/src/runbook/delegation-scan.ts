@@ -1,5 +1,6 @@
 import { hashDelegationToken } from './delegation-token.js';
 import type { RunbookStateManager } from './state.js';
+import type { FrameKey } from './targeting.js';
 import type { RunbookState, StepDelegation } from './types.js';
 
 /**
@@ -12,8 +13,8 @@ export interface TokenScanResult {
   readonly stepId: string;
   /** Substep ID if delegation is on a substep. */
   readonly substepId?: string;
-  /** Frame key from the substep state, if set. */
-  readonly frameKey?: string;
+  /** Frame key from the substep state. */
+  readonly frameKey: FrameKey;
   /** The delegation metadata. */
   readonly delegation: StepDelegation;
 }
@@ -59,7 +60,7 @@ export class DelegationScanService {
             parentState: state,
             stepId: ss.delegation.contextSnapshot.step ?? state.step,
             substepId: ss.id,
-            ...(ss.frameKey !== undefined ? { frameKey: ss.frameKey } : {}),
+            frameKey: ss.frameKey,
             delegation: ss.delegation,
           };
         }

@@ -1,7 +1,12 @@
 import { parseStepIdFromString, stepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
 import { generateDelegationToken, hashDelegationToken } from './delegation-token.js';
-import { deriveExecutionAt, findSubstepState, getActiveForContext } from './targeting.js';
+import {
+  deriveExecutionAt,
+  findSubstepState,
+  getActiveForContext,
+  type FrameKey,
+} from './targeting.js';
 import type {
   AncestorSnapshot,
   ContextSnapshot,
@@ -22,7 +27,7 @@ export interface AbortDelegationOptions {
   /** Force cancel even if a child run has claimed the token. */
   readonly force?: boolean;
   /** Frame key scoping the lookup to a specific FOR iteration. */
-  readonly frameKey?: string;
+  readonly frameKey: FrameKey;
 }
 
 /** Delegation was cancelled; caller must persist updated substep states. */
@@ -67,7 +72,7 @@ export interface DelegateOptions {
   /** Ancestor chain built by the caller. */
   readonly ancestors?: readonly AncestorSnapshot[];
   /** Frame key scoping this delegation to a FOR iteration. */
-  readonly frameKey?: string;
+  readonly frameKey: FrameKey;
 }
 
 /**
@@ -194,12 +199,7 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
     // Append new entry for this frame (new iteration or simple step)
     updatedSubstepStates = [
       ...existingStates,
-      {
-        id: substepId,
-        ...(frameKey !== undefined ? { frameKey } : {}),
-        status: 'pending' as const,
-        delegation,
-      },
+      { id: substepId, frameKey, status: 'pending' as const, delegation },
     ];
   }
 

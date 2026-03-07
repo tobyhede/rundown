@@ -5,6 +5,7 @@ import {
   evaluateIterationAggregation,
   shouldAggregationPass,
 } from '../../src/runbook/transition-handler.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step } from '../../src/runbook/types.js';
 import type { SubstepState } from '../../src/runbook/types.js';
 
@@ -101,8 +102,8 @@ describe('evaluateSubstepAggregation', () => {
   describe('PASS ALL mode', () => {
     it('returns null when substeps still running', () => {
       const states: SubstepState[] = [
-        { id: '1', status: 'done', result: 'pass' },
-        { id: '2', status: 'running' },
+        { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'running' },
       ];
 
       const result = evaluateSubstepAggregation(states, passAllTransitions);
@@ -111,8 +112,8 @@ describe('evaluateSubstepAggregation', () => {
 
     it('returns pass action when ALL substeps pass', () => {
       const states: SubstepState[] = [
-        { id: '1', status: 'done', result: 'pass' },
-        { id: '2', status: 'done', result: 'pass' },
+        { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
       ];
 
       const result = evaluateSubstepAggregation(states, passAllTransitions);
@@ -121,8 +122,8 @@ describe('evaluateSubstepAggregation', () => {
 
     it('returns fail action when ANY substep fails', () => {
       const states: SubstepState[] = [
-        { id: '1', status: 'done', result: 'pass' },
-        { id: '2', status: 'done', result: 'fail' },
+        { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'done', result: 'fail' },
       ];
 
       const result = evaluateSubstepAggregation(states, passAllTransitions);
@@ -133,8 +134,8 @@ describe('evaluateSubstepAggregation', () => {
   describe('PASS ANY mode', () => {
     it('returns pass action when ANY substep passes', () => {
       const states: SubstepState[] = [
-        { id: '1', status: 'done', result: 'fail' },
-        { id: '2', status: 'done', result: 'pass' },
+        { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'fail' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
       ];
 
       const result = evaluateSubstepAggregation(states, passAnyTransitions);
@@ -143,8 +144,8 @@ describe('evaluateSubstepAggregation', () => {
 
     it('returns fail action when ALL substeps fail', () => {
       const states: SubstepState[] = [
-        { id: '1', status: 'done', result: 'fail' },
-        { id: '2', status: 'done', result: 'fail' },
+        { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'fail' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'done', result: 'fail' },
       ];
 
       const result = evaluateSubstepAggregation(states, passAnyTransitions);
@@ -232,9 +233,9 @@ describe('evaluateSubstepAggregation edge cases', () => {
 
   it('returns fail in ANY mode when all substeps have zero passes', () => {
     const states: SubstepState[] = [
-      { id: '1', status: 'done', result: 'fail' },
-      { id: '2', status: 'done', result: 'fail' },
-      { id: '3', status: 'done', result: 'fail' },
+      { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'fail' },
+      { id: '2', frameKey: buildFrameKey('1'), status: 'done', result: 'fail' },
+      { id: '3', frameKey: buildFrameKey('1'), status: 'done', result: 'fail' },
     ];
 
     const result = evaluateSubstepAggregation(states, passAnyTransitions);
@@ -292,8 +293,8 @@ describe('evaluateFailCondition with retry property', () => {
 describe('evaluateSubstepAggregation with retry property', () => {
   it('returns retry when substep aggregation triggers transition with retry configured', () => {
     const substepStates = [
-      { id: 'a', status: 'done' as const, result: 'fail' as const },
-      { id: 'b', status: 'done' as const, result: 'pass' as const },
+      { id: 'a', frameKey: buildFrameKey('1'), status: 'done' as const, result: 'fail' as const },
+      { id: 'b', frameKey: buildFrameKey('1'), status: 'done' as const, result: 'pass' as const },
     ];
     const transitions = {
       aggregation: 'ALL' as const,
@@ -308,8 +309,8 @@ describe('evaluateSubstepAggregation with retry property', () => {
 
   it('returns action when substep aggregation retry exhausted', () => {
     const substepStates = [
-      { id: 'a', status: 'done' as const, result: 'fail' as const },
-      { id: 'b', status: 'done' as const, result: 'pass' as const },
+      { id: 'a', frameKey: buildFrameKey('1'), status: 'done' as const, result: 'fail' as const },
+      { id: 'b', frameKey: buildFrameKey('1'), status: 'done' as const, result: 'pass' as const },
     ];
     const transitions = {
       aggregation: 'ALL' as const,

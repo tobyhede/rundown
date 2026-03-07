@@ -1,0 +1,28 @@
+---
+name: delegate-named-step
+description: Named step with delegation — verifies delegation works with named step identifiers
+tags:
+  - delegation
+  - named-steps
+scenarios:
+  completed:
+    description: Named step delegates substep to child, child completes
+    commands:
+      - rd run delegate-named-step.runbook.md
+      - rd delegate delegation-child-pass.runbook.md --step Review.1
+      - rd claim ${TOKEN}
+    result: COMPLETE
+---
+
+# Named Step Delegation
+
+## Review. Code review
+
+- PASS ALL: COMPLETE
+- FAIL ANY: STOP
+
+### Review.1 Automated check
+
+Delegated to child for automated code review.
+
+- delegation-child-pass.runbook.md

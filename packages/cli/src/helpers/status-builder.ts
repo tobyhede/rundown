@@ -198,6 +198,7 @@ export function buildActiveStatus(
 
   const delegations = (activeState.substepStates ?? [])
     .filter((ss) => ss.delegation != null)
+    // Show delegations from the current frame only; include unscoped entries (simple steps)
     .filter((ss) => !activeFrameKey || !ss.frameKey || ss.frameKey === activeFrameKey)
     .map((ss) => ({
       substep: ss.id,

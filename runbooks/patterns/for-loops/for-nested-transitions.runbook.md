@@ -9,6 +9,20 @@ scenarios:
     commands:
       - rd run for-nested-transitions.runbook.md
     result: COMPLETE
+    expect:
+      steps:
+        - from: "1.1.1"
+          action: DEFER
+          result: PASS
+        - from: "1.2.1"
+          action: DEFER
+          result: PASS
+        - from: "1.3.1"
+          action: CONTINUE
+          result: PASS
+        - from: "2"
+          action: COMPLETE
+          result: PASS
   stopped:
     description: Second iteration fails, FAIL ANY triggers STOP on parent step
     commands:

@@ -13,7 +13,11 @@ import {
   type Scenario,
   type Scenarios,
 } from '../../src/schemas/scenarios.js';
-import { executeCommandSequence } from '../../src/helpers/command-sequence.js';
+import {
+  executeCommandSequence,
+  matchStepAssertions,
+  formatStepAssertionDescription,
+} from '../../src/helpers/command-sequence.js';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -241,7 +245,7 @@ async function executeScenario(
   const binPath = workspace.binPath();
   const pluginDir = join(workspace.cwd, 'plugin');
 
-  await executeCommandSequence({
+  const seqResult = await executeCommandSequence({
     commands: scenario.commands,
     cwd: workspace.cwd,
     cliPath,
@@ -253,6 +257,24 @@ async function executeScenario(
       FORCE_COLOR: undefined,
     },
   });
+
+  // Validate step assertions when present
+  if (scenario.expect?.steps) {
+    const assertionResults = matchStepAssertions(scenario.expect.steps, seqResult.transitions);
+    const failed = assertionResults.filter((r) => !r.matched);
+    if (failed.length > 0) {
+      const descriptions = failed.map(formatStepAssertionDescription).join('\n  ');
+      const eventSummary = seqResult.transitions
+        .map(
+          (t) =>
+            `{action=${t.action ?? '?'}, from=${t.from ?? '?'}, at=${t.at ?? '?'}, result=${t.result ?? '?'}}`,
+        )
+        .join('\n  ');
+      throw new Error(
+        `Step assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured transitions:\n  ${eventSummary}`,
+      );
+    }
+  }
 
   const states = await getAllStates(workspace);
   const expectedName = filename.split('/').pop()!;

@@ -10,7 +10,7 @@
 import type { Step, Substep } from '@rundown-org/parser';
 import { stepHasSubsteps, hasRunbooks } from '@rundown-org/parser';
 import type { RunbookState, SubstepState } from '@rundown-org/core';
-import { Errors, findSubstepState, deriveActiveFrame } from '@rundown-org/core';
+import { Errors, findSubstepState, deriveActiveFrame, type FrameKey } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 
 /**
@@ -34,7 +34,7 @@ export interface InferredDelegation {
 function hasActiveDelegation(
   substepId: string,
   substepStates: readonly SubstepState[] | undefined,
-  frameKey?: string,
+  frameKey: FrameKey,
 ): boolean {
   if (!substepStates) return false;
   const ss = findSubstepState(substepStates, substepId, frameKey);
@@ -118,7 +118,7 @@ export function inferRunbookFromStep(
 function isSubstepDone(
   substepId: string,
   substepStates: readonly SubstepState[] | undefined,
-  frameKey?: string,
+  frameKey: FrameKey,
 ): boolean {
   if (!substepStates) return false;
   const ss = findSubstepState(substepStates, substepId, frameKey);

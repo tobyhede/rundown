@@ -9,6 +9,14 @@ scenarios:
     commands:
       - rd run substep-defer-shorthand.runbook.md
     result: COMPLETE
+    expect:
+      steps:
+        - from: "1.1"
+          action: DEFER
+          result: PASS
+        - from: "1.2"
+          action: COMPLETE
+          result: PASS
 ---
 
 # Substep DEFER Shorthand
