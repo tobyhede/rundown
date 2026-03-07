@@ -58,11 +58,11 @@ describe('targeting helpers', () => {
 
   describe('buildCompletionKey', () => {
     it('builds completion key with substep', () => {
-      expect(buildCompletionKey('1|2', 3, '1')).toBe('1|2|3|1');
+      expect(buildCompletionKey(buildFrameKey('1', 2), 3, '1')).toBe('1|2|3|1');
     });
 
     it('builds completion key without substep', () => {
-      expect(buildCompletionKey('1|2', 3)).toBe('1|2|3|');
+      expect(buildCompletionKey(buildFrameKey('1', 2), 3)).toBe('1|2|3|');
     });
   });
 
@@ -116,7 +116,7 @@ describe('targeting helpers', () => {
         targetStep: '2',
         targetSubstep: '1',
         targetIteration: 3,
-        targetFrameKey: '2|3',
+        targetFrameKey: buildFrameKey('2', 3),
         targetEntry: 1,
         completedAt: '2026-01-01T00:00:00.000Z',
       });
@@ -126,7 +126,7 @@ describe('targeting helpers', () => {
         targetStep: '2',
         targetSubstep: '1',
         targetIteration: 3,
-        targetFrameKey: '2|3',
+        targetFrameKey: buildFrameKey('2', 3),
         targetEntry: 1,
         completedAt: '2026-01-01T00:00:00.000Z',
       });
@@ -137,7 +137,7 @@ describe('targeting helpers', () => {
         agentId: 'agent-1',
         result: 'fail',
         targetStep: '1',
-        targetFrameKey: '1|',
+        targetFrameKey: buildFrameKey('1'),
         targetEntry: 2,
         completedAt: '2026-01-01T00:00:00.000Z',
       });
@@ -151,7 +151,7 @@ describe('targeting helpers', () => {
         agentId: 'agent-1',
         result: 'pass',
         targetStep: '1',
-        targetFrameKey: '1|',
+        targetFrameKey: buildFrameKey('1'),
         targetEntry: 1,
       });
       const after = new Date().toISOString();

@@ -65,7 +65,7 @@ describe('renderStepForCLI', () => {
       name: '1',
       description: 'With extras',
       transitions: {
-        all: true,
+        aggregation: 'ALL',
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },

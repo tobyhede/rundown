@@ -118,11 +118,10 @@ Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
 | :--- | :--- | :--- |
 | **Result** | `PASS` (`YES`), `FAIL` (`NO`) | Outcome of the step's body. |
 | **Aggregation** | `ALL`, `ANY` | For substeps. Step-level runbook-list shorthand is canonicalized to substeps. Default: `PASS ALL`, `FAIL ANY`. |
-| **Deferral** | `AWAIT` | Optional modifier after `ANY`. Defers aggregation until all substeps complete. Without `AWAIT`, `ANY` short-circuits (fail-fast/pass-fast). |
 
 Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` (pessimistic — any failure stops), or `PASS ANY` with `FAIL ALL` (optimistic — only total failure stops). Non-complementary combinations are invalid because they create evaluation gaps (ALL/ALL) or overlaps (ANY/ANY).
 
-**Short-circuit behavior (default):** Without `AWAIT`, aggregation short-circuits as soon as the outcome is determined — `FAIL ANY` (pessimistic) stops on the first failure, `PASS ANY` (optimistic) continues on the first success. This mirrors `Promise.all` / `Promise.any` semantics. Adding `AWAIT` defers evaluation until all substeps complete, like `Promise.allSettled`. Both `FAIL ANY AWAIT` and `PASS ANY AWAIT` are valid — `AWAIT` on either side defers both transitions of the complementary pair.
+**Aggregation semantics:** Aggregation always waits for all DEFER'd results before evaluating. `ALL`/`ANY` evaluates over the count of DEFER'd results, not total substeps/iterations. This mirrors `Promise.allSettled` semantics — all results are collected before the outcome is determined.
 
 **Defaults**:
 *   If only `PASS` defined: `FAIL` -> `STOP`.
@@ -133,13 +132,16 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 
 | Action | Context | Effect |
 | :--- | :--- | :--- |
-| `CONTINUE` | Any | Proceed to next sequential unit. |
+| `CONTINUE` | Any | Proceed to next sequential unit. At FOR iteration level: exit loop. |
+| `DEFER` | Substep, FOR Iteration-Level, Step-Level | Pass result up one level for aggregation. |
 | `STOP [msg]` | Any | Terminate execution immediately (failure). |
 | `COMPLETE [msg]` | Any | Terminate execution immediately (success). |
 | `GOTO {Target}` | Any | Jump to step/substep (e.g., `1`, `Error`). |
 | `RETRY [N] [Act]` | Any | Retry N times (default 1), then perform Action. |
-| `NEXT` | FOR Substep | Skip to next iteration. |
+| `NEXT` | FOR Substep, FOR Iteration-Level | Skip to next iteration (no result accumulation). |
 | `BREAK` | FOR Substep, FOR Iteration-Level | Exit loop immediately. |
+
+> **Shorthand:** A standalone `- DEFER` bullet (without PASS/FAIL prefix) expands to `- PASS: DEFER` + `- FAIL: DEFER`. This is convenient for substeps and steps where both outcomes should propagate to parent aggregation.
 
 GOTO targeting the containing step (self-reference) without an AT qualifier may create an infinite loop. Use RETRY for bounded re-execution.
 
@@ -174,7 +176,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
 *   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.
-*   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause execute per iteration. Allowed terminal actions are `CONTINUE`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
+*   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause execute per iteration. Allowed actions: `DEFER` (default, loop back with accumulation), `NEXT` (loop back without accumulation), `CONTINUE` (exit loop), `BREAK` (exit loop), `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
 *   **Nested bullet rule**: Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid and fail parse.
 *   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action.
 *   **Exit semantics**: Iteration-level `BREAK` includes the current iteration result in parent aggregation. Iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation and exit directly.

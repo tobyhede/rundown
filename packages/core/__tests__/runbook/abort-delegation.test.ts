@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { abortDelegation } from '../../src/runbook/delegation-service.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, StepDelegation, SubstepState } from '../../src/runbook/types.js';
 
 /** Helper: create a delegation object. */
@@ -36,11 +37,15 @@ describe('abortDelegation', () => {
   it('cancels a pending delegation (cancelledAt set, other substeps unchanged)', () => {
     const delegation = makeDelegation();
     const state = makeState([
-      { id: '1', status: 'pending', delegation },
-      { id: '2', status: 'pending' },
+      { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation },
+      { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
     ]);
 
-    const result = abortDelegation({ parentState: state, substepId: '1' });
+    const result = abortDelegation({
+      parentState: state,
+      substepId: '1',
+      frameKey: buildFrameKey('1'),
+    });
 
     expect(result.status).toBe('cancelled');
     if (result.status === 'cancelled') {
@@ -57,18 +62,30 @@ describe('abortDelegation', () => {
 
   it('returns already_cancelled for idempotent re-cancel', () => {
     const delegation = makeDelegation({ cancelledAt: '2026-02-27T11:00:00.000Z' });
-    const state = makeState([{ id: '1', status: 'pending', delegation }]);
+    const state = makeState([
+      { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation },
+    ]);
 
-    const result = abortDelegation({ parentState: state, substepId: '1' });
+    const result = abortDelegation({
+      parentState: state,
+      substepId: '1',
+      frameKey: buildFrameKey('1'),
+    });
 
     expect(result.status).toBe('already_cancelled');
   });
 
   it('returns needs_force when delegation is claimed without force', () => {
     const delegation = makeDelegation({ childRunId: 'child-run-1' });
-    const state = makeState([{ id: '1', status: 'pending', delegation }]);
+    const state = makeState([
+      { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation },
+    ]);
 
-    const result = abortDelegation({ parentState: state, substepId: '1' });
+    const result = abortDelegation({
+      parentState: state,
+      substepId: '1',
+      frameKey: buildFrameKey('1'),
+    });
 
     expect(result.status).toBe('needs_force');
     if (result.status === 'needs_force') {
@@ -78,9 +95,16 @@ describe('abortDelegation', () => {
 
   it('cancels a claimed delegation when force=true', () => {
     const delegation = makeDelegation({ childRunId: 'child-run-1' });
-    const state = makeState([{ id: '1', status: 'pending', delegation }]);
+    const state = makeState([
+      { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation },
+    ]);
 
-    const result = abortDelegation({ parentState: state, substepId: '1', force: true });
+    const result = abortDelegation({
+      parentState: state,
+      substepId: '1',
+      frameKey: buildFrameKey('1'),
+      force: true,
+    });
 
     expect(result.status).toBe('cancelled');
     if (result.status === 'cancelled') {
@@ -91,18 +115,49 @@ describe('abortDelegation', () => {
   });
 
   it('throws RD-801 for missing substep', () => {
-    const state = makeState([{ id: '1', status: 'pending' }]);
+    const state = makeState([{ id: '1', frameKey: buildFrameKey('1'), status: 'pending' }]);
 
-    expect(() => abortDelegation({ parentState: state, substepId: '99' })).toThrow(
-      /step not found/i,
-    );
+    expect(() =>
+      abortDelegation({ parentState: state, substepId: '99', frameKey: buildFrameKey('1') }),
+    ).toThrow(/step not found/i);
+  });
+
+  it('only cancels delegation in the targeted frame (cross-frame isolation)', () => {
+    const delegation = makeDelegation();
+    const otherDelegation = makeDelegation({ childRunId: 'other-child' });
+    const state = makeState([
+      { id: '1', frameKey: buildFrameKey('1', 1), status: 'pending', delegation },
+      { id: '1', frameKey: buildFrameKey('1', 2), status: 'pending', delegation: otherDelegation },
+    ]);
+
+    const result = abortDelegation({
+      parentState: state,
+      substepId: '1',
+      frameKey: buildFrameKey('1', 1),
+    });
+
+    expect(result.status).toBe('cancelled');
+    if (result.status === 'cancelled') {
+      // Targeted substep in frame 1|1 is cancelled
+      const targeted = result.updatedSubstepStates.find(
+        (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1', 1),
+      );
+      expect(targeted?.delegation?.cancelledAt).toBeDefined();
+
+      // Same substep ID in different frame 1|2 is untouched
+      const other = result.updatedSubstepStates.find(
+        (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1', 2),
+      );
+      expect(other?.delegation?.cancelledAt).toBeNull();
+      expect(other?.delegation?.childRunId).toBe('other-child');
+    }
   });
 
   it('throws RD-801 for substep without delegation', () => {
-    const state = makeState([{ id: '1', status: 'pending' }]);
+    const state = makeState([{ id: '1', frameKey: buildFrameKey('1'), status: 'pending' }]);
 
-    expect(() => abortDelegation({ parentState: state, substepId: '1' })).toThrow(
-      /step not found/i,
-    );
+    expect(() =>
+      abortDelegation({ parentState: state, substepId: '1', frameKey: buildFrameKey('1') }),
+    ).toThrow(/step not found/i);
   });
 });

@@ -19,7 +19,7 @@ describe('runbook compiler', () => {
     | Omit<StepWithFor, 'kind'>;
 
   const DEFAULT_TRANSITIONS = {
-    all: true,
+    aggregation: 'ALL' as const,
     pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
     fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
   };
@@ -162,7 +162,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
     });
 
-    it('non-FOR substeps with FAIL ANY: STOP short-circuits on first failure', () => {
+    it('non-FOR substeps with FAIL ANY: STOP waits for all DEFER results before aggregation', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -173,7 +173,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Check 1',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -182,7 +182,7 @@ describe('runbook compiler', () => {
               id: '2',
               description: 'Check 2',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -196,11 +196,14 @@ describe('runbook compiler', () => {
       const actor = createActor(machine);
       actor.start();
 
-      // 1.1 fails — fail-fast: FAIL ANY (all=true) short-circuits to STOPPED immediately
+      // 1.1 fails — DEFER advances to 1.2, aggregation waits for all results
       actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
 
+      // 1.2 passes — all results in, FAIL ANY (all=true) has a fail → STOPPED
+      actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.substepResults).toEqual(['fail']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['fail', 'pass']);
     });
   });
 
@@ -352,7 +355,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -372,7 +375,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: {
               kind: 'fail',
@@ -400,7 +403,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -433,7 +436,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: {
               kind: 'fail',
@@ -495,7 +498,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -504,7 +507,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Step 2',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -529,7 +532,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 2, action: { type: 'GOTO', target: { step: '2' } } },
           },
@@ -538,7 +541,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Step 2',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -571,7 +574,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 2, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -603,7 +606,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Run Tests',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
           },
@@ -612,7 +615,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Recovery and Fix',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 2,
@@ -625,7 +628,7 @@ describe('runbook compiler', () => {
           name: '3',
           description: 'Commit Changes',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -665,7 +668,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Run Tests',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
           },
@@ -674,7 +677,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Recovery and Fix',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 2,
@@ -687,7 +690,7 @@ describe('runbook compiler', () => {
           name: '3',
           description: 'Commit Changes',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -752,7 +755,7 @@ describe('runbook compiler', () => {
           name: '4',
           description: 'Commit',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -825,7 +828,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -875,7 +878,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -915,7 +918,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -932,15 +935,15 @@ describe('runbook compiler', () => {
     });
 
     it('records iteration results including failures', () => {
-      const CONTINUE_ON_FAIL = {
-        all: true as const,
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      const DEFER_ON_FAIL = {
+        aggregation: 'ALL' as const,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
       };
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 4, transitions: CONTINUE_ON_FAIL },
+          forClause: { start: 1, end: 4, transitions: DEFER_ON_FAIL },
           description: 'Test with failures',
           transitions: DEFAULT_TRANSITIONS,
           substeps: [
@@ -948,9 +951,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Single substep',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -959,7 +962,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -995,7 +998,7 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail', 'pass']);
-      expect(actor.getSnapshot().context.substepResults).toEqual(['pass']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
     it('handles FOR step without substeps gracefully', () => {
@@ -1011,7 +1014,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Next',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1035,7 +1038,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Start',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1060,7 +1063,7 @@ describe('runbook compiler', () => {
           name: '4',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1108,7 +1111,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Fetch',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -1124,7 +1127,7 @@ describe('runbook compiler', () => {
           name: '4',
           description: 'Commit',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1181,15 +1184,19 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
               },
             },
             {
               id: '2',
               description: 'Process',
-              transitions: DEFAULT_TRANSITIONS,
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
             },
           ],
         },
@@ -1197,7 +1204,7 @@ describe('runbook compiler', () => {
           name: '4',
           description: 'Commit',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1215,15 +1222,16 @@ describe('runbook compiler', () => {
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topBreak1.iteration).toBe(1);
 
-      // Iteration 1: FAIL on substep 1 → BREAK → exit loop → FAIL ANY: STOP
+      // Iteration 1: FAIL on substep 1 → BREAK → exit loop
+      // BREAK does not populate deferredResults → vacuous pass → PASS ALL → CONTINUE to step 4
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::4');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
-      expect(actor.getSnapshot().context.substepResults).toEqual(['fail']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual([]);
     });
 
-    it('NEXT records iteration results correctly across iterations', () => {
+    it('NEXT skips deferredResults but iteration-level DEFER still accumulates vacuous pass', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -1235,7 +1243,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Step',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'NEXT' } },
               },
@@ -1246,7 +1254,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1257,25 +1265,26 @@ describe('runbook compiler', () => {
       const actor = createActor(machine);
       actor.start();
 
-      // Iteration 1: FAIL → NEXT
+      // Iteration 1: FAIL → NEXT (deferredResults stays empty → vacuous pass at iteration level)
       actor.send({ type: 'FAIL' });
       const topNextRes1 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topNextRes1.iteration).toBe(2);
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['fail']);
+      // Iteration-level DEFER accumulates vacuous pass (empty deferredResults → pass)
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
 
-      // Iteration 2: PASS → NEXT
+      // Iteration 2: PASS → NEXT (deferredResults stays empty → vacuous pass at iteration level)
       actor.send({ type: 'PASS' });
       const topNextRes2 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topNextRes2.iteration).toBe(3);
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['fail', 'pass']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
-      // Iteration 3 (last): PASS → NEXT → exit → FAIL ANY: STOP
+      // Iteration 3 (last): PASS → NEXT → exit → PASS ALL: all vacuous passes → CONTINUE to step 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['fail', 'pass']);
-      expect(actor.getSnapshot().context.substepResults).toEqual(['pass']);
+      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual([]);
     });
 
     it('BREAK records the final iteration result before exiting', () => {
@@ -1289,14 +1298,18 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Increment',
-              transitions: DEFAULT_TRANSITIONS,
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
             },
             {
               id: '2',
               description: 'Check and break',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
               },
             },
@@ -1306,7 +1319,7 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1337,14 +1350,16 @@ describe('runbook compiler', () => {
       expect(topBreakRes2.iteration).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
-      // Iteration 3: PASS → FAIL (BREAK) → exit loop → FAIL ANY: STOP
+      // Iteration 3: PASS (DEFER) → FAIL (BREAK) → exit loop
+      // BREAK does not populate deferredResults; only the DEFER'd pass from substep 1 is present
+      // deferredResults = ['pass'] → computeIterationResult = pass → all iterations pass → CONTINUE
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step::1::2');
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
-      expect(actor.getSnapshot().context.substepResults).toEqual(['pass', 'fail']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
     it('NEXT outside FOR loop goes to STOPPED', () => {
@@ -1353,7 +1368,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'No FOR clause',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1375,7 +1390,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'No FOR clause',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
           },
@@ -1397,7 +1412,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Start',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -1422,7 +1437,7 @@ describe('runbook compiler', () => {
           name: '3',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1461,7 +1476,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Start',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1482,7 +1497,7 @@ describe('runbook compiler', () => {
           name: '3',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1525,7 +1540,7 @@ describe('runbook compiler', () => {
           name: '3',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1605,7 +1620,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Non-FOR target',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1619,7 +1634,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Substep with GOTO out',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '1' } } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -1635,7 +1650,7 @@ describe('runbook compiler', () => {
           name: '3',
           description: 'After loop',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1674,7 +1689,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Start',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -1699,7 +1714,7 @@ describe('runbook compiler', () => {
           name: '3',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1732,7 +1747,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Sub',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: {
                   kind: 'fail',
@@ -1793,7 +1808,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Sub',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: {
                   kind: 'fail',
@@ -1871,7 +1886,7 @@ describe('runbook compiler', () => {
           name: '3',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1996,7 +2011,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Source',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -2040,7 +2055,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Sub',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -2067,7 +2082,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Sub',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'BREAK' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -2091,7 +2106,17 @@ describe('runbook compiler', () => {
           name: '1',
           forClause: { start: 1, end: 3 },
           description: 'FOR step',
-          substeps: [{ id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS }],
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub',
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
         },
         {
           name: '2',
@@ -2121,7 +2146,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('step::2'); // exits
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
-      expect(actor.getSnapshot().context.substepResults).toEqual(['pass']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
     it('intra-loop GOTO preserves forStack', () => {
@@ -2135,7 +2160,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'First sub',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: {
                   kind: 'fail',
@@ -2204,7 +2229,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Source step',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -2254,7 +2279,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Source step',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -2302,7 +2327,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Source step',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -2379,18 +2404,18 @@ describe('runbook compiler', () => {
   });
 
   describe('post-loop aggregation', () => {
-    // Iteration-level CONTINUE on fail: loop continues past failed iterations
-    const FOR_CONTINUE_ON_FAIL = {
-      all: true as const,
-      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-      fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+    // Iteration-level DEFER on fail: loop continues past failed iterations with accumulation
+    const FOR_DEFER_ON_FAIL = {
+      aggregation: 'ALL' as const,
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
     };
 
     it('PASS ALL fails when any iteration failed', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3, transitions: FOR_CONTINUE_ON_FAIL },
+          forClause: { start: 1, end: 3, transitions: FOR_DEFER_ON_FAIL },
           description: 'Loop with PASS ALL',
           transitions: DEFAULT_TRANSITIONS,
           substeps: [
@@ -2398,9 +2423,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Process',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -2433,14 +2458,14 @@ describe('runbook compiler', () => {
       // PASS ALL with one failure → aggregation fails → STOP
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.iterationResults).toEqual(['pass', 'fail']);
-      expect(snapshot.context.substepResults).toEqual(['pass']);
+      expect(snapshot.context.deferredResults).toEqual(['pass']);
     });
 
     it('PASS ALL fails when first iteration failed', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3, transitions: FOR_CONTINUE_ON_FAIL },
+          forClause: { start: 1, end: 3, transitions: FOR_DEFER_ON_FAIL },
           description: 'Loop with PASS ALL',
           transitions: DEFAULT_TRANSITIONS,
           substeps: [
@@ -2448,9 +2473,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -2481,7 +2506,7 @@ describe('runbook compiler', () => {
       // FAIL ANY with one failure → aggregation fails → STOP
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
-      expect(snapshot.context.substepResults).toEqual(['pass']);
+      expect(snapshot.context.deferredResults).toEqual(['pass']);
     });
 
     it('PASS ALL succeeds when all iterations pass', () => {
@@ -2495,7 +2520,11 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Always pass',
-              transitions: DEFAULT_TRANSITIONS,
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
             },
           ],
         },
@@ -2522,17 +2551,17 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
-      expect(snapshot.context.substepResults).toEqual(['pass']);
+      expect(snapshot.context.deferredResults).toEqual(['pass']);
     });
 
     it('PASS ANY succeeds when one iteration passes', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3, transitions: FOR_CONTINUE_ON_FAIL },
+          forClause: { start: 1, end: 3, transitions: FOR_DEFER_ON_FAIL },
           description: 'Loop with PASS ANY',
           transitions: {
-            all: false,
+            aggregation: 'ANY' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -2541,9 +2570,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Process',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -2573,7 +2602,7 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
-      expect(snapshot.context.substepResults).toEqual(['fail']);
+      expect(snapshot.context.deferredResults).toEqual(['fail']);
     });
 
     it('BREAK triggers aggregation on accumulated results', () => {
@@ -2588,17 +2617,17 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
             {
               id: '2',
               description: 'Maybe break',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
               },
             },
@@ -2628,12 +2657,13 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' });
       actor.send({ type: 'FAIL' });
 
-      // BREAK at iter 3 with two loop-backs → aggregation uses substepResults
-      // PASS ALL: substepResults [pass, fail] → has failure → STOP
+      // BREAK at iter 3: only substep 1's DEFER'd result is in deferredResults (BREAK doesn't append)
+      // deferredResults = ['pass'] → computeIterationResult = pass → all iterations pass
+      // PASS ALL: allResults [pass, pass, pass] → passes → CONTINUE to step 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
-      expect(snapshot.context.substepResults).toEqual(['pass', 'fail']);
+      expect(snapshot.context.deferredResults).toEqual(['pass']);
     });
 
     it('NEXT at last iteration triggers aggregation', () => {
@@ -2648,7 +2678,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'NEXT' } },
               },
@@ -2657,9 +2687,9 @@ describe('runbook compiler', () => {
               id: '2',
               description: 'Skipped by NEXT',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -2683,21 +2713,22 @@ describe('runbook compiler', () => {
       // Iteration 2: PASS substep 1 → NEXT (last iteration, exit loop)
       actor.send({ type: 'PASS' });
 
+      // NEXT doesn't populate deferredResults → vacuous pass at iteration level
       // PASS ALL with all passes → aggregation passes → CONTINUE to step 2
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass']);
-      expect(snapshot.context.substepResults).toEqual(['pass']);
+      expect(snapshot.context.deferredResults).toEqual([]);
     });
 
     it('FAIL ALL triggers when all iterations fail under PASS ANY mode', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3, transitions: FOR_CONTINUE_ON_FAIL },
+          forClause: { start: 1, end: 3, transitions: FOR_DEFER_ON_FAIL },
           description: 'Loop with PASS ANY',
           transitions: {
-            all: false,
+            aggregation: 'ANY' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -2706,9 +2737,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Process',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -2736,7 +2767,7 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.iterationResults).toEqual(['fail', 'fail']);
-      expect(snapshot.context.substepResults).toEqual(['fail']);
+      expect(snapshot.context.deferredResults).toEqual(['fail']);
     });
 
     it('PASS ALL with GOTO target records GOTO lastAction and initializes forStack for target FOR step', () => {
@@ -2746,7 +2777,7 @@ describe('runbook compiler', () => {
           forClause: { start: 1, end: 2 },
           description: 'Loop that GOTOs on pass',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -2759,9 +2790,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Process',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -2799,7 +2830,12 @@ describe('runbook compiler', () => {
       // PASS ALL succeeds → GOTO 3 AT 1
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3::1');
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', at: 1 });
+      expect(snapshot.context.lastAction).toEqual({
+        type: 'GOTO',
+        target: '3',
+        at: 1,
+        aggregated: true,
+      });
       expect(snapshot.context.forStack).toEqual([
         {
           stepId: '3',
@@ -2821,7 +2857,7 @@ describe('runbook compiler', () => {
           forClause: { start: 1, end: 2 },
           description: 'Loop that COMPLETEs on fail',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'COMPLETE' } },
           },
@@ -2830,9 +2866,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Process',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -2859,7 +2895,7 @@ describe('runbook compiler', () => {
       // PASS ALL with one failure → aggregation fails → COMPLETE
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE', aggregated: true });
     });
 
     it('PASS ALL with STOP action records STOP lastAction', () => {
@@ -2869,7 +2905,7 @@ describe('runbook compiler', () => {
           forClause: { start: 1, end: 2 },
           description: 'Loop that STOPs on pass',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'STOP' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
           },
@@ -2878,9 +2914,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Process',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -2906,7 +2942,7 @@ describe('runbook compiler', () => {
       // PASS ALL succeeds → STOP
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.lastAction).toEqual({ type: 'STOP' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'STOP', aggregated: true });
     });
 
     it('PASS ALL failure triggers fail-path GOTO to non-FOR step', () => {
@@ -2916,7 +2952,7 @@ describe('runbook compiler', () => {
           forClause: { start: 1, end: 2 },
           description: 'Loop that GOTOs on fail',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
           },
@@ -2925,9 +2961,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Process',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -2960,9 +2996,9 @@ describe('runbook compiler', () => {
       // PASS ALL with one failure → aggregation fails → GOTO 3
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3');
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
       expect(snapshot.context.iterationResults).toEqual(['pass']);
-      expect(snapshot.context.substepResults).toEqual(['fail']);
+      expect(snapshot.context.deferredResults).toEqual(['fail']);
       expect(snapshot.context.forStack).toEqual([]);
     });
 
@@ -2973,7 +3009,7 @@ describe('runbook compiler', () => {
           forClause: { start: 1, end: 2 },
           description: 'Loop that GOTOs AT on fail',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: {
               kind: 'fail',
@@ -2986,9 +3022,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Process',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -3025,7 +3061,12 @@ describe('runbook compiler', () => {
       // PASS ALL with one failure → aggregation fails → GOTO 3 AT 2
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3::1');
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', at: 2 });
+      expect(snapshot.context.lastAction).toEqual({
+        type: 'GOTO',
+        target: '3',
+        at: 2,
+        aggregated: true,
+      });
       expect(snapshot.context.forStack).toEqual([
         {
           stepId: '3',
@@ -3044,10 +3085,10 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3, transitions: FOR_CONTINUE_ON_FAIL },
+          forClause: { start: 1, end: 3, transitions: FOR_DEFER_ON_FAIL },
           description: 'Loop with PASS ANY and GOTO',
           transitions: {
-            all: false,
+            aggregation: 'ANY' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -3056,9 +3097,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Process',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -3092,9 +3133,9 @@ describe('runbook compiler', () => {
       // PASS ANY with one pass → aggregation passes → GOTO 3
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3');
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
       expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
-      expect(snapshot.context.substepResults).toEqual(['fail']);
+      expect(snapshot.context.deferredResults).toEqual(['fail']);
       expect(snapshot.context.forStack).toEqual([]);
     });
 
@@ -3105,7 +3146,7 @@ describe('runbook compiler', () => {
           forClause: { start: 1, end: 5 },
           description: 'Loop with BREAK and GOTO',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -3114,18 +3155,18 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
             {
               id: '2',
               description: 'Maybe break',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'BREAK' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -3156,19 +3197,20 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' }); // sub 1
       actor.send({ type: 'PASS' }); // sub 2 → BREAK
 
-      // BREAK on iteration 1 with [PASS, PASS] → no loop-back, only substepResults
+      // BREAK on iteration 1: substep 1 DEFER'd 'pass', substep 2 BREAK (no append)
+      // deferredResults = ['pass'] → computeIterationResult = pass
       // PASS ALL: no failures → aggregation passes → GOTO 3
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3');
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
       expect(snapshot.context.iterationResults).toEqual([]);
-      expect(snapshot.context.substepResults).toEqual(['pass', 'pass']);
+      expect(snapshot.context.deferredResults).toEqual(['pass']);
       expect(snapshot.context.forStack).toEqual([]);
     });
   });
 
   describe('descending FOR loop ranges', () => {
-    it('iterates descending range (3, 2, 1) via CONTINUE', () => {
+    it('iterates descending range (3, 2, 1) via DEFER', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -3178,7 +3220,11 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'Process',
-              transitions: DEFAULT_TRANSITIONS,
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
             },
           ],
         },
@@ -3220,7 +3266,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
-      expect(actor.getSnapshot().context.substepResults).toEqual(['pass']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
     it('BREAK exits descending loop immediately', () => {
@@ -3235,8 +3281,8 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
               },
             },
@@ -3258,9 +3304,10 @@ describe('runbook compiler', () => {
 
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(5);
 
-      // FAIL → BREAK → exit loop → FAIL ANY: STOP
+      // FAIL → BREAK → exit loop
+      // BREAK does not populate deferredResults → vacuous pass → PASS ALL → CONTINUE to step 2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -3275,7 +3322,7 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'First',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -3325,7 +3372,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Start',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -3430,9 +3477,9 @@ describe('runbook compiler', () => {
             start: 3,
             end: 1,
             transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
             },
           },
           description: 'Descending with mixed results',
@@ -3442,9 +3489,9 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Process',
               transitions: {
-                all: true,
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-                fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
             },
           ],
@@ -3477,7 +3524,7 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
-      expect(actor.getSnapshot().context.substepResults).toEqual(['pass']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
     it('iterates descending range with two substeps', () => {
@@ -3490,12 +3537,20 @@ describe('runbook compiler', () => {
             {
               id: '1',
               description: 'First check',
-              transitions: DEFAULT_TRANSITIONS,
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
             },
             {
               id: '2',
               description: 'Second check',
-              transitions: DEFAULT_TRANSITIONS,
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
             },
           ],
         },
@@ -3536,7 +3591,7 @@ describe('runbook compiler', () => {
       // Should have exited to step 2 (final iteration computed inline)
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
-      expect(snapshot.context.substepResults).toEqual(['pass', 'pass']);
+      expect(snapshot.context.deferredResults).toEqual(['pass', 'pass']);
     });
   });
 
@@ -3757,7 +3812,7 @@ echo "processing"
 
     it('GOTO intra-loop preserves forStack with array source', () => {
       const DEFAULT_TRANSITIONS_LOCAL = {
-        all: true,
+        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
@@ -3772,7 +3827,7 @@ echo "processing"
               id: '1',
               description: 'First sub',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 fail: {
                   kind: 'fail' as const,
@@ -3830,7 +3885,7 @@ echo "processing"
 
     it('GOTO cross-loop initializes forStack for array source step', () => {
       const DEFAULT_TRANSITIONS_LOCAL = {
-        all: true,
+        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
@@ -3840,7 +3895,7 @@ echo "processing"
           name: '1',
           description: 'Source step',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -3887,7 +3942,7 @@ echo "processing"
 
     it('GOTO cross-loop with AT into array source resolves correct currentValue', () => {
       const DEFAULT_TRANSITIONS_LOCAL = {
-        all: true,
+        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
@@ -3897,7 +3952,7 @@ echo "processing"
           name: '1',
           description: 'Source step',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -3991,7 +4046,7 @@ echo "processing"
 
     it('compiles descending file source window (3 TO 1)', () => {
       const DEFAULT_TRANSITIONS_LOCAL = {
-        all: true,
+        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
@@ -4270,7 +4325,7 @@ echo "processing"
       actor.send({ type: 'PASS' }); // iteration 2 complete (final) -> PASS ALL -> step 2
       expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
-      expect(actor.getSnapshot().context.substepResults).toEqual(['pass']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
     it('evaluates FAIL ANY across shorthand iterations and routes to GOTO target', () => {
@@ -4298,7 +4353,7 @@ echo "processing"
 
       expect(actor.getSnapshot().value).toBe('step::Synthesize');
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
-      expect(actor.getSnapshot().context.substepResults).toEqual(['fail']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['fail']);
     });
 
     it('GOTO to shorthand-canonicalized FOR step enters substep .1', () => {
@@ -4394,18 +4449,18 @@ echo "processing"
               id: '1',
               description: 'Check 1',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
               id: '2',
               description: 'Check 2',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -4421,7 +4476,7 @@ echo "processing"
       actor.send({ type: 'PASS' }); // 1.2 passes -> parent -> PASS ALL -> step::2
 
       expect(actor.getSnapshot().value).toBe('step::2');
-      expect(actor.getSnapshot().context.substepResults).toEqual(['pass', 'pass']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass', 'pass']);
     });
 
     it('FAIL ANY: GOTO routes to target step on failure', () => {
@@ -4430,7 +4485,7 @@ echo "processing"
           name: '1',
           description: 'Review step',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: {
               kind: 'fail' as const,
@@ -4443,18 +4498,18 @@ echo "processing"
               id: '1',
               description: 'Check 1',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
               id: '2',
               description: 'Check 2',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -4479,7 +4534,7 @@ echo "processing"
           name: '1',
           description: 'Source with mixed outcomes',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: {
               kind: 'fail' as const,
@@ -4492,18 +4547,18 @@ echo "processing"
               id: '1',
               description: 'Source check 1',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
               id: '2',
               description: 'Source check 2',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -4512,7 +4567,7 @@ echo "processing"
           name: '2',
           description: 'Target implicit step',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -4525,8 +4580,24 @@ echo "processing"
             },
           },
           substeps: [
-            { id: '1', description: 'Target check 1', transitions: DEFAULT_TRANSITIONS },
-            { id: '2', description: 'Target check 2', transitions: DEFAULT_TRANSITIONS },
+            {
+              id: '1',
+              description: 'Target check 1',
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+              },
+            },
+            {
+              id: '2',
+              description: 'Target check 2',
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+              },
+            },
           ],
         },
         { name: '3', description: 'Pass handler', transitions: DEFAULT_TRANSITIONS },
@@ -4551,7 +4622,7 @@ echo "processing"
           name: '1',
           description: 'Review step',
           transitions: {
-            all: false,
+            aggregation: 'ANY' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
@@ -4560,18 +4631,18 @@ echo "processing"
               id: '1',
               description: 'Check 1',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
               id: '2',
               description: 'Check 2',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -4600,9 +4671,9 @@ echo "processing"
               id: '1',
               description: 'Only check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -4625,7 +4696,7 @@ echo "processing"
       expect(actor2.getSnapshot().value).toBe('step::2');
     });
 
-    it('three substeps with mixed results and PASS ALL short-circuits on failure', () => {
+    it('three substeps with mixed results and PASS ALL waits for all DEFER results', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -4636,7 +4707,7 @@ echo "processing"
               id: '1',
               description: 'Check 1',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4645,7 +4716,7 @@ echo "processing"
               id: '2',
               description: 'Check 2',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4654,7 +4725,7 @@ echo "processing"
               id: '3',
               description: 'Check 3',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4669,11 +4740,13 @@ echo "processing"
       actor.start();
 
       actor.send({ type: 'PASS' }); // 1.1 passes → advance to 1.2
-      // 1.2 fails → fail-fast: FAIL ANY (all=true) short-circuits to STOPPED
-      actor.send({ type: 'FAIL' });
+      actor.send({ type: 'FAIL' }); // 1.2 fails → advance to 1.3
+      expect(actor.getSnapshot().value).toBe('step::1::3');
 
+      // 1.3 passes — all results in, FAIL ANY (all=true) has a fail → STOPPED
+      actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.substepResults).toEqual(['pass', 'fail']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass', 'fail', 'pass']);
     });
 
     it('FOR loop iterates through parent state', () => {
@@ -4683,7 +4756,17 @@ echo "processing"
           description: 'FOR loop',
           forClause: { start: 1, end: 3 },
           transitions: DEFAULT_TRANSITIONS,
-          substeps: [{ id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS }],
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+              },
+            },
+          ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
       ]);
@@ -4698,7 +4781,7 @@ echo "processing"
 
       expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
-      expect(actor.getSnapshot().context.substepResults).toEqual(['pass']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
     it('BREAK exits FOR loop via parent state', () => {
@@ -4708,7 +4791,7 @@ echo "processing"
           description: 'FOR loop',
           forClause: { start: 1, end: 3 },
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
           },
@@ -4717,7 +4800,7 @@ echo "processing"
               id: '1',
               description: 'Sub 1',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
               },
@@ -4749,7 +4832,7 @@ echo "processing"
               id: '1',
               description: 'Sub 1',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
               },
@@ -4787,7 +4870,7 @@ echo "processing"
           name: '1',
           description: 'Review step',
           transitions: {
-            all: false,
+            aggregation: 'ANY' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
@@ -4796,18 +4879,18 @@ echo "processing"
               id: '1',
               description: 'Check 1',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
               id: '2',
               description: 'Check 2',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -4823,7 +4906,7 @@ echo "processing"
       actor.send({ type: 'FAIL' }); // 1.2 fails -> parent -> FAIL ALL -> STOPPED
 
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.substepResults).toEqual(['fail', 'fail']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual(['fail', 'fail']);
     });
 
     it('parent transitions with retry re-runs substeps before terminal action', () => {
@@ -4832,7 +4915,7 @@ echo "processing"
           name: '1',
           description: 'Retry step',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
@@ -4841,9 +4924,9 @@ echo "processing"
               id: '1',
               description: 'Check 1',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -4871,7 +4954,7 @@ echo "processing"
           name: '1',
           description: 'Multi-substep retry',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
@@ -4880,7 +4963,7 @@ echo "processing"
               id: '1',
               description: 'Check 1',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4889,7 +4972,7 @@ echo "processing"
               id: '2',
               description: 'Check 2',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4903,17 +4986,26 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // With fail-fast (FAIL ANY, no AWAIT), first FAIL short-circuits to parent
-      actor.send({ type: 'FAIL' }); // 1.1 -> parent (fail-fast) -> retry #1 -> 1.1
+      // First FAIL at 1.1 → DEFER advances to 1.2, waits for all results
+      actor.send({ type: 'FAIL' }); // 1.1 → advance to 1.2
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      // 1.2 fails → all results in, FAIL ANY (all=true) → retry #1 → back to 1.1
+      actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
-      actor.send({ type: 'FAIL' }); // 1.1 -> parent (fail-fast) -> retries exhausted -> STOPPED
+      // Retry: 1.1 fails again → advance to 1.2
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      // 1.2 fails → all results in, retries exhausted → STOPPED
+      actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
     });
 
     it('cross-step substep GOTO resets parentRetryCount before target parent retries', () => {
       const substepDeferTransitions = {
-        all: true,
+        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
       };
@@ -4923,7 +5015,7 @@ echo "processing"
           name: '1',
           description: 'Source with parent retry',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
@@ -4932,7 +5024,7 @@ echo "processing"
               id: '1',
               description: 'Jump to target',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: {
                   kind: 'pass' as const,
                   retry: 0,
@@ -4945,7 +5037,7 @@ echo "processing"
               id: '2',
               description: 'Fail to trigger parent retry',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4956,7 +5048,7 @@ echo "processing"
           name: '2',
           description: 'Target with parent retry',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
@@ -4972,22 +5064,26 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // With fail-fast (FAIL ANY, no AWAIT), first FAIL short-circuits to parent
-      actor.send({ type: 'FAIL' }); // 1.1 -> parent (fail-fast) -> retry #1 -> 1.1
+      // 1.1 fails → DEFER advances to 1.2
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      // 1.2 fails → all results in, FAIL ANY → retry #1 → back to 1.1
+      actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().context.parentRetryCount).toBe(1);
 
       actor.send({ type: 'PASS' }); // 1.1 -> GOTO 2.2 (bypass parent)
       expect(actor.getSnapshot().value).toBe('step::2::2');
       expect(actor.getSnapshot().context.parentRetryCount).toBe(0);
 
-      // 2.2 fail-fast to parent -> parent should retry, not exhaust
-      actor.send({ type: 'FAIL' }); // 2.2 -> parent (fail-fast) -> retry -> 2.1
+      // 2.2 is last substep of step 2: FAIL → parent aggregation → retry → 2.1
+      actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::2::1');
     });
 
     it('cross-step GOTO event resets parentRetryCount before target parent retries', () => {
       const substepDeferTransitions = {
-        all: true,
+        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
       };
@@ -4997,7 +5093,7 @@ echo "processing"
           name: '1',
           description: 'Source with parent retry',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
@@ -5010,7 +5106,7 @@ echo "processing"
           name: '2',
           description: 'Target with parent retry',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
@@ -5026,16 +5122,20 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // With fail-fast (FAIL ANY, no AWAIT), first FAIL short-circuits to parent
-      actor.send({ type: 'FAIL' }); // 1.1 -> parent (fail-fast) -> retry #1 -> 1.1
+      // 1.1 fails → DEFER advances to 1.2
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      // 1.2 fails → all results in, FAIL ANY → retry #1 → back to 1.1
+      actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().context.parentRetryCount).toBe(1);
 
       actor.send({ type: 'GOTO', target: { step: '2', substep: '2' } });
       expect(actor.getSnapshot().value).toBe('step::2::2');
       expect(actor.getSnapshot().context.parentRetryCount).toBe(0);
 
-      // 2.2 fail-fast to parent -> parent should retry, not exhaust
-      actor.send({ type: 'FAIL' }); // 2.2 -> parent (fail-fast) -> retry -> 2.1
+      // 2.2 is last substep: FAIL → parent aggregation → retry → 2.1
+      actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::2::1');
     });
 
@@ -5045,7 +5145,7 @@ echo "processing"
           name: '1',
           description: 'Complete step',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
@@ -5054,7 +5154,7 @@ echo "processing"
               id: '1',
               description: 'Check 1',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
               },
@@ -5071,7 +5171,10 @@ echo "processing"
       actor.send({ type: 'PASS' }); // 1.1 passes -> parent -> PASS ALL -> COMPLETE
 
       expect(actor.getSnapshot().value).toBe('COMPLETE');
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({
+        type: 'COMPLETE',
+        aggregated: true,
+      });
     });
 
     describe('2-substep delegation bug scenarios', () => {
@@ -5081,7 +5184,7 @@ echo "processing"
             name: '1',
             description: 'Delegation step',
             transitions: {
-              all: true,
+              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
@@ -5090,7 +5193,7 @@ echo "processing"
                 id: '1',
                 description: 'Substep 1',
                 transitions: {
-                  all: true,
+                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 },
@@ -5099,7 +5202,7 @@ echo "processing"
                 id: '2',
                 description: 'Substep 2',
                 transitions: {
-                  all: true,
+                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 },
@@ -5124,7 +5227,7 @@ echo "processing"
             name: '1',
             description: 'Delegation step',
             transitions: {
-              all: true,
+              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
@@ -5133,7 +5236,7 @@ echo "processing"
                 id: '1',
                 description: 'Substep 1',
                 transitions: {
-                  all: true,
+                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 },
@@ -5142,7 +5245,7 @@ echo "processing"
                 id: '2',
                 description: 'Substep 2',
                 transitions: {
-                  all: true,
+                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 },
@@ -5159,16 +5262,19 @@ echo "processing"
         actor.send({ type: 'PASS' }); // 1.2 passes -> parent -> PASS ALL -> COMPLETE
 
         expect(actor.getSnapshot().value).toBe('COMPLETE');
-        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'COMPLETE' });
+        expect(actor.getSnapshot().context.lastAction).toEqual({
+          type: 'COMPLETE',
+          aggregated: true,
+        });
       });
 
-      it('Test C: explicit CONTINUE substeps with PASS ALL: COMPLETE parent — PASS then FAIL stops', () => {
+      it('Test C: explicit DEFER substeps with PASS ALL: COMPLETE parent — PASS then FAIL stops', () => {
         const steps = inferSteps([
           {
             name: '1',
             description: 'Delegation step',
             transitions: {
-              all: true,
+              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
@@ -5177,18 +5283,18 @@ echo "processing"
                 id: '1',
                 description: 'Substep 1',
                 transitions: {
-                  all: true,
-                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
                 },
               },
               {
                 id: '2',
                 description: 'Substep 2',
                 transitions: {
-                  all: true,
-                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
                 },
               },
             ],
@@ -5211,7 +5317,7 @@ echo "processing"
             name: '1',
             description: 'Delegation step',
             transitions: {
-              all: true,
+              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
@@ -5246,7 +5352,7 @@ echo "processing"
             name: '1',
             description: 'Delegation step',
             transitions: {
-              all: true,
+              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
@@ -5255,7 +5361,7 @@ echo "processing"
                 id: '1',
                 description: 'Substep 1',
                 transitions: {
-                  all: true,
+                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
                 },
@@ -5264,7 +5370,7 @@ echo "processing"
                 id: '2',
                 description: 'Substep 2',
                 transitions: {
-                  all: true,
+                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
                 },
@@ -5283,13 +5389,13 @@ echo "processing"
         expect(actor.getSnapshot().value).toBe('COMPLETE');
       });
 
-      it('Test F: substep FAIL with FAIL ANY (all=true) short-circuits to STOPPED on first fail', () => {
+      it('Test F: substep FAIL with substep-level STOP routes directly to STOPPED', () => {
         const steps = inferSteps([
           {
             name: '1',
             description: 'Delegation step',
             transitions: {
-              all: true,
+              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
@@ -5298,7 +5404,7 @@ echo "processing"
                 id: '1',
                 description: 'Substep 1',
                 transitions: {
-                  all: true,
+                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
                 },
@@ -5307,7 +5413,7 @@ echo "processing"
                 id: '2',
                 description: 'Substep 2',
                 transitions: {
-                  all: true,
+                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
                 },
@@ -5320,204 +5426,18 @@ echo "processing"
         const actor = createActor(machine);
         actor.start();
 
-        // Substep 1.1 fails — with FAIL ANY (all=true, no AWAIT), first fail short-circuits to STOPPED
+        // Substep 1.1 fails — substep's own fail: STOP routes directly to STOPPED
         actor.send({ type: 'FAIL' });
         expect(actor.getSnapshot().value).toBe('STOPPED');
       });
 
-      it('Test F-AWAIT: substep FAIL with AWAIT defers to parent aggregation', () => {
-        // Substeps use CONTINUE so all substeps run; AWAIT at parent prevents short-circuit
-        const SUBSTEP_CONTINUE = {
-          all: true,
-          pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-          fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        };
+      it('PASS ANY (all=false) waits for all DEFER results before aggregation', () => {
         const steps = inferSteps([
           {
             name: '1',
             description: 'Delegation step',
             transitions: {
-              all: true,
-              await: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-            },
-            substeps: [
-              { id: '1', description: 'Substep 1', transitions: SUBSTEP_CONTINUE },
-              { id: '2', description: 'Substep 2', transitions: SUBSTEP_CONTINUE },
-            ],
-          },
-        ]);
-
-        const machine = compileRunbookToMachine(steps);
-        const actor = createActor(machine);
-        actor.start();
-
-        // Substep 1.1 fails — CONTINUE advances to substep 1.2, AWAIT defers aggregation
-        actor.send({ type: 'FAIL' });
-        expect(actor.getSnapshot().value).toBe('step::1::2');
-
-        // Substep 1.2 fails — all results in, aggregation → STOPPED
-        actor.send({ type: 'FAIL' });
-        expect(actor.getSnapshot().value).toBe('STOPPED');
-      });
-
-      it('PASS ANY AWAIT — first pass defers, all complete → COMPLETE', () => {
-        const SUBSTEP_CONTINUE = {
-          all: true,
-          pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-          fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        };
-        const steps = inferSteps([
-          {
-            name: '1',
-            description: 'Delegation step',
-            transitions: {
-              all: false,
-              await: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-            },
-            substeps: [
-              { id: '1', description: 'Substep 1', transitions: SUBSTEP_CONTINUE },
-              { id: '2', description: 'Substep 2', transitions: SUBSTEP_CONTINUE },
-            ],
-          },
-        ]);
-
-        const machine = compileRunbookToMachine(steps);
-        const actor = createActor(machine);
-        actor.start();
-
-        // Substep 1.1 passes — CONTINUE advances to substep 1.2, AWAIT defers aggregation
-        actor.send({ type: 'PASS' });
-        expect(actor.getSnapshot().value).toBe('step::1::2');
-
-        // Substep 1.2 passes — all results in, aggregation → COMPLETE
-        actor.send({ type: 'PASS' });
-        expect(actor.getSnapshot().value).toBe('COMPLETE');
-      });
-
-      it('PASS ANY AWAIT — first pass defers, second fails, still COMPLETE', () => {
-        const SUBSTEP_CONTINUE = {
-          all: true,
-          pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-          fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        };
-        const steps = inferSteps([
-          {
-            name: '1',
-            description: 'Delegation step',
-            transitions: {
-              all: false,
-              await: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-            },
-            substeps: [
-              { id: '1', description: 'Substep 1', transitions: SUBSTEP_CONTINUE },
-              { id: '2', description: 'Substep 2', transitions: SUBSTEP_CONTINUE },
-            ],
-          },
-        ]);
-
-        const machine = compileRunbookToMachine(steps);
-        const actor = createActor(machine);
-        actor.start();
-
-        // Substep 1.1 passes — CONTINUE advances to substep 1.2, AWAIT defers aggregation
-        actor.send({ type: 'PASS' });
-        expect(actor.getSnapshot().value).toBe('step::1::2');
-
-        // Substep 1.2 fails — all results in, at least one passed → COMPLETE
-        actor.send({ type: 'FAIL' });
-        expect(actor.getSnapshot().value).toBe('COMPLETE');
-      });
-
-      it('FAIL ANY AWAIT — first fails, second passes → STOPPED (any fail triggers STOP)', () => {
-        const SUBSTEP_CONTINUE = {
-          all: true,
-          pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-          fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        };
-        const steps = inferSteps([
-          {
-            name: '1',
-            description: 'Delegation step',
-            transitions: {
-              all: true,
-              await: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-            },
-            substeps: [
-              { id: '1', description: 'Substep 1', transitions: SUBSTEP_CONTINUE },
-              { id: '2', description: 'Substep 2', transitions: SUBSTEP_CONTINUE },
-            ],
-          },
-        ]);
-
-        const machine = compileRunbookToMachine(steps);
-        const actor = createActor(machine);
-        actor.start();
-
-        // Substep 1.1 fails — CONTINUE advances to substep 1.2, AWAIT defers aggregation
-        actor.send({ type: 'FAIL' });
-        expect(actor.getSnapshot().value).toBe('step::1::2');
-
-        // Substep 1.2 passes — all results in, but hasFailed=true → FAIL ANY fires → STOPPED
-        actor.send({ type: 'PASS' });
-        expect(actor.getSnapshot().value).toBe('STOPPED');
-      });
-
-      it('FAIL ANY AWAIT with 3 substeps — no short-circuit, all complete before aggregation', () => {
-        const SUBSTEP_CONTINUE = {
-          all: true,
-          pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-          fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        };
-        const steps = inferSteps([
-          {
-            name: '1',
-            description: 'Delegation step',
-            transitions: {
-              all: true,
-              await: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
-            },
-            substeps: [
-              { id: '1', description: 'Substep 1', transitions: SUBSTEP_CONTINUE },
-              { id: '2', description: 'Substep 2', transitions: SUBSTEP_CONTINUE },
-              { id: '3', description: 'Substep 3', transitions: SUBSTEP_CONTINUE },
-            ],
-          },
-        ]);
-
-        const machine = compileRunbookToMachine(steps);
-        const actor = createActor(machine);
-        actor.start();
-
-        // Substep 1.1 fails — CONTINUE advances to substep 1.2, AWAIT defers aggregation
-        actor.send({ type: 'FAIL' });
-        expect(actor.getSnapshot().value).toBe('step::1::2');
-
-        // Substep 1.2 passes — CONTINUE advances to substep 1.3, AWAIT defers aggregation
-        actor.send({ type: 'PASS' });
-        expect(actor.getSnapshot().value).toBe('step::1::3');
-
-        // Substep 1.3 passes — all results in, but hasFailed=true → FAIL ANY fires → STOPPED
-        actor.send({ type: 'PASS' });
-        expect(actor.getSnapshot().value).toBe('STOPPED');
-      });
-
-      it('PASS ANY (all=false) short-circuits to COMPLETE on first pass', () => {
-        const steps = inferSteps([
-          {
-            name: '1',
-            description: 'Delegation step',
-            transitions: {
-              all: false,
+              aggregation: 'ANY' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
@@ -5532,8 +5452,12 @@ echo "processing"
         const actor = createActor(machine);
         actor.start();
 
-        // Substep 1.1 passes — with PASS ANY (all=false), first pass short-circuits to COMPLETE
+        // Substep 1.1 passes — DEFER advances to 1.2, aggregation waits for all results
         actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Substep 1.2 fails — all results in, PASS ANY (all=false) has a pass → COMPLETE
+        actor.send({ type: 'FAIL' });
         expect(actor.getSnapshot().value).toBe('COMPLETE');
       });
     });
@@ -5546,7 +5470,7 @@ echo "processing"
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: {
               kind: 'fail' as const,
@@ -5570,7 +5494,7 @@ echo "processing"
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 2, action: { type: 'COMPLETE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
@@ -5592,9 +5516,9 @@ echo "processing"
               id: '1',
               description: 'Sub 1',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 3, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 3, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -5620,7 +5544,7 @@ echo "processing"
       actor.send({ type: 'FAIL' }); // retry 3/3
       expect(actor.getSnapshot().context.retryCount).toBe(3);
 
-      // Exhausted → CONTINUE to parent aggregation → parent FAIL (all: true) → STOPPED
+      // Exhausted → CONTINUE to parent aggregation → parent FAIL (aggregation: 'ALL') → STOPPED
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
       expect(actor.getSnapshot().context.retryCount).toBe(0);
@@ -5632,7 +5556,7 @@ echo "processing"
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } },
           },
@@ -5678,7 +5602,7 @@ echo "processing"
           name: '1',
           description: 'Step 1',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 1, action: { type: 'COMPLETE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
@@ -5708,7 +5632,7 @@ echo "processing"
   });
 
   describe('two-level FOR aggregation', () => {
-    it('FOR with 2 substeps, mixed results, explicit CONTINUE iteration-level transitions', () => {
+    it('FOR with 2 substeps, mixed results, explicit DEFER iteration-level transitions', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -5716,9 +5640,9 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
             },
           },
           description: 'Loop with substeps',
@@ -5728,18 +5652,18 @@ echo "processing"
               id: '1',
               description: 'Substep 1',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
               id: '2',
               description: 'Substep 2',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -5766,14 +5690,14 @@ echo "processing"
       actor.send({ type: 'PASS' }); // 2.1 pass
       actor.send({ type: 'PASS' }); // 2.2 pass → iteration result = pass
 
-      // Iteration-level transitions are PASS ALL (all: true) with CONTINUE on both pass/fail
-      // Iteration 1 failed, but action is CONTINUE, so loop continues
+      // Iteration-level transitions are PASS ALL (aggregation: 'ALL') with DEFER on both pass/fail
+      // Iteration 1 failed, but action is DEFER, so loop continues
       // iterationResults has iteration 1 only (loop-backed); iteration 2 is computed inline
       // Step-level PASS ALL: [fail, pass] aggregates to fail (not all passed) → STOP
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.iterationResults).toEqual(['fail']);
-      expect(snapshot.context.substepResults).toEqual(['pass', 'pass']);
+      expect(snapshot.context.deferredResults).toEqual(['pass', 'pass']);
     });
 
     it('FOR with FAIL ANY: BREAK iteration-level transition', () => {
@@ -5784,8 +5708,8 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
             },
           },
@@ -5796,9 +5720,9 @@ echo "processing"
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -5828,10 +5752,10 @@ echo "processing"
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.iterationResults).toEqual(['pass']);
-      expect(snapshot.context.substepResults).toEqual(['fail']);
+      expect(snapshot.context.deferredResults).toEqual(['fail']);
     });
 
-    it('default FOR transitions (no explicit nested transitions) — CONTINUE loops back', () => {
+    it('default FOR transitions (no explicit nested transitions) — DEFER loops back', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -5843,18 +5767,18 @@ echo "processing"
               id: '1',
               description: 'Check A',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
               id: '2',
               description: 'Check B',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -5877,13 +5801,13 @@ echo "processing"
       actor.send({ type: 'PASS' });
       actor.send({ type: 'FAIL' });
 
-      // Default iteration transitions (DEFAULT_FOR_TRANSITIONS): FAIL → CONTINUE
-      // CONTINUE = loop-back to next iteration
+      // Default iteration transitions (DEFAULT_FOR_TRANSITIONS): FAIL → DEFER
+      // DEFER = loop-back with result accumulation
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::1::1');
       expect(snapshot.context.forStack[0].iteration).toBe(2);
       expect(snapshot.context.iterationResults).toEqual(['fail']);
-      expect(snapshot.context.substepResults).toEqual([]);
+      expect(snapshot.context.deferredResults).toEqual([]);
     });
 
     it('non-FOR steps are unaffected', () => {
@@ -5897,18 +5821,18 @@ echo "processing"
               id: '1',
               description: 'Substep 1',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
               id: '2',
               description: 'Substep 2',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -5935,8 +5859,8 @@ echo "processing"
       const snapshot = actor.getSnapshot();
       // Should reach step 2
       expect(snapshot.value).toBe('step::2');
-      // Non-FOR steps use substepResults (one per substep)
-      expect(snapshot.context.substepResults).toEqual(['pass', 'pass']);
+      // Non-FOR steps use deferredResults (one per substep)
+      expect(snapshot.context.deferredResults).toEqual(['pass', 'pass']);
       // iterationResults is initialized but unused for non-FOR steps (entry action sets [])
       expect(snapshot.context.iterationResults).toEqual([]);
     });
@@ -5949,30 +5873,30 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              all: false,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              aggregation: 'ANY' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
             },
           },
-          description: 'Loop with PASS ANY (all: false)',
+          description: 'Loop with PASS ANY (aggregation: ANY)',
           transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
               description: 'Check X',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
             {
               id: '2',
               description: 'Check Y',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -5999,15 +5923,15 @@ echo "processing"
       actor.send({ type: 'PASS' });
       actor.send({ type: 'FAIL' });
 
-      // Iteration-level PASS ANY (all: false):
+      // Iteration-level PASS ANY (aggregation: 'ANY'):
       //   Iteration 1 result = fail (0 passes), action = CONTINUE
       //   Iteration 2 result = pass (1 pass), action = CONTINUE
       // iterationResults has iteration 1 only (loop-backed); iteration 2 computed inline
-      // Step-level PASS ALL (all: true): [fail, pass] includes a failure → STOP
+      // Step-level PASS ALL (aggregation: 'ALL'): [fail, pass] includes a failure → STOP
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.iterationResults).toEqual(['fail']);
-      expect(snapshot.context.substepResults).toEqual(['pass', 'fail']);
+      expect(snapshot.context.deferredResults).toEqual(['pass', 'fail']);
     });
 
     it('FOR with FAIL ANY: RETRY 2 BREAK retries twice then breaks', () => {
@@ -6018,8 +5942,8 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 2, action: { type: 'BREAK' as const } },
             },
           },
@@ -6030,9 +5954,9 @@ echo "processing"
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -6067,7 +5991,7 @@ echo "processing"
       expect(snapshot.value).toBe('STOPPED');
     });
 
-    it('FOR with FAIL ANY: RETRY 1 CONTINUE retries once then continues', () => {
+    it('FOR with FAIL ANY: RETRY 1 DEFER retries once then defers', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -6075,21 +5999,21 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-              fail: { kind: 'fail' as const, retry: 1, action: { type: 'CONTINUE' as const } },
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
             },
           },
-          description: 'Loop with RETRY 1 CONTINUE on fail',
+          description: 'Loop with RETRY 1 DEFER on fail',
           transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -6112,13 +6036,13 @@ echo "processing"
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().context.iterationRetryCount).toBe(1);
 
-      // Retry exhausted: FAIL → CONTINUE (terminal action), advance to iteration 2
+      // Retry exhausted: FAIL → DEFER (loop-back with accumulation), advance to iteration 2
       actor.send({ type: 'FAIL' });
 
       // iterationRetryCount resets on iteration advance
       expect(actor.getSnapshot().context.iterationRetryCount).toBe(0);
 
-      // Iteration 2: PASS → CONTINUE, loop ends
+      // Iteration 2: PASS → DEFER, loop ends (last iteration)
       actor.send({ type: 'PASS' });
 
       // iterationResults: [fail] (iteration 1 from loop-back); iteration 2 computed inline as pass
@@ -6135,8 +6059,8 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 2, action: { type: 'BREAK' as const } },
             },
           },
@@ -6147,9 +6071,9 @@ echo "processing"
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -6197,21 +6121,21 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-              fail: { kind: 'fail' as const, retry: 1, action: { type: 'CONTINUE' as const } },
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
             },
           },
-          description: 'Loop with RETRY 1 CONTINUE',
+          description: 'Loop with RETRY 1 DEFER',
           transitions: DEFAULT_TRANSITIONS,
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                all: true,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
           ],
@@ -6259,6 +6183,165 @@ echo "processing"
     });
   });
 
+  describe('FOR iteration-level NEXT and CONTINUE', () => {
+    it('NEXT at iteration level loops back without accumulating result', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: {
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'NEXT' as const } },
+            },
+          },
+          description: 'Loop with NEXT on fail at iteration level',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: FAIL → NEXT at iteration level → loop back, no accumulation
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+      expect(actor.getSnapshot().context.iterationResults).toEqual([]); // NEXT skips
+
+      // Iteration 2: PASS → DEFER → loop back with accumulation
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(3);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']); // DEFER accumulates
+
+      // Iteration 3: PASS → last iteration, aggregation
+      // iterationResults: ['pass'] + inline pass = all pass → CONTINUE → step 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::2');
+    });
+
+    it('CONTINUE at iteration level exits loop and routes through parent aggregation', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: {
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+            },
+          },
+          description: 'Loop with CONTINUE exit on pass at iteration level',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: PASS → substep DEFER feeds 'pass' → iteration pass → CONTINUE → exits loop
+      // CONTINUE routes through parent aggregation: ['pass'] → PASS ALL → passes → CONTINUE → step 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::2');
+    });
+
+    it('CONTINUE at iteration level with failing aggregation routes to STOPPED', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: {
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            },
+          },
+          description: 'Loop with CONTINUE exit on fail at iteration level',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: PASS → substep DEFER feeds 'pass' → iteration DEFER → loop back
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      // Iteration 2: FAIL → substep DEFER feeds 'fail' → iteration CONTINUE → exits loop
+      // Parent aggregation: ['pass', 'fail'] → PASS ALL → fails → FAIL: STOP → STOPPED
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+  });
+
   describe('aggregation substep default transitions', () => {
     it('substeps default to DEFER on fail — advance to next substep under PASS ANY', () => {
       const steps = inferSteps([
@@ -6266,7 +6349,7 @@ echo "processing"
           name: '1',
           description: 'Aggregated check',
           transitions: {
-            all: false,
+            aggregation: 'ANY' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -6293,9 +6376,9 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('STOPPED');
     });
 
-    it('substeps with explicit CONTINUE on fail advance to next substep', () => {
+    it('substeps with explicit CONTINUE on fail advance to next substep but skip aggregation', () => {
       const SUBSTEP_CONTINUE = {
-        all: true,
+        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       };
@@ -6304,7 +6387,7 @@ echo "processing"
           name: '1',
           description: 'Aggregated check',
           transitions: {
-            all: false,
+            aggregation: 'ANY' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -6321,13 +6404,14 @@ echo "processing"
 
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
-      // Substep 1 fails — explicit CONTINUE advances to substep 2
+      // Substep 1 fails — explicit CONTINUE advances to substep 2 (navigation works)
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::1::2');
 
-      // Substep 2 passes — aggregation evaluates: PASS ANY → COMPLETE
+      // Substep 2 passes — CONTINUE does not feed deferredResults,
+      // so aggregation sees zero results. PASS ANY with 0 passes → STOP.
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('COMPLETE');
+      expect(actor.getSnapshot().value).toBe('STOPPED');
     });
 
     it('substeps under FOR default to DEFER — failure propagates to iteration aggregation', () => {
@@ -6342,7 +6426,7 @@ echo "processing"
           name: '2',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -6356,13 +6440,13 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
       // Iteration 1: substep fails → DEFER → parent → iteration fails (ALL mode)
-      // DEFAULT_FOR_TRANSITIONS FAIL: CONTINUE → loop-back to iteration 2
+      // DEFAULT_FOR_TRANSITIONS FAIL: DEFER → loop-back with result accumulation
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::1::1');
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
     });
 
-    it('FOR with explicit FAIL: CONTINUE on iteration continues past failures', () => {
+    it('FOR with explicit FAIL: DEFER on iteration loops back with accumulation', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -6371,9 +6455,9 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              all: true,
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-              fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              aggregation: 'ALL' as const,
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
             },
           },
           substeps: [
@@ -6381,7 +6465,7 @@ echo "processing"
               id: '1',
               description: 'Check item',
               transitions: {
-                all: true,
+                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
               },
@@ -6392,7 +6476,7 @@ echo "processing"
           name: '2',
           description: 'Done',
           transitions: {
-            all: true,
+            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -6405,7 +6489,7 @@ echo "processing"
 
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
-      // Iteration 1: substep fails → CONTINUE → parent → iteration CONTINUE → next iteration
+      // Iteration 1: substep fails → CONTINUE → parent → iteration DEFER → loop-back
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
@@ -6416,6 +6500,835 @@ echo "processing"
       // Step 2 passes → COMPLETE
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('COMPLETE');
+    });
+  });
+
+  describe('deferredResults: substep action permutations', () => {
+    // Tests that only DEFER feeds deferredResults (aggregation).
+    // CONTINUE, NEXT, and BREAK are flow control — they advance navigation
+    // (substepCompletedCount) but do NOT populate deferredResults.
+
+    const PASS_ALL_TRANSITIONS = {
+      aggregation: 'ALL' as const,
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+    };
+    const PASS_ANY_TRANSITIONS = {
+      aggregation: 'ANY' as const,
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+    };
+
+    function makeSubstepTransitions(passAction: string, failAction: string) {
+      return {
+        aggregation: 'ALL' as const,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: passAction as 'DEFER' } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: failAction as 'DEFER' } },
+      };
+    }
+
+    describe('non-FOR: single substep', () => {
+      it.each([
+        // [substep action, event, expected deferredResults, expected final state]
+        ['DEFER', 'PASS', ['pass'], 'COMPLETE'],
+        ['DEFER', 'FAIL', ['fail'], 'STOPPED'],
+        ['CONTINUE', 'PASS', [], 'COMPLETE'],
+        ['CONTINUE', 'FAIL', [], 'COMPLETE'],
+      ])('substep %s on %s → deferredResults=%j, final=%s (PASS ALL)', (action, event, expectedDeferred, expectedState) => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Only substep',
+                transitions: makeSubstepTransitions(action, action),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: event as 'PASS' | 'FAIL' });
+        const ctx = actor.getSnapshot().context;
+        expect(ctx.deferredResults).toEqual(expectedDeferred);
+        expect(actor.getSnapshot().value).toBe(expectedState);
+      });
+    });
+
+    describe('non-FOR: two substeps, PASS ALL', () => {
+      it.each([
+        // [sub1 action, sub2 action, event1, event2, expected deferredResults, expected state]
+        ['DEFER', 'DEFER', 'PASS', 'PASS', ['pass', 'pass'], 'COMPLETE'],
+        ['DEFER', 'DEFER', 'PASS', 'FAIL', ['pass', 'fail'], 'STOPPED'],
+        ['DEFER', 'DEFER', 'FAIL', 'PASS', ['fail', 'pass'], 'STOPPED'],
+        ['DEFER', 'DEFER', 'FAIL', 'FAIL', ['fail', 'fail'], 'STOPPED'],
+        ['CONTINUE', 'DEFER', 'PASS', 'PASS', ['pass'], 'COMPLETE'],
+        ['CONTINUE', 'DEFER', 'FAIL', 'FAIL', ['fail'], 'STOPPED'],
+        ['DEFER', 'CONTINUE', 'PASS', 'PASS', ['pass'], 'COMPLETE'],
+        ['DEFER', 'CONTINUE', 'FAIL', 'FAIL', ['fail'], 'STOPPED'],
+        ['CONTINUE', 'CONTINUE', 'PASS', 'PASS', [], 'COMPLETE'],
+        ['CONTINUE', 'CONTINUE', 'FAIL', 'FAIL', [], 'COMPLETE'],
+        ['CONTINUE', 'CONTINUE', 'PASS', 'FAIL', [], 'COMPLETE'],
+      ])('sub1=%s sub2=%s events=%s,%s → deferredResults=%j, final=%s', (sub1Action, sub2Action, event1, event2, expectedDeferred, expectedState) => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions(sub1Action, sub1Action),
+              },
+              {
+                id: '2',
+                description: 'Sub 2',
+                transitions: makeSubstepTransitions(sub2Action, sub2Action),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: event1 as 'PASS' | 'FAIL' });
+        actor.send({ type: event2 as 'PASS' | 'FAIL' });
+        const ctx = actor.getSnapshot().context;
+        expect(ctx.deferredResults).toEqual(expectedDeferred);
+        expect(actor.getSnapshot().value).toBe(expectedState);
+      });
+    });
+
+    describe('non-FOR: two substeps, PASS ANY', () => {
+      it.each([
+        // PASS ANY: at least one pass in deferredResults → COMPLETE; else STOPPED
+        ['DEFER', 'DEFER', 'PASS', 'FAIL', ['pass', 'fail'], 'COMPLETE'],
+        ['DEFER', 'DEFER', 'FAIL', 'FAIL', ['fail', 'fail'], 'STOPPED'],
+        ['DEFER', 'DEFER', 'FAIL', 'PASS', ['fail', 'pass'], 'COMPLETE'],
+        ['CONTINUE', 'CONTINUE', 'PASS', 'PASS', [], 'STOPPED'],
+        ['CONTINUE', 'CONTINUE', 'FAIL', 'FAIL', [], 'STOPPED'],
+        ['CONTINUE', 'DEFER', 'FAIL', 'PASS', ['pass'], 'COMPLETE'],
+        ['CONTINUE', 'DEFER', 'FAIL', 'FAIL', ['fail'], 'STOPPED'],
+      ])('sub1=%s sub2=%s events=%s,%s → deferredResults=%j, final=%s (PASS ANY)', (sub1Action, sub2Action, event1, event2, expectedDeferred, expectedState) => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ANY_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions(sub1Action, sub1Action),
+              },
+              {
+                id: '2',
+                description: 'Sub 2',
+                transitions: makeSubstepTransitions(sub2Action, sub2Action),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: event1 as 'PASS' | 'FAIL' });
+        actor.send({ type: event2 as 'PASS' | 'FAIL' });
+        const ctx = actor.getSnapshot().context;
+        expect(ctx.deferredResults).toEqual(expectedDeferred);
+        expect(actor.getSnapshot().value).toBe(expectedState);
+      });
+    });
+
+    describe('non-FOR: BREAK substep in multi-substep step', () => {
+      it('BREAK on second substep — only first substep DEFER feeds deferredResults', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            forClause: { start: 1, end: 2 },
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2',
+                transitions: {
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'BREAK' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
+                },
+              },
+            ],
+          },
+          {
+            name: '2',
+            description: 'Done',
+            transitions: PASS_ALL_TRANSITIONS,
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Sub 1: PASS → DEFER feeds ['pass'] to deferredResults
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        // Sub 2: FAIL → BREAK (does NOT feed deferredResults, ends loop)
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
+        // computeIterationResult(['pass']) → ALL: pass → PASS ALL → COMPLETE
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('BREAK on second substep — DEFER+BREAK with fail gives correct aggregation', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            forClause: { start: 1, end: 2 },
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2',
+                transitions: {
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'BREAK' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
+                },
+              },
+            ],
+          },
+          {
+            name: '2',
+            description: 'Done',
+            transitions: PASS_ALL_TRANSITIONS,
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Sub 1: FAIL → DEFER feeds ['fail']
+        actor.send({ type: 'FAIL' });
+        // Sub 2: PASS → BREAK (flow control only)
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().context.deferredResults).toEqual(['fail']);
+        // computeIterationResult(['fail']) → ALL: has fail → fail → FAIL ALL → STOP
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+    });
+
+    describe('non-FOR: NEXT substep (outside FOR → STOPPED)', () => {
+      it('NEXT outside FOR loop goes to STOPPED', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: {
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+    });
+
+    describe('FOR: substep action permutations with iteration aggregation', () => {
+      const FOR_DEFER_TRANSITIONS = {
+        aggregation: 'ALL' as const,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+      };
+
+      it.each([
+        // [substep action, iter1 event, iter2 event, expected iterationResults, expected final]
+        ['DEFER', 'PASS', 'PASS', ['pass'], 'COMPLETE'],
+        ['DEFER', 'PASS', 'FAIL', ['pass'], 'STOPPED'],
+        ['DEFER', 'FAIL', 'PASS', ['fail'], 'STOPPED'],
+        ['DEFER', 'FAIL', 'FAIL', ['fail'], 'STOPPED'],
+        ['CONTINUE', 'PASS', 'PASS', ['pass'], 'COMPLETE'],
+        ['CONTINUE', 'FAIL', 'PASS', ['pass'], 'COMPLETE'],
+        ['CONTINUE', 'PASS', 'FAIL', ['pass'], 'COMPLETE'],
+        ['CONTINUE', 'FAIL', 'FAIL', ['pass'], 'COMPLETE'],
+      ])('substep %s: iter1=%s iter2=%s → iterationResults=%j, final=%s (PASS ALL, 2 iters)', (action, event1, event2, expectedIterResults, expectedState) => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 2, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Single substep',
+                transitions: makeSubstepTransitions(action, action),
+              },
+            ],
+          },
+          {
+            name: '2',
+            description: 'Done',
+            transitions: {
+              ...DEFAULT_TRANSITIONS,
+              pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            },
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: event1 as 'PASS' | 'FAIL' }); // iteration 1
+        actor.send({ type: event2 as 'PASS' | 'FAIL' }); // iteration 2
+        const ctx = actor.getSnapshot().context;
+        expect(ctx.iterationResults).toEqual(expectedIterResults);
+        expect(actor.getSnapshot().value).toBe(expectedState);
+      });
+    });
+
+    describe('FOR: mixed substep actions in multi-substep iteration', () => {
+      const FOR_DEFER_TRANSITIONS = {
+        aggregation: 'ALL' as const,
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+      };
+
+      it('DEFER+CONTINUE: only DEFER substep feeds iteration aggregation', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Sub 1: PASS → DEFER feeds 'pass'
+        actor.send({ type: 'PASS' });
+        // Sub 2: FAIL → CONTINUE (does NOT feed deferredResults)
+        actor.send({ type: 'FAIL' });
+        // deferredResults = ['pass'] → ALL: pass → COMPLETE
+        expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('CONTINUE+DEFER: only DEFER substep feeds iteration aggregation', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Sub 1: FAIL → CONTINUE (no deferredResults entry)
+        actor.send({ type: 'FAIL' });
+        // Sub 2: FAIL → DEFER feeds 'fail'
+        actor.send({ type: 'FAIL' });
+        // deferredResults = ['fail'] → ALL: fail → STOPPED
+        expect(actor.getSnapshot().context.deferredResults).toEqual(['fail']);
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('all CONTINUE in FOR: iteration-level ALL gives vacuous pass, parent sees pass', () => {
+        // PASS ALL at parent: iteration ALL vacuous pass → parent ALL → COMPLETE
+        const stepsAll = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+            ],
+          },
+        ]);
+        const machineAll = compileRunbookToMachine(stepsAll);
+        const actorAll = createActor(machineAll);
+        actorAll.start();
+        actorAll.send({ type: 'FAIL' }); // CONTINUE does not feed deferredResults
+        expect(actorAll.getSnapshot().context.deferredResults).toEqual([]);
+        // Iteration ALL over empty deferredResults = vacuous pass → iteration result 'pass'
+        // Parent ALL over ['pass'] → pass → COMPLETE
+        expect(actorAll.getSnapshot().value).toBe('COMPLETE');
+
+        // PASS ANY at parent: iteration ALL vacuous pass → parent ANY sees 'pass' → COMPLETE
+        // (The vacuous behavior at the parent depends on iteration-level aggregation)
+        const stepsAny = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ANY_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+            ],
+          },
+        ]);
+        const machineAny = compileRunbookToMachine(stepsAny);
+        const actorAny = createActor(machineAny);
+        actorAny.start();
+        actorAny.send({ type: 'PASS' }); // CONTINUE does not feed deferredResults
+        expect(actorAny.getSnapshot().context.deferredResults).toEqual([]);
+        // Iteration ALL over empty = vacuous pass → parent ANY sees 'pass' → COMPLETE
+        expect(actorAny.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('non-FOR: all CONTINUE with PASS ANY → vacuous fail (no deferred results)', () => {
+        // Non-FOR context: deferredResults directly used for parent aggregation
+        // PASS ANY with zero results → no passes → STOPPED
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ANY_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: 'PASS' }); // CONTINUE does not feed deferredResults
+        expect(actor.getSnapshot().context.deferredResults).toEqual([]);
+        // Parent ANY over empty = no passes → STOPPED
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+    });
+
+    describe('substepCompletedCount tracks all action types', () => {
+      it('DEFER increments substepCompletedCount', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().context.substepCompletedCount).toBe(1);
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().context.substepCompletedCount).toBe(2);
+      });
+
+      it('CONTINUE increments substepCompletedCount', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().context.substepCompletedCount).toBe(1);
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().context.substepCompletedCount).toBe(2);
+      });
+
+      it('mixed DEFER/CONTINUE: both increment count, only DEFER feeds results', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        actor.send({ type: 'PASS' }); // CONTINUE: count=1, deferredResults=[]
+        expect(actor.getSnapshot().context.substepCompletedCount).toBe(1);
+        expect(actor.getSnapshot().value).toBe('step::1::2');
+
+        actor.send({ type: 'FAIL' }); // DEFER: count=2, deferredResults=['fail']
+        expect(actor.getSnapshot().context.substepCompletedCount).toBe(2);
+        expect(actor.getSnapshot().context.deferredResults).toEqual(['fail']);
+      });
+    });
+
+    describe('FOR: NEXT and BREAK do not feed deferredResults', () => {
+      it('NEXT substep in FOR: does not populate deferredResults', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 2 },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: {
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+                },
+              },
+            ],
+          },
+          {
+            name: '2',
+            description: 'Done',
+            transitions: {
+              ...DEFAULT_TRANSITIONS,
+              pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            },
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Iteration 1: PASS → NEXT (deferredResults stays [])
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().context.deferredResults).toEqual([]);
+
+        // Iteration 2: FAIL → DEFER feeds 'fail'
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().context.deferredResults).toEqual(['fail']);
+      });
+
+      it('BREAK substep in FOR: does not populate deferredResults', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 3 },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: {
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
+                },
+              },
+            ],
+          },
+          {
+            name: '2',
+            description: 'Done',
+            transitions: {
+              ...DEFAULT_TRANSITIONS,
+              pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            },
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Iteration 1: PASS → DEFER feeds 'pass'
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
+
+        // Iteration 2: FAIL → BREAK (deferredResults for this iteration = [], NOT ['fail'])
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().context.deferredResults).toEqual([]);
+        // computeIterationResult([]) → vacuous pass → iteration results [pass, pass]
+        // PASS ALL with all pass → COMPLETE
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+    });
+
+    describe('asymmetric substep actions (pass vs fail use different actions)', () => {
+      it('PASS→DEFER, FAIL→CONTINUE: only pass events feed deferredResults', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: {
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Sub 2',
+                transitions: {
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Sub 1: FAIL → CONTINUE (no deferredResults entry)
+        actor.send({ type: 'FAIL' });
+        // Sub 2: PASS → DEFER feeds 'pass'
+        actor.send({ type: 'PASS' });
+        expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
+        // PASS ALL over ['pass'] → pass → COMPLETE
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('PASS→CONTINUE, FAIL→DEFER: only fail events feed deferredResults', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            description: 'Parent',
+            transitions: PASS_ANY_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1',
+                transitions: {
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+                },
+              },
+              {
+                id: '2',
+                description: 'Sub 2',
+                transitions: {
+                  aggregation: 'ALL' as const,
+                  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                  fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+                },
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Sub 1: PASS → CONTINUE (no deferredResults entry)
+        actor.send({ type: 'PASS' });
+        // Sub 2: FAIL → DEFER feeds 'fail'
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().context.deferredResults).toEqual(['fail']);
+        // PASS ANY over ['fail'] → no passes → STOPPED
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+    });
+  });
+
+  describe('graph validation', () => {
+    it('compiles a multi-step runbook without graph validation errors', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'First',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          },
+        },
+        {
+          name: '2',
+          description: 'Second',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          },
+        },
+        {
+          name: '3',
+          description: 'Third',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      // Should not throw — all targets resolve to valid states
+      expect(() => compileRunbookToMachine(steps)).not.toThrow();
+    });
+
+    it('throws on GOTO to nonexistent step instead of silently routing', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Only step',
+          transitions: {
+            aggregation: 'ALL' as const,
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: 'nonexistent' } },
+            },
+            fail: DEFAULT_TRANSITIONS.fail,
+          },
+        },
+      ]);
+
+      expect(() => compileRunbookToMachine(steps)).toThrow(/GOTO target step .* does not exist/);
+    });
+
+    it('throws when NEXT appears as parent-step action', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Step with substeps',
+          substeps: [
+            { id: '1', description: 'Sub 1' },
+            { id: '2', description: 'Sub 2' },
+          ],
+          transitions: {
+            aggregation: 'ALL' as const,
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'NEXT' as const },
+            },
+            fail: DEFAULT_TRANSITIONS.fail,
+          },
+        },
+        {
+          name: '2',
+          description: 'Second step',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      expect(() => compileRunbookToMachine(steps)).toThrow(/invariant violation/);
+    });
+
+    it('throws on duplicate state IDs', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'First step',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+        {
+          name: '1',
+          description: 'Duplicate step name',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      expect(() => compileRunbookToMachine(steps)).toThrow(/duplicate state ID/);
     });
   });
 });

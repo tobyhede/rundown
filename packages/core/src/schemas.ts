@@ -1,5 +1,9 @@
 import { z } from 'zod';
+import type { FrameKey } from './runbook/targeting.js';
 import type { JsonValue } from './runbook/types.js';
+
+/** Zod schema that parses strings and brands them as {@link FrameKey}. */
+const FrameKeySchema = z.string().transform((v) => v as FrameKey);
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -169,6 +173,7 @@ export const StepDelegationSchema = z.object({
  */
 const SubstepStateSchema = z.object({
   id: z.string(),
+  frameKey: FrameKeySchema,
   status: z.enum(['pending', 'running', 'done']),
   result: z.enum(['pass', 'fail']).optional(),
   delegation: StepDelegationSchema.optional(),
@@ -180,7 +185,7 @@ const ResolvedCompletionSchema = z.object({
   targetStep: z.string(),
   targetSubstep: z.string().optional(),
   targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
-  targetFrameKey: z.string(),
+  targetFrameKey: FrameKeySchema,
   targetEntry: z.number().int().positive().max(MAX_FOR_BOUND),
   completedAt: z.string(),
 });
@@ -275,7 +280,7 @@ export const RunbookStateSchema = z
     ),
     resolvedCompletions: z.record(z.string(), ResolvedCompletionSchema).optional(),
     frameEntries: z.record(z.string(), z.number().int().positive().max(MAX_FOR_BOUND)).optional(),
-    activeFrameKey: z.string().optional(),
+    activeFrameKey: FrameKeySchema.optional(),
     activeEntry: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
     substepStates: z.array(SubstepStateSchema).optional(),
     delegation: z
@@ -284,7 +289,7 @@ export const RunbookStateSchema = z
         parentStepId: z.string(),
         tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
         parentStep: z.string().optional(),
-        parentFrameKey: z.string().optional(),
+        parentFrameKey: FrameKeySchema.optional(),
         parentEntry: z.number().int().positive().optional(),
       })
       .optional(),

@@ -2,6 +2,7 @@ import { describe, it, expect } from '@jest/globals';
 import { createDelegation } from '../../src/runbook/delegation-service.js';
 import type { DelegateOptions } from '../../src/runbook/delegation-service.js';
 import { hashDelegationToken, TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, Step, AncestorSnapshot } from '../../src/runbook/types.js';
 
 /** Helper: create minimal RunbookState for testing. */
@@ -18,8 +19,8 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     startedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',
     substepStates: [
-      { id: '1', status: 'pending' },
-      { id: '2', status: 'pending' },
+      { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
+      { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
     ],
     templateVars: { env: 'staging' },
     ...overrides,
@@ -60,6 +61,7 @@ describe('createDelegation', () => {
       state,
       stepId: '1.1',
       childRunbookPath: 'child.md',
+      frameKey: buildFrameKey('1'),
     };
 
     const result = createDelegation(options, steps);
@@ -73,7 +75,10 @@ describe('createDelegation', () => {
   it('returns a token with correct format', () => {
     const state = makeState();
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.token.startsWith(TOKEN_PREFIX)).toBe(true);
     expect(result.token.length).toBe(37);
@@ -82,7 +87,10 @@ describe('createDelegation', () => {
   it('returns hash that matches token', () => {
     const state = makeState();
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.tokenHash).toBe(hashDelegationToken(result.token));
   });
@@ -90,7 +98,10 @@ describe('createDelegation', () => {
   it('delegation has correct fields', () => {
     const state = makeState();
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.delegation.childRunbookPath).toBe('child.md');
     expect(result.delegation.childRunId).toBeNull();
@@ -104,7 +115,10 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     expect(() =>
-      createDelegation({ state, stepId: '99.1', childRunbookPath: 'child.md' }, steps),
+      createDelegation(
+        { state, stepId: '99.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        steps,
+      ),
     ).toThrow(/step not found/i);
   });
 
@@ -113,7 +127,10 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     expect(() =>
-      createDelegation({ state, stepId: '1', childRunbookPath: 'child.md' }, steps),
+      createDelegation(
+        { state, stepId: '1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        steps,
+      ),
     ).toThrow(/substep.*required/i);
   });
 
@@ -125,7 +142,10 @@ describe('createDelegation', () => {
     ] as readonly Step[];
 
     expect(() =>
-      createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps),
+      createDelegation(
+        { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        steps,
+      ),
     ).toThrow(/not at execution frontier/i);
   });
 
@@ -140,14 +160,22 @@ describe('createDelegation', () => {
     };
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'pending', delegation: existingDelegation },
-        { id: '2', status: 'pending' },
+        {
+          id: '1',
+          frameKey: buildFrameKey('1'),
+          status: 'pending',
+          delegation: existingDelegation,
+        },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
       ],
     });
     const steps = makeSteps();
 
     expect(() =>
-      createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps),
+      createDelegation(
+        { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        steps,
+      ),
     ).toThrow(/active delegation exists/i);
   });
 
@@ -162,13 +190,16 @@ describe('createDelegation', () => {
     };
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'pending', delegation: claimedDelegation },
-        { id: '2', status: 'pending' },
+        { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation: claimedDelegation },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
       ],
     });
     const steps = makeSteps();
 
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.token).toBeDefined();
     const updated = result.updatedSubstepStates.find((ss) => ss.id === '1');
@@ -187,13 +218,21 @@ describe('createDelegation', () => {
     };
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'pending', delegation: cancelledDelegation },
-        { id: '2', status: 'pending' },
+        {
+          id: '1',
+          frameKey: buildFrameKey('1'),
+          status: 'pending',
+          delegation: cancelledDelegation,
+        },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
       ],
     });
     const steps = makeSteps();
 
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.token).toBeDefined();
     // The updated substep should have the new delegation
@@ -205,7 +244,10 @@ describe('createDelegation', () => {
   it('captures state.templateVars in context snapshot', () => {
     const state = makeState({ templateVars: { env: 'prod', version: '2.0' } });
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.delegation.contextSnapshot.vars).toEqual({
       env: 'prod',
@@ -226,7 +268,13 @@ describe('createDelegation', () => {
     const state = makeState();
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', ancestors },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        ancestors,
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -243,6 +291,7 @@ describe('createDelegation', () => {
         stepId: '1.1',
         childRunbookPath: 'child.md',
         extraVars: { version: '3.0', env: 'override' },
+        frameKey: buildFrameKey('1'),
       },
       steps,
     );
@@ -256,12 +305,15 @@ describe('createDelegation', () => {
   it('preserves existing substepStates when adding delegation', () => {
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'running' },
-        { id: '2', status: 'pending' },
+        { id: '1', frameKey: buildFrameKey('1'), status: 'running' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
       ],
     });
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.2', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     // Substep 1 should be untouched
     const ss1 = result.updatedSubstepStates.find((ss) => ss.id === '1');
@@ -289,7 +341,10 @@ describe('createDelegation', () => {
       ],
     });
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.2', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 3) },
+      steps,
+    );
 
     expect(result.delegation.contextSnapshot.step).toBe('1');
     expect(result.delegation.contextSnapshot.substep).toBe('2');
@@ -297,10 +352,29 @@ describe('createDelegation', () => {
     expect(result.delegation.contextSnapshot.index).toBe(3);
   });
 
+  it('snapshot uses delegation target substep, not cursor', () => {
+    const state = makeState({
+      step: '1',
+      substep: '1', // cursor is on substep 1
+    });
+    const steps = makeSteps();
+    const result = createDelegation(
+      { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
+
+    // snapshot should reflect the delegation target (substep 2), not cursor (substep 1)
+    expect(result.delegation.contextSnapshot.substep).toBe('2');
+    expect(result.delegation.contextSnapshot.at).toBe('1.2');
+  });
+
   it('omits index from snapshot when not in a FOR loop', () => {
     const state = makeState();
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.delegation.contextSnapshot.step).toBe('1');
     expect(result.delegation.contextSnapshot.index).toBeUndefined();
@@ -311,7 +385,10 @@ describe('createDelegation', () => {
       substepStates: undefined,
     });
     const steps = makeSimpleSteps();
-    const result = createDelegation({ state, stepId: '1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.token).toBeDefined();
     // Should create a synthetic substep state entry
@@ -325,7 +402,10 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     expect(() =>
-      createDelegation({ state, stepId: 'invalid', childRunbookPath: 'child.md' }, steps),
+      createDelegation(
+        { state, stepId: 'invalid', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        steps,
+      ),
     ).toThrow(/step not found/i);
   });
 
@@ -335,14 +415,20 @@ describe('createDelegation', () => {
 
     // parseStepIdFromString should reject this format
     expect(() =>
-      createDelegation({ state, stepId: '1.2.3', childRunbookPath: 'child.md' }, steps),
+      createDelegation(
+        { state, stepId: '1.2.3', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        steps,
+      ),
     ).toThrow(/step not found/i);
   });
 
   it('captures empty templateVars when state has none', () => {
     const state = makeState({ templateVars: undefined });
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.delegation.contextSnapshot.vars).toEqual({});
   });
@@ -358,14 +444,14 @@ describe('createDelegation', () => {
     };
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'done', delegation: completedDelegation },
-        { id: '2', status: 'pending' },
+        { id: '1', frameKey: buildFrameKey('1'), status: 'done', delegation: completedDelegation },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
       ],
     });
     const steps = makeSteps();
 
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'new-child.md' },
+      { state, stepId: '1.1', childRunbookPath: 'new-child.md', frameKey: buildFrameKey('1') },
       steps,
     );
 
@@ -385,6 +471,7 @@ describe('createDelegation', () => {
         stepId: '1.1',
         childRunbookPath: 'child.md',
         extraVars: { env: 'production', tier: 'premium' },
+        frameKey: buildFrameKey('1'),
       },
       steps,
     );
@@ -398,12 +485,15 @@ describe('createDelegation', () => {
   it('preserves all existing substep properties when adding delegation', () => {
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'running' },
-        { id: '2', status: 'pending' },
+        { id: '1', frameKey: buildFrameKey('1'), status: 'running' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
       ],
     });
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.2', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     const ss1 = result.updatedSubstepStates.find((ss) => ss.id === '1');
     expect(ss1?.status).toBe('running');
@@ -416,20 +506,20 @@ describe('createDelegation', () => {
   it('tokens are unique across multiple delegations', () => {
     const state = makeState({
       substepStates: [
-        { id: '1', status: 'pending' },
-        { id: '2', status: 'pending' },
+        { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
       ],
     });
     const steps = makeSteps();
 
     const result1 = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child1.md' },
+      { state, stepId: '1.1', childRunbookPath: 'child1.md', frameKey: buildFrameKey('1') },
       steps,
     );
 
     // Create delegation on different substep
     const result2 = createDelegation(
-      { state, stepId: '1.2', childRunbookPath: 'child2.md' },
+      { state, stepId: '1.2', childRunbookPath: 'child2.md', frameKey: buildFrameKey('1') },
       steps,
     );
 
@@ -453,7 +543,10 @@ describe('createDelegation', () => {
       ],
     });
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.delegation.contextSnapshot.index).toBe(5);
     expect(result.delegation.contextSnapshot.at).toBe('1.5.1');
@@ -462,17 +555,24 @@ describe('createDelegation', () => {
   it('omits index from snapshot when forStack is empty', () => {
     const state = makeState({ forStack: [] });
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
     expect(result.delegation.contextSnapshot.index).toBeUndefined();
   });
 
-  it('handles null substep in state', () => {
+  it('snapshot substep reflects delegation target even when cursor has no substep', () => {
     const state = makeState({ substep: undefined });
     const steps = makeSteps();
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
 
-    expect(result.delegation.contextSnapshot.substep).toBeUndefined();
+    // snapshot should reflect the delegation target substep, not the cursor
+    expect(result.delegation.contextSnapshot.substep).toBe('1');
   });
 
   it('handles ancestors with empty vars', () => {
@@ -486,7 +586,13 @@ describe('createDelegation', () => {
     const state = makeState();
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', ancestors: [ancestor] },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        ancestors: [ancestor],
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -498,12 +604,80 @@ describe('createDelegation', () => {
     const state = makeState();
     const steps = makeSteps();
     const before = new Date();
-    const result = createDelegation({ state, stepId: '1.1', childRunbookPath: 'child.md' }, steps);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
     const after = new Date();
 
     const createdAt = new Date(result.delegation.createdAt);
     expect(createdAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(createdAt.getTime()).toBeLessThanOrEqual(after.getTime());
     expect(result.delegation.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  });
+
+  it('sets frameKey on created substep states when frameKey is provided', () => {
+    const state = makeState({
+      substepStates: [
+        { id: '1', frameKey: buildFrameKey('1', 2), status: 'pending' },
+        { id: '2', frameKey: buildFrameKey('1', 2), status: 'pending' },
+      ],
+    });
+    const steps = makeSteps();
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      steps,
+    );
+
+    const ss = result.updatedSubstepStates.find(
+      (s) => s.id === '1' && s.frameKey === buildFrameKey('1', 2),
+    );
+    expect(ss?.frameKey).toBe(buildFrameKey('1', 2));
+    expect(ss?.delegation).toBeDefined();
+  });
+
+  it('allows delegation on iteration 2 when iteration 1 has active delegation', () => {
+    const delegation1 = {
+      tokenHash: `sha256:${'a'.repeat(64)}`,
+      childRunbookPath: 'child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: null,
+      createdAt: '2026-02-27T10:00:00.000Z',
+      cancelledAt: null,
+    };
+    const state = makeState({
+      substepStates: [
+        { id: '1', frameKey: buildFrameKey('1', 1), status: 'pending', delegation: delegation1 },
+        { id: '2', frameKey: buildFrameKey('1', 1), status: 'pending' },
+      ],
+    });
+    const steps = makeSteps();
+
+    // Delegate on iteration 2 — should succeed even though iteration 1 has active delegation
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      steps,
+    );
+
+    expect(result.token).toBeDefined();
+    // Should append a new entry for iteration 2
+    expect(result.updatedSubstepStates).toHaveLength(3);
+    const iter2 = result.updatedSubstepStates.find(
+      (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1', 2),
+    );
+    expect(iter2?.delegation?.childRunbookPath).toBe('child.md');
+    expect(iter2?.delegation?.childRunId).toBeNull();
+  });
+
+  it('appends new entry for synthetic step when frameKey is provided', () => {
+    const state = makeState({ substepStates: undefined });
+    const steps = makeSimpleSteps();
+    const result = createDelegation(
+      { state, stepId: '1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 3) },
+      steps,
+    );
+
+    expect(result.updatedSubstepStates).toHaveLength(1);
+    expect(result.updatedSubstepStates[0].frameKey).toBe(buildFrameKey('1', 3));
   });
 });

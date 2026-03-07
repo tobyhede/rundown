@@ -163,7 +163,7 @@ export function registerAbortCommand(program: Command): void {
             throw Errors.tokenNotFound(token);
           }
 
-          const { parentState, substepId } = scanResult;
+          const { parentState, substepId, frameKey: scanFrameKey } = scanResult;
           const targetSubstepId = substepId ?? scanResult.stepId;
           const lock = new DelegationLock(cwd);
 
@@ -190,18 +190,14 @@ export function registerAbortCommand(program: Command): void {
               throw Errors.tokenNotFound(token);
             }
 
-            // Re-locate delegation on fresh state and verify token hash
+            // Re-locate delegation on fresh state by tokenHash (precise match)
+            const tokenHash = hashDelegationToken(token);
             const freshSubstep = (freshParent.substepStates ?? []).find(
-              (ss) => ss.id === targetSubstepId,
+              (ss) => ss.id === targetSubstepId && ss.delegation?.tokenHash === tokenHash,
             );
             const freshDelegation = freshSubstep?.delegation;
 
             if (!freshDelegation) {
-              throw Errors.tokenNotFound(token);
-            }
-
-            const tokenHash = hashDelegationToken(token);
-            if (freshDelegation.tokenHash !== tokenHash) {
               throw Errors.tokenNotFound(token);
             }
 
@@ -220,11 +216,12 @@ export function registerAbortCommand(program: Command): void {
               }
             }
 
-            // 6. Call abortDelegation() pure function
+            // 6. Call abortDelegation() pure function (frame-scoped)
             abortResult = abortDelegation({
               parentState: freshParent,
               substepId: targetSubstepId,
               force: options.force,
+              frameKey: scanFrameKey,
             });
 
             // 7. Handle early-exit results (already_cancelled, needs_force)

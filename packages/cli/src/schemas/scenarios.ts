@@ -15,6 +15,7 @@ export const StepAssertionSchema = z.object({
     .optional(),
   result: z.enum(['PASS', 'FAIL']).optional(),
   command: z.string().optional(),
+  aggregated: z.boolean().optional(),
 });
 
 /** A parsed step assertion used to match against captured transition events. */

@@ -39,13 +39,13 @@ export interface ForLoopConfig {
   // Layer 2: iteration transitions (forClause.transitions)
   iterationPassAction: IterationAction;
   iterationFailAction: IterationAction;
-  iterationAggMode: boolean; // true=ALL, false=ANY
+  iterationAggMode: 'ALL' | 'ANY' | 'none'; // aggregation discriminant
   iterationFailRetry: number; // 0–2
 
   // Layer 3: parent aggregation (step.transitions)
   parentPassAction: ParentAction;
   parentFailAction: ParentAction;
-  parentAggMode: boolean; // true=ALL, false=ANY
+  parentAggMode: 'ALL' | 'ANY' | 'none'; // aggregation discriminant
   parentFailRetry: number; // 0–2
 }
 
@@ -77,13 +77,13 @@ function makeTransitionObject(kind: 'pass' | 'fail', action: string, retry = 0):
 }
 
 function makeTransitions(
-  all: boolean,
+  aggregation: 'ALL' | 'ANY' | 'none',
   passAction: string,
   failAction: string,
   failRetry = 0,
 ): Transitions {
   return {
-    all,
+    aggregation,
     pass: makeTransitionObject('pass', passAction),
     fail: makeTransitionObject('fail', failAction, failRetry),
   };
@@ -99,7 +99,7 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
       id: String(i),
       description: `Substep ${String(i)}`,
       transitions: makeTransitions(
-        true,
+        'ALL',
         config.substepPassAction,
         config.substepFailAction,
         config.substepFailRetry,
@@ -135,7 +135,7 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
     name: '2',
     description: 'Terminal',
     transitions: {
-      all: true,
+      aggregation: 'ALL',
       pass: makeTransitionObject('pass', 'COMPLETE'),
       fail: makeTransitionObject('fail', 'STOP'),
     },
@@ -281,33 +281,28 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
       // Iteration retry loop
       let iterResult: 'pass' | 'fail' = 'fail';
       for (let iterRetry = 0; iterRetry <= config.iterationFailRetry; iterRetry++) {
-        const substepResults: ('pass' | 'fail')[] = [];
+        const deferredResults: ('pass' | 'fail')[] = [];
         let earlyExit: 'BREAK' | 'NEXT' | 'STOP' | 'COMPLETE' | null = null;
 
         // Substep loop
         for (let sub = 0; sub < config.numSubsteps; sub++) {
           let event = nextEvent();
           let substepAction: SubstepAction = config.substepFailAction;
+          let kind: 'pass' | 'fail' = 'fail';
 
           if (event === 'PASS') {
             substepAction = config.substepPassAction;
-            substepResults.push('pass');
+            kind = 'pass';
           } else {
             // Handle substep fail retry
-            let retried = false;
             for (let r = 0; r < config.substepFailRetry; r++) {
               // Retry: consume next event
               event = nextEvent();
               if (event === 'PASS') {
                 substepAction = config.substepPassAction;
-                substepResults.push('pass');
-                retried = true;
+                kind = 'pass';
                 break;
               }
-            }
-            if (!retried) {
-              substepAction = config.substepFailAction;
-              substepResults.push('fail');
             }
           }
 
@@ -322,12 +317,15 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
             earlyExit = 'NEXT';
             break;
           }
-          // CONTINUE or DEFER: advance to next substep (DEFER propagates result to parent)
+          // Only DEFER contributes to aggregation; CONTINUE is flow control only
+          if (substepAction === 'DEFER') {
+            deferredResults.push(kind);
+          }
         }
 
-        // Aggregate substep results for this iteration using iteration-level aggregation
-        const hasFailed = substepResults.some((r) => r === 'fail');
-        const passCount = substepResults.filter((r) => r === 'pass').length;
+        // Aggregate deferred results for this iteration using iteration-level aggregation
+        const hasFailed = deferredResults.some((r) => r === 'fail');
+        const passCount = deferredResults.filter((r) => r === 'pass').length;
         iterResult = shouldAggregationPass(hasFailed, passCount, config.iterationAggMode)
           ? 'pass'
           : 'fail';
@@ -367,7 +365,13 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
           return aggregateParent(config, allIterationResults, iterResult);
         }
 
-        // CONTINUE: record result and proceed to next iteration
+        // CONTINUE exits the loop (goes to next step)
+        if (iterAction === 'CONTINUE') {
+          allIterationResults.push(iterResult);
+          return aggregateParent(config, allIterationResults, iterResult);
+        }
+
+        // DEFER: record result and proceed to next iteration (loop back with accumulation)
         break; // break out of iteration retry loop
       }
 

@@ -25,9 +25,23 @@ import { PolicyConfigTrustRequiredError, setColorEnabled } from '@rundown-org/co
 import { initializePolicyContext, parsePolicyCliOptions } from './services/policy-context.js';
 import { outputCommandSchema } from './services/schema-service.js';
 
+import { fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
+
+// Detect whether this module is the CLI entry point (vs imported for createProgram)
+const isEntryPoint = (() => {
+  try {
+    const thisFile = realpathSync(fileURLToPath(import.meta.url));
+    const mainFile = realpathSync(process.argv[1] ?? '');
+    return thisFile === mainFile;
+  } catch {
+    return false;
+  }
+})();
+
 // Handle --schema flag early, before Commander parses arguments
 // This allows schema output without requiring command arguments
-if (process.argv.includes('--schema')) {
+if (isEntryPoint && process.argv.includes('--schema')) {
   // Extract command name(s) from argv (skip node, script, and flags)
   const args = process.argv.slice(2).filter((arg) => !arg.startsWith('-'));
   const commandName = args.join(' ');
@@ -41,72 +55,86 @@ if (process.argv.includes('--schema')) {
   }
 }
 
-const program = new Command();
+/**
+ * Create and configure the Commander program with all commands and hooks.
+ * Extracted as a factory for in-process test execution.
+ *
+ * @returns Configured Commander program (not yet parsed)
+ */
+export function createProgram(): Command {
+  const program = new Command();
 
-program.name('rundown').description('Runbook orchestration CLI').version('1.0.0');
+  program.name('rundown').description('Runbook orchestration CLI').version('1.0.0');
 
-// Display options
-program.option('--no-color', 'Disable colored output');
-program.option('--schema', "Output JSON schema for command's --json output");
+  // Display options
+  program.option('--no-color', 'Disable colored output');
+  program.option('--schema', "Output JSON schema for command's --json output");
 
-// Policy options
-program
-  .option('--allow-run <commands>', 'Allow specific commands (comma-separated)')
-  .option('--allow-read <paths>', 'Allow reading specific paths (comma-separated)')
-  .option('--allow-write <paths>', 'Allow writing to specific paths (comma-separated)')
-  .option('--allow-env <vars>', 'Allow specific environment variables (comma-separated)')
-  .option('--allow-all', 'Allow all operations (bypass policy)')
-  .option('--deny-all', 'Deny all operations')
-  .option('--policy <file>', 'Path to policy configuration file')
-  .option('--trust-js-policy', 'Trust executable JavaScript policy config files')
-  .option('-y, --yes', 'Skip confirmation prompts')
-  .option('--non-interactive', 'Non-interactive mode (no prompts, CI-friendly)')
-  // Sandbox options
-  .option('--sandbox', 'Enable OS-level sandbox for file access enforcement')
-  .option('--no-sandbox', 'Disable sandbox enforcement (trust mode)')
-  .option('--sandbox-strict', 'Fail if sandbox is unavailable (strict mode)');
+  // Policy options
+  program
+    .option('--allow-run <commands>', 'Allow specific commands (comma-separated)')
+    .option('--allow-read <paths>', 'Allow reading specific paths (comma-separated)')
+    .option('--allow-write <paths>', 'Allow writing to specific paths (comma-separated)')
+    .option('--allow-env <vars>', 'Allow specific environment variables (comma-separated)')
+    .option('--allow-all', 'Allow all operations (bypass policy)')
+    .option('--deny-all', 'Deny all operations')
+    .option('--policy <file>', 'Path to policy configuration file')
+    .option('--trust-js-policy', 'Trust executable JavaScript policy config files')
+    .option('-y, --yes', 'Skip confirmation prompts')
+    .option('--non-interactive', 'Non-interactive mode (no prompts, CI-friendly)')
+    // Sandbox options
+    .option('--sandbox', 'Enable OS-level sandbox for file access enforcement')
+    .option('--no-sandbox', 'Disable sandbox enforcement (trust mode)')
+    .option('--sandbox-strict', 'Fail if sandbox is unavailable (strict mode)');
 
-// Initialize policy before subcommands
-program.hook('preSubcommand', async (thisCommand) => {
-  const opts = thisCommand.opts();
-  const policyOpts = parsePolicyCliOptions(opts);
-  await initializePolicyContext(policyOpts, process.cwd());
-});
+  // Initialize policy before subcommands
+  program.hook('preSubcommand', async (thisCommand) => {
+    const opts = thisCommand.opts();
+    const policyOpts = parsePolicyCliOptions(opts);
+    await initializePolicyContext(policyOpts, process.cwd());
+  });
 
-program.hook('preAction', (thisCommand) => {
-  const opts = thisCommand.opts();
-  if (opts.color === false) {
-    setColorEnabled(false);
-  }
-});
+  program.hook('preAction', (thisCommand) => {
+    const opts = thisCommand.opts();
+    if (opts.color === false) {
+      setColorEnabled(false);
+    }
+  });
 
-registerRunCommand(program);
-registerPassCommand(program);
-registerFailCommand(program);
-registerCompleteCommand(program);
-registerGotoCommand(program);
-registerStatusCommand(program);
-registerStopCommand(program);
-registerLsCommand(program);
-registerStashCommand(program);
-registerPopCommand(program);
-registerEchoCommand(program);
-registerCheckCommand(program);
-registerPruneCommand(program);
-registerPromptCommand(program);
-registerScenariosCommand(program);
-registerScenarioSuiteCommand(program);
-registerDelegateCommand(program);
-registerClaimCommand(program);
-registerAbortCommand(program);
+  registerRunCommand(program);
+  registerPassCommand(program);
+  registerFailCommand(program);
+  registerCompleteCommand(program);
+  registerGotoCommand(program);
+  registerStatusCommand(program);
+  registerStopCommand(program);
+  registerLsCommand(program);
+  registerStashCommand(program);
+  registerPopCommand(program);
+  registerEchoCommand(program);
+  registerCheckCommand(program);
+  registerPruneCommand(program);
+  registerPromptCommand(program);
+  registerScenariosCommand(program);
+  registerScenarioSuiteCommand(program);
+  registerDelegateCommand(program);
+  registerClaimCommand(program);
+  registerAbortCommand(program);
 
-program.parseAsync().catch((error: unknown) => {
-  if (error instanceof PolicyConfigTrustRequiredError) {
-    console.error(error.message);
-  } else if (error instanceof Error) {
-    console.error(error.message);
-  } else {
-    console.error(String(error));
-  }
-  process.exit(1);
-});
+  return program;
+}
+
+// Only auto-run when invoked as entry point
+if (isEntryPoint) {
+  const program = createProgram();
+  program.parseAsync().catch((error: unknown) => {
+    if (error instanceof PolicyConfigTrustRequiredError) {
+      console.error(error.message);
+    } else if (error instanceof Error) {
+      console.error(error.message);
+    } else {
+      console.error(String(error));
+    }
+    process.exit(1);
+  });
+}

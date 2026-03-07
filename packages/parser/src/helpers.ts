@@ -1,4 +1,9 @@
-import { RunbookSyntaxError, type ParsedConditional, type AggregationModifier } from './types.js';
+import {
+  RunbookSyntaxError,
+  type ParsedConditional,
+  type ParseConditionalResult,
+  type AggregationModifier,
+} from './types.js';
 import type { Action, Transitions } from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
 import {
@@ -516,33 +521,12 @@ function parseConditionalPrefix(
   type: 'pass' | 'fail' | 'yes' | 'no',
 ): ParsedConditional | null {
   let modifier: AggregationModifier = null;
-  let hasAwait = false;
   let remaining = rest;
 
-  const modifierMatch = /^\s+(ALL|ANY)(?:\s+(AWAIT))?[\s:→-]/.exec(remaining);
+  const modifierMatch = /^\s+(ALL|ANY)[\s:→-]/.exec(remaining);
   if (modifierMatch) {
     modifier = modifierMatch[1] as 'ALL' | 'ANY';
-    hasAwait = !!modifierMatch[2];
     remaining = remaining.slice(modifierMatch[0].length);
-  }
-
-  // Validate: AWAIT requires ANY, ALL AWAIT is invalid
-  if (hasAwait && modifier === 'ALL') {
-    throw new RunbookSyntaxError(
-      'AWAIT is only valid with ANY (e.g., FAIL ANY AWAIT: STOP). ' +
-        'ALL already waits for all substeps by nature.',
-    );
-  }
-
-  // Reject bare AWAIT without ALL/ANY (e.g., "FAIL AWAIT: STOP")
-  if (!modifier) {
-    const awaitOnly = /^\s+AWAIT[\s:→-]/.exec(remaining);
-    if (awaitOnly) {
-      throw new RunbookSyntaxError(
-        'AWAIT requires explicit ANY modifier (e.g., FAIL ANY AWAIT: STOP). ' +
-          'Write FAIL ANY AWAIT: STOP instead of FAIL AWAIT: STOP.',
-      );
-    }
   }
 
   const actionStr = stripSeparator(remaining);
@@ -570,7 +554,7 @@ function parseConditionalPrefix(
     return null;
   }
 
-  return { type, retry, action, modifier, ...(hasAwait && { await: true }), raw: actionStr };
+  return { type, retry, action, modifier, raw: actionStr };
 }
 
 /**
@@ -580,13 +564,22 @@ function parseConditionalPrefix(
  * - PASS/YES: triggers on step success (e.g., "PASS: CONTINUE", "YES → GOTO 2")
  * - FAIL/NO: triggers on step failure (e.g., "FAIL: STOP", "NO → RETRY 3")
  * - With aggregation: "PASS ALL: CONTINUE", "FAIL ANY: STOP"
+ * - Standalone DEFER: shorthand for PASS: DEFER + FAIL: DEFER
  *
  * @param text - The conditional line to parse
- * @returns Parsed conditional with type, action, and optional modifier, or null if not a conditional
+ * @returns Parsed conditional (single or array for DEFER shorthand), or null if not a conditional
  * @throws {RunbookSyntaxError} If the line starts with PASS/FAIL/YES/NO but has invalid action
  */
-export function parseConditional(text: string): ParsedConditional | null {
+export function parseConditional(text: string): ParseConditionalResult {
   const trimmed = text.trim();
+
+  // Standalone DEFER shorthand: expands to PASS: DEFER + FAIL: DEFER
+  if (trimmed === 'DEFER') {
+    return [
+      { type: 'pass', retry: 0, action: { type: 'DEFER' }, modifier: null, raw: 'DEFER' },
+      { type: 'fail', retry: 0, action: { type: 'DEFER' }, modifier: null, raw: 'DEFER' },
+    ];
+  }
 
   if (trimmed.startsWith('PASS')) {
     const result = parseConditionalPrefix(trimmed.slice(4), 'pass');
@@ -626,22 +619,22 @@ export function parseConditional(text: string): ParsedConditional | null {
 function resolveAggregationMode(
   passModifier: AggregationModifier,
   failModifier: AggregationModifier,
-): boolean {
+): 'ALL' | 'ANY' | 'none' {
   if (passModifier && failModifier) {
-    if (passModifier === 'ALL' && failModifier === 'ANY') return true;
-    if (passModifier === 'ANY' && failModifier === 'ALL') return false;
+    if (passModifier === 'ALL' && failModifier === 'ANY') return 'ALL';
+    if (passModifier === 'ANY' && failModifier === 'ALL') return 'ANY';
     throw new RunbookSyntaxError(
       `Invalid aggregation combination: PASS ${passModifier} + FAIL ${failModifier}. ` +
         `Valid: PASS ALL + FAIL ANY (pessimistic) or PASS ANY + FAIL ALL (optimistic)`,
     );
   }
 
-  if (passModifier === 'ALL') return true;
-  if (passModifier === 'ANY') return false;
-  if (failModifier === 'ANY') return true;
-  if (failModifier === 'ALL') return false;
+  if (passModifier === 'ALL') return 'ALL';
+  if (passModifier === 'ANY') return 'ANY';
+  if (failModifier === 'ANY') return 'ALL';
+  if (failModifier === 'ALL') return 'ANY';
 
-  return true;
+  return 'none';
 }
 
 /**
@@ -688,8 +681,6 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
   let failRetry = 0;
   let passModifier: AggregationModifier = null;
   let failModifier: AggregationModifier = null;
-  let passAwait = false;
-  let failAwait = false;
   let passKind: 'pass' | 'yes' = 'pass';
   let failKind: 'fail' | 'no' = 'fail';
 
@@ -700,28 +691,18 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
       passAction = conditional.action;
       passRetry = conditional.retry;
       passModifier = conditional.modifier;
-      passAwait = !!conditional.await;
       passKind = conditional.type;
     } else {
       failAction = conditional.action;
       failRetry = conditional.retry;
       failModifier = conditional.modifier;
-      failAwait = !!conditional.await;
       failKind = conditional.type;
     }
   }
 
-  const all = resolveAggregationMode(passModifier, failModifier);
-  const modifierImplicit =
-    passModifier === null && failModifier === null ? (true as const) : undefined;
-  // AWAIT on either side defers both transitions (complementary pairs share the trigger)
-  const hasAwait = passAwait || failAwait;
+  const aggregation = resolveAggregationMode(passModifier, failModifier);
 
-  const base = {
-    all,
-    ...(modifierImplicit && { modifierImplicit }),
-    ...(hasAwait && { await: true as const }),
-  };
+  const base = { aggregation };
 
   if (passAction && failAction) {
     return {

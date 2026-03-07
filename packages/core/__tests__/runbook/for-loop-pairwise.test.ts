@@ -36,10 +36,10 @@ const factors: Record<string, unknown[]> = {
   substepPassAction: ['CONTINUE', 'NEXT'],
   substepFailAction: ['CONTINUE', 'BREAK', 'STOP'],
   substepFailRetry: [0, 1],
-  iterationAggMode: [true, false],
-  iterationFailAction: ['CONTINUE', 'BREAK'],
+  iterationAggMode: ['ALL', 'ANY', 'none'],
+  iterationFailAction: ['DEFER', 'BREAK'],
   iterationFailRetry: [0, 1],
-  parentAggMode: [true, false],
+  parentAggMode: ['ALL', 'ANY', 'none'],
   parentPassAction: ['CONTINUE', 'COMPLETE'],
   parentFailAction: ['STOP', 'COMPLETE'],
   parentFailRetry: [0, 1],
@@ -52,10 +52,10 @@ interface PairwiseRow {
   substepPassAction: string;
   substepFailAction: string;
   substepFailRetry: number;
-  iterationAggMode: boolean;
+  iterationAggMode: 'ALL' | 'ANY' | 'none';
   iterationFailAction: string;
   iterationFailRetry: number;
-  parentAggMode: boolean;
+  parentAggMode: 'ALL' | 'ANY' | 'none';
   parentPassAction: string;
   parentFailAction: string;
   parentFailRetry: number;
@@ -79,8 +79,8 @@ function rowToConfig(row: PairwiseRow): ForLoopConfig {
     substepPassAction: row.substepPassAction as SubstepAction,
     substepFailAction: row.substepFailAction as SubstepAction,
     substepFailRetry: row.substepFailRetry,
-    // Iteration pass action defaults to CONTINUE (not varied in pairwise)
-    iterationPassAction: 'CONTINUE' as IterationAction,
+    // Iteration pass action defaults to DEFER (loops back with accumulation)
+    iterationPassAction: 'DEFER' as IterationAction,
     iterationFailAction: row.iterationFailAction as IterationAction,
     iterationAggMode: row.iterationAggMode,
     iterationFailRetry: row.iterationFailRetry,

@@ -1,5 +1,13 @@
 import type { StepPosition } from '../cli/types.js';
-import type { ForContext, ResolvedCompletion, RunbookState } from './types.js';
+import type { ForContext, ResolvedCompletion, RunbookState, SubstepState } from './types.js';
+
+/**
+ * Nominal string type for frame identity keys.
+ *
+ * Format: `<step>|<iteration-or-empty>` (e.g., `"1|"`, `"1|2"`).
+ * Construct only via {@link buildFrameKey} or {@link parseCompletionKey}.
+ */
+export type FrameKey = string & { readonly __brand: 'FrameKey' };
 
 /**
  * Derive execution location notation for runtime targets.
@@ -56,8 +64,9 @@ export function buildTargetKey(step: string, substep?: string, iteration?: numbe
  * @param iteration - Optional FOR loop iteration number
  * @returns Pipe-delimited frame key
  */
-export function buildFrameKey(step: string, iteration?: number): string {
-  return `${step}|${iteration !== undefined ? String(iteration) : ''}`;
+export function buildFrameKey(step: string, iteration?: number): FrameKey {
+  const iterationPart = iteration !== undefined ? String(iteration) : '';
+  return `${step}|${iterationPart}` as FrameKey;
 }
 
 /**
@@ -70,7 +79,7 @@ export function buildFrameKey(step: string, iteration?: number): string {
  * @param substep - Optional substep identifier
  * @returns Pipe-delimited completion key
  */
-export function buildCompletionKey(frameKey: string, entry: number, substep?: string): string {
+export function buildCompletionKey(frameKey: FrameKey, entry: number, substep?: string): string {
   return `${frameKey}|${String(entry)}|${substep ?? ''}`;
 }
 
@@ -82,14 +91,14 @@ export function buildCompletionKey(frameKey: string, entry: number, substep?: st
  */
 export function parseCompletionKey(
   key: string,
-): { frameKey: string; entry: number; substep?: string } | null {
+): { frameKey: FrameKey; entry: number; substep?: string } | null {
   const parts = key.split('|');
   if (parts.length !== 4) return null;
   const [step, iterationRaw, entryRaw, substepRaw] = parts;
   if (!step || !entryRaw) return null;
   const entry = Number.parseInt(entryRaw, 10);
   if (!Number.isFinite(entry) || entry < 1) return null;
-  const frameKey = `${step}|${iterationRaw}`;
+  const frameKey = `${step}|${iterationRaw}` as FrameKey;
   return {
     frameKey,
     entry,
@@ -123,7 +132,7 @@ export function getActiveForContext(
  * @returns Frame key, step, and optional iteration for the active frame
  */
 export function deriveActiveFrame(state: RunbookState): {
-  frameKey: string;
+  frameKey: FrameKey;
   step: string;
   iteration?: number;
 } {
@@ -179,7 +188,7 @@ export function buildResolvedCompletion(fields: {
   targetStep: string;
   targetSubstep?: string;
   targetIteration?: number;
-  targetFrameKey: string;
+  targetFrameKey: FrameKey;
   targetEntry: number;
   completedAt?: string;
 }): ResolvedCompletion {
@@ -193,4 +202,22 @@ export function buildResolvedCompletion(fields: {
     targetEntry: fields.targetEntry,
     completedAt: fields.completedAt ?? new Date().toISOString(),
   };
+}
+
+/**
+ * Find a SubstepState by `(id, frameKey)`.
+ *
+ * Strict match: both `id` and `frameKey` must equal.
+ *
+ * @param substepStates - Array of substep states to search
+ * @param substepId - Substep ID to match
+ * @param frameKey - Frame key to match
+ * @returns The matching SubstepState, or undefined
+ */
+export function findSubstepState(
+  substepStates: readonly SubstepState[],
+  substepId: string,
+  frameKey: FrameKey,
+): SubstepState | undefined {
+  return substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
 }

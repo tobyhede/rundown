@@ -250,6 +250,40 @@ cases:
       - rd run named-step-for-loop.runbook.md
     result: COMPLETE
 
+  # stash-pop/
+  stash-pop-basic-resumed:
+    description: Stash mid-execution, pop to resume, then complete
+    file: patterns/stash-pop/stash-pop-basic.runbook.md
+    commands:
+      - rd run --prompted stash-pop-basic.runbook.md
+      - rd pass
+      - rd stash
+      - rd pop
+      - rd pass
+    result: COMPLETE
+
+  stash-pop-interleave-completed:
+    description: Stash A, run B to completion, pop A and complete
+    file: patterns/stash-pop/stash-pop-interleave.runbook.md
+    commands:
+      - rd run --prompted stash-pop-interleave.runbook.md
+      - rd pass
+      - rd stash
+      - rd run stash-pop-interleave-child.runbook.md
+      - rd pop
+      - rd pass
+    result: COMPLETE
+
+  # delegation/ (cross-feature)
+  delegate-named-step-completed:
+    description: Named step delegates substep to child
+    file: patterns/delegation/delegate-named-step.runbook.md
+    commands:
+      - rd run delegate-named-step.runbook.md
+      - rd delegate delegation-child-pass.runbook.md --step Review.1
+      - rd claim ${TOKEN}
+    result: COMPLETE
+
   # composition/
   step-runbook-list-completed:
     description: All child workflows pass

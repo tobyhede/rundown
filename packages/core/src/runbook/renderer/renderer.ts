@@ -40,6 +40,18 @@ function renderTransitionAction(transition: TransitionObject): string {
 }
 
 /**
+ * Map an aggregation mode to its rendered modifier suffix.
+ *
+ * Pass and fail use inverted modifiers: when aggregation is ALL,
+ * PASS shows ALL but FAIL shows ANY (and vice-versa).
+ */
+function aggregationModifier(aggregation: 'ALL' | 'ANY' | 'none', kind: 'pass' | 'fail'): string {
+  if (aggregation === 'none') return '';
+  if (kind === 'pass') return aggregation === 'ALL' ? ' ALL' : ' ANY';
+  return aggregation === 'ALL' ? ' ANY' : ' ALL';
+}
+
+/**
  * Render transitions block with retry prefix when configured.
  *
  * @param transitions - The transitions to render
@@ -47,8 +59,8 @@ function renderTransitionAction(transition: TransitionObject): string {
  */
 export function renderTransitions(transitions: Transitions): string {
   const lines: string[] = [];
-  const passAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ALL' : ' ANY';
-  const failAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ANY' : ' ALL';
+  const passAgg = aggregationModifier(transitions.aggregation, 'pass');
+  const failAgg = aggregationModifier(transitions.aggregation, 'fail');
   lines.push(`- PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
   lines.push(`- FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
   return lines.join('\n');
@@ -115,8 +127,8 @@ function renderForClause(forClause: ForClause): string[] {
 
   const transitions = (forClause as { transitions?: Transitions }).transitions;
   if (transitions) {
-    const passAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ALL' : ' ANY';
-    const failAgg = transitions.modifierImplicit ? '' : transitions.all ? ' ANY' : ' ALL';
+    const passAgg = aggregationModifier(transitions.aggregation, 'pass');
+    const failAgg = aggregationModifier(transitions.aggregation, 'fail');
     lines.push(`  - PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
     lines.push(`  - FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
   }

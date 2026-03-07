@@ -34,8 +34,9 @@ export interface ParsedConditional {
   action: Action;
   /** Optional aggregation modifier for substep evaluation (ALL or ANY) */
   modifier: AggregationModifier;
-  /** Whether AWAIT modifier was present (defer aggregation until all substeps complete) */
-  await?: boolean;
   /** The raw action string as it appeared in the source */
   raw: string;
 }
+
+/** Return type for parseConditional: single conditional, array (for DEFER shorthand), or null */
+export type ParseConditionalResult = ParsedConditional | ParsedConditional[] | null;

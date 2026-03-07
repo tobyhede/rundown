@@ -17,14 +17,15 @@ scenarios:
       - rd pass  # 3.2 Run first runbook
     result: COMPLETE
   minimal-install:
-    description: Installation only
+    description: Full installation with getting started
     commands:
       - rd run --prompted install.runbook.md
       - rd pass  # 1.1 Verify Node.js
       - rd pass  # 2.1 Install globally
       - rd pass  # 2.2 Verify installation
-      - rd no    # 3 Getting Started (skip)
-    result: STOP
+      - rd pass  # 3.1 Create first runbook
+      - rd pass  # 3.2 Run first runbook
+    result: COMPLETE
   prerequisites-fail:
     description: Fail early if Node.js prerequisite not met
     commands:
@@ -87,9 +88,6 @@ rd --version
 ```
 
 ## 3 Getting Started
-
-- YES: CONTINUE
-- NO: COMPLETE "Rundown CLI installed successfully"
 
 Would you like to create and run a simple "Hello World" runbook?
 

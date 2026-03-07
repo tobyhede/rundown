@@ -259,16 +259,18 @@ rd echo --result pass
       expect(result.exitCode).toBe(0);
       const token = /Token:\s*(rdtk_\S+)/.exec(result.stdout)![1];
 
-      // Claim the token — child should auto-complete and propagate back to parent
+      // Claim — child auto-completes and propagates pass to parent 1.1
+      // DEFER model: parent advances to 1.2
       result = runCli(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // After claim, parent should have advanced to substep 1.2
-      // (because child completed and propagated PASS to parent substep 1.1)
+      // Complete parent substep 1.2 → aggregation → PASS ALL → CONTINUE → step 2
+      result = runCli('pass', workspace);
+      expect(result.exitCode).toBe(0);
+
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(updatedParent!.step).toBe('1');
-      expect(updatedParent!.substep).toBe('2');
+      expect(updatedParent!.step).toBe('2');
     });
 
     it('auto-propagates fail when child stops during claim', async () => {
@@ -295,10 +297,13 @@ rd echo --result fail
       expect(result.exitCode).toBe(0);
       const token = /Token:\s*(rdtk_\S+)/.exec(result.stdout)![1];
 
-      // Claim — child will auto-fail and propagate FAIL to parent
-      // Parent has FAIL ANY: STOP, so it should stop
+      // Claim — child auto-fails and propagates fail to parent 1.1
+      // DEFER model: parent advances to 1.2
       result = runCli(`claim ${token}`, workspace);
-      // Claim exits with 1 when the result is stopped
+      expect(result.exitCode).toBe(1);
+
+      // Complete parent substep 1.2 → aggregation → FAIL ANY: STOP
+      result = runCli('pass', workspace);
       expect(result.exitCode).toBe(1);
 
       // Parent should be stopped

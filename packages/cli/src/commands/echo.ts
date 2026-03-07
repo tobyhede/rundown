@@ -54,7 +54,9 @@ export function registerEchoCommand(program: Command): void {
             'echo',
           );
           output.flush();
-          process.exit(result.exitCode);
+          // Use process.exitCode (not process.exit) to avoid interfering with
+          // in-process test execution where process.exit is intercepted.
+          process.exitCode = result.exitCode;
         } catch (error) {
           let message = 'Failed to process test command';
           if (error instanceof Error) {
@@ -73,7 +75,7 @@ export function registerEchoCommand(program: Command): void {
             'echo',
           );
           output.flush();
-          process.exit(1);
+          process.exitCode = 1;
         }
       },
     );

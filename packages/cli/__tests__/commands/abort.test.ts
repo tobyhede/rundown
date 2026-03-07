@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createTestWorkspace,
-  runCli,
+  runCliInProcess,
   getActiveState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -51,10 +51,10 @@ Run the child task.
     await writeParentRunbook();
     await writeChildRunbook();
 
-    let result = runCli('run --prompted parent.runbook.md', workspace);
+    let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate child.runbook.md --step 1.1', workspace);
+    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
 
     const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
@@ -63,31 +63,31 @@ Run the child task.
   }
 
   describe('token validation', () => {
-    it('rejects token with incorrect prefix', () => {
-      const result = runCli('abort invalid_token_without_prefix', workspace);
+    it('rejects token with incorrect prefix', async () => {
+      const result = await runCliInProcess('abort invalid_token_without_prefix', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
     });
 
-    it('rejects empty token', () => {
-      const result = runCli('abort ""', workspace);
+    it('rejects empty token', async () => {
+      const result = await runCliInProcess(['abort', ''], workspace);
       expect(result.exitCode).toBe(1);
     });
 
-    it('rejects token with special characters', () => {
-      const result = runCli('abort rdtk_invalid@#$%', workspace);
+    it('rejects token with special characters', async () => {
+      const result = await runCliInProcess('abort rdtk_invalid@#$%', workspace);
       expect(result.exitCode).toBe(1);
     });
 
-    it('rejects token that is too short', () => {
-      const result = runCli('abort rdtk_ABC', workspace);
+    it('rejects token that is too short', async () => {
+      const result = await runCliInProcess('abort rdtk_ABC', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).toMatch(/not found|no active run/i);
     });
 
     it('accepts valid token format', async () => {
       const token = await setupDelegation();
-      const result = runCli(`abort ${token}`, workspace);
+      const result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
     });
   });
@@ -96,7 +96,7 @@ Run the child task.
     it('pending → cancelled without force flag', async () => {
       const token = await setupDelegation();
 
-      const result = runCli(`abort ${token}`, workspace);
+      const result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toMatch(/CANCELLED/i);
     });
@@ -105,11 +105,11 @@ Run the child task.
       const token = await setupDelegation();
 
       // First abort
-      let result = runCli(`abort ${token}`, workspace);
+      let result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Second abort - should succeed with "already cancelled" message
-      result = runCli(`abort ${token}`, workspace);
+      result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toMatch(/already cancelled/i);
     });
@@ -118,11 +118,11 @@ Run the child task.
       const token = await setupDelegation();
 
       // Claim the token
-      let result = runCli(`claim ${token}`, workspace);
+      let result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Try to abort without force
-      result = runCli(`abort ${token}`, workspace);
+      result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).toMatch(/already claimed|--force|RD-811/i);
     });
@@ -131,11 +131,11 @@ Run the child task.
       const token = await setupDelegation();
 
       // Claim the token
-      let result = runCli(`claim ${token}`, workspace);
+      let result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Force abort
-      result = runCli(`abort ${token} --force`, workspace);
+      result = await runCliInProcess(`abort ${token} --force`, workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toMatch(/CANCELLED/i);
     });
@@ -144,11 +144,11 @@ Run the child task.
       const token = await setupDelegation();
 
       // Abort the delegation
-      let result = runCli(`abort ${token}`, workspace);
+      let result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Try to claim
-      result = runCli(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).toMatch(/cancelled|RD-809/i);
     });
@@ -158,7 +158,7 @@ Run the child task.
     it('includes required fields in JSON output', async () => {
       const token = await setupDelegation();
 
-      const result = runCli(`abort ${token} --json`, workspace);
+      const result = await runCliInProcess(`abort ${token} --json`, workspace);
       expect(result.exitCode).toBe(0);
 
       const output = JSON.parse(result.stdout);
@@ -174,11 +174,11 @@ Run the child task.
       const token = await setupDelegation();
 
       // Claim first
-      let result = runCli(`claim ${token}`, workspace);
+      let result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Force abort
-      result = runCli(`abort ${token} --force --json`, workspace);
+      result = await runCliInProcess(`abort ${token} --force --json`, workspace);
       expect(result.exitCode).toBe(0);
 
       // stdout contains JSONL events + pretty-printed abort result + flush trailer
@@ -195,11 +195,11 @@ Run the child task.
       const token = await setupDelegation();
 
       // First abort
-      let result = runCli(`abort ${token}`, workspace);
+      let result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Second abort with JSON
-      result = runCli(`abort ${token} --json`, workspace);
+      result = await runCliInProcess(`abort ${token} --json`, workspace);
       expect(result.exitCode).toBe(0);
 
       const output = JSON.parse(result.stdout);
@@ -210,7 +210,7 @@ Run the child task.
   describe('error handling', () => {
     it('handles non-existent parent runbook gracefully', async () => {
       // cspell:disable-next-line
-      const result = runCli('abort rdtk_NONEXISTENTTOKEN12345678901234', workspace);
+      const result = await runCliInProcess('abort rdtk_NONEXISTENTTOKEN12345678901234', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).toMatch(/not found|no active run/i);
     });
@@ -219,7 +219,7 @@ Run the child task.
       // This is hard to test without directly corrupting files
       // but the command should handle errors gracefully
       // cspell:disable-next-line
-      const result = runCli('abort rdtk_INVALIDTOKEN123456789012345678', workspace);
+      const result = await runCliInProcess('abort rdtk_INVALIDTOKEN123456789012345678', workspace);
       expect(result.exitCode).toBe(1);
     });
   });
@@ -230,17 +230,17 @@ Run the child task.
       await writeChildRunbook();
 
       // Start parent
-      let result = runCli('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       // Delegate
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
 
       const token = /Token:\s*(rdtk_\S+)/.exec(result.stdout)![1];
 
       // Abort should work
-      result = runCli(`abort ${token}`, workspace);
+      result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
     });
 
@@ -248,17 +248,17 @@ Run the child task.
       const token = await setupDelegation();
 
       // First abort should succeed
-      const result1 = runCli(`abort ${token}`, workspace);
+      const result1 = await runCliInProcess(`abort ${token}`, workspace);
       expect(result1.exitCode).toBe(0);
 
       // Second abort should be idempotent
-      const result2 = runCli(`abort ${token}`, workspace);
+      const result2 = await runCliInProcess(`abort ${token}`, workspace);
       expect(result2.exitCode).toBe(0);
       expect(result2.stdout).toMatch(/already cancelled/i);
     });
 
-    it('abort without arguments shows help', () => {
-      const result = runCli('abort', workspace);
+    it('abort without arguments shows help', async () => {
+      const result = await runCliInProcess('abort', workspace);
       // Commander shows error for missing required argument
       expect(result.exitCode).toBe(1);
     });
@@ -267,7 +267,7 @@ Run the child task.
       const token = await setupDelegation();
 
       // Pass multiple tokens - Commander should only use first positional arg
-      const result = runCli(`abort ${token} extra-arg`, workspace);
+      const result = await runCliInProcess(`abort ${token} extra-arg`, workspace);
       // Commander errors on unexpected argument
       expect(result.exitCode).toBe(1);
     });
@@ -277,7 +277,7 @@ Run the child task.
     it('shows hint token in output', async () => {
       const token = await setupDelegation();
 
-      const result = runCli(`abort ${token}`, workspace);
+      const result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Should show token hint (e.g., rdtk_ABC...XYZ)
@@ -287,7 +287,7 @@ Run the child task.
     it('shows runbook path in output', async () => {
       const token = await setupDelegation();
 
-      const result = runCli(`abort ${token}`, workspace);
+      const result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       expect(result.stdout).toContain('child.runbook.md');
@@ -297,11 +297,11 @@ Run the child task.
       const token = await setupDelegation();
 
       // Claim first
-      let result = runCli(`claim ${token}`, workspace);
+      let result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Force abort
-      result = runCli(`abort ${token} --force`, workspace);
+      result = await runCliInProcess(`abort ${token} --force`, workspace);
       expect(result.exitCode).toBe(0);
 
       expect(result.stdout).toMatch(/in-flight|child run stopped/i);
@@ -313,7 +313,7 @@ Run the child task.
       const token = await setupDelegation();
 
       // Claim the token
-      let result = runCli(`claim ${token}`, workspace);
+      let result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Get parent state
@@ -322,7 +322,7 @@ Run the child task.
       expect(parentState!.step).toBe('1');
 
       // Force abort - should propagate fail to parent
-      result = runCli(`abort ${token} --force`, workspace);
+      result = await runCliInProcess(`abort ${token} --force`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent should be stopped due to FAIL ANY: STOP
@@ -337,11 +337,11 @@ Run the child task.
     it('handles force abort after claim completes', async () => {
       const token = await setupDelegation();
 
-      // Claim completes synchronously before abort
-      runCli(`claim ${token}`, workspace);
+      // Claim completes before abort
+      await runCliInProcess(`claim ${token}`, workspace);
 
       // Force abort after claim has completed
-      const result = runCli(`abort ${token} --force`, workspace);
+      const result = await runCliInProcess(`abort ${token} --force`, workspace);
       expect(result.exitCode).toBe(0);
     });
 
@@ -352,7 +352,7 @@ Run the child task.
       expect(parentBefore).not.toBeNull();
 
       // Abort pending delegation
-      const result = runCli(`abort ${token}`, workspace);
+      const result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       const parentAfter = await getActiveState(workspace);

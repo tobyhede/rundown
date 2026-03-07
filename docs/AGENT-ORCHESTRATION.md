@@ -297,7 +297,7 @@ The plugin parses this from agent output and translates it to `rd pass` or `rd f
 Routing behavior:
 - Agent completion and plain `pass/fail` share one record-and-drain transition path.
 - Completion keys are scoped to `frame + entry + substep`; stale completions from previous entries are rejected.
-- Resolved completions drain in deterministic substep order. By default (fail-fast), step-level transition evaluates after each substep result and short-circuits if the outcome is determined (e.g., first failure with `FAIL ANY`). Use `AWAIT` to defer evaluation until all substeps complete.
+- Resolved completions drain in deterministic substep order. Aggregation waits for all DEFER'd results before evaluating the step-level transition.
 - When a completion arrives for a frontier substep that is not at the active cursor, it is **deferred** — stored and applied when the cursor reaches that substep. See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
 
 **Important:** The STATUS line should appear at the end of the agent's response. If no STATUS line is found, the plugin treats the result based on the agent's exit behaviour.
@@ -320,10 +320,8 @@ When substeps involve agents, transition rules use aggregate conditions:
 | Condition | Meaning |
 |-----------|---------|
 | `PASS ALL` | All substep agents passed |
-| `FAIL ANY` | At least one substep agent failed (short-circuits on first failure) |
-| `FAIL ANY AWAIT` | At least one failed, but wait for all to complete first |
-| `PASS ANY` | At least one substep agent passed (short-circuits on first success) |
-| `PASS ANY AWAIT` | At least one passed, but wait for all to complete first |
+| `FAIL ANY` | At least one substep agent failed |
+| `PASS ANY` | At least one substep agent passed |
 | `PASS` / `FAIL` | Standard single-result transitions |
 
 See [SPEC.md](./SPEC.md) for the full transition grammar.

@@ -12,8 +12,12 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ),
   deriveActiveFrame: jest
     .fn()
-    .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1' }),
+    .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1|' }),
   getActiveForContext: jest.fn().mockReturnValue(null),
+  buildFrameKey: jest.fn(
+    (step: string, iteration?: number) =>
+      `${step}|${iteration !== undefined ? String(iteration) : ''}`,
+  ),
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
@@ -152,7 +156,7 @@ beforeEach(() => {
     step: '1',
     substep: undefined,
     iteration: undefined,
-    frameKey: '1',
+    frameKey: '1|',
   });
 });
 
@@ -590,7 +594,7 @@ describe('claimAndLaunch', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('RD-808');
-      expect(result.error).toContain('mismatch');
+      expect(result.error).toContain('no longer exists');
     }
   });
 

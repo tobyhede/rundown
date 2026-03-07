@@ -11,7 +11,7 @@ import type { Command } from 'commander';
 import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rm } from 'node:fs/promises';
-import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadScenarioSuite, type ScenarioSuiteCase } from '../schemas/scenario-suite.js';
@@ -26,8 +26,12 @@ import { getEffectiveResult } from '../schemas/scenarios.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-/** Path to the CLI executable */
-const CLI_PATH = join(__dirname, '..', 'cli.js');
+/** Path to the CLI executable — resolves from compiled output or source (ts-jest). */
+const CLI_PATH = (() => {
+  const adjacent = join(__dirname, '..', 'cli.js');
+  if (existsSync(adjacent)) return adjacent;
+  return join(__dirname, '..', '..', 'dist', 'cli.js');
+})();
 
 /**
  * Validate that a relative path does not escape its parent directory.

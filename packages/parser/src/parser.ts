@@ -424,7 +424,7 @@ export function parseRunbookDocument(
               const nestedParagraph = nestedItem.children.find((c) => c.type === 'paragraph');
               if (!nestedParagraph) {
                 throw new RunbookSyntaxError(
-                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL) are allowed`,
+                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed`,
                 );
               }
               const nestedText = extractText(
@@ -433,10 +433,14 @@ export function parseRunbookDocument(
               const cond = parseConditional(nestedText);
               if (!cond) {
                 throw new RunbookSyntaxError(
-                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL) are allowed`,
+                  `Invalid nested bullet under FOR clause in step "${currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed`,
                 );
               }
-              forConditionals.push(cond);
+              if (Array.isArray(cond)) {
+                forConditionals.push(...cond);
+              } else {
+                forConditionals.push(cond);
+              }
             }
             if (forConditionals.length > 0) {
               currentStep.forConditionals = forConditionals;
@@ -452,8 +456,11 @@ export function parseRunbookDocument(
           );
         }
 
-        const conditional = parseConditional(text);
-        if (conditional) {
+        const conditionalResult = parseConditional(text);
+        if (conditionalResult) {
+          const conditionals = Array.isArray(conditionalResult)
+            ? conditionalResult
+            : [conditionalResult];
           if (currentStep.pendingSubstep) {
             // Reject transitions after prompt text or content (header-adjacent requirement)
             if (
@@ -468,7 +475,7 @@ export function parseRunbookDocument(
                 `Substep ${stepLabel}.${currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`,
               );
             }
-            currentStep.pendingSubstep.pendingConditionals.push(conditional);
+            currentStep.pendingSubstep.pendingConditionals.push(...conditionals);
             currentStep.pendingSubstep.hasSeenTransitions = true;
           } else {
             // Reject transitions after prompt text or content (header-adjacent requirement)
@@ -481,7 +488,7 @@ export function parseRunbookDocument(
                 `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`,
               );
             }
-            pendingConditionals.push(conditional);
+            pendingConditionals.push(...conditionals);
             currentStep.hasSeenTransitions = true;
           }
         } else if (currentStep.pendingSubstep) {

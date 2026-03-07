@@ -6,7 +6,7 @@ export {
 // eslint-disable-next-line @typescript-eslint/no-deprecated -- backward-compatible re-export
 export type { ValidationError, ValidationDiagnostic } from './validator.js';
 export { RunbookSyntaxError, MAX_STEP_NUMBER } from './types.js';
-export type { ParsedConditional, AggregationModifier } from './types.js';
+export type { ParsedConditional, ParseConditionalResult, AggregationModifier } from './types.js';
 export type * from './ast.js';
 export * from './schemas.js';
 export {

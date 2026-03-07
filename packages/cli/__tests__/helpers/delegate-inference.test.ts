@@ -69,8 +69,8 @@ describe('inferDelegationTarget', () => {
     ];
     const steps: Step[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', status: 'pending', delegation: makeActiveDelegation() },
-      { id: '2', status: 'pending' },
+      { id: '1', frameKey: '1|', status: 'pending', delegation: makeActiveDelegation() },
+      { id: '2', frameKey: '1|', status: 'pending' },
     ];
     const state = makeState({ step: '1', substepStates });
 
@@ -86,8 +86,8 @@ describe('inferDelegationTarget', () => {
     ];
     const steps: Step[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', status: 'done', result: 'pass' },
-      { id: '2', status: 'pending' },
+      { id: '1', frameKey: '1|', status: 'done', result: 'pass' },
+      { id: '2', frameKey: '1|', status: 'pending' },
     ];
     const state = makeState({ step: '1', substepStates });
 
@@ -115,7 +115,7 @@ describe('inferDelegationTarget', () => {
     ];
     const steps: Step[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', status: 'pending', delegation: makeActiveDelegation() },
+      { id: '1', frameKey: '1|', status: 'pending', delegation: makeActiveDelegation() },
     ];
     const state = makeState({ step: '1', substepStates });
 
@@ -131,6 +131,36 @@ describe('inferDelegationTarget', () => {
     expect(() => inferDelegationTarget(state, steps)).toThrow(
       expect.objectContaining({ code: 'RD-813' }),
     );
+  });
+
+  it('finds next delegatable substep in FOR loop iteration 2 when iteration 1 has active delegation', () => {
+    const substeps = [
+      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
+    ];
+    const steps: Step[] = [makeStepWithSubsteps('1', substeps)];
+    const substepStates: SubstepState[] = [
+      { id: '1', frameKey: '1|1', status: 'pending', delegation: makeActiveDelegation() },
+      { id: '1', frameKey: '1|2', status: 'pending' },
+    ];
+    const state = makeState({
+      step: '1',
+      substepStates,
+      activeFrameKey: '1|2',
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+    });
+
+    const result = inferDelegationTarget(state, steps);
+
+    expect(result).toEqual({ runbookRef: 'child.runbook.md', stepId: '1.1' });
   });
 });
 

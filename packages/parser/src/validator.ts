@@ -124,7 +124,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
       // FOR iteration-level transitions allow full loop control and terminal routing.
       if (step.forClause.transitions) {
-        const allowedActions = ['CONTINUE', 'DEFER', 'BREAK', 'GOTO', 'STOP', 'COMPLETE'];
+        const allowedActions = ['CONTINUE', 'DEFER', 'NEXT', 'BREAK', 'GOTO', 'STOP', 'COMPLETE'];
         if (!allowedActions.includes(step.forClause.transitions.pass.action.type)) {
           diagnostics.push(
             error(
@@ -212,6 +212,31 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         if (substep.transitions) {
           validateAction(substep.transitions.pass.action, substep.id, steps, step, diagnostics);
           validateAction(substep.transitions.fail.action, substep.id, steps, step, diagnostics);
+        }
+      }
+
+      // For non-FOR steps with explicit aggregation (ALL/ANY): parent transitions use
+      // deferredResults for aggregation. Only DEFER populates deferredResults —
+      // CONTINUE/NEXT/BREAK are flow control only. Substeps without explicit transitions
+      // auto-DEFER, so only error when every substep has explicit non-DEFER transitions
+      // (making aggregation vacuous). Steps with aggregation: 'none' use sequential flow
+      // control, not aggregation, so the check does not apply.
+      if (step.transitions && step.transitions.aggregation !== 'none' && step.kind !== 'for') {
+        const allSubstepsExplicitNonDefer = step.substeps.every((sub) => {
+          if (!sub.transitions) return false; // no explicit transitions → will auto-DEFER
+          const passIsDefer = sub.transitions.pass.action.type === 'DEFER';
+          const failIsDefer = sub.transitions.fail.action.type === 'DEFER';
+          return !passIsDefer && !failIsDefer;
+        });
+
+        if (allSubstepsExplicitNonDefer && step.substeps.length > 0) {
+          diagnostics.push(
+            error(
+              step.line,
+              `Step "${step.name}" has substeps but no substep uses DEFER. ` +
+                `Use DEFER on at least one substep to propagate results to parent.`,
+            ),
+          );
         }
       }
     }

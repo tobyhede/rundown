@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { formatStepAssertionDescription } from '../helpers/command-sequence.js';
@@ -13,8 +14,12 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-/** Path to the CLI executable */
-const CLI_PATH = join(__dirname, '..', 'cli.js');
+/** Path to the CLI executable — resolves from compiled output or source (ts-jest). */
+const CLI_PATH = (() => {
+  const adjacent = join(__dirname, '..', 'cli.js');
+  if (existsSync(adjacent)) return adjacent;
+  return join(__dirname, '..', '..', 'dist', 'cli.js');
+})();
 
 /**
  * Emit a load-failure result to the output and exit.

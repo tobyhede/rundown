@@ -1,20 +1,20 @@
 ---
-name: for-runbook-list
-description: FOR-annotated step with runbook list as substeps
+name: for-basic-substep
+description: FOR-annotated step with basic substeps
 tags:
   - for-loops
 scenarios:
   completed:
-    description: FOR iterates with runbook list providing implicit substeps
+    description: FOR iterates with substeps
     commands:
-      - rd run --prompted for-runbook-list.runbook.md
+      - rd run --prompted for-basic-substep.runbook.md
       - rd pass
       - rd pass
       - rd pass
     result: COMPLETE
 ---
 
-# FOR Runbook List
+# FOR Basic Substep
 
 ## 1. Process tasks
 

@@ -3,6 +3,10 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { CommanderError } from 'commander';
+import { createProgram } from '../../src/cli.js';
+import { resetPolicyContext } from '../../src/services/policy-context.js';
+import { resetColorCache, setWriter, ConsoleWriter } from '@rundown-org/core';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -106,6 +110,160 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
     stderr: result.stderr || '',
     exitCode: result.status ?? 1,
   };
+}
+
+/** Sentinel error thrown when a command calls `process.exit()` in-process. */
+class ExitSignal extends Error {
+  constructor(public readonly code: number) {
+    super(`process.exit(${String(code)})`);
+    this.name = 'ExitSignal';
+  }
+}
+
+/**
+ * Run CLI in-process via Commander for fast test execution (~1-5ms vs ~200-500ms subprocess).
+ *
+ * Uses `process.chdir()` to set the working directory, ensuring all code paths
+ * (including `process.cwd()` in hooks) see the correct directory without
+ * production code changes.
+ *
+ * @param args - Command arguments as string or array
+ * @param workspace - Test workspace with cwd and binPath
+ * @returns CLI result with stdout, stderr, and exitCode
+ */
+export async function runCliInProcess(
+  args: string | string[],
+  workspace: TestWorkspace,
+): Promise<CliResult> {
+  const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
+  const binPath = workspace.binPath();
+  const pluginDir = join(workspace.cwd, 'plugin');
+
+  // Save originals
+  const origCwd = process.cwd();
+  const origStdoutWrite = process.stdout.write.bind(process.stdout);
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+  const origExit = process.exit.bind(process);
+  const origConsoleError = console.error.bind(console);
+  const origConsoleLog = console.log.bind(console);
+  const envKeys = ['NO_COLOR', 'RUNDOWN_LOG', 'CLAUDE_PLUGIN_ROOT', 'PATH', 'FORCE_COLOR'] as const;
+  const origEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]])) as Record<
+    string,
+    string | undefined
+  >;
+
+  let stdoutBuf = '';
+  let stderrBuf = '';
+  let exitCode = 0;
+
+  try {
+    // Reset global state before each invocation
+    resetPolicyContext();
+    resetColorCache();
+
+    // Change real cwd — covers process.cwd() everywhere
+    process.chdir(workspace.cwd);
+
+    // Set env vars (matching runCli)
+    process.env.NO_COLOR = '1';
+    process.env.RUNDOWN_LOG = '0';
+    process.env.CLAUDE_PLUGIN_ROOT = pluginDir;
+    process.env.PATH = `${binPath}:${origEnv.PATH ?? ''}`;
+    delete process.env.FORCE_COLOR;
+
+    // Capture stdout/stderr via process.stdout/stderr.write
+    // ConsoleWriter consistently uses these (not console.log/error)
+    process.stdout.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      stdoutBuf +=
+        typeof chunk === 'string'
+          ? chunk
+          : chunk instanceof Uint8Array
+            ? new TextDecoder().decode(chunk)
+            : String(chunk);
+      const cb = rest.find((a) => typeof a === 'function') as
+        | ((err?: Error | null) => void)
+        | undefined;
+      cb?.();
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      stderrBuf +=
+        typeof chunk === 'string'
+          ? chunk
+          : chunk instanceof Uint8Array
+            ? new TextDecoder().decode(chunk)
+            : String(chunk);
+      const cb = rest.find((a) => typeof a === 'function') as
+        | ((err?: Error | null) => void)
+        | undefined;
+      cb?.();
+      return true;
+    }) as typeof process.stderr.write;
+
+    // Create ConsoleWriter AFTER monkey-patching stdout/stderr so it
+    // captures output into the buffers above (not the original streams)
+    setWriter(new ConsoleWriter());
+
+    // Intercept console.error/log — Jest may replace these with its own
+    // Console that bypasses process.stderr/stdout.write, so we route them
+    // into the capture buffers explicitly.
+    console.error = (...args: unknown[]) => {
+      stderrBuf += `${args.map(String).join(' ')}\n`;
+    };
+    console.log = (...args: unknown[]) => {
+      stdoutBuf += `${args.map(String).join(' ')}\n`;
+    };
+
+    // Intercept process.exit
+    process.exit = ((code?: number) => {
+      throw new ExitSignal(code ?? 0);
+    }) as never;
+
+    // Create fresh program and parse
+    const program = createProgram();
+    program.exitOverride();
+    await program.parseAsync(argArray, { from: 'user' });
+
+    // Capture exitCode set via process.exitCode (used by pass/fail commands)
+    exitCode = process.exitCode ?? 0;
+    process.exitCode = undefined;
+  } catch (err: unknown) {
+    if (err instanceof ExitSignal) {
+      exitCode = err.code;
+    } else if (err instanceof CommanderError) {
+      exitCode = err.exitCode;
+    } else {
+      exitCode = 1;
+      stderrBuf += err instanceof Error ? err.message : String(err);
+    }
+  } finally {
+    // Restore everything
+    process.stdout.write = origStdoutWrite;
+    process.stderr.write = origStderrWrite;
+    process.exit = origExit;
+    console.error = origConsoleError;
+    console.log = origConsoleLog;
+    process.exitCode = undefined;
+
+    // Restore cwd
+    process.chdir(origCwd);
+
+    // Restore env (only the keys we modified)
+    for (const key of envKeys) {
+      if (origEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = origEnv[key];
+      }
+    }
+
+    // Reset globals again for clean state
+    resetPolicyContext();
+    resetColorCache();
+    setWriter(new ConsoleWriter());
+  }
+
+  return { stdout: stdoutBuf, stderr: stderrBuf, exitCode };
 }
 
 /**

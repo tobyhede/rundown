@@ -1,4 +1,5 @@
 // src/runbook/types.ts
+import type { FrameKey } from './targeting.js';
 
 // Re-export parser types needed by core package consumers
 
@@ -99,27 +100,41 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
  * Replaces the previous string-based representation to preserve full transition
  * information (e.g., GOTO target) through persistence without lossy conversion.
  */
+type LastActionBase = {
+  /**
+   * Marks this transition as the terminal point of a deferred aggregation sequence.
+   *
+   * Set to `true` when the `lastAction` was produced by parent-exit aggregation logic
+   * (e.g., FOR loop completion, non-FOR substep aggregation, or BREAK). In these cases
+   * the action type reflects the **parent's** resolved outcome (COMPLETE, STOP, CONTINUE,
+   * etc.), not the child's original action (typically DEFER). Consumers can use this flag
+   * to distinguish aggregation-terminal transitions from direct step transitions.
+   */
+  readonly aggregated?: boolean;
+};
+
 export type LastAction =
-  | { readonly type: 'START' }
-  | { readonly type: 'CONTINUE' }
-  | { readonly type: 'DEFER' }
-  | {
+  | (LastActionBase & { readonly type: 'START' })
+  | (LastActionBase & { readonly type: 'CONTINUE' })
+  | (LastActionBase & { readonly type: 'DEFER' })
+  | (LastActionBase & {
       readonly type: 'GOTO';
       readonly target: string;
       readonly substep?: string;
       readonly at?: number | `{{${string}}}`;
-    }
-  | { readonly type: 'COMPLETE' }
-  | { readonly type: 'STOP' }
-  | { readonly type: 'RETRY' }
-  | { readonly type: 'NEXT' }
-  | { readonly type: 'BREAK' };
+    })
+  | (LastActionBase & { readonly type: 'COMPLETE' })
+  | (LastActionBase & { readonly type: 'STOP' })
+  | (LastActionBase & { readonly type: 'RETRY' })
+  | (LastActionBase & { readonly type: 'NEXT' })
+  | (LastActionBase & { readonly type: 'BREAK' });
 
 /**
  * Runtime state of a substep within a step
  */
 export interface SubstepState {
   readonly id: string; // Matches Substep.id ("1", "2", or dynamic instance)
+  readonly frameKey: FrameKey; // From buildFrameKey(step, iteration?) — scopes identity in FOR loops
   readonly status: 'pending' | 'running' | 'done';
   readonly result?: 'pass' | 'fail'; // Result when done
   readonly delegation?: StepDelegation; // Delegation attached to this substep
@@ -141,7 +156,7 @@ export interface ResolvedCompletion {
   /** FOR loop iteration number this completion applies to. */
   readonly targetIteration?: number;
   /** Frame key identifying the step+iteration context (e.g. "1|", "1|2"). */
-  readonly targetFrameKey: string;
+  readonly targetFrameKey: FrameKey;
   /** Monotonic entry counter within the frame, distinguishing repeated visits. */
   readonly targetEntry: number;
   /** ISO 8601 timestamp when the agent completed. */
@@ -193,7 +208,7 @@ export interface DelegationLinkage {
   /** Parent's step name at claim time (e.g., "1"). */
   readonly parentStep?: string;
   /** Parent's frame key at claim time for completion key construction. */
-  readonly parentFrameKey?: string;
+  readonly parentFrameKey?: FrameKey;
   /** Parent's entry counter at claim time for completion key construction. */
   readonly parentEntry?: number;
 }
@@ -386,9 +401,9 @@ export interface RunbookState {
   // Orchestration fields
   readonly resolvedCompletions?: Readonly<Record<string, ResolvedCompletion>>;
   /** Monotonic entry counter by frame key (`step|iteration`). */
-  readonly frameEntries?: Readonly<Record<string, number>>;
+  readonly frameEntries?: Readonly<Record<FrameKey, number>>;
   /** Active frame key (`step|iteration`). */
-  readonly activeFrameKey?: string;
+  readonly activeFrameKey?: FrameKey;
   /** Active frame entry (monotonic per frame). */
   readonly activeEntry?: number;
 

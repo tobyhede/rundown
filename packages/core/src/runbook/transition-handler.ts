@@ -94,21 +94,21 @@ export function evaluatePassCondition(step: Step, currentRetryCount = 0): Condit
  * Pure predicate shared between the transition handler (runtime evaluation) and
  * the compiler (XState guard closures) to keep ALL/ANY logic in one place.
  *
- * - ALL mode (`aggregationAll = true`): passes only when no failures exist
- * - ANY mode (`aggregationAll = false`): passes when at least one result passed
+ * - ALL mode (`aggregation = 'ALL'` or `'none'`): passes only when no failures exist
+ * - ANY mode (`aggregation = 'ANY'`): passes when at least one result passed
  *
  * @param hasFailed - Whether any result was a failure
  * @param passCount - Number of passing results
- * @param aggregationAll - True for ALL mode, false for ANY mode
+ * @param aggregation - Aggregation mode: 'ALL', 'ANY', or 'none' (uses ALL semantics)
  * @returns True if the aggregated outcome should be treated as PASS
  * @see {@link evaluateAggregation}
  */
 export function shouldAggregationPass(
   hasFailed: boolean,
   passCount: number,
-  aggregationAll: boolean,
+  aggregation: 'ALL' | 'ANY' | 'none',
 ): boolean {
-  return aggregationAll ? !hasFailed : passCount > 0;
+  return aggregation !== 'ANY' ? !hasFailed : passCount > 0; // 'none' defaults to ALL (pessimistic)
 }
 
 /**
@@ -127,7 +127,7 @@ function evaluateAggregation(
   currentRetryCount: number,
 ): ConditionResult {
   return evaluateTransition(
-    shouldAggregationPass(hasFailed, passCount, transitions.all)
+    shouldAggregationPass(hasFailed, passCount, transitions.aggregation)
       ? transitions.pass
       : transitions.fail,
     currentRetryCount,

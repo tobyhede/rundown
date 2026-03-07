@@ -180,6 +180,7 @@ export async function orchestrateTransition(
   const lastAction = extractLastAction(snapshot);
   const retryDisplayCount = extractRetryDisplayCount(snapshot, updatedState.retryCount);
   const actionType = parseActionType(lastAction);
+  const aggregated = lastAction?.aggregated === true;
   const positions = buildTransitionPositions(previousState, updatedState, steps);
   const fromStr = derivePositionAt(positions.from);
   const atStr = derivePositionAt(positions.to);
@@ -198,6 +199,7 @@ export async function orchestrateTransition(
     command,
     ...(actionType === 'RETRY' ? { retryAttempt: retryDisplayCount, retryMax } : {}),
     ...(toPos.for ? { forIndex: toPos.for.index, forEnd: toPos.for.end } : {}),
+    ...(aggregated ? { aggregated: true } : {}),
   });
 
   const terminalSnapshot = asTerminalSnapshotOrDefault(snapshot);

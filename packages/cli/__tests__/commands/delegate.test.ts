@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
-  runCli,
+  runCliInProcess,
   getActiveState,
   type TestWorkspace,
   createRunbook,
@@ -29,7 +29,10 @@ describe('delegate command', () => {
     await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
 
     // Start the substeps runbook in prompted mode
-    const startResult = runCli('run --prompted runbooks/substeps.runbook.md', workspace);
+    const startResult = await runCliInProcess(
+      'run --prompted runbooks/substeps.runbook.md',
+      workspace,
+    );
     expect(startResult.exitCode).toBe(0);
   }
 
@@ -37,7 +40,10 @@ describe('delegate command', () => {
     it('emits a delegation token for a valid substep', async () => {
       await setupDelegation();
 
-      const result = runCli('delegate runbooks/child.runbook.md --step 1.1', workspace);
+      const result = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1.1',
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('DELEGATED');
@@ -49,7 +55,7 @@ describe('delegate command', () => {
     it('token has correct format (rdtk_ prefix, length 37)', async () => {
       await setupDelegation();
 
-      const result = runCli(
+      const result = await runCliInProcess(
         ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--json'],
         workspace,
       );
@@ -64,7 +70,7 @@ describe('delegate command', () => {
     it('updates state with delegation on substep', async () => {
       await setupDelegation();
 
-      runCli('delegate runbooks/child.runbook.md --step 1.1', workspace);
+      await runCliInProcess('delegate runbooks/child.runbook.md --step 1.1', workspace);
 
       const state = await getActiveState(workspace);
       const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
@@ -82,9 +88,9 @@ describe('delegate command', () => {
     it('status --json shows delegation info', async () => {
       await setupDelegation();
 
-      runCli('delegate runbooks/child.runbook.md --step 1.1', workspace);
+      await runCliInProcess('delegate runbooks/child.runbook.md --step 1.1', workspace);
 
-      const statusResult = runCli('status --json', workspace);
+      const statusResult = await runCliInProcess('status --json', workspace);
       expect(statusResult.exitCode).toBe(0);
 
       const statusOutput = JSON.parse(statusResult.stdout) as Record<string, unknown>;
@@ -98,7 +104,7 @@ describe('delegate command', () => {
     it('JSON output has snake_case keys', async () => {
       await setupDelegation();
 
-      const result = runCli(
+      const result = await runCliInProcess(
         ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--json'],
         workspace,
       );
@@ -145,14 +151,17 @@ describe('delegate command', () => {
         childContent,
       );
 
-      const startResult = runCli('run --prompted runbooks/with-ref.runbook.md', workspace);
+      const startResult = await runCliInProcess(
+        'run --prompted runbooks/with-ref.runbook.md',
+        workspace,
+      );
       expect(startResult.exitCode).toBe(0);
     }
 
     it('rd delegate (no args) infers both substep and runbook', async () => {
       await setupDelegationWithRunbookRef();
 
-      const result = runCli(['delegate', '--json'], workspace);
+      const result = await runCliInProcess(['delegate', '--json'], workspace);
 
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout) as Record<string, unknown>;
@@ -164,7 +173,7 @@ describe('delegate command', () => {
     it('rd delegate --step 1.1 infers runbook from substep reference', async () => {
       await setupDelegationWithRunbookRef();
 
-      const result = runCli(['delegate', '--step', '1.1', '--json'], workspace);
+      const result = await runCliInProcess(['delegate', '--step', '1.1', '--json'], workspace);
 
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout) as Record<string, unknown>;
@@ -176,7 +185,7 @@ describe('delegate command', () => {
     it('backward compat: explicit rd delegate child.runbook.md --step 1.1 still works', async () => {
       await setupDelegationWithRunbookRef();
 
-      const result = runCli(
+      const result = await runCliInProcess(
         ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--json'],
         workspace,
       );
@@ -192,23 +201,32 @@ describe('delegate command', () => {
     it('fails for nonexistent step', async () => {
       await setupDelegation();
 
-      const result = runCli('delegate runbooks/child.runbook.md --step 99.1', workspace);
+      const result = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 99.1',
+        workspace,
+      );
 
       expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain('step not found');
+      expect(result.stdout + result.stderr).toContain('step not found');
     });
 
     it('fails for duplicate delegation on same substep', async () => {
       await setupDelegation();
 
       // First delegation succeeds
-      const first = runCli('delegate runbooks/child.runbook.md --step 1.1', workspace);
+      const first = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1.1',
+        workspace,
+      );
       expect(first.exitCode).toBe(0);
 
       // Second delegation on same substep fails
-      const second = runCli('delegate runbooks/child.runbook.md --step 1.1', workspace);
+      const second = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1.1',
+        workspace,
+      );
       expect(second.exitCode).not.toBe(0);
-      expect(second.stderr).toContain('delegation exists');
+      expect(second.stdout + second.stderr).toContain('delegation exists');
     });
 
     it('reports no active runbook when none is running', async () => {
@@ -218,7 +236,10 @@ describe('delegate command', () => {
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
 
-      const result = runCli('delegate runbooks/child.runbook.md --step 1.1', workspace);
+      const result = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1.1',
+        workspace,
+      );
 
       // The CLI exits 0 but outputs "no active runbook" per convention
       expect(result.stdout).toContain('No active runbook');
@@ -226,12 +247,12 @@ describe('delegate command', () => {
 
     it('fails for unresolvable child runbook', async () => {
       // Start a runbook but don't create the child
-      runCli('run --prompted runbooks/substeps.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/substeps.runbook.md', workspace);
 
-      const result = runCli('delegate nonexistent.runbook.md --step 1.1', workspace);
+      const result = await runCliInProcess('delegate nonexistent.runbook.md --step 1.1', workspace);
 
       expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain('not found');
+      expect(result.stdout + result.stderr).toContain('not found');
     });
   });
 });

@@ -3,7 +3,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
-  runCli,
+  runCliInProcess,
   getActiveState,
   readSession,
   readRunbookState,
@@ -23,11 +23,11 @@ describe('stop command', () => {
 
   describe('basic stop', () => {
     beforeEach(async () => {
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
     });
 
     it('aborts active runbook', async () => {
-      const result = runCli('stop', workspace);
+      const result = await runCliInProcess('stop', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('STOP');
@@ -40,7 +40,7 @@ describe('stop command', () => {
       const stateBefore = await getActiveState(workspace);
       const runId = stateBefore!.id;
 
-      runCli('stop', workspace);
+      await runCliInProcess('stop', workspace);
 
       // State file should be deleted
       const stateAfter = await readRunbookState(workspace, runId);
@@ -50,11 +50,11 @@ describe('stop command', () => {
 
   describe('stop with message', () => {
     beforeEach(async () => {
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
     });
 
     it('includes custom message in output', async () => {
-      const result = runCli(['stop', 'User cancelled'], workspace);
+      const result = await runCliInProcess(['stop', 'User cancelled'], workspace);
 
       expect(result.exitCode).toBe(0);
       // Text renderer discards the message; just check for STOP
@@ -64,7 +64,7 @@ describe('stop command', () => {
 
   describe('stop with no active runbook', () => {
     it('reports no active runbook', async () => {
-      const result = runCli('stop', workspace);
+      const result = await runCliInProcess('stop', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('No active runbook');
@@ -89,14 +89,14 @@ Do work.
       await writeFile(join(workspace.cwd, 'runbooks', 'child-stop.md'), childRunbook);
 
       // Start parent (prompted)
-      runCli('run --prompted runbooks/parent-stop.md', workspace);
+      await runCliInProcess('run --prompted runbooks/parent-stop.md', workspace);
       const parentState = await getActiveState(workspace);
 
       // Start child in same stack
-      runCli('run --prompted runbooks/child-stop.md', workspace);
+      await runCliInProcess('run --prompted runbooks/child-stop.md', workspace);
 
       // Stop child
-      const result = runCli('stop', workspace);
+      const result = await runCliInProcess('stop', workspace);
       expect(result.exitCode).toBe(0);
 
       // Should now be on parent
@@ -107,11 +107,11 @@ Do work.
 
   describe('JSON output', () => {
     beforeEach(async () => {
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
     });
 
     it('outputs JSON when --json flag provided', async () => {
-      const result = runCli('stop --json', workspace);
+      const result = await runCliInProcess('stop --json', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -121,7 +121,7 @@ Do work.
     });
 
     it('includes metadata in JSON output', async () => {
-      const result = runCli('stop --json', workspace);
+      const result = await runCliInProcess('stop --json', workspace);
 
       const output = JSON.parse(result.stdout);
       expect(output.file).toBeDefined();
@@ -169,27 +169,28 @@ Run the child task.
       await writeParentRunbook();
       await writeChildRunbook();
 
-      // Start parent in prompted mode
-      let result = runCli('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
-      // Delegate substep 1.1
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token = extractToken(result.stdout);
 
-      // Claim — launches child runbook
-      result = runCli(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Stop the child — should propagate fail to parent
-      result = runCli('stop', workspace);
+      // Stop the child — propagates fail to parent substep 1.1
+      // Parent DEFER model: 1.1 fails, advance to 1.2
+      result = await runCliInProcess('stop', workspace);
       expect(result.exitCode).toBe(0);
 
-      // After child is stopped, parent should be stopped (FAIL ANY: STOP)
+      // Parent is now active at substep 1.2 — complete it to trigger aggregation
+      result = await runCliInProcess('pass', workspace);
+
+      // Aggregation: FAIL ANY (1.1 failed) triggers STOP
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect((updatedParent!.variables as Record<string, unknown>).stopped).toBe(true);
@@ -199,25 +200,25 @@ Run the child task.
       await writeParentRunbook();
       await writeChildRunbook();
 
-      // Start parent
-      let result = runCli('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
-      // Delegate and claim
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       const token = extractToken(result.stdout);
-      result = runCli(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token}`, workspace);
 
-      // Stop with message — propagation happens but stop succeeds
-      result = runCli(['stop', 'Task cancelled by user'], workspace);
+      // Stop with message — child stops, propagation to parent 1.1
+      result = await runCliInProcess(['stop', 'Task cancelled by user'], workspace);
       expect(result.exitCode).toBe(0);
-      // Text renderer discards the message; just check for STOP
       expect(result.stdout).toContain('STOP');
 
-      // Parent should be stopped
+      // Complete parent substep 1.2 to trigger aggregation
+      result = await runCliInProcess('pass', workspace);
+
+      // Parent should be stopped (FAIL ANY: STOP)
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect((updatedParent!.variables as Record<string, unknown>).stopped).toBe(true);
@@ -227,24 +228,20 @@ Run the child task.
       await writeParentRunbook();
       await writeChildRunbook();
 
-      // Start parent
-      let result = runCli('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
-      // Delegate and claim
-      result = runCli('delegate child.runbook.md --step 1.1 --json', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1 --json', workspace);
       const delegateOutput = JSON.parse(result.stdout);
       const token = delegateOutput.token as string;
 
-      result = runCli(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token}`, workspace);
 
-      // Stop with JSON — propagation happens but stop succeeds
-      result = runCli('stop --json', workspace);
+      // Stop with JSON — child stops, propagation to parent 1.1
+      result = await runCliInProcess('stop --json', workspace);
       expect(result.exitCode).toBe(0);
 
-      // With delegation, stop --json produces JSONL (multiple lines).
-      // Find the line with the stop action from the child's output.
       const lines = result.stdout.split('\n').filter((l: string) => l.trim());
       const stopLine = lines.find((l: string) => {
         try {
@@ -258,6 +255,9 @@ Run the child task.
       const output = JSON.parse(stopLine!);
       expect(output.action).toBe('stop');
 
+      // Complete parent substep 1.2 to trigger aggregation
+      result = await runCliInProcess('pass', workspace);
+
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -266,10 +266,10 @@ Run the child task.
 
     it('stop without delegation linkage does not propagate', async () => {
       // Start a runbook without delegation
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
 
       // Stop it
-      const result = runCli('stop', workspace);
+      const result = await runCliInProcess('stop', workspace);
       expect(result.exitCode).toBe(0);
 
       // No propagation should occur — just a normal stop
@@ -277,7 +277,7 @@ Run the child task.
     });
 
     it('3-level cascade — stop child propagates through parent to grandparent', async () => {
-      // Grandparent with substeps
+      // Grandparent with 2 substeps
       const grandparentContent = `## 1. Pipeline
 - PASS ALL: COMPLETE
 - FAIL ANY: STOP
@@ -285,50 +285,63 @@ Run the child task.
 ### 1.1 Deploy
 Deploy step.
 
-### 1.2 Verify
-Verify step.
+### 1.2 Monitor
+Monitor step.
 `;
       await writeFile(join(workspace.cwd, 'grandparent.runbook.md'), grandparentContent);
 
-      // Parent with a substep
+      // Parent with 2 substeps
       const parentContent = `## 1. Review
 - PASS ALL: COMPLETE
 - FAIL ANY: STOP
 
 ### 1.1 Task
 Review the deployment.
+
+### 1.2 Approve
+Approve the deployment.
 `;
       await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
 
-      // Child
+      // Child (single step, no substeps)
       await writeChildRunbook();
 
       // Start grandparent
-      let result = runCli('run --prompted grandparent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted grandparent.runbook.md', workspace);
       const grandparentState = await getActiveState(workspace);
       const grandparentRunId = grandparentState!.id as string;
 
       // Delegate grandparent 1.1 to parent
-      result = runCli('delegate parent.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate parent.runbook.md --step 1.1', workspace);
       const token1 = extractToken(result.stdout);
-      result = runCli(`claim ${token1}`, workspace);
+      result = await runCliInProcess(`claim ${token1}`, workspace);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
       // Delegate parent 1.1 to child
-      result = runCli('delegate child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       const token2 = extractToken(result.stdout);
-      result = runCli(`claim ${token2}`, workspace);
+      result = await runCliInProcess(`claim ${token2}`, workspace);
 
-      // Stop the child — should cascade through parent to grandparent
-      result = runCli('stop', workspace);
+      // Stop the child — propagates fail to parent substep 1.1
+      // Parent DEFER: 1.1 fail, advance to 1.2
+      result = await runCliInProcess('stop', workspace);
       expect(result.exitCode).toBe(0);
+
+      // Parent is now active at substep 1.2 — complete it
+      // Aggregation: FAIL ANY triggers STOP, propagates fail to grandparent 1.1
+      // Grandparent DEFER: 1.1 fail, advance to 1.2
+      result = await runCliInProcess('pass', workspace);
 
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect((updatedParent!.variables as Record<string, unknown>).stopped).toBe(true);
+
+      // Grandparent is now active at substep 1.2 — complete it
+      // Aggregation: FAIL ANY triggers STOP
+      result = await runCliInProcess('pass', workspace);
 
       // Verify grandparent is stopped
       const updatedGrandparent = await readRunbookState(workspace, grandparentRunId);

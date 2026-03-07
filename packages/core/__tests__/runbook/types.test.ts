@@ -1,10 +1,12 @@
 import { describe, it, expect } from '@jest/globals';
 import type { Action, SubstepState, Substep, RunbookState } from '../../src/runbook/types.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 
 describe('SubstepState type', () => {
   it('has required fields', () => {
     const subtaskState: SubstepState = {
       id: '1',
+      frameKey: buildFrameKey('1'),
       status: 'pending',
       result: undefined,
     };
@@ -85,7 +87,7 @@ describe('Substep interface', () => {
       id: '1',
       description: 'Test substep',
       transitions: {
-        all: true,
+        aggregation: 'ALL',
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'BLOCKED' } },
       },

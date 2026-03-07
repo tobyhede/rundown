@@ -1,6 +1,12 @@
 import path from 'node:path';
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService, createDelegation, Errors } from '@rundown-org/core';
+import {
+  RunbookStateManager,
+  SessionService,
+  createDelegation,
+  Errors,
+  deriveActiveFrame,
+} from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -110,6 +116,9 @@ export function registerDelegateCommand(program: Command): void {
               extraVars = extraVars ? { ...extraVars, ...flagVars } : flagVars;
             }
 
+            // Compute active frame key for FOR loop scoping
+            const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+
             // Create delegation (pure function — validates and returns token)
             const result = createDelegation(
               {
@@ -118,6 +127,7 @@ export function registerDelegateCommand(program: Command): void {
                 childRunbookPath: childPath,
                 extraVars,
                 ancestors: [],
+                frameKey: activeFrameKey,
               },
               steps,
             );

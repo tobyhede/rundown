@@ -14,6 +14,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     .fn()
     .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1' }),
   getActiveForContext: jest.fn().mockReturnValue(null),
+  buildFrameKey: jest.fn(
+    (step: string, iteration?: number) =>
+      `${step}|${iteration !== undefined ? String(iteration) : ''}`,
+  ),
   parseStepIdFromString: jest.fn(),
   STATE_DIR: '.claude/rundown/runs',
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
@@ -406,11 +410,18 @@ describe('startRunbook', () => {
 
     runExecutionLoop.mockResolvedValue('done');
 
+    const mockLoad = jest.fn<any>().mockResolvedValue({
+      id: 'sub-id',
+      step: '1',
+      activeFrameKey: '1|',
+    });
+
     const ctx = {
       output: { flush: jest.fn() } as any,
       manager: {
         create: mockCreate,
         update: mockUpdate,
+        load: mockLoad,
         initializeSubsteps: mockInitSubsteps,
       } as any,
       actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
@@ -431,7 +442,7 @@ describe('startRunbook', () => {
     const result = await startRunbook(ctx as any, prepared, { file: 'runbook.md' });
 
     expect(result.ok).toBe(true);
-    expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps);
+    expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps, '1|');
     expect(mockUpdate).toHaveBeenCalledWith('sub-id', { substep: 'a' });
   });
 });

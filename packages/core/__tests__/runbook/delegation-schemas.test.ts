@@ -6,6 +6,7 @@ import {
   RunbookStateSchema,
 } from '../../src/schemas.js';
 import { DelegationStatusEntrySchema, StatusResponseSchema } from '../../src/output/zod-schemas.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 
 describe('AncestorSnapshotSchema', () => {
   it('accepts valid ancestor snapshot', () => {
@@ -158,6 +159,7 @@ describe('SubstepStateSchema backward compatibility', () => {
   it('accepts substep state without delegation field', () => {
     const state = {
       id: '1',
+      frameKey: buildFrameKey('1'),
       status: 'pending' as const,
     };
     // SubstepState is embedded in RunbookState, so we test via RunbookStateSchema
@@ -169,9 +171,38 @@ describe('SubstepStateSchema backward compatibility', () => {
     expect(result.success).toBe(true);
   });
 
+  it('accepts substep state with frameKey field', () => {
+    const state = {
+      id: '1',
+      frameKey: buildFrameKey('1', 2),
+      status: 'pending' as const,
+    };
+    const runbookState = createMinimalRunbookState({
+      substepStates: [state],
+    });
+    const result = RunbookStateSchema.safeParse(runbookState);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.substepStates?.[0]?.frameKey).toBe('1|2');
+    }
+  });
+
+  it('rejects substep state without frameKey', () => {
+    const state = {
+      id: '1',
+      status: 'pending' as const,
+    };
+    const runbookState = createMinimalRunbookState({
+      substepStates: [state as any],
+    });
+    const result = RunbookStateSchema.safeParse(runbookState);
+    expect(result.success).toBe(false);
+  });
+
   it('accepts substep state with delegation field', () => {
     const state = {
       id: '1',
+      frameKey: buildFrameKey('1'),
       status: 'pending' as const,
       delegation: {
         tokenHash: `sha256:${'b'.repeat(64)}`,
@@ -212,7 +243,7 @@ describe('RunbookStateSchema round-trip with delegation', () => {
       cancelledAt: null,
     };
     const runbookState = createMinimalRunbookState({
-      substepStates: [{ id: '1', status: 'pending', delegation }],
+      substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation }],
     });
     const result = RunbookStateSchema.safeParse(runbookState);
     expect(result.success).toBe(true);

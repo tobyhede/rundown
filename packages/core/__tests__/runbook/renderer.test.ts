@@ -56,7 +56,7 @@ describe('renderAction', () => {
 describe('renderTransitions', () => {
   it('renders pass and fail transitions', () => {
     const result = renderTransitions({
-      all: true,
+      aggregation: 'ALL',
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'failed' } },
     });
@@ -65,17 +65,16 @@ describe('renderTransitions', () => {
 
   it('renders transitions with retry prefix', () => {
     const result = renderTransitions({
-      all: true,
+      aggregation: 'ALL',
       pass: { kind: 'pass', retry: 2, action: { type: 'STOP' } },
       fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
     });
     expect(result).toBe('- PASS ALL: RETRY 2 STOP\n- FAIL ANY: CONTINUE');
   });
 
-  it('omits modifier when modifierImplicit is set', () => {
+  it('omits modifier when aggregation is none', () => {
     const result = renderTransitions({
-      all: true,
-      modifierImplicit: true,
+      aggregation: 'none',
       pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     });
@@ -163,7 +162,7 @@ describe('renderStep', () => {
       description: 'Review the plan',
       forClause: { variable: 'pass', start: 1, end: 2 },
       transitions: {
-        all: false,
+        aggregation: 'ANY',
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: 'Synthesize' } } },
       },
@@ -389,7 +388,7 @@ echo hello
 ## 2. Second step`;
 
     const parsed1 = parseRunbook(original);
-    expect(parsed1[0].transitions?.modifierImplicit).toBe(true);
+    expect(parsed1[0].transitions?.aggregation).toBe('none');
 
     const rendered = parsed1.map(renderStep).join('\n\n');
     expect(rendered).toContain('- PASS: GOTO 2');
@@ -399,7 +398,7 @@ echo hello
 
     // Verify re-parse produces same result
     const parsed2 = parseRunbook(rendered);
-    expect(parsed2[0].transitions?.modifierImplicit).toBe(true);
+    expect(parsed2[0].transitions?.aggregation).toBe('none');
     expect(parsed2[0].transitions?.pass.action).toEqual({
       type: 'GOTO',
       target: { step: '2', substep: undefined },
@@ -415,7 +414,7 @@ echo hello
 ## 2. Second step`;
 
     const parsed1 = parseRunbook(original);
-    expect(parsed1[0].transitions?.modifierImplicit).toBeUndefined();
+    expect(parsed1[0].transitions?.aggregation).toBe('ALL');
 
     const rendered = parsed1.map(renderStep).join('\n\n');
     expect(rendered).toContain('- PASS ALL: CONTINUE');
@@ -469,7 +468,7 @@ describe('FOR clause with nested transitions', () => {
         start: 1,
         end: 3,
         transitions: {
-          all: true,
+          aggregation: 'ALL',
           pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
           fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
         },
