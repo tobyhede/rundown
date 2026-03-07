@@ -10,10 +10,7 @@
 import { spawn } from 'node:child_process';
 import { parse as shellParse } from 'shell-quote';
 import type { StepAssertion } from '../schemas/scenarios.js';
-import {
-  isInternalRdCommand,
-  executeRdCommandInternal,
-} from '../services/internal-commands.js';
+import { isInternalRdCommand, executeRdCommandInternal } from '../services/internal-commands.js';
 
 /** A captured step transition from JSON output. */
 export interface CapturedTransition {
