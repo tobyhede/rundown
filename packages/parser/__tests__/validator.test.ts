@@ -486,6 +486,30 @@ describe('validator strict rules', () => {
       );
     });
 
+    it('rejects DEFER at step level', () => {
+      const steps: Step[] = [
+        {
+          kind: 'command',
+          name: '1',
+          description: 'Step with DEFER',
+          command: { type: 'shell', value: 'echo test' },
+          transitions: {
+            aggregation: 'ALL',
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ];
+      const errors = validateRunbook(steps);
+      expect(
+        errors.some((e) =>
+          e.message.includes(
+            'DEFER is only valid within substeps or FOR iteration-level transitions, not at step level',
+          ),
+        ),
+      ).toBe(true);
+    });
+
     it('accepts AT-qualified GOTO to self (not a true self-loop)', () => {
       const steps: Step[] = [
         {

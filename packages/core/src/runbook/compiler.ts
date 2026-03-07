@@ -1305,7 +1305,7 @@ function buildLoopControlTransition(
  * DEFER always routes substeps to the parent aggregation state with result
  * accumulation, enabling fail-fast ALL/ANY evaluation. For non-last substeps,
  * the parent's advance guards handle routing to the next sibling.
- * At the step level (no substep), DEFER acts like CONTINUE.
+ * DEFER at step level is invalid and rejected by the parser/validator.
  *
  * **Aggregation and `lastAction` reporting:**
  * - Non-last substeps: DEFER routes to parent, the advance guard advances to the
@@ -1347,16 +1347,12 @@ function buildDeferTransition(
     };
   }
 
-  // Non-substep DEFER: behaves like CONTINUE (advance to next step)
-  const target = findNextStateId(stepName, substepId, steps);
-  return {
-    target,
-    actions: runbookSetup.assign({
-      lastAction: { type: 'DEFER' as const },
-      lastMessage: undefined as string | undefined,
-      substep: extractSubstepFromStateId(target),
-    }),
-  };
+  // Step-level DEFER should be rejected by the parser/validator.
+  // If we reach here, it's an invariant violation.
+  throw new Error(
+    `Invariant violation: DEFER at step level for "${stepName}". ` +
+      `DEFER is only valid in substep or FOR iteration contexts.`,
+  );
 }
 
 /**

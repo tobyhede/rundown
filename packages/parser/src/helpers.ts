@@ -666,6 +666,31 @@ export function validateNEXTUsage(conditionals: ParsedConditional[], isForContex
 }
 
 /**
+ * Validate that DEFER is only used in substep or FOR iteration-level contexts.
+ *
+ * DEFER propagates a result to a parent aggregation state (ALL/ANY). At step
+ * level there is no parent aggregation, so DEFER is meaningless.
+ *
+ * @param conditionals - Array of parsed conditionals to check for DEFER usage
+ * @param isSubstepContext - Whether the current context is within a substep or FOR iteration
+ * @throws {RunbookSyntaxError} When DEFER used at step level
+ */
+export function validateDEFERUsage(
+  conditionals: ParsedConditional[],
+  isSubstepContext: boolean,
+): void {
+  for (const conditional of conditionals) {
+    if (conditional.action.type === 'DEFER') {
+      if (!isSubstepContext) {
+        throw new RunbookSyntaxError(
+          'DEFER is only valid within substeps or FOR iteration-level transitions, not at step level',
+        );
+      }
+    }
+  }
+}
+
+/**
  * Convert an array of parsed conditionals into a Transitions object.
  *
  * Combines PASS and FAIL conditionals into a unified Transitions structure,

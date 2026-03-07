@@ -23,6 +23,7 @@ export {
   escapeForShellSingleQuote,
   parseQuotedOrIdentifier,
   validateNEXTUsage,
+  validateDEFERUsage,
 } from './helpers.js';
 export type { ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
 export {

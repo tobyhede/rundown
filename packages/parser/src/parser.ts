@@ -14,6 +14,7 @@ import {
   isPromptCodeBlock,
   escapeForShellSingleQuote,
   validateNEXTUsage,
+  validateDEFERUsage,
   parseForClause,
 } from './helpers.js';
 import { validateRunbook } from './validator.js';
@@ -585,6 +586,7 @@ function finalizeStep(
   // Validate NEXT usage before converting to transitions
   const effectiveConditionals = step.stepConditionals ?? pendingConditionals;
   validateNEXTUsage(effectiveConditionals, step.forClause !== undefined);
+  validateDEFERUsage(effectiveConditionals, false);
 
   const transitions = convertToTransitions(effectiveConditionals);
 

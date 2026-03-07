@@ -12,6 +12,7 @@ import {
   parseConditional,
   convertToTransitions,
   validateNEXTUsage,
+  validateDEFERUsage,
   parseForClause,
   type ParsedConditional,
 } from '../src/index.js';
@@ -1121,6 +1122,37 @@ describe('validateNEXTUsage with first-class NEXT/BREAK', () => {
     ];
     expect(() => {
       validateNEXTUsage(conditionals, true);
+    }).not.toThrow();
+  });
+});
+
+describe('validateDEFERUsage', () => {
+  it('rejects DEFER in non-substep context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'DEFER' }, retry: 0, modifier: null, raw: 'DEFER' },
+    ];
+    expect(() => {
+      validateDEFERUsage(conditionals, false);
+    }).toThrow(
+      'DEFER is only valid within substeps or FOR iteration-level transitions, not at step level',
+    );
+  });
+
+  it('accepts DEFER in substep context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'DEFER' }, retry: 0, modifier: null, raw: 'DEFER' },
+    ];
+    expect(() => {
+      validateDEFERUsage(conditionals, true);
+    }).not.toThrow();
+  });
+
+  it('does not throw for non-DEFER actions in non-substep context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'CONTINUE' }, retry: 0, modifier: null, raw: 'CONTINUE' },
+    ];
+    expect(() => {
+      validateDEFERUsage(conditionals, false);
     }).not.toThrow();
   });
 });

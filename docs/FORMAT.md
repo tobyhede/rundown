@@ -101,6 +101,7 @@ where action is:
   CONTINUE | DEFER | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK
 
 Context constraints:
+- `DEFER` is only valid inside substeps or FOR iteration-level nested transitions
 - `NEXT` is only valid inside substeps of a FOR step
 - `BREAK` is valid inside substeps of a FOR step and FOR-level nested transitions
 - FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions: `CONTINUE` (exit loop), `DEFER`, `NEXT` (loop back without accumulation), `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
