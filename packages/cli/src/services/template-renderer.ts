@@ -286,6 +286,73 @@ export function substituteRunbookVariables(
 }
 
 /**
+ * Collect unresolved template variable names from text.
+ *
+ * Scans for remaining `{{...}}` placeholders and returns the variable names.
+ *
+ * @param text - Text that may contain unresolved placeholders
+ * @returns Array of unresolved variable names
+ */
+export function collectUnresolvedVariables(text: string): string[] {
+  const matches: string[] = [];
+  for (const match of text.matchAll(TEMPLATE_PATH_REGEX)) {
+    matches.push(match[1]);
+  }
+  return matches;
+}
+
+/**
+ * Emit warnings for any unresolved template variables in a substituted runbook.
+ *
+ * Walks the runbook AST collecting all remaining `{{...}}` placeholders,
+ * then emits a deduplicated warning per variable to stderr.
+ *
+ * @param runbook - Runbook AST after variable substitution
+ */
+export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
+  const unresolved = new Set<string>();
+
+  const collect = (text: string | undefined): void => {
+    if (!text) return;
+    for (const name of collectUnresolvedVariables(text)) {
+      unresolved.add(name);
+    }
+  };
+
+  collect(runbook.title);
+  collect(runbook.description);
+
+  for (const step of runbook.steps) {
+    collect(step.description);
+    collect(step.prompt);
+    switch (step.kind) {
+      case 'command':
+        collect(step.command.code);
+        break;
+      case 'substeps':
+      case 'for':
+        for (const ss of step.substeps) {
+          collect(ss.description);
+          collect(ss.prompt);
+          if (ss.command) {
+            collect(ss.command.code);
+          }
+          if (ss.runbooks) {
+            for (const rb of ss.runbooks) {
+              collect(rb);
+            }
+          }
+        }
+        break;
+    }
+  }
+
+  for (const name of unresolved) {
+    console.warn(`Warning: Undefined variable "{{${name}}}" preserved as literal text`);
+  }
+}
+
+/**
  * Expand loop variables in command code with shell escaping.
  *
  * @param text - Command text containing placeholders

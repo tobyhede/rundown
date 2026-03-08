@@ -243,8 +243,8 @@ Canonical runtime targeting is `step + substep + iteration`.
 | Pattern             | Variable  | Expansion                               |
 |---------------------|-----------|-----------------------------------------|
 | `{{VariableName}}`  | defined   | literal variable value                  |
-| `{{VariableName}}`  | undefined | preserved as literal `{{VariableName}}` |
-| `{{path.to.value}}` | missing path | preserved as literal `{{path.to.value}}` |
+| `{{VariableName}}`  | undefined | preserved as literal `{{VariableName}}` (warning emitted to stderr) |
+| `{{path.to.value}}` | missing path | preserved as literal `{{path.to.value}}` (warning emitted to stderr) |
 
 
  VariableName: `/^[a-zA-Z_][a-zA-Z0-9_]*$/`

@@ -17,10 +17,14 @@ import type { RunbookState } from '@rundown-org/core';
 import {
   substituteRunbookVariables,
   expandForClauseVariables,
+  warnUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 
 /**
  * Load and parse runbook steps from state.
+ *
+ * When `templateVars` is present in state, variables are re-applied via AST-level
+ * substitution. Any unresolved template variables emit a warning to stderr.
  *
  * @param state - Runbook state containing runbookSrc and optionally templateVars
  * @param _cwd - Unused, kept for signature compatibility
@@ -28,6 +32,11 @@ import {
  * @throws {Error} if runbookSrc is missing (corrupted state)
  * @throws {RunbookSyntaxError} if runbookSrc fails to parse as a runbook document
  *         (thrown by parseRunbookDocument)
+ *
+ * @remarks
+ * When `state.templateVars` is present and substitution leaves unresolved
+ * `{{variable}}` placeholders, a deduplicated warning per variable is written
+ * to stderr via `console.warn`.
  *
  * @example
  * ```typescript
@@ -47,7 +56,9 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
     const sourceKeys = new Set(Object.keys(state.sources ?? {}));
     const forExpanded = expandForClauseVariables(state.runbookSrc, state.templateVars, sourceKeys);
     const runbook = parseRunbookDocument(forExpanded, state.runbook);
-    return substituteRunbookVariables(runbook, state.templateVars).steps;
+    const substituted = substituteRunbookVariables(runbook, state.templateVars);
+    warnUnresolvedRunbookVariables(substituted);
+    return substituted.steps;
   }
 
   const runbook = parseRunbookDocument(state.runbookSrc, state.runbook);
