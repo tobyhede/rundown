@@ -23,12 +23,20 @@ import {
 /**
  * Load and parse runbook steps from state.
  *
+ * When `templateVars` is present in state, variables are re-applied via AST-level
+ * substitution. Any unresolved template variables emit a warning to stderr.
+ *
  * @param state - Runbook state containing runbookSrc and optionally templateVars
  * @param _cwd - Unused, kept for signature compatibility
  * @returns Parsed steps from runbookSrc (with variables substituted if templateVars present)
  * @throws Error if runbookSrc is missing (corrupted state)
  * @throws {RunbookSyntaxError} if runbookSrc fails to parse as a runbook document
  *         (thrown by parseRunbookDocument)
+ *
+ * @remarks
+ * When `state.templateVars` is present and substitution leaves unresolved
+ * `{{variable}}` placeholders, a deduplicated warning per variable is written
+ * to stderr via `console.warn`.
  *
  * @example
  * ```typescript

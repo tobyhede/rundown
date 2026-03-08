@@ -507,6 +507,25 @@ describe('warnUnresolvedRunbookVariables', () => {
     );
     warnSpy.mockRestore();
   });
+
+  it('should warn for unresolved variables in substep runbook paths', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Main step',
+      '',
+      '### 1.1 Sub',
+      '',
+      '- deploy-{{region}}.runbook.md',
+    ].join('\n');
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Warning: Undefined variable "{{region}}" preserved as literal text',
+    );
+    warnSpy.mockRestore();
+  });
 });
 
 describe('expandForClauseVariables', () => {

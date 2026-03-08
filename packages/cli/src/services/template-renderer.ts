@@ -337,6 +337,11 @@ export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
           if (ss.command) {
             collect(ss.command.code);
           }
+          if (ss.runbooks) {
+            for (const rb of ss.runbooks) {
+              collect(rb);
+            }
+          }
         }
         break;
     }
