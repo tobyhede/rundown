@@ -15,9 +15,9 @@ jobs:
   quality-checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6
         with:
           node-version: 22
           cache: 'npm'
@@ -42,10 +42,10 @@ jobs:
         node-version: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
@@ -57,7 +57,7 @@ jobs:
         run: npm run build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7
         with:
           name: build-artifacts-node${{ matrix.node-version }}
           path: |
@@ -77,10 +77,10 @@ jobs:
         node-version: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
@@ -89,7 +89,7 @@ jobs:
         run: npm ci
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: build-artifacts-node${{ matrix.node-version }}
           path: packages
@@ -106,10 +106,10 @@ jobs:
         node-version: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && '[20, 22]' || '[22]') }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
@@ -118,7 +118,7 @@ jobs:
         run: npm ci
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: build-artifacts-node${{ matrix.node-version }}
           path: packages
@@ -128,7 +128,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: matrix.node-version == 22
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de  # v5
         with:
           files: ./packages/parser/coverage/lcov.info,./packages/core/coverage/lcov.info,./packages/cli/coverage/lcov.info,./packages/claude-code-plugin/coverage/lcov.info
           fail_ci_if_error: false
@@ -137,9 +137,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: setup-build
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6
         with:
           node-version: 22
           cache: 'npm'
@@ -148,7 +148,7 @@ jobs:
         run: npm ci
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: build-artifacts-node22
           path: packages
@@ -159,7 +159,7 @@ jobs:
       - name: Run Playwright tests
         run: npm test -w site
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7
         if: failure()
         with:
           name: playwright-report
@@ -174,7 +174,7 @@ jobs:
     steps:
       - name: Trigger turboshovel CI
         continue-on-error: true
-        uses: peter-evans/repository-dispatch@v4
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4
         with:
           token: ${{ secrets.CROSS_REPO_PAT }}
           repository: tobyhede/turboshovel
