@@ -795,12 +795,10 @@ function buildParentExitAssign(
         lastMessage: undefined as string | undefined,
       });
     case 'DEFER':
-      return runbookSetup.assign({
-        ...baseAssign,
-        forStack: [] as readonly ForContext[],
-        lastAction: { type: 'DEFER' as const, aggregated: true },
-        lastMessage: undefined as string | undefined,
-      });
+      throw new Error(
+        'Invariant violation: DEFER appeared as parent-step exit action. ' +
+          'DEFER is only valid in substep or FOR iteration contexts.',
+      );
     default:
       return runbookSetup.assign({
         ...baseAssign,
@@ -1206,7 +1204,6 @@ function buildRetryStateConfig(
 function resolveActionTarget(action: Action, stepName: string, steps: Step[]): string {
   switch (action.type) {
     case 'CONTINUE':
-    case 'DEFER':
       return findNextStateId(stepName, undefined, steps);
     case 'COMPLETE':
       return 'COMPLETE';
@@ -1225,9 +1222,10 @@ function resolveActionTarget(action: Action, stepName: string, steps: Step[]): s
     }
     case 'NEXT':
     case 'BREAK':
+    case 'DEFER':
       throw new Error(
         `Compiler invariant violation: ${action.type} appeared as parent-step action. ` +
-          `This should be caught by parser validateNEXTUsage.`,
+          `DEFER is only valid in substep or FOR iteration contexts.`,
       );
   }
 }

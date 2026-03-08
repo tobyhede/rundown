@@ -489,10 +489,9 @@ describe('validator strict rules', () => {
     it('rejects DEFER at step level', () => {
       const steps: Step[] = [
         {
-          kind: 'command',
+          kind: 'base',
           name: '1',
           description: 'Step with DEFER',
-          command: { type: 'shell', value: 'echo test' },
           transitions: {
             aggregation: 'ALL',
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
@@ -508,6 +507,26 @@ describe('validator strict rules', () => {
           ),
         ),
       ).toBe(true);
+    });
+
+    it('emits single error when both pass and fail are DEFER at step level', () => {
+      const steps: Step[] = [
+        {
+          kind: 'base',
+          name: '1',
+          description: 'Step with DEFER on both',
+          transitions: {
+            aggregation: 'ALL',
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+          },
+        },
+      ];
+      const errors = validateRunbook(steps);
+      const deferErrors = errors.filter((e) =>
+        e.message.includes('DEFER is only valid within substeps'),
+      );
+      expect(deferErrors).toHaveLength(1);
     });
 
     it('accepts AT-qualified GOTO to self (not a true self-loop)', () => {

@@ -227,7 +227,7 @@ scenarios:
 7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
 9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.
-10. **FOR Iteration Action Set**: FOR-level nested transitions only allow `CONTINUE`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
+10. **FOR Iteration Action Set**: FOR-level nested transitions only allow `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
 
 ## 9. Compatibility
 

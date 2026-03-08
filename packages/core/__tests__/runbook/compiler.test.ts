@@ -6943,6 +6943,364 @@ echo "processing"
         expect(actorAny.getSnapshot().value).toBe('COMPLETE');
       });
 
+      it('S1: 3 substeps DEFER+CONTINUE+DEFER, 2 iterations — CONTINUE in middle is invisible', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 2, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '3',
+                description: 'Sub 3 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Iter 1: sub1=PASS(DEFER), sub2=FAIL(CONTINUE), sub3=PASS(DEFER)
+        actor.send({ type: 'PASS' }); // sub1 → DEFER feeds 'pass'
+        actor.send({ type: 'FAIL' }); // sub2 → CONTINUE (invisible)
+        actor.send({ type: 'PASS' }); // sub3 → DEFER feeds 'pass'
+        // deferredResults=['pass','pass'] → ALL: pass → iter pass → DEFER → loopback
+        expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
+
+        // Iter 2: sub1=PASS(DEFER), sub2=PASS(CONTINUE), sub3=PASS(DEFER)
+        actor.send({ type: 'PASS' }); // sub1 → DEFER feeds 'pass'
+        actor.send({ type: 'PASS' }); // sub2 → CONTINUE (invisible)
+        actor.send({ type: 'PASS' }); // sub3 → DEFER feeds 'pass'
+        // deferredResults=['pass','pass'] → ALL: pass → iter pass
+        // Parent: iterationResults=['pass'] + inline pass → ALL: pass → COMPLETE
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('S2: 3 substeps DEFER+CONTINUE+DEFER, 1 iteration — hidden failure', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '3',
+                description: 'Sub 3 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // sub1=PASS(DEFER), sub2=FAIL(CONTINUE), sub3=PASS(DEFER)
+        actor.send({ type: 'PASS' }); // sub1 → DEFER feeds 'pass'
+        actor.send({ type: 'FAIL' }); // sub2 → CONTINUE (failure invisible)
+        actor.send({ type: 'PASS' }); // sub3 → DEFER feeds 'pass'
+        // deferredResults=['pass','pass'] → ALL: pass → COMPLETE
+        expect(actor.getSnapshot().context.deferredResults).toEqual(['pass', 'pass']);
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('S3: 2 substeps CONTINUE+DEFER with iteration-level CONTINUE on pass', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: {
+              start: 1,
+              end: 3,
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Iter 1: sub1=PASS(CONTINUE), sub2=PASS(DEFER)
+        actor.send({ type: 'PASS' }); // sub1 → CONTINUE (invisible)
+        actor.send({ type: 'PASS' }); // sub2 → DEFER feeds 'pass'
+        // deferredResults=['pass'] → ALL: pass → iter pass → CONTINUE → exits loop
+        // Parent: iterationResults=[] + partial feed → ALL: pass → COMPLETE
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('S4: 2 substeps CONTINUE+DEFER, 3 iterations — DEFER loopback then CONTINUE exit', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: {
+              start: 1,
+              end: 3,
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              },
+            },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Iter 1: sub1=PASS(CONTINUE), sub2=PASS(DEFER)
+        actor.send({ type: 'PASS' }); // sub1 → CONTINUE (invisible)
+        actor.send({ type: 'PASS' }); // sub2 → DEFER feeds 'pass'
+        // deferredResults=['pass'] → ALL: pass → iter pass → DEFER → loopback
+        expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
+
+        // Iter 2: sub1=PASS(CONTINUE), sub2=PASS(DEFER)
+        actor.send({ type: 'PASS' }); // sub1 → CONTINUE (invisible)
+        actor.send({ type: 'PASS' }); // sub2 → DEFER feeds 'pass'
+        // deferredResults=['pass'] → ALL: pass → iter pass → DEFER → loopback
+        expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+
+        // Iter 3: sub1=FAIL(CONTINUE), sub2=FAIL(DEFER)
+        actor.send({ type: 'FAIL' }); // sub1 → CONTINUE (invisible)
+        actor.send({ type: 'FAIL' }); // sub2 → DEFER feeds 'fail'
+        // deferredResults=['fail'] → ALL: fail → iter fail → CONTINUE → exits loop
+        // Parent: iterationResults=['pass','pass'] + inline fail → ALL fails → STOPPED
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('S5: 3 substeps CONTINUE+CONTINUE+DEFER — only last feeds results', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ANY_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '3',
+                description: 'Sub 3 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // sub1=PASS(CONTINUE), sub2=PASS(CONTINUE), sub3=FAIL(DEFER)
+        actor.send({ type: 'PASS' }); // sub1 → CONTINUE (invisible)
+        actor.send({ type: 'PASS' }); // sub2 → CONTINUE (invisible)
+        actor.send({ type: 'FAIL' }); // sub3 → DEFER feeds 'fail'
+        // deferredResults=['fail'] → ALL: fail → iter fail
+        // Parent ANY: ['fail'] → 0 passes → STOPPED
+        expect(actor.getSnapshot().context.deferredResults).toEqual(['fail']);
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('S6: 3 substeps DEFER+CONTINUE+DEFER, PASS ANY at iteration level', () => {
+        const FOR_ANY_DEFER_TRANSITIONS = {
+          aggregation: 'ANY' as const,
+          pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+          fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+        };
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 2, transitions: FOR_ANY_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '3',
+                description: 'Sub 3 (DEFER)',
+                transitions: makeSubstepTransitions('DEFER', 'DEFER'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Iter 1: sub1=FAIL(DEFER), sub2=PASS(CONTINUE), sub3=FAIL(DEFER)
+        actor.send({ type: 'FAIL' }); // sub1 → DEFER feeds 'fail'
+        actor.send({ type: 'PASS' }); // sub2 → CONTINUE (invisible — would be 'pass' but hidden)
+        actor.send({ type: 'FAIL' }); // sub3 → DEFER feeds 'fail'
+        // deferredResults=['fail','fail'] → ANY: 0 passes → fail → DEFER → loopback
+        expect(actor.getSnapshot().context.iterationResults).toEqual(['fail']);
+
+        // Iter 2: sub1=FAIL(DEFER), sub2=FAIL(CONTINUE), sub3=PASS(DEFER)
+        actor.send({ type: 'FAIL' }); // sub1 → DEFER feeds 'fail'
+        actor.send({ type: 'FAIL' }); // sub2 → CONTINUE (invisible)
+        actor.send({ type: 'PASS' }); // sub3 → DEFER feeds 'pass'
+        // deferredResults=['fail','pass'] → ANY: 1 pass → pass → iter pass
+        // Parent: iterationResults=['fail'] + inline pass → ALL fails → STOPPED
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
+      it('S7: all-CONTINUE substeps, 3 iterations — vacuous pass propagation', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 3, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ANY_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (CONTINUE)',
+                transitions: makeSubstepTransitions('CONTINUE', 'CONTINUE'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Iter 1: both FAIL → both CONTINUE → deferredResults=[] → ALL vacuous pass → DEFER
+        actor.send({ type: 'FAIL' });
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
+
+        // Iter 2: both FAIL → both CONTINUE → deferredResults=[] → ALL vacuous pass → DEFER
+        actor.send({ type: 'FAIL' });
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+
+        // Iter 3: both FAIL → both CONTINUE → deferredResults=[] → ALL vacuous pass
+        // Parent: iterationResults=['pass','pass'] + inline pass → ANY: 3 passes → COMPLETE
+        actor.send({ type: 'FAIL' });
+        actor.send({ type: 'FAIL' });
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
+      });
+
+      it('S8: asymmetric PASS→CONTINUE, FAIL→DEFER across 3 substeps', () => {
+        const steps = inferSteps([
+          {
+            name: '1',
+            forClause: { start: 1, end: 2, transitions: FOR_DEFER_TRANSITIONS },
+            description: 'FOR loop',
+            transitions: PASS_ALL_TRANSITIONS,
+            substeps: [
+              {
+                id: '1',
+                description: 'Sub 1 (pass→CONTINUE, fail→DEFER)',
+                transitions: makeSubstepTransitions('CONTINUE', 'DEFER'),
+              },
+              {
+                id: '2',
+                description: 'Sub 2 (pass→CONTINUE, fail→DEFER)',
+                transitions: makeSubstepTransitions('CONTINUE', 'DEFER'),
+              },
+              {
+                id: '3',
+                description: 'Sub 3 (pass→CONTINUE, fail→DEFER)',
+                transitions: makeSubstepTransitions('CONTINUE', 'DEFER'),
+              },
+            ],
+          },
+        ]);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine);
+        actor.start();
+
+        // Iter 1: sub1=PASS(CONTINUE), sub2=FAIL(DEFER), sub3=PASS(CONTINUE)
+        actor.send({ type: 'PASS' }); // sub1 → CONTINUE (pass hidden)
+        actor.send({ type: 'FAIL' }); // sub2 → DEFER feeds 'fail'
+        actor.send({ type: 'PASS' }); // sub3 → CONTINUE (pass hidden)
+        // deferredResults=['fail'] → ALL: fail → iter fail → DEFER → loopback
+        expect(actor.getSnapshot().context.iterationResults).toEqual(['fail']);
+
+        // Iter 2: sub1=PASS(CONTINUE), sub2=PASS(CONTINUE), sub3=PASS(CONTINUE)
+        actor.send({ type: 'PASS' }); // sub1 → CONTINUE (hidden)
+        actor.send({ type: 'PASS' }); // sub2 → CONTINUE (hidden)
+        actor.send({ type: 'PASS' }); // sub3 → CONTINUE (hidden)
+        // deferredResults=[] → ALL vacuous pass → iter pass
+        // Parent: iterationResults=['fail'] + inline pass → ALL fails → STOPPED
+        expect(actor.getSnapshot().value).toBe('STOPPED');
+      });
+
       it('non-FOR: all CONTINUE with PASS ANY → vacuous fail (no deferred results)', () => {
         // Non-FOR context: deferredResults directly used for parent aggregation
         // PASS ANY with zero results → no passes → STOPPED
@@ -7312,6 +7670,115 @@ echo "processing"
       ]);
 
       expect(() => compileRunbookToMachine(steps)).toThrow(/invariant violation/);
+    });
+
+    it('throws when DEFER appears as parent-step pass action (substeps)', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Step with substeps',
+          substeps: [
+            { id: '1', description: 'Sub 1' },
+            { id: '2', description: 'Sub 2' },
+          ],
+          transitions: {
+            aggregation: 'ALL' as const,
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'DEFER' as const },
+            },
+            fail: DEFAULT_TRANSITIONS.fail,
+          },
+        },
+        {
+          name: '2',
+          description: 'Second step',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      expect(() => compileRunbookToMachine(steps)).toThrow(/invariant violation/i);
+    });
+
+    it('throws when DEFER appears as parent-step fail action (substeps)', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Step with substeps',
+          substeps: [
+            { id: '1', description: 'Sub 1' },
+            { id: '2', description: 'Sub 2' },
+          ],
+          transitions: {
+            aggregation: 'ALL' as const,
+            pass: DEFAULT_TRANSITIONS.pass,
+            fail: {
+              kind: 'fail' as const,
+              retry: 0,
+              action: { type: 'DEFER' as const },
+            },
+          },
+        },
+        {
+          name: '2',
+          description: 'Second step',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      expect(() => compileRunbookToMachine(steps)).toThrow(/invariant violation/i);
+    });
+
+    it('throws when DEFER appears as parent FOR step action', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'FOR step',
+          forClause: { start: 1, end: 3 },
+          substeps: [{ id: '1', description: 'Sub 1' }],
+          transitions: {
+            aggregation: 'ALL' as const,
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'DEFER' as const },
+            },
+            fail: DEFAULT_TRANSITIONS.fail,
+          },
+        },
+        {
+          name: '2',
+          description: 'Second step',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      expect(() => compileRunbookToMachine(steps)).toThrow(/invariant violation/i);
+    });
+
+    it('allows DEFER at substep level (non-regression)', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Step with substeps',
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                aggregation: 'ALL' as const,
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+            { id: '2', description: 'Sub 2' },
+          ],
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      expect(() => compileRunbookToMachine(steps)).not.toThrow();
     });
 
     it('throws on duplicate state IDs', () => {
