@@ -19,12 +19,18 @@ import {
 export class Session {
   private stateFile: string;
 
+  /**
+   * Create a new Session instance for the given project directory.
+   * @param cwd - Project root directory (defaults to current directory)
+   */
   constructor(cwd = '.') {
     this.stateFile = join(cwd, '.claude', 'session', 'state.json');
   }
 
   /**
    * Get a session state value
+   * @param key - Session state key to retrieve
+   * @returns The value for the given key from persisted state
    */
   async get<K extends keyof SessionState>(key: K): Promise<SessionState[K]> {
     const state = await this.load();
@@ -32,7 +38,10 @@ export class Session {
   }
 
   /**
-   * Set a session state value
+   * Set a session state value.
+   * @param key - Session state key to update
+   * @param value - New value to persist
+   * @throws {Error} If persistence fails (mkdir/write/rename errors from save)
    */
   async set<K extends keyof SessionState>(key: K, value: SessionState[K]): Promise<void> {
     const state = await this.load();
@@ -41,7 +50,10 @@ export class Session {
   }
 
   /**
-   * Append value to array field (deduplicated)
+   * Append value to array field (deduplicated).
+   * @param key - Array-typed session state key
+   * @param value - String value to append if not already present
+   * @throws {Error} If persistence fails (mkdir/write/rename errors from save)
    */
   async append(key: SessionStateArrayKey, value: string): Promise<void> {
     const state = await this.load();
@@ -56,6 +68,9 @@ export class Session {
 
   /**
    * Check if array contains value
+   * @param key - Array-typed session state key
+   * @param value - String value to check for
+   * @returns True if the array contains the value
    */
   async contains(key: SessionStateArrayKey, value: string): Promise<boolean> {
     const state = await this.load();
@@ -74,8 +89,9 @@ export class Session {
   }
 
   /**
-   * Load state from file with detailed error handling
-   * Returns result object with success/error discriminant
+   * Load state from file with detailed error handling.
+   * Returns result object with success/error discriminant.
+   * @returns Discriminated union with parsed state on success or typed error on failure
    */
   private async loadWithError(): Promise<SessionLoadResult<SessionState>> {
     try {
@@ -127,8 +143,9 @@ export class Session {
   }
 
   /**
-   * Load state from file or initialize new state
-   * Handles errors silently: missing file initialized, corrupted data logged and reinitialized
+   * Load state from file or initialize new state.
+   * Handles errors silently: missing file initialized, corrupted data logged and reinitialized.
+   * @returns Parsed session state or freshly initialized defaults
    */
   private async load(): Promise<SessionState> {
     const result = await this.loadWithError();
@@ -165,6 +182,7 @@ export class Session {
    * concurrent operations overwrite each other's changes. This is acceptable
    * because hooks run sequentially in practice. If true concurrent access is
    * needed, add file locking or retry logic.
+   * @param state - Session state object to persist
    */
   private async save(state: SessionState): Promise<void> {
     await fs.mkdir(dirname(this.stateFile), { recursive: true });
@@ -195,6 +213,7 @@ export class Session {
    * Session ID format: ISO timestamp with punctuation replaced (e.g., "2025-11-23T14-30-45")
    * Unique per millisecond. Collisions possible if multiple sessions start in same millisecond,
    * but unlikely in practice due to hook serialization.
+   * @returns Fresh SessionState with schema defaults
    */
   private initState(): SessionState {
     return SessionStateSchema.parse({});

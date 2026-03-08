@@ -49,6 +49,13 @@ export class RundownError extends Error {
   /** Original cause if wrapping another error */
   override readonly cause?: Error;
 
+  /**
+   * Create a new RundownError from an error code key.
+   *
+   * @param codeKey - The error code key (e.g., 'FILE_NOT_FOUND')
+   * @param context - Additional context for error message formatting
+   * @param cause - Original error if wrapping another error
+   */
   constructor(codeKey: ErrorCodeKey, context: ErrorContext = {}, cause?: Error) {
     const errorCode = ErrorCodes[codeKey];
     const message = RundownError.formatMessage(errorCode, context);
@@ -65,6 +72,8 @@ export class RundownError extends Error {
 
   /**
    * Get the error code string (e.g., 'RD-101').
+   *
+   * @returns The formatted error code string
    */
   get code(): string {
     return this.errorCode.code;
@@ -72,6 +81,8 @@ export class RundownError extends Error {
 
   /**
    * Get documentation URL for this error.
+   *
+   * @returns URL to the error documentation page
    */
   get docsUrl(): string {
     return `https://rundown.dev/docs/errors/${this.errorCode.docSlug}`;
@@ -81,6 +92,9 @@ export class RundownError extends Error {
    * Format error message with context.
    *
    * Renders context fields in priority order, filtering out undefined values.
+   * @param errorCode - The error code definition with title and description
+   * @param context - Context data for message interpolation
+   * @returns Formatted error message string
    */
   private static formatMessage(errorCode: ErrorCodeDefinition, context: ErrorContext): string {
     const {
@@ -143,6 +157,8 @@ export class RundownError extends Error {
 
   /**
    * Format for JSON output (--json flag).
+   *
+   * @returns Plain object with error details for serialization
    */
   toJSON(): object {
     return {

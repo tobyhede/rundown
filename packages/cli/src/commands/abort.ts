@@ -175,7 +175,12 @@ export function registerAbortCommand(program: Command): void {
           let childRunId: string | null = null;
           let childRunbookPath: string = scanResult.delegation.childRunbookPath;
 
-          /** Derive the completion key for a given substep from the current state. */
+          /**
+           * Derive the completion key for a given substep from the current state.
+           * @param state - Current runbook state with frame and entry info
+           * @param substepId - Substep identifier to build the completion key for
+           * @returns Completion key string scoped to the active frame and entry
+           */
           function deriveCompletionKey(state: RunbookState, substepId: string): string {
             const frame = deriveActiveFrame(state);
             const frameKey = state.activeFrameKey ?? frame.frameKey;

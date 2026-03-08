@@ -18,6 +18,7 @@ const __dirname = dirname(__filename);
 /**
  * Get the plugin root directory from CLAUDE_PLUGIN_ROOT env var.
  * Falls back to computing relative to this file's location.
+ * @returns Absolute path to the plugin root, or null if it cannot be determined
  */
 function getPluginRoot(): string | null {
   // First check env var (set by Claude Code when plugin is loaded)
@@ -42,6 +43,11 @@ function getPluginRoot(): string | null {
  * Build context file paths for a given base directory.
  * Returns array of paths following priority order:
  * flat > slash-command subdir > slash-command nested > skill subdir > skill nested
+ * @param baseDir - Root directory to resolve paths from
+ * @param contextDir - Relative context directory name (e.g., '.claude/context')
+ * @param name - Context name derived from hook event (e.g., command or tool name)
+ * @param stage - Hook stage (e.g., 'start', 'end', 'pre', 'post')
+ * @returns Array of candidate file paths in priority order
  */
 function buildContextPaths(
   baseDir: string,
@@ -68,6 +74,10 @@ function buildContextPaths(
  * Priority (project takes precedence over plugin):
  * 1. Project: .claude/context/{name}-{stage}.md (and variations)
  * 2. Plugin: ${CLAUDE_PLUGIN_ROOT}/context/{name}-{stage}.md (and variations)
+ * @param cwd - Current working directory (project root)
+ * @param name - Context name derived from hook event
+ * @param stage - Hook stage identifier (e.g., 'start', 'end', 'pre', 'post')
+ * @returns Path to the discovered context file, or null if none found
  */
 export async function discoverContextFile(
   cwd: string,
@@ -126,6 +136,11 @@ export async function discoverContextFile(
  * 3. Plugin: {agent}-{command}-{stage}.md
  * 4. Plugin: {agent}-{stage}.md
  * 5. Standard discovery (backward compat, checks both project and plugin)
+ * @param cwd - Current working directory (project root)
+ * @param agent - Agent type identifier (namespace prefix stripped internally)
+ * @param commandOrSkill - Active slash command or skill name, or null
+ * @param stage - Hook stage identifier
+ * @returns Path to the discovered context file, or null if none found
  */
 async function discoverAgentCommandContext(
   cwd: string,
@@ -231,6 +246,9 @@ async function discoverAgentCommandContext(
  * - SessionStart → { name: 'session', stage: 'start' }
  * - SessionEnd → { name: 'session', stage: 'end' }
  * - Notification → { name: 'notification', stage: 'receive' }
+ * @param hookEvent - The hook event name from Claude Code
+ * @param input - Full hook input containing event metadata
+ * @returns Object with name and stage for context file lookup, or null if unmapped
  */
 function extractNameAndStage(
   hookEvent: string,
@@ -299,6 +317,9 @@ function extractNameAndStage(
  * - .claude/context/{name}-{stage}.md
  * - e.g., .claude/context/code-review-start.md
  * - e.g., .claude/context/prompt-submit.md
+ * @param hookEvent - The hook event name from Claude Code
+ * @param input - Full hook input containing event metadata and cwd
+ * @returns The context file content to inject, or null if no context found
  */
 export async function injectContext(hookEvent: string, input: HookInput): Promise<string | null> {
   await logger.debug('Context injection starting', { event: hookEvent, cwd: input.cwd });

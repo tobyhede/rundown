@@ -10,7 +10,7 @@ import { handleSubagentStop } from '../workflow/hooks/subagent-stop.js';
  *
  * @param input - Hook input provided to the subagent-stop handler
  * @returns A GateResult: `decision: 'block'` and `reason` when a violation is present; `additionalContext` when context is returned; or an empty object otherwise.
- * @throws Session retrieval or persistence errors propagated from {@link handleSubagentStop} (e.g. filesystem I/O failures or JSON parse errors from {@link Session.get}/{@link Session.set})
+ * @throws {Error} Session retrieval or persistence errors propagated from {@link handleSubagentStop} (e.g. filesystem I/O failures or JSON parse errors from {@link Session.get}/{@link Session.set})
  */
 export async function execute(input: HookInput): Promise<GateResult> {
   const result = await handleSubagentStop(input);

@@ -105,7 +105,7 @@ function parseResultOptions(args: string[]): { results: string[]; remaining: str
 /**
  * Execute the 'prompt' command internally.
  *
- * Outputs the provided content wrapped in markdown fences (```).
+ * Outputs the provided content wrapped in markdown code fences.
  * This is used for displaying code/commands to agents without executing them.
  *
  * @param args - Command arguments after 'prompt' (the content to display)

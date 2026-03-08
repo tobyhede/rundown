@@ -211,6 +211,7 @@ export class JSONRenderer implements OutputRenderer {
    *
    * Stores items both in the output object (for mixed output) and separately
    * for raw array output when this is the only event type.
+   * @param event - The list output event containing items and optional JSON mapper
    */
   private renderList(event: OutputEvent & { type: 'list' }): void {
     const items = event.jsonMapper ? event.items.map(event.jsonMapper) : event.items;
@@ -223,6 +224,7 @@ export class JSONRenderer implements OutputRenderer {
 
   /**
    * Render a detail event.
+   * @param event - The detail output event containing format-specific data
    */
   private renderDetail(event: OutputEvent & { type: 'detail' }): void {
     Object.assign(this.output, event.data);
@@ -230,6 +232,7 @@ export class JSONRenderer implements OutputRenderer {
 
   /**
    * Render an action event.
+   * @param event - The action output event containing transition block data
    */
   private renderAction(event: OutputEvent & { type: 'action' }): void {
     const block = event.block;

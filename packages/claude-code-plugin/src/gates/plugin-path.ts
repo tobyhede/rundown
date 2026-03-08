@@ -46,6 +46,7 @@ When you see file references like \`@\${CLAUDE_PLUGIN_ROOT}/skills/...\`, resolv
  *
  * After compilation, this is at: packages/claude-code-plugin/dist/gates/
  * We go up 2 levels: gates/ -> dist/ -> plugin root
+ * @returns Absolute path to the plugin root directory
  */
 function computePluginRoot(): string {
   // __dirname is at: packages/claude-code-plugin/dist/gates/

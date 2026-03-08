@@ -15,11 +15,19 @@ interface HookSpecificOutput {
   permissionDecisionReason?: string;
 }
 
+/**
+ * Output structure written to stdout for Claude Code hook responses.
+ */
 export interface ClaudeHookOutput {
+  /** Whether processing should continue (false = halt Claude). */
   continue?: boolean;
+  /** Machine-friendly reason for halting when continue is false. */
   stopReason?: string;
+  /** Enforced action — 'block' prevents the tool use from proceeding. */
   decision?: 'block';
+  /** Human-readable explanation for the block decision. */
   reason?: string;
+  /** Hook-specific payload with event name, context, and permission decisions. */
   hookSpecificOutput?: HookSpecificOutput;
 }
 
@@ -39,6 +47,9 @@ function makeContextOutput(
 
 /**
  * Build Claude Code hook JSON output using the modern hookSpecificOutput contract.
+ * @param input - Hook input with event name and metadata
+ * @param result - Dispatch result containing context, block, or stop directives
+ * @returns Formatted hook output object for Claude Code consumption
  */
 export function buildHookOutput(input: HookInput, result: DispatchResult): ClaudeHookOutput {
   const hookEventName = input.hook_event_name;

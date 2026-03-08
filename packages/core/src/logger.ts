@@ -3,6 +3,9 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 
+/**
+ * Supported log severity levels.
+ */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 interface LogEntry {
@@ -23,6 +26,8 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 /**
  * Get the log directory path.
  * Uses ${TMPDIR}/rundown/ for isolation.
+ *
+ * @returns Absolute path to the log directory
  */
 function getLogDir(): string {
   return path.join(tmpdir(), 'rundown');
@@ -31,6 +36,8 @@ function getLogDir(): string {
 /**
  * Get the log file path for today.
  * Format: hooks-YYYY-MM-DD.log
+ *
+ * @returns Absolute path to today's log file
  */
 function getLogFilePath(): string {
   const date = new Date().toISOString().split('T')[0];
@@ -41,6 +48,8 @@ function getLogFilePath(): string {
  * Check if logging is enabled via environment variable.
  * Logging is ENABLED by default (env vars don't pass through from Claude CLI).
  * Set RUNDOWN_LOG=0 to disable.
+ *
+ * @returns True if logging is enabled
  */
 function isLoggingEnabled(): boolean {
   return process.env.RUNDOWN_LOG !== '0';
@@ -49,6 +58,8 @@ function isLoggingEnabled(): boolean {
 /**
  * Get the minimum log level from environment.
  * RUNDOWN_LOG_LEVEL=debug|info|warn|error (default: info)
+ *
+ * @returns The configured minimum log level
  */
 function getMinLogLevel(): LogLevel {
   const envLevel = process.env.RUNDOWN_LOG_LEVEL;
@@ -60,6 +71,9 @@ function getMinLogLevel(): LogLevel {
 
 /**
  * Check if a log level should be written based on minimum level.
+ *
+ * @param level - The log level to check
+ * @returns True if the level meets the minimum threshold
  */
 function shouldLog(level: LogLevel): boolean {
   return LOG_LEVELS[level] >= LOG_LEVELS[getMinLogLevel()];
@@ -76,6 +90,8 @@ async function ensureLogDir(): Promise<void> {
 /**
  * Write a log entry to the log file.
  * Each entry is a JSON line for easy parsing with jq.
+ *
+ * @param entry - The structured log entry to write
  */
 async function writeLog(entry: LogEntry): Promise<void> {
   if (!isLoggingEnabled()) return;
@@ -93,6 +109,8 @@ async function writeLog(entry: LogEntry): Promise<void> {
 /**
  * Write a log entry unconditionally (bypasses RUNDOWN_LOG check).
  * Used for startup/diagnostic logging to verify hooks are being invoked.
+ *
+ * @param entry - The structured log entry to write
  */
 async function writeLogAlways(entry: LogEntry): Promise<void> {
   try {
@@ -106,6 +124,11 @@ async function writeLogAlways(entry: LogEntry): Promise<void> {
 
 /**
  * Create a log entry with timestamp.
+ *
+ * @param level - The log severity level
+ * @param message - The log message
+ * @param data - Optional structured data to merge into the entry
+ * @returns A complete log entry with timestamp
  */
 function createEntry(level: LogLevel, message: string, data?: Record<string, unknown>): LogEntry {
   return {

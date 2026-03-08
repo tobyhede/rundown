@@ -3,7 +3,7 @@
 // Import HookInput from schemas (single source of truth for validation)
 import type { HookInput as SchemaHookInput } from './schemas.js';
 
-// Re-export for consumers
+/** Re-exported HookInput from the schemas module for consumer convenience. */
 export type HookInput = SchemaHookInput;
 
 /**
@@ -29,6 +29,7 @@ export interface GateResult {
  */
 export type GateExecute = (input: HookInput) => Promise<GateResult>;
 
+/** Configuration for a gate: shell command, built-in reference, or cross-plugin delegation. */
 export interface GateConfig {
   /** Reference gate from another plugin (requires gate field) */
   plugin?: string;
@@ -60,7 +61,9 @@ export interface GateConfig {
    */
   file_patterns?: string[];
 
+  /** Message to inject into conversation when the gate passes. */
   on_pass?: string;
+  /** Message to inject into conversation when the gate fails. */
   on_fail?: string;
 }
 
@@ -88,7 +91,7 @@ export interface RundownPluginConfig {
   gates: Record<string, GateConfig>;
 }
 
-// Session state interface
+/** Persisted session state tracking the current command, edited files, and workflow metadata. */
 export interface SessionState {
   /** Unique session identifier (timestamp-based) */
   session_id: string;

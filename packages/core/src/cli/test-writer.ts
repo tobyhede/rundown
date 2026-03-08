@@ -23,27 +23,58 @@ export interface CapturedOutput {
 export class TestWriter implements OutputWriter {
   private output: CapturedOutput[] = [];
 
+  /**
+   * Capture raw text output.
+   *
+   * @param text - The text to capture
+   * @param stream - Target output stream (defaults to stdout)
+   */
   write(text: string, stream: OutputStream = 'stdout'): void {
     this.output.push({ text, stream });
   }
 
+  /**
+   * Capture text with a trailing newline.
+   *
+   * @param text - The text to capture (defaults to empty string for blank line)
+   * @param stream - Target output stream (defaults to stdout)
+   */
   writeLine(text = '', stream: OutputStream = 'stdout'): void {
     this.output.push({ text: `${text}\n`, stream });
   }
 
+  /**
+   * Capture multiple lines of text.
+   *
+   * @param lines - Array of text lines to capture
+   * @param stream - Target output stream (defaults to stdout)
+   */
   writeLines(lines: string[], stream: OutputStream = 'stdout'): void {
     for (const line of lines) {
       this.writeLine(line, stream);
     }
   }
 
+  /**
+   * Capture error text to stderr.
+   *
+   * @param text - The error text to capture
+   */
   writeError(text: string): void {
     this.writeLine(text, 'stderr');
   }
 
+  /**
+   * Capture data as JSON output.
+   *
+   * @param data - The data to serialize to JSON
+   * @param pretty - Whether to pretty-print with indentation (defaults to true)
+   */
   writeJson(data: unknown, pretty = true): void {
     const json = pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data);
-    this.writeLine(json);
+    // JSON.stringify can return undefined at runtime for functions/symbols,
+    // but TypeScript types it as string. Cast to handle this safely.
+    this.writeLine((json as string | undefined) ?? 'null');
   }
 
   // Test helper methods
@@ -52,6 +83,7 @@ export class TestWriter implements OutputWriter {
    * Get all captured output as a single string.
    *
    * @param stream - Filter by stream (optional)
+   * @returns Concatenated output text
    */
   getOutput(stream?: OutputStream): string {
     const filtered = stream ? this.output.filter((o) => o.stream === stream) : this.output;
@@ -62,6 +94,7 @@ export class TestWriter implements OutputWriter {
    * Get captured output as array of lines (trimmed, non-empty).
    *
    * @param stream - Filter by stream (optional)
+   * @returns Array of non-empty trimmed lines
    */
   getLines(stream?: OutputStream): string[] {
     return this.getOutput(stream)
@@ -72,6 +105,8 @@ export class TestWriter implements OutputWriter {
 
   /**
    * Get stdout output only.
+   *
+   * @returns Concatenated stdout output text
    */
   getStdout(): string {
     return this.getOutput('stdout');
@@ -79,6 +114,8 @@ export class TestWriter implements OutputWriter {
 
   /**
    * Get stderr output only.
+   *
+   * @returns Concatenated stderr output text
    */
   getStderr(): string {
     return this.getOutput('stderr');
@@ -93,6 +130,8 @@ export class TestWriter implements OutputWriter {
 
   /**
    * Get raw captured entries for detailed assertions.
+   *
+   * @returns Read-only array of captured output entries
    */
   getRawOutput(): readonly CapturedOutput[] {
     return this.output;

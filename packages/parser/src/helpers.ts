@@ -72,18 +72,18 @@ export interface ParsedSubstepHeader {
   description: string;
 }
 
+/** Characters to strip from trailing position of named step identifiers. */
+const TRAILING_SEPARATORS = new Set(['.', ':', '\u2014', '\u2192', ')', '-']);
+
 /**
  * Strip common separators and whitespace from the beginning of text.
  *
  * Removes leading punctuation (periods, colons, dashes, arrows, parentheses)
  * and whitespace that commonly separate step numbers from descriptions.
  *
- * @param text - The text to strip separators from
+ * @param text - The text to strip leading separators from
  * @returns The text with leading separators and whitespace removed
  */
-/** Characters to strip from trailing position of named step identifiers. */
-const TRAILING_SEPARATORS = new Set(['.', ':', '\u2014', '\u2192', ')', '-']);
-
 export function stripSeparator(text: string): string {
   return text.replace(/^[.:—→\-)\s]+/, '').trim();
 }
@@ -102,7 +102,12 @@ export interface ParsedStepHeader {
   description: string;
 }
 
-/** Generate a default description for bare numeric step headers (e.g., "## 1" → "Step 1"). */
+/**
+ * Generate a default description for bare numeric step headers (e.g., "## 1" → "Step 1").
+ *
+ * @param stepNumber - The numeric step identifier to include in the description
+ * @returns A default description string in the form "Step N"
+ */
 function defaultStepDescription(stepNumber: string): string {
   return `Step ${stepNumber}`;
 }

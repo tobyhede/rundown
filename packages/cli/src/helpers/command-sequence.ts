@@ -101,6 +101,10 @@ export function substituteTokens(cmd: string, tokens: string[]): string {
  *
  * @param command - Command descriptor: either an rd command with parsed args or a raw shell command
  * @param options - Execution options including cwd, quiet flag, and CLI path
+ * @param options.cwd - Working directory for command execution
+ * @param options.quiet - Whether to suppress stdout/stderr passthrough
+ * @param options.cliPath - Path to the CLI entry point for rd commands
+ * @param options.env - Optional environment variables to merge into spawn env
  * @returns Promise resolving to stdout string and exit code
  */
 async function runCommandWithTee(
@@ -160,6 +164,7 @@ async function runCommandWithTee(
  *
  * @param obj - A parsed JSON object from command output
  * @param transitions - Array to push extracted transitions into
+ * @param tokens - Array to push captured delegation tokens into
  * @returns Terminal state detected from this object, or null
  */
 function processJsonObject(

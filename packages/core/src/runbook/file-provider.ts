@@ -40,10 +40,12 @@ export interface FileProvider {
  * Create a FileProvider for lazy line-by-line streaming.
  *
  * @param filePath - Absolute path to the data file
- * @param format - File format metadata from the source descriptor — line-level
- *   processing is format-agnostic (both text and jsonl are line-oriented)
- * @param options - Optional: skipLines to resume from a position
+ * @param _format - File format metadata from the source descriptor (line-level
+ *   processing is format-agnostic since both text and jsonl are line-oriented)
+ * @param options - Optional resume configuration
+ * @param options.skipLines - Number of non-empty lines to skip for resume
  * @returns A FileProvider that streams non-empty lines
+ * @throws {Error} On I/O errors (ENOENT, EACCES) during file open or line skipping
  */
 export async function createFileProvider(
   filePath: string,
@@ -136,8 +138,8 @@ export async function computeFileSnapshot(filePath: string, line: number): Promi
  *
  * @param filePath - Absolute path to the file
  * @param snapshot - Persisted snapshot to validate
- * @throws Error if drift is detected (file changed since snapshot)
- * @throws I/O errors (ENOENT, EACCES) from stat or computeFingerprint
+ * @throws {Error} If drift is detected (file changed since snapshot)
+ * @throws {Error} I/O errors (ENOENT, EACCES) from stat or computeFingerprint
  */
 export async function validateFileSnapshot(
   filePath: string,
@@ -171,6 +173,10 @@ export async function validateFileSnapshot(
  *
  * Metadata (size, mtimeMs) is compared separately in validateFileSnapshot.
  * The fingerprint is content-only to avoid mtime drift forcing false mismatches.
+ *
+ * @param filePath - Absolute path to the file
+ * @param size - Total file size in bytes (fingerprint covers min of size and 64 KiB)
+ * @returns SHA-256 hex digest of the file content prefix
  */
 async function computeFingerprint(filePath: string, size: number): Promise<string> {
   const fd = await fsp.open(filePath, 'r');

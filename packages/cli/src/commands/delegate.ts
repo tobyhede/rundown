@@ -18,6 +18,8 @@ import { collect } from './echo.js';
 
 /**
  * Parse `--var key=value` entries into a record.
+ * @param vars - Array of `key=value` strings from CLI flags
+ * @returns Record mapping variable names to their string values
  */
 function parseVarFlags(vars: string[]): Record<string, string> {
   const result: Record<string, string> = {};
@@ -109,7 +111,7 @@ export function registerDelegateCommand(program: Command): void {
               const varFilePath = path.isAbsolute(options.varFile)
                 ? options.varFile
                 : path.join(cwd, options.varFile);
-              extraVars = await loadVariablesFromFile(varFilePath);
+              extraVars = await loadVariablesFromFile(varFilePath, { optional: false });
             }
             if (options.var.length > 0) {
               const flagVars = parseVarFlags(options.var);

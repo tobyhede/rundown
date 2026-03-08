@@ -16,6 +16,7 @@ import { z } from 'zod';
  * - 'deny': Block without prompting
  */
 export const PolicyModeSchema = z.enum(['prompted', 'execute', 'deny']);
+/** Inferred type from {@link PolicyModeSchema}: `'prompted' | 'execute' | 'deny'`. */
 export type PolicyMode = z.infer<typeof PolicyModeSchema>;
 
 /**
@@ -27,6 +28,7 @@ export const PermissionRulesSchema = z.object({
   /** Patterns to deny (glob patterns, takes precedence over allow) */
   deny: z.array(z.string()).default([]),
 });
+/** Inferred type from {@link PermissionRulesSchema}: allow/deny glob pattern lists. */
 export type PermissionRules = z.infer<typeof PermissionRulesSchema>;
 
 /**
@@ -44,6 +46,7 @@ export const DefaultPolicySchema = z.object({
   /** Environment variable access rules */
   env: PermissionRulesSchema.default({ allow: [], deny: [] }),
 });
+/** Inferred type from {@link DefaultPolicySchema}: mode and per-capability permission rules. */
 export type DefaultPolicy = z.infer<typeof DefaultPolicySchema>;
 
 /**
@@ -63,6 +66,7 @@ export const PolicyOverrideSchema = z.object({
   /** Override env rules */
   env: PermissionRulesSchema.optional(),
 });
+/** Inferred type from {@link PolicyOverrideSchema}: runbook-specific policy overrides. */
 export type PolicyOverride = z.infer<typeof PolicyOverrideSchema>;
 
 /**
@@ -80,6 +84,7 @@ export const PolicyGrantSchema = z.object({
   /** Grant scope: 'session' | 'permanent' */
   scope: z.enum(['session', 'permanent']).default('session'),
 });
+/** Inferred type from {@link PolicyGrantSchema}: a persisted user permission grant. */
 export type PolicyGrant = z.infer<typeof PolicyGrantSchema>;
 
 /**
@@ -95,6 +100,7 @@ export const PolicyConfigSchema = z.object({
   /** Persisted user grants */
   grants: z.array(PolicyGrantSchema).default([]),
 });
+/** Inferred type from {@link PolicyConfigSchema}: complete policy with defaults, overrides, and grants. */
 export type PolicyConfig = z.infer<typeof PolicyConfigSchema>;
 
 /**

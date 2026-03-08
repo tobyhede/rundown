@@ -14,6 +14,9 @@ interface LockContent {
 
 /**
  * Check if a process is alive using kill(pid, 0).
+ *
+ * @param pid - The process ID to check
+ * @returns True if the process exists and is reachable
  */
 function isProcessAlive(pid: number): boolean {
   try {
@@ -55,7 +58,7 @@ export class DelegationLock {
    * Reclaims stale locks from dead processes or locks older than 60 seconds.
    *
    * @param parentRunId - The parent run ID to lock
-   * @throws Error when the lock cannot be acquired within the deadline
+   * @throws {Error} When the lock cannot be acquired within the deadline
    */
   async acquire(parentRunId: string): Promise<void> {
     await fs.mkdir(this.lockDir, { recursive: true, mode: 0o700 });

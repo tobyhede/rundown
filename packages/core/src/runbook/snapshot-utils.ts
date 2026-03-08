@@ -13,6 +13,8 @@
  * Check if a runbook snapshot indicates successful completion.
  *
  * @param snapshot - XState snapshot with status and value
+ * @param snapshot.status - Actor status string (e.g. 'done', 'active')
+ * @param snapshot.value - Terminal state value (e.g. 'COMPLETE', 'STOPPED')
  * @returns True if the runbook has completed successfully
  */
 export function isRunbookComplete(snapshot: { status: string; value: unknown }): boolean {
@@ -23,6 +25,8 @@ export function isRunbookComplete(snapshot: { status: string; value: unknown }):
  * Check if a runbook snapshot indicates a stopped (aborted) state.
  *
  * @param snapshot - XState snapshot with status and value
+ * @param snapshot.status - Actor status string (e.g. 'done', 'active')
+ * @param snapshot.value - Terminal state value (e.g. 'COMPLETE', 'STOPPED')
  * @returns True if the runbook has been stopped
  */
 export function isRunbookStopped(snapshot: { status: string; value: unknown }): boolean {

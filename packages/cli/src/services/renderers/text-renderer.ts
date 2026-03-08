@@ -1,7 +1,7 @@
 /**
  * TextRenderer - Renders output events as human-readable text.
  *
- * Uses the existing print functions from @rundown-org/core for consistent
+ * Uses the existing print functions from `@rundown-org/core` for consistent
  * formatting with the established CLI style.
  *
  * @module renderers/text-renderer
@@ -137,6 +137,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Render a list event as an ASCII table.
+   * @param event - The list output event containing items and column definitions
    */
   private renderList(event: OutputEvent & { type: 'list' }): void {
     if (event.items.length === 0) {
@@ -181,6 +182,7 @@ export class TextRenderer implements OutputRenderer {
    * - 'prompt': Prompt content wrapped in markdown fences
    * - 'check': Runbook validation result (PASS/FAIL with stats)
    * - 'custom': Generic key-value rendering
+   * @param event - The detail output event with format type and data payload
    */
   private renderDetail(event: OutputEvent & { type: 'detail' }): void {
     const { data, format } = event;
@@ -211,6 +213,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Render status response as formatted text.
+   * @param data - Status data including active/stashed state, position, and step details
    */
   private renderStatusDetail(data: Record<string, unknown>): void {
     const {
@@ -293,6 +296,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Render scenario details with aligned keys.
+   * @param data - Scenario data with name, description, expected result, commands, and tags
    */
   private renderScenarioDetail(data: Record<string, unknown>): void {
     const { name, description, expected, commands, tags } = data as {
@@ -326,6 +330,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Render scenario run result with color.
+   * @param data - Result data with pass/fail status, expected, and actual outcome
    */
   private renderScenarioResult(data: Record<string, unknown>): void {
     const { result, expected, actual } = data as {
@@ -353,6 +358,7 @@ export class TextRenderer implements OutputRenderer {
    * In text mode:
    * - If there's output, print it as plain text
    * - If there's an error, print it to stderr with error formatting
+   * @param data - Echo result data with optional output and error fields
    */
   private renderEchoDetail(data: Record<string, unknown>): void {
     const { output, error } = data as {
@@ -376,6 +382,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Render prompt content wrapped in markdown fences.
+   * @param data - Prompt data with output content to display
    */
   private renderPromptDetail(data: Record<string, unknown>): void {
     const { output } = data as { output?: string };
@@ -392,6 +399,7 @@ export class TextRenderer implements OutputRenderer {
    * Formats as "PASS: N steps, M substeps" or "FAIL: N errors".
    * Warnings are not included in the summary line but are rendered as
    * separate lines below the summary when present.
+   * @param data - Check result data with validity flag, stats, errors, and warnings
    */
   private renderCheckDetail(data: Record<string, unknown>): void {
     const { valid, stats, errors, warnings } = data as {
@@ -430,6 +438,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Render generic key-value pairs.
+   * @param data - Key-value data to render as aligned text output
    */
   private renderGenericDetail(data: Record<string, unknown>): void {
     for (const [key, value] of Object.entries(data)) {
@@ -469,6 +478,7 @@ export class TextRenderer implements OutputRenderer {
    *
    * Handles special cases for 'stash' and 'pop' actions that require
    * position-aware formatting.
+   * @param event - The status output event with result, action, and optional data
    */
   private renderStatus(event: OutputEvent & { type: 'status' }): void {
     // Handle stash action with position data specially
@@ -508,6 +518,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Render a message event with appropriate styling.
+   * @param event - The message output event with text and severity level
    */
   private renderMessage(event: OutputEvent & { type: 'message' }): void {
     let coloredText: string;
@@ -535,6 +546,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Render an error event.
+   * @param event - The error output event with message and optional code
    */
   private renderError(event: OutputEvent & { type: 'error' }): void {
     this.writer.writeError(failure(`Error: ${event.message}`));
@@ -585,6 +597,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Handle RUNBOOK_STARTED event.
+   * @param event - Runbook started event with metadata and prompted flag
    */
   private handleRunbookStarted(event: RunbookEventV1 & { type: 'RUNBOOK_STARTED' }): void {
     const { payload, runbook } = event;
@@ -602,6 +615,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Handle STEP_ENTERED event.
+   * @param event - Step entered event with position, description, and command details
    */
   private handleStepEntered(event: RunbookEventV1 & { type: 'STEP_ENTERED' }): void {
     const { payload } = event;
@@ -632,6 +646,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Handle COMMAND_STARTED event.
+   * @param event - Command started event with display command string
    */
   private handleCommandStarted(event: RunbookEventV1 & { type: 'COMMAND_STARTED' }): void {
     printCommandExec(event.payload.displayCommand, this.writer);
@@ -639,6 +654,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Handle STEP_TRANSITIONED event.
+   * @param event - Step transitioned event with action, from/at positions, and result
    */
   private handleStepTransitioned(event: RunbookEventV1 & { type: 'STEP_TRANSITIONED' }): void {
     const { payload } = event;
@@ -668,6 +684,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Handle POLICY_DENIED event.
+   * @param event - Policy denied event with blocked command and denial reason
    */
   private handlePolicyDenied(event: RunbookEventV1 & { type: 'POLICY_DENIED' }): void {
     printPolicyDenied(event.payload.command, event.payload.reason, this.writer);
@@ -675,6 +692,7 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Handle ERROR_OCCURRED event.
+   * @param event - Error event with message and optional error code
    */
   private handleErrorOccurred(event: RunbookEventV1 & { type: 'ERROR_OCCURRED' }): void {
     const { payload } = event;

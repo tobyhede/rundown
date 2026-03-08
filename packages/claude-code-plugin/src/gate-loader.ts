@@ -13,8 +13,13 @@ import * as builtinGates from './gates/index.js';
 
 const execAsync = promisify(exec);
 
+/**
+ * Result of executing a shell command within a gate.
+ */
 export interface ShellResult {
+  /** Process exit code (0 = success, 124 = timeout). */
   exitCode: number;
+  /** Combined stdout and stderr output, untrimmed. */
   output: string;
 }
 
@@ -31,8 +36,10 @@ interface ExecError extends Error {
 }
 
 /**
- * Type guard to safely access error properties
- * Returns the error cast to ExecError, handling both CommonJS and ESM error objects
+ * Type guard to safely access error properties.
+ * Returns the error cast to ExecError, handling both CommonJS and ESM error objects.
+ * @param error - The caught error value to normalize
+ * @returns Normalized ExecError with safe property access
  */
 function asExecError(error: unknown): ExecError {
   // Check if error is an object with Error-like properties
@@ -72,6 +79,10 @@ function asExecError(error: unknown): ExecError {
  * This is equivalent to package.json scripts or Makefile targets - trusted project configuration.
  *
  * ERROR HANDLING: Commands timeout after 30 seconds to prevent hung gates.
+ * @param command - Shell command string to execute
+ * @param cwd - Working directory for command execution
+ * @param timeoutMs - Maximum execution time in milliseconds (default 30000)
+ * @returns Shell result with exit code and combined stdout/stderr output
  */
 export async function executeShellCommand(
   command: string,
@@ -110,6 +121,10 @@ export async function executeShellCommand(
  * Gate names use kebab-case and are mapped to camelCase module names:
  * - "plugin-path" → pluginPath
  * - "custom-gate" → customGate
+ * @param gateName - Kebab-case gate name to look up in built-in modules
+ * @param input - Hook input to pass to the gate's execute function
+ * @returns Gate result from the built-in gate module
+ * @throws {Error} If gate module not found or missing execute function
  */
 export async function executeBuiltinGate(gateName: string, input: HookInput): Promise<GateResult> {
   try {
@@ -142,6 +157,15 @@ export async function executeBuiltinGate(gateName: string, input: HookInput): Pr
 // Track plugin gate call stack to detect circular references
 const MAX_PLUGIN_DEPTH = 10;
 
+/**
+ * Execute a gate by its configuration, supporting shell commands, built-in gates, and plugin references.
+ * @param gateName - Name of the gate being executed
+ * @param gateConfig - Gate configuration specifying command, plugin reference, or built-in type
+ * @param input - Hook input to pass to the gate
+ * @param pluginStack - Stack of plugin gate references for circular dependency detection
+ * @returns Object with passed flag and gate result
+ * @throws {Error} If circular gate reference detected or max plugin depth exceeded
+ */
 export async function executeGate(
   gateName: string,
   gateConfig: GateConfig,
@@ -184,11 +208,9 @@ export async function executeGate(
           additionalContext: shellResult.output,
         },
       };
-    } else if (pluginGateConfig.plugin && pluginGateConfig.gate) {
-      // Plugin gate references another plugin gate - recurse
-      return executeGate(gateRef, pluginGateConfig, input, newStack);
     } else {
-      throw new Error(`Plugin gate '${gateConfig.plugin}:${gateConfig.gate}' has no command`);
+      // Plugin reference or built-in gate — recurse with updated stack
+      return executeGate(gateRef, pluginGateConfig, input, newStack);
     }
   }
 
@@ -215,8 +237,13 @@ export async function executeGate(
   }
 }
 
+/**
+ * Result of loading a gate definition from an external plugin.
+ */
 export interface PluginGateResult {
+  /** Gate configuration loaded from the plugin's rundown-plugin.json. */
   gateConfig: GateConfig;
+  /** Absolute path to the plugin's root directory, used as cwd for command execution. */
   pluginRoot: string;
 }
 
@@ -233,6 +260,7 @@ export interface PluginGateResult {
  * @param pluginName - Name of the plugin (e.g., 'cipherpowers')
  * @param gateName - Name of the gate within the plugin
  * @returns The gate config and the plugin root path for execution context
+ * @throws {Error} If plugin config not found, invalid structure, or gate not defined
  */
 export async function loadPluginGate(
   pluginName: string,

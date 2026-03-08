@@ -4,6 +4,7 @@
 import type { HookInput as SchemaHookInput } from './schemas.js';
 
 // Re-export for consumers
+/** Re-export of the validated hook input payload type from schemas. */
 export type HookInput = SchemaHookInput;
 
 /**
@@ -76,7 +77,9 @@ export interface GateConfig {
    */
   file_patterns?: string[];
 
+  /** Message to inject into conversation when the gate passes. */
   on_pass?: string;
+  /** Message to inject into conversation when the gate fails. */
   on_fail?: string;
 }
 

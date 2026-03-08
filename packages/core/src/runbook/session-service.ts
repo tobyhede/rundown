@@ -22,6 +22,8 @@ import type { RunbookStateManager } from './state.js';
  */
 export class SessionService {
   /**
+   * Create a new SessionService.
+   *
    * @param manager - State manager for raw session and state persistence
    */
   constructor(private readonly manager: RunbookStateManager) {}

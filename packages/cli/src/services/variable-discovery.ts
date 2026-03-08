@@ -35,6 +35,8 @@ export const RUNTIME_RESERVED_VARIABLES = new Set(['step', 'index', 'context']);
  * Check whether a variable name is reserved for runtime context semantics.
  *
  * Matching is case-insensitive (`Step`, `STEP`, and `step` are treated equally).
+ * @param name - Variable name to check
+ * @returns True if the name is reserved for runtime context semantics
  */
 export function isRuntimeReservedVariable(name: string): boolean {
   return RUNTIME_RESERVED_VARIABLES.has(name.toLowerCase());
@@ -93,6 +95,7 @@ export class FileSourcePolicyError extends Error {
   readonly reason: string;
 
   /**
+   * Create a FileSourcePolicyError.
    * @param variable - The variable name that referenced the blocked file source
    * @param filePath - The resolved file path that was blocked
    * @param reason - Human-readable denial reason from the policy engine
@@ -213,20 +216,23 @@ export function mergeVariables(
  * Load variables from a YAML file.
  *
  * @param filePath - Absolute path to the YAML file
- * @param options - Optional: set normalize=false to preserve raw types (arrays, multiline strings)
+ * @param options - Optional: set normalize=false to preserve raw types, optional=false to throw on errors
+ * @param options.normalize - When false, preserves raw YAML types; when true/omitted, converts to strings
+ * @param options.optional - When true (default), silently returns `{}` on errors; when false, throws
  * @returns Variable record (string values when normalized, unknown values when raw)
+ * @throws {Error} When optional is false and the file cannot be read or parsed
  */
 export async function loadVariablesFromFile(
   filePath: string,
-  options: { normalize: false },
+  options: { normalize: false; optional?: boolean },
 ): Promise<Record<string, unknown>>;
 export async function loadVariablesFromFile(
   filePath: string,
-  options?: { normalize?: true },
+  options?: { normalize?: true; optional?: boolean },
 ): Promise<Record<string, string>>;
 export async function loadVariablesFromFile(
   filePath: string,
-  options?: { normalize?: boolean },
+  options?: { normalize?: boolean; optional?: boolean },
 ): Promise<Record<string, unknown>> {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
@@ -241,7 +247,10 @@ export async function loadVariablesFromFile(
       return raw;
     }
     return normalizeVariables(raw);
-  } catch {
+  } catch (error) {
+    if (options?.optional === false) {
+      throw error;
+    }
     return {};
   }
 }
@@ -361,6 +370,7 @@ function inferFileFormat(filePath: string): FileFormat {
  * @param sources - Accumulator for data sources
  * @param cwd - Current working directory for resolving relative paths
  * @param projectRoot - Canonical project root path (pre-resolved)
+ * @param security - Optional security context for file source policy enforcement
  */
 async function routeVariable(
   key: string,
@@ -449,6 +459,9 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
  * Returns array from lowest to highest precedence.
  *
  * @param options - Variable sources from CLI flags, var-file, and frontmatter
+ * @param options.varFile - Path to YAML file containing variable definitions
+ * @param options.var - Array of key=value flag strings from CLI
+ * @param options.frontmatterVars - Variables extracted from runbook frontmatter
  * @param cwd - Current working directory for resolving relative paths
  * @returns Array of variable layers in precedence order
  */
@@ -471,7 +484,7 @@ async function collectRawLayers(
     const varFilePath = path.isAbsolute(options.varFile)
       ? options.varFile
       : path.join(cwd, options.varFile);
-    fromFile = await loadVariablesFromFile(varFilePath, { normalize: false });
+    fromFile = await loadVariablesFromFile(varFilePath, { normalize: false, optional: false });
   }
 
   // 5. CLI flags (highest)
@@ -536,6 +549,9 @@ async function enforceFileSourcePolicy(
  * - Scalar → vars only
  *
  * @param options - Variable sources from CLI flags, var-file, and frontmatter
+ * @param options.varFile - Path to YAML file containing variable definitions
+ * @param options.var - Array of key=value flag strings from CLI
+ * @param options.frontmatterVars - Variables extracted from runbook frontmatter
  * @param cwd - Current working directory for resolving relative paths
  * @param security - Optional security context for file source policy enforcement
  * @returns ResolvedVariables with vars and sources maps

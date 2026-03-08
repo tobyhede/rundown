@@ -16,7 +16,7 @@ import { getRunbookFromState } from '../helpers/runbook-loader.js';
 /**
  * Registers the 'pop' command for resuming stashed runbooks.
  * @param program - Commander program instance to register the command on
- * @throws Error when the stashed runbook file cannot be found
+ * @throws {Error} When the stashed runbook file cannot be found
  */
 export function registerPopCommand(program: Command): void {
   program

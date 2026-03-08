@@ -36,6 +36,7 @@ export interface EventEnvelope {
 
 // ─── Payload Types ───────────────────────────────────────────────────────────
 
+/** Payload emitted when a runbook begins execution (RUNBOOK_STARTED event). */
 export interface RunbookStartedPayload {
   readonly title?: string;
   readonly description?: string;
@@ -44,6 +45,7 @@ export interface RunbookStartedPayload {
   readonly statePath: string;
 }
 
+/** Payload emitted when a step begins execution (STEP_ENTERED event). */
 export interface StepEnteredPayload {
   readonly position: StepPosition;
   readonly stepName: string;
@@ -59,12 +61,14 @@ export interface StepEnteredPayload {
   readonly prompted: boolean;
 }
 
+/** Payload emitted when a step command begins execution (COMMAND_STARTED event). */
 export interface CommandStartedPayload {
   readonly command: string;
   readonly displayCommand: string;
   readonly position: StepPosition;
 }
 
+/** Payload emitted when a step command finishes (COMMAND_COMPLETED event). */
 export interface CommandCompletedPayload {
   readonly command: string;
   readonly success: boolean;
@@ -105,23 +109,27 @@ export interface StepTransitionedPayload {
   readonly aggregated?: boolean;
 }
 
+/** Payload emitted when a command is blocked by policy (POLICY_DENIED event). */
 export interface PolicyDeniedPayload {
   readonly command: string;
   readonly reason: string;
   readonly position: StepPosition;
 }
 
+/** Payload emitted when a runbook finishes successfully (RUNBOOK_COMPLETED event). */
 export interface RunbookCompletedPayload {
   readonly message?: string;
   readonly finalPosition: StepPosition;
 }
 
+/** Payload emitted when a runbook is halted (RUNBOOK_STOPPED event). */
 export interface RunbookStoppedPayload {
   readonly message?: string;
   readonly position: StepPosition;
   readonly reason?: 'policy_denied' | 'fail_transition' | 'user_abort';
 }
 
+/** Payload emitted when an error occurs during execution (ERROR_OCCURRED event). */
 export interface ErrorOccurredPayload {
   readonly message: string;
   readonly code?: string;
@@ -130,6 +138,7 @@ export interface ErrorOccurredPayload {
 
 // ─── Event Union ─────────────────────────────────────────────────────────────
 
+/** Discriminated union of all v1 runbook lifecycle events. */
 export type RunbookEventV1 =
   | (EventEnvelope & { type: 'RUNBOOK_STARTED'; payload: RunbookStartedPayload })
   | (EventEnvelope & { type: 'STEP_ENTERED'; payload: StepEnteredPayload })

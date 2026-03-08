@@ -5,6 +5,8 @@ import type { SyntheticEvent } from './types.js';
  * Detect synthetic events from Claude Code primitive events.
  *
  * Emits derived SlashCommand and Skill lifecycle events.
+ * @param input - Hook input containing the primitive event to analyze
+ * @returns Array of synthetic events derived from the input event
  */
 export function detectSyntheticEvents(input: HookInput): SyntheticEvent[] {
   const events: SyntheticEvent[] = [];

@@ -114,6 +114,10 @@ export function inferRunbookFromStep(
 
 /**
  * Check whether a substep is marked as done in the persisted state.
+ * @param substepId - The substep ID to check
+ * @param substepStates - Current substep states from persisted state
+ * @param frameKey - Frame key to scope the lookup
+ * @returns True if the substep has status 'done'
  */
 function isSubstepDone(
   substepId: string,

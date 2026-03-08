@@ -2,6 +2,10 @@
  * Get the display status string for a runbook state.
  *
  * @param state - The runbook state object
+ * @param state.id - Unique identifier for this runbook state
+ * @param state.variables - Runbook state variables
+ * @param state.variables.completed - Whether the runbook has completed
+ * @param state.variables.stopped - Whether the runbook was stopped
  * @param activeState - The currently active runbook state (if any)
  * @param stashedId - The ID of the stashed runbook (if any)
  * @returns Status string: 'active', 'stashed', 'complete', 'stopped', or 'inactive'

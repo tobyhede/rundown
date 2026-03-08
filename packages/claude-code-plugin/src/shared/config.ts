@@ -37,7 +37,7 @@ const KNOWN_ACTIONS = ['CONTINUE', 'BLOCK', 'STOP'];
  * Called during config loading for fail-fast type checking.
  *
  * @param gateConfig - Gate configuration to validate
- * @throws Error if any pattern is not a string
+ * @throws {Error} if any pattern is not a string
  */
 export function validateFilePatterns(gateConfig: GateConfig): void {
   if (!gateConfig.file_patterns) {
@@ -86,10 +86,10 @@ function validateGateConfig(gateName: string, gateConfig: GateConfig): void {
  * Throws descriptive errors when invariants are violated.
  *
  * @param config - The RundownPluginConfig to validate
- * @throws Error if hook event names are unknown
- * @throws Error if gates referenced in hooks don't exist
- * @throws Error if gate actions are invalid
- * @throws Error if gate file patterns are invalid
+ * @throws {Error} if hook event names are unknown
+ * @throws {Error} if gates referenced in hooks don't exist
+ * @throws {Error} if gate actions are invalid
+ * @throws {Error} if gate file patterns are invalid
  */
 export function validateConfig(config: RundownPluginConfig): void {
   // Invariant: Hook event names must be known types
@@ -147,7 +147,7 @@ export function validateConfig(config: RundownPluginConfig): void {
  *
  * @param pluginName - Name of the plugin to resolve
  * @returns Absolute path to the plugin root
- * @throws Error if CLAUDE_PLUGIN_ROOT is not set or plugin name is invalid
+ * @throws {Error} if CLAUDE_PLUGIN_ROOT is not set or plugin name is invalid
  */
 export function resolvePluginPath(pluginName: string): string {
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
@@ -180,6 +180,7 @@ export function resolvePluginPath(pluginName: string): string {
 /**
  * Get the plugin root directory from CLAUDE_PLUGIN_ROOT env var.
  * Claude Code sets this automatically during hook execution.
+ * @returns Absolute path to the plugin root, or null if not set
  */
 function getPluginRoot(): string | null {
   return process.env.CLAUDE_PLUGIN_ROOT ?? null;
@@ -190,7 +191,7 @@ function getPluginRoot(): string | null {
  *
  * @param configPath - Absolute path to the configuration file
  * @returns The parsed RundownPluginConfig, or null if file doesn't exist
- * @throws Error if file exists but contains invalid JSON
+ * @throws {Error} if file exists but contains invalid JSON
  */
 export async function loadConfigFile(configPath: string): Promise<RundownPluginConfig | null> {
   if (await fileExists(configPath)) {
@@ -204,6 +205,9 @@ export async function loadConfigFile(configPath: string): Promise<RundownPluginC
  * Merge two configs. Project config takes precedence over plugin config.
  * - hooks: project hooks override plugin hooks for same event
  * - gates: project gates override plugin gates for same name
+ * @param pluginConfig - Base plugin configuration (lower priority)
+ * @param projectConfig - Project configuration that overrides plugin settings
+ * @returns Merged configuration with project values taking precedence
  */
 function mergeConfigs(
   pluginConfig: RundownPluginConfig,
@@ -233,7 +237,7 @@ function mergeConfigs(
  *
  * @param cwd - Current working directory to search for config files
  * @returns The merged RundownPluginConfig, or null if no config found
- * @throws Error if config is found but fails validation
+ * @throws {Error} if config is found but fails validation
  */
 export async function loadConfig(cwd: string): Promise<RundownPluginConfig | null> {
   const pluginRoot = getPluginRoot();

@@ -195,12 +195,21 @@ const DEFAULT_FOR_SUBSTEP_TRANSITIONS: Transitions = {
 /**
  * Internal helper to format state IDs for the XState machine.
  * Uses _ instead of . to avoid XState path resolution issues.
+ *
+ * @param stepName - The step name (e.g., "1", "ErrorHandler")
+ * @param substepId - Optional substep identifier within the step
+ * @returns Formatted state ID string (e.g., "step::1" or "step::1::2")
  */
 function formatStateId(stepName: string, substepId?: string): string {
   return substepId ? `step::${stepName}::${substepId}` : `step::${stepName}`;
 }
 
-/** Extract substep ID from a state ID string, or undefined if no substep. */
+/**
+ * Extract substep ID from a state ID string, or undefined if no substep.
+ *
+ * @param stateId - The state ID to parse (e.g., "step::3::2")
+ * @returns The substep ID if present, otherwise undefined
+ */
 function extractSubstepFromStateId(stateId: string): string | undefined {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   return match?.[2];
@@ -212,6 +221,9 @@ function extractSubstepFromStateId(stateId: string): string | undefined {
  * Note: StepId.at is validated against TEMPLATE_VAR_PATTERN at parse time,
  * but Zod's .regex() doesn't narrow the TypeScript type from `string`.
  * The cast here bridges the gap between the runtime guarantee and the type.
+ *
+ * @param target - The parsed GOTO target with step, substep, and optional at
+ * @returns A structured GOTO LastAction
  */
 function buildGotoLastAction(target: StepId): LastAction {
   return {
@@ -296,23 +308,43 @@ function isLastSubstepOfStep(
   return substepId === lastSubstepId;
 }
 
-/** Peek at the top of the FOR context stack. */
+/**
+ * Peek at the top of the FOR context stack.
+ *
+ * @param stack - The FOR context stack to inspect
+ * @returns The topmost ForContext, or undefined if the stack is empty
+ */
 function peekForStack(stack: readonly ForContext[]): ForContext | undefined {
   return stack.length > 0 ? stack[stack.length - 1] : undefined;
 }
 
-/** Check if a FOR context iterates in descending order. */
+/**
+ * Check if a FOR context iterates in descending order.
+ *
+ * @param fc - The FOR context to check
+ * @returns True if start is greater than end
+ */
 function isDescending(fc: ForContext): boolean {
   if (fc.end === undefined) return false;
   return fc.start > fc.end;
 }
 
-/** Advance iteration by one step in the appropriate direction. */
+/**
+ * Advance iteration by one step in the appropriate direction.
+ *
+ * @param fc - The FOR context with current iteration position
+ * @returns The next iteration number (incremented or decremented based on direction)
+ */
 function nextIteration(fc: ForContext): number {
   return isDescending(fc) ? fc.iteration - 1 : fc.iteration + 1;
 }
 
-/** Check whether the loop has more iterations remaining. */
+/**
+ * Check whether the loop has more iterations remaining.
+ *
+ * @param fc - The FOR context to evaluate
+ * @returns True if the loop should continue iterating
+ */
 function hasMoreIterations(fc: ForContext): boolean {
   if (fc.end === undefined) {
     // Safety net for file sources: if the resolver hasn't populated
@@ -339,7 +371,14 @@ function resolveAtValue(at: number | string | undefined, defaultValue: number): 
   return Number.isNaN(parsed) ? defaultValue : parsed;
 }
 
-/** Resolve AT value at runtime, expanding template variables from forStack context. */
+/**
+ * Resolve AT value at runtime, expanding template variables from forStack context.
+ *
+ * @param at - The AT value to resolve (number, template string, or undefined)
+ * @param defaultValue - Fallback value when AT is undefined or non-resolvable
+ * @param forStack - Current FOR context stack for template variable resolution
+ * @returns Resolved numeric iteration value
+ */
 function resolveAtValueRuntime(
   at: number | string | undefined,
   defaultValue: number,
@@ -369,7 +408,9 @@ function resolveAtValueRuntime(
  * @param forClause - The FOR clause definition
  * @param atValue - Optional AT value for starting iteration
  * @param implicit - Optional flag indicating implicit FOR context
+ * @param sources - Data source bindings for sourced FOR loops
  * @returns A new ForContext
+ * @throws {Error} When a sourced FOR clause references an undefined data source
  */
 function createForContext(
   stepName: string,
@@ -516,7 +557,12 @@ type GotoAssignValue<T> = T | ((args: { event: RunbookEvent }) => T);
  * Handles retry count increment for GOTO-to-self and clears next instance flags.
  * Skips lastAction update when GOTO is internal (raised by RETRY) to preserve the originating action.
  *
- * @param options - Configuration for lastAction, resolvedSubstepId, and isGotoToSelf
+ * @param options - Configuration for the GOTO assign action
+ * @param options.lastAction - The lastAction value or factory function
+ * @param options.resolvedSubstepId - Substep ID value or factory function
+ * @param options.isGotoToSelf - Whether this GOTO targets the current state
+ * @param options.preserveForContext - Whether to preserve the FOR context stack
+ * @param options.preserveParentRetryCount - Whether to preserve the parent retry counter
  * @returns XState assign action
  */
 function buildSimpleGotoAssign(options: {
@@ -570,6 +616,9 @@ const DEFAULT_FOR_TRANSITIONS: Transitions = {
  * Check if a step is a numbered step (vs named step).
  * Numbered steps: "1", "2", "10"
  * Named steps: "ErrorHandler", "Cleanup", "Recovery"
+ *
+ * @param step - The step to check
+ * @returns True if the step name is purely numeric
  */
 function isNumberedStep(step: Step): boolean {
   // Numeric step names: 1, 2, 3, etc.
@@ -579,6 +628,17 @@ function isNumberedStep(step: Step): boolean {
 /**
  * Build XState transition config from a TransitionObject.
  * Handles retry property uniformly for all transitions.
+ *
+ * @param transition - The transition definition with kind, retry count, and action
+ * @param transition.kind - Whether this is a 'pass' or 'fail' transition
+ * @param transition.retry - Number of retries before executing the action
+ * @param transition.action - The terminal action to execute when retries are exhausted
+ * @param currentStateId - The XState state ID of the current state
+ * @param stepName - The step name for target resolution
+ * @param substepId - Optional substep ID within the step
+ * @param steps - All parsed runbook steps for target lookup
+ * @param sources - Optional data sources for GOTO to FOR step initialization
+ * @returns XState transition configuration
  */
 function buildTransition(
   transition: { kind: string; retry: number; action: Action },
@@ -603,7 +663,12 @@ function buildTransition(
 }
 
 /**
- * Find the next state ID in the flattened sequence
+ * Find the next state ID in the flattened sequence.
+ *
+ * @param stepName - The current step name
+ * @param substepId - Optional current substep ID
+ * @param steps - All parsed runbook steps
+ * @returns The next state ID, or 'COMPLETE' if at the end
  */
 function findNextStateId(stepName: string, substepId: string | undefined, steps: Step[]): string {
   // Find current step by name
@@ -1077,6 +1142,9 @@ function buildParentStateConfig(
  * otherwise, execute the exhausted action via `buildActionTransition`.
  *
  * @param transition - The transition object with retry count and exhausted action
+ * @param transition.kind - Whether this is a 'pass' or 'fail' transition
+ * @param transition.retry - Maximum retry attempts before executing the exhausted action
+ * @param transition.action - The action to execute when retries are exhausted
  * @param currentStateId - The state ID to loop back to on retry
  * @param stepName - Step name for the exhausted action builder
  * @param substepId - Substep ID for the exhausted action builder
@@ -1132,6 +1200,8 @@ function buildRetryStateConfig(
  * @param stepName - The parent step name (for CONTINUE target resolution)
  * @param steps - The full steps array
  * @returns The target state ID string
+ * @throws {Error} If GOTO target step does not exist in the steps array
+ * @throws {Error} If NEXT or BREAK appears as a parent-step action (compiler invariant violation)
  */
 function resolveActionTarget(action: Action, stepName: string, steps: Step[]): string {
   switch (action.type) {
@@ -1366,6 +1436,7 @@ function buildContinueTransition(
  * @param steps - The full array of runbook steps
  * @param sources - Data sources available for FOR loop initialization
  * @returns XState transition configuration
+ * @throws {Error} If the GOTO target step does not exist
  */
 function buildGotoTransition(
   target: StepId,
@@ -1467,6 +1538,14 @@ function buildGotoTransition(
 /**
  * Build XState transition config by dispatching on Action type
  * (CONTINUE, GOTO, NEXT, BREAK, COMPLETE, STOP).
+ *
+ * @param action - The action to build a transition for
+ * @param stepName - The current step name
+ * @param substepId - Optional current substep ID
+ * @param steps - All parsed runbook steps
+ * @param kind - Whether this transition is for 'pass' or 'fail'
+ * @param sources - Optional data sources for GOTO to FOR step initialization
+ * @returns XState transition configuration
  */
 function buildActionTransition(
   action: Action,
@@ -1503,6 +1582,8 @@ function buildActionTransition(
  * `target` value referenced by the state.
  *
  * @param config - A state config object from the generated states record
+ * @param config.on - Event-driven transition map (PASS, FAIL, GOTO, RETRY)
+ * @param config.always - Eventless always-transitions for transient states
  * @returns Array of target strings (may include duplicates)
  */
 function extractTargets(config: {
@@ -1587,6 +1668,7 @@ function validateGraph(
  * @param states - The mutable states record
  * @param id - The state ID to insert
  * @param config - The state configuration
+ * @throws {Error} If a state with the given ID already exists
  */
 function checkedStateInsert(states: Record<string, unknown>, id: string, config: unknown): void {
   if (id in states) {
@@ -1605,6 +1687,7 @@ function checkedStateInsert(states: Record<string, unknown>, id: string, config:
  *
  * @param steps - The parsed runbook steps to compile
  * @param options - Optional compilation options including data sources
+ * @param options.sources - Data source bindings for FOR loop iteration (keyed by source name)
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */

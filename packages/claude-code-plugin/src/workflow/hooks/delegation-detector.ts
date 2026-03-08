@@ -14,7 +14,7 @@ export interface DelegationDetection {
  * Multiline flag ensures `^` matches line starts, first match wins.
  *
  * Character class uses [A-Z0-9] (broader than strict RFC 4648 base32 [A-Z2-7])
- * to match the token format defined in @rundown-org/core's token generator.
+ * to match the token format defined in `@rundown-org/core`'s token generator.
  *
  * Note: Matching is line-anchored (^...$) which means markers inside fenced
  * code blocks could produce false positives. This is accepted as pragmatic —
