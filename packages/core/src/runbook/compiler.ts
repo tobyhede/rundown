@@ -794,11 +794,6 @@ function buildParentExitAssign(
         lastAction: { type: 'CONTINUE' as const, aggregated: true },
         lastMessage: undefined as string | undefined,
       });
-    case 'DEFER':
-      throw new Error(
-        'Invariant violation: DEFER appeared as parent-step exit action. ' +
-          'DEFER is only valid in substep or FOR iteration contexts.',
-      );
     default:
       return runbookSetup.assign({
         ...baseAssign,
@@ -1220,6 +1215,8 @@ function resolveActionTarget(action: Action, stepName: string, steps: Step[]): s
           : action.target.substep;
       return formatStateId(targetStep.name, substep);
     }
+    // DEFER/NEXT/BREAK are substep-only actions. This guard is the primary
+    // enforcement point for all parent-step paths (aggregation + direct exit).
     case 'NEXT':
     case 'BREAK':
     case 'DEFER':
