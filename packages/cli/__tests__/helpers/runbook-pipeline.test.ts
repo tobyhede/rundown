@@ -103,6 +103,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
   expandForClauseVariables: jest.fn((content: string) => content),
   expandLoopVariables: jest.fn((text: string) => text),
+  warnUnresolvedRunbookVariables: jest.fn(),
 }));
 
 // Mock node:fs/promises

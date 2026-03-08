@@ -561,7 +561,7 @@ Top-level aliases are retained for ergonomics:
 
 ### Undefined Variables
 
-Undefined variables and missing dotted paths are preserved as literal placeholders (`{{variable}}`, `{{context.parent.missing}}`) rather than causing an error.
+Undefined variables and missing dotted paths are preserved as literal placeholders (`{{variable}}`, `{{context.parent.missing}}`) rather than causing an error. A deduplicated warning is emitted to stderr for each undefined variable.
 
 ### State Persistence
 

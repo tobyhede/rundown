@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import { parseRunbookDocument } from '@rundown-org/core';
 import {
   expandLoopVariables,
@@ -7,6 +7,8 @@ import {
   substituteRunbookVariables,
   expandLoopVariablesForCommand,
   expandForClauseVariables,
+  collectUnresolvedVariables,
+  warnUnresolvedRunbookVariables,
 } from '../../src/services/template-renderer.js';
 
 describe('expandLoopVariables', () => {
@@ -413,6 +415,97 @@ describe('expandLoopVariablesForCommand', () => {
       'context.parent.index': '7',
     };
     expect(expandLoopVariables('Index={{context.parent.index}}', variables)).toBe('Index=7');
+  });
+});
+
+describe('collectUnresolvedVariables', () => {
+  it('should return variable names from unresolved placeholders', () => {
+    expect(collectUnresolvedVariables('Hello {{name}} and {{age}}')).toEqual(['name', 'age']);
+  });
+
+  it('should return empty array when no placeholders', () => {
+    expect(collectUnresolvedVariables('No variables here')).toEqual([]);
+  });
+
+  it('should handle dotted paths', () => {
+    expect(collectUnresolvedVariables('{{item.name}} and {{config.port}}')).toEqual([
+      'item.name',
+      'config.port',
+    ]);
+  });
+
+  it('should handle spaces in braces', () => {
+    expect(collectUnresolvedVariables('{{ name }}')).toEqual(['name']);
+  });
+
+  it('should return duplicates when same variable appears multiple times', () => {
+    expect(collectUnresolvedVariables('{{x}} and {{x}}')).toEqual(['x', 'x']);
+  });
+});
+
+describe('warnUnresolvedRunbookVariables', () => {
+  it('should warn for unresolved variables in description', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = '# Test\n\n## 1. Deploy\n\nDeploy to {{environment}}.';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Warning: Undefined variable "{{environment}}" preserved as literal text',
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('should warn for unresolved variables in command code', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Warning: Undefined variable "{{BRANCH}}" preserved as literal text',
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('should deduplicate warnings for same variable', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown =
+      '# Test\n\n## 1. Deploy {{env}}\n\nDeploy to {{env}}.\n\n## 2. Verify {{env}}\n\nCheck {{env}}.';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it('should not warn when all variables are resolved', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = '# Test\n\n## 1. Deploy\n\nDeploy to {{environment}}.';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    const substituted = substituteRunbookVariables(runbook, { environment: 'staging' });
+    warnUnresolvedRunbookVariables(substituted);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('should warn for unresolved variables in title', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = '# {{project}} Runbook\n\n## 1. Start\n\nGo.';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Warning: Undefined variable "{{project}}" preserved as literal text',
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('should warn for unresolved variables in prompt', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = '# Test\n\n## 1. Check\n\n> Is {{service}} running?\n';
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Warning: Undefined variable "{{service}}" preserved as literal text',
+    );
+    warnSpy.mockRestore();
   });
 });
 

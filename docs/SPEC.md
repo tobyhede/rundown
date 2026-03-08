@@ -196,7 +196,7 @@ Variables use Handlebars syntax: `{{variable}}`.
 | `{{context.vars.NAME}}` | Global | User/config/frontmatter variable namespace. |
 | Loop Var | Loop | Current item/index (e.g., `{{batch}}`). |
 
-*   **Undefined**: Preserved as literal text.
+*   **Undefined**: Preserved as literal text. A warning is emitted to stderr for each undefined variable.
 *   **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
 *   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
 *   **Depth limit**: Parent context chain addressing is capped at 32 levels. Exceeding this limit produces an error.

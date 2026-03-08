@@ -17,6 +17,7 @@ import type { RunbookState } from '@rundown-org/core';
 import {
   substituteRunbookVariables,
   expandForClauseVariables,
+  warnUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 
 /**
@@ -47,7 +48,9 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
     const sourceKeys = new Set(Object.keys(state.sources ?? {}));
     const forExpanded = expandForClauseVariables(state.runbookSrc, state.templateVars, sourceKeys);
     const runbook = parseRunbookDocument(forExpanded, state.runbook);
-    return substituteRunbookVariables(runbook, state.templateVars).steps;
+    const substituted = substituteRunbookVariables(runbook, state.templateVars);
+    warnUnresolvedRunbookVariables(substituted);
+    return substituted.steps;
   }
 
   const runbook = parseRunbookDocument(state.runbookSrc, state.runbook);

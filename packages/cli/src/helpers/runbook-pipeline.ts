@@ -45,6 +45,7 @@ import {
 import {
   substituteRunbookVariables,
   expandForClauseVariables,
+  warnUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
 
@@ -273,6 +274,7 @@ export async function prepareRunbook(
 
   // Substitute variables into parsed AST
   const runbook = substituteRunbookVariables(rawRunbook, templateVars);
+  warnUnresolvedRunbookVariables(runbook);
 
   // Validate sourced FOR clauses reference defined data sources
   try {
