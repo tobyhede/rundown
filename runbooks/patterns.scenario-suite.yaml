@@ -164,7 +164,8 @@ cases:
     description: Substep BREAK bypasses iteration-level retry
     file: patterns/for-loops/for-substep-break-skips-retry.runbook.md
     commands:
-      - rd run --prompted for-substep-break-skips-retry.runbook.md --var items=a,b,c
+      - rd run --prompted for-substep-break-skips-retry.runbook.md
+      - rd fail
       - rd fail
     result: STOP
 

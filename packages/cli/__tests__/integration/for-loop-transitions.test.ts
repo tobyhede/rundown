@@ -285,11 +285,17 @@ describe('FOR loop transitions integration', () => {
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP
 
-### 1.1 Check
+### 1.1 First check
+- PASS: DEFER
+- FAIL: DEFER
+
+Do the first check.
+
+### 1.2 Second check
 - PASS: DEFER
 - FAIL: BREAK
 
-Do the check.
+Do the second check.
 
 ## 2. Done
 - PASS: COMPLETE
@@ -301,9 +307,10 @@ Final step.
       // Start runbook in prompted mode
       expect(runCli(`run --prompted ${filename}`, workspace).exitCode).toBe(0);
 
-      // Iteration 1: fail → substep BREAK fires (bypasses iteration-level retry)
+      // Iteration 1: substep 1.1 FAIL (DEFER accumulates fail), substep 1.2 FAIL (BREAK exits)
+      expect(runCli('fail', workspace).exitCode).toBe(0);
       const result = runCli('fail', workspace);
-      // BREAK exits loop → aggregation: [fail] → PASS ALL fails → STOP
+      // BREAK exits loop → aggregation: deferredResults=[fail] → fail → PASS ALL fails → STOP
       expect(result.exitCode).toBe(1);
       // Retry should NOT have fired
       expect(result.stdout).not.toContain('RETRY');
