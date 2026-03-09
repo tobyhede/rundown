@@ -73,7 +73,7 @@ The CLI is an orchestration and control interface. Claude executes the actual wo
 
 ### Design Principles
 
-**Type-driven dispatch:** The state machine uses types and events to drive logic. Steps raise typed events; parent states dispatch on event type via `on:` handlers. Guards express domain conditions (e.g., "has more iterations"), never action-type checks. If a guard inspects `lastAction.type` to decide routing, that is a code smell — the event type system should handle the dispatch instead. `if` statements checking action types indicate missing structure in the state graph.
+**Type-driven dispatch:** The state machine uses types and events to drive logic. Steps raise typed events; parent states dispatch on event type via `on:` handlers. Guards express domain conditions (e.g., "has more iterations"), never action-type checks. If a guard inspects `lastAction.type` to decide routing, that is a code smell — the event type system should handle the dispatch instead. `if` statements checking action types indicate missing structure in the state graph. Example: `IterationOutcome` is a discriminated union (`completed | break | next`) that encodes *why* an iteration ended. Retry config only exists on the `completed` variant, so TypeScript prevents accessing retry on loop-control exits at compile time. The single `lastAction.type` check is encapsulated inside `getIterationOutcome` — guards narrow on `outcome.kind` instead.
 
 ---
 

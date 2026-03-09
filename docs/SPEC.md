@@ -223,7 +223,7 @@ scenarios:
 3.  **Strict Ordering**: FOR -> Transitions -> Prompt -> Body.
 4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
 5.  **Single Command**: Max one executable block per step.
-6.  **Loop Safety**: `NEXT` is only valid inside FOR substeps. `BREAK` is valid in FOR substeps and FOR iteration-level transitions.
+6.  **Loop Safety**: `NEXT` and `BREAK` are valid in FOR substeps and FOR iteration-level transitions.
 7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
 9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.

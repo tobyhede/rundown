@@ -31,6 +31,7 @@ import {
 
 const substepActionArb = fc.constantFrom<SubstepAction>(
   'CONTINUE',
+  'DEFER',
   'NEXT',
   'BREAK',
   'STOP',
@@ -39,6 +40,8 @@ const substepActionArb = fc.constantFrom<SubstepAction>(
 
 const iterationActionArb = fc.constantFrom<IterationAction>(
   'CONTINUE',
+  'DEFER',
+  'NEXT',
   'BREAK',
   'STOP',
   'COMPLETE',

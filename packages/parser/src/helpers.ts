@@ -643,7 +643,7 @@ function resolveAggregationMode(
 }
 
 /**
- * Validate that first-class NEXT/BREAK are only used in FOR contexts.
+ * Validate that loop control actions (NEXT/BREAK) are only used in FOR contexts.
  *
  * The first-class `NEXT` and `BREAK` actions are for FOR loop control flow
  * and are only valid within substeps of a FOR step.
@@ -652,7 +652,10 @@ function resolveAggregationMode(
  * @param isForContext - Whether the current context is within a FOR step
  * @throws {RunbookSyntaxError} When NEXT/BREAK used outside FOR context
  */
-export function validateNEXTUsage(conditionals: ParsedConditional[], isForContext: boolean): void {
+export function validateLoopControlUsage(
+  conditionals: ParsedConditional[],
+  isForContext: boolean,
+): void {
   for (const conditional of conditionals) {
     // Check first-class NEXT/BREAK — requires FOR context
     if (conditional.action.type === 'NEXT' || conditional.action.type === 'BREAK') {
@@ -664,6 +667,9 @@ export function validateNEXTUsage(conditionals: ParsedConditional[], isForContex
     }
   }
 }
+
+/** @deprecated Use {@link validateLoopControlUsage} instead. */
+export const validateNEXTUsage = validateLoopControlUsage;
 
 /**
  * Validate that DEFER is only used in substep or FOR iteration-level contexts.

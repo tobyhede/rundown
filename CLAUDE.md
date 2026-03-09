@@ -346,3 +346,11 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
 - [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
 - [docs/TEST-RUNBOOK-STANDARD.md](docs/TEST-RUNBOOK-STANDARD.md) - Declarative test runbook standard
+
+## Design Principles
+
+**Type-driven dispatch.** Types drive logic everywhere possible. Use discriminated unions and type narrowing to make invalid states unrepresentable. Guards express domain conditions through typed return values, never raw action-type string checks. If logic branches on a string discriminant, that discriminant should be encoded in a purpose-built type that forces callers to narrow before accessing variant-specific fields. `if` statements checking action types in guards are code smells — missing type structure. See [docs/RUNDOWN.md](docs/RUNDOWN.md#design-principles) for state machine specifics.
+
+**No silent mapping.** Actions like STOP, COMPLETE, BREAK must propagate as themselves. Never silently convert one action type to another (e.g., mapping DEFER to CONTINUE). Each action type has distinct semantics that must be preserved through the entire dispatch chain.
+
+**No synthetic IDs.** Don't create artificial state identifiers (like `~channel` prefixes). Use XState's native event system and state graph structure.
