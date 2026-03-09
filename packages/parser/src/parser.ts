@@ -13,7 +13,8 @@ import {
   isExecutableCodeBlock,
   isPromptCodeBlock,
   escapeForShellSingleQuote,
-  validateNEXTUsage,
+  validateLoopControlUsage,
+  validateDEFERUsage,
   parseForClause,
 } from './helpers.js';
 import { validateRunbook } from './validator.js';
@@ -154,7 +155,7 @@ export function parseRunbookDocument(
       const runbooks = extractRunbookList(ps.content);
 
       // Validate NEXT usage before converting to transitions
-      validateNEXTUsage(ps.pendingConditionals, currentStep.forClause !== undefined);
+      validateLoopControlUsage(ps.pendingConditionals, currentStep.forClause !== undefined);
 
       const transitions = convertToTransitions(ps.pendingConditionals);
 
@@ -584,7 +585,8 @@ function finalizeStep(
 
   // Validate NEXT usage before converting to transitions
   const effectiveConditionals = step.stepConditionals ?? pendingConditionals;
-  validateNEXTUsage(effectiveConditionals, step.forClause !== undefined);
+  validateLoopControlUsage(effectiveConditionals, step.forClause !== undefined);
+  validateDEFERUsage(effectiveConditionals, false);
 
   const transitions = convertToTransitions(effectiveConditionals);
 

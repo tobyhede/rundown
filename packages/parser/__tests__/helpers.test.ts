@@ -11,7 +11,8 @@ import {
   extractSubstepHeader,
   parseConditional,
   convertToTransitions,
-  validateNEXTUsage,
+  validateLoopControlUsage,
+  validateDEFERUsage,
   parseForClause,
   type ParsedConditional,
 } from '../src/index.js';
@@ -1068,10 +1069,10 @@ describe('convertToTransitions aggregation conflicts', () => {
   });
 });
 
-describe('validateNEXTUsage with RETRY containing NEXT', () => {
+describe('validateLoopControlUsage with RETRY containing NEXT', () => {
   it('rejects RETRY with NEXT fallback in non-FOR context', () => {
     expect(() => {
-      validateNEXTUsage(
+      validateLoopControlUsage(
         [
           {
             type: 'fail',
@@ -1087,13 +1088,13 @@ describe('validateNEXTUsage with RETRY containing NEXT', () => {
   });
 });
 
-describe('validateNEXTUsage with first-class NEXT/BREAK', () => {
+describe('validateLoopControlUsage with first-class NEXT/BREAK', () => {
   it('rejects first-class NEXT outside FOR context', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', action: { type: 'NEXT' }, retry: 0, modifier: null, raw: 'NEXT' },
     ];
     expect(() => {
-      validateNEXTUsage(conditionals, false);
+      validateLoopControlUsage(conditionals, false);
     }).toThrow('NEXT is only valid within substeps of a FOR step');
   });
 
@@ -1102,7 +1103,7 @@ describe('validateNEXTUsage with first-class NEXT/BREAK', () => {
       { type: 'pass', action: { type: 'NEXT' }, retry: 0, modifier: null, raw: 'NEXT' },
     ];
     expect(() => {
-      validateNEXTUsage(conditionals, true);
+      validateLoopControlUsage(conditionals, true);
     }).not.toThrow();
   });
 
@@ -1111,7 +1112,7 @@ describe('validateNEXTUsage with first-class NEXT/BREAK', () => {
       { type: 'pass', action: { type: 'BREAK' }, retry: 0, modifier: null, raw: 'BREAK' },
     ];
     expect(() => {
-      validateNEXTUsage(conditionals, false);
+      validateLoopControlUsage(conditionals, false);
     }).toThrow('BREAK is only valid within substeps of a FOR step');
   });
 
@@ -1120,7 +1121,38 @@ describe('validateNEXTUsage with first-class NEXT/BREAK', () => {
       { type: 'pass', action: { type: 'BREAK' }, retry: 0, modifier: null, raw: 'BREAK' },
     ];
     expect(() => {
-      validateNEXTUsage(conditionals, true);
+      validateLoopControlUsage(conditionals, true);
+    }).not.toThrow();
+  });
+});
+
+describe('validateDEFERUsage', () => {
+  it('rejects DEFER in non-substep context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'DEFER' }, retry: 0, modifier: null, raw: 'DEFER' },
+    ];
+    expect(() => {
+      validateDEFERUsage(conditionals, false);
+    }).toThrow(
+      'DEFER is only valid within substeps or FOR iteration-level transitions, not at step level',
+    );
+  });
+
+  it('accepts DEFER in substep context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'DEFER' }, retry: 0, modifier: null, raw: 'DEFER' },
+    ];
+    expect(() => {
+      validateDEFERUsage(conditionals, true);
+    }).not.toThrow();
+  });
+
+  it('does not throw for non-DEFER actions in non-substep context', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', action: { type: 'CONTINUE' }, retry: 0, modifier: null, raw: 'CONTINUE' },
+    ];
+    expect(() => {
+      validateDEFERUsage(conditionals, false);
     }).not.toThrow();
   });
 });

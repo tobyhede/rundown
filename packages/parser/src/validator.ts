@@ -203,6 +203,17 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
     }
 
     if (step.transitions) {
+      if (
+        step.transitions.pass.action.type === 'DEFER' ||
+        step.transitions.fail.action.type === 'DEFER'
+      ) {
+        diagnostics.push(
+          error(
+            step.line,
+            `DEFER is only valid within substeps or FOR iteration-level transitions, not at step level (step "${step.name}")`,
+          ),
+        );
+      }
       validateAction(step.transitions.pass.action, undefined, steps, step, diagnostics);
       validateAction(step.transitions.fail.action, undefined, steps, step, diagnostics);
     }

@@ -271,4 +271,49 @@ describe('FOR loop transitions integration', () => {
       expect(result.stdout).toContain('COMPLETE');
     });
   });
+
+  // ===========================================================================
+  // Group 4: Substep Loop Control Bypasses Iteration Retry
+  // ===========================================================================
+  describe('substep loop-control bypasses iteration retry', () => {
+    it('substep BREAK skips iteration retry', async () => {
+      // Substep ON FAIL: BREAK should bypass iteration-level RETRY 2 BREAK
+      const filename = 'substep-break-bypass.runbook.md';
+      const content = `## 1. Process
+- FOR i IN 1 TO 3
+  - FAIL ANY: RETRY 2 BREAK
+- PASS ALL: CONTINUE
+- FAIL ANY: STOP
+
+### 1.1 First check
+- PASS: DEFER
+- FAIL: DEFER
+
+Do the first check.
+
+### 1.2 Second check
+- PASS: DEFER
+- FAIL: BREAK
+
+Do the second check.
+
+## 2. Done
+- PASS: COMPLETE
+
+Final step.
+`;
+      await writeFile(join(workspace.cwd, filename), content);
+
+      // Start runbook in prompted mode
+      expect(runCli(`run --prompted ${filename}`, workspace).exitCode).toBe(0);
+
+      // Iteration 1: substep 1.1 FAIL (DEFER accumulates fail), substep 1.2 FAIL (BREAK exits)
+      expect(runCli('fail', workspace).exitCode).toBe(0);
+      const result = runCli('fail', workspace);
+      // BREAK exits loop → aggregation: deferredResults=[fail] → fail → PASS ALL fails → STOP
+      expect(result.exitCode).toBe(1);
+      // Retry should NOT have fired
+      expect(result.stdout).not.toContain('RETRY');
+    });
+  });
 });

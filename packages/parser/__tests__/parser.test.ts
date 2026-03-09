@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseRunbook, parseRunbookDocument } from '../src/index.js';
+import { parseRunbook, parseRunbookDocument, RunbookSyntaxError } from '../src/index.js';
 
 describe('Step-level runbooks', () => {
   it('parses runbook list in substep', () => {
@@ -1901,7 +1901,7 @@ echo "{{item}}"
     }
   });
 
-  it('standalone DEFER on step-level produces both pass and fail DEFER transitions', () => {
+  it('standalone DEFER on step-level throws syntax error', () => {
     const md = `## 1. Check
 
 - DEFER
@@ -1910,9 +1910,7 @@ echo "{{item}}"
 echo "check"
 \`\`\`
 `;
-    const steps = parseRunbook(md);
-    expect(steps[0].transitions).toBeDefined();
-    expect(steps[0].transitions!.pass.action).toEqual({ type: 'DEFER' });
-    expect(steps[0].transitions!.fail.action).toEqual({ type: 'DEFER' });
+    expect(() => parseRunbook(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbook(md)).toThrow(/DEFER is only valid/);
   });
 });

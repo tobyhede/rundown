@@ -794,13 +794,6 @@ function buildParentExitAssign(
         lastAction: { type: 'CONTINUE' as const, aggregated: true },
         lastMessage: undefined as string | undefined,
       });
-    case 'DEFER':
-      return runbookSetup.assign({
-        ...baseAssign,
-        forStack: [] as readonly ForContext[],
-        lastAction: { type: 'DEFER' as const, aggregated: true },
-        lastMessage: undefined as string | undefined,
-      });
     default:
       return runbookSetup.assign({
         ...baseAssign,
@@ -859,14 +852,37 @@ function buildParentStateConfig(
       : 'fail';
   };
 
-  const getIterationTransition = (
-    context: RunbookContext,
-  ): {
-    result: 'pass' | 'fail';
-    transition: { retry: number; action: Action };
-  } => {
+  /**
+   * Discriminated union encoding *why* an iteration ended.
+   *
+   * - `completed`: iteration finished normally — retry config is accessible.
+   * - `break`: substep fired BREAK — retry is structurally unavailable.
+   * - `next`: substep fired NEXT — retry is structurally unavailable.
+   *
+   * TypeScript prevents accessing `.transition.retry` without narrowing to
+   * `kind === 'completed'` first, making retry bypass on loop-control exits
+   * a compile-time error rather than a runtime bug.
+   */
+  type IterationOutcome =
+    | { kind: 'completed'; result: 'pass' | 'fail'; transition: { retry: number; action: Action } }
+    | { kind: 'break'; result: 'pass' | 'fail' }
+    | { kind: 'next'; result: 'pass' | 'fail' };
+
+  /**
+   * Compute the iteration outcome, encoding exit reason in the type system.
+   *
+   * The `lastAction.type` check is encapsulated here so guards never inspect
+   * `lastAction.type` directly — they narrow on `outcome.kind` instead.
+   *
+   * @param context - Current runbook context
+   * @returns Discriminated outcome with retry config only on `completed` variant
+   */
+  const getIterationOutcome = (context: RunbookContext): IterationOutcome => {
     const result = computeIterationResult(context);
+    if (context.lastAction?.type === 'BREAK') return { kind: 'break', result };
+    if (context.lastAction?.type === 'NEXT') return { kind: 'next', result };
     return {
+      kind: 'completed',
       result,
       transition: result === 'pass' ? forTransitions.pass : forTransitions.fail,
     };
@@ -953,8 +969,9 @@ function buildParentStateConfig(
       always.push({
         guard: ({ context }: { context: RunbookContext }) => {
           if (context.substep !== undefined) return false; // mid-iteration — not ready
-          const iterResult = computeIterationResult(context);
-          return iterResult === kind && context.iterationRetryCount < transition.retry;
+          const outcome = getIterationOutcome(context);
+          if (outcome.kind !== 'completed') return false; // BREAK/NEXT bypass retry
+          return outcome.result === kind && context.iterationRetryCount < outcome.transition.retry;
         },
         target: firstSubstepStateId,
         actions: runbookSetup.assign({
@@ -989,9 +1006,12 @@ function buildParentStateConfig(
       always.push({
         guard: ({ context }: { context: RunbookContext }) => {
           if (context.substep !== undefined) return false; // mid-iteration — not ready
-          const selected = getIterationTransition(context);
-          if (selected.result !== kind) return false;
-          return transition.retry <= 0 || context.iterationRetryCount >= transition.retry;
+          const outcome = getIterationOutcome(context);
+          if (outcome.kind !== 'completed') return false; // BREAK/NEXT bypass direct-exit
+          if (outcome.result !== kind) return false;
+          return (
+            outcome.transition.retry <= 0 || context.iterationRetryCount >= outcome.transition.retry
+          );
         },
         target,
         actions: [
@@ -1020,9 +1040,12 @@ function buildParentStateConfig(
         guard: ({ context }: { context: RunbookContext }) => {
           if (context.substep !== undefined) return false;
           if (context.forStack.length === 0) return false; // Already exited loop
-          const selected = getIterationTransition(context);
-          if (selected.result !== kind) return false;
-          return transition.retry <= 0 || context.iterationRetryCount >= transition.retry;
+          const outcome = getIterationOutcome(context);
+          if (outcome.kind !== 'completed') return false; // BREAK/NEXT bypass CONTINUE exit
+          if (outcome.result !== kind) return false;
+          return (
+            outcome.transition.retry <= 0 || context.iterationRetryCount >= outcome.transition.retry
+          );
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
@@ -1038,9 +1061,15 @@ function buildParentStateConfig(
     always.push({
       guard: ({ context }: { context: RunbookContext }) => {
         if (context.substep !== undefined) return false; // mid-iteration — not ready
-        // BREAK clears forStack, so peekForStack returns undefined → naturally prevents loop-back
-        const selected = getIterationTransition(context).transition;
-        if (selected.action.type !== 'DEFER' && selected.action.type !== 'NEXT') return false;
+        const outcome = getIterationOutcome(context);
+        // Loop-back fires for NEXT (substep or iteration-level) or DEFER (configured action)
+        const isLoopBack =
+          outcome.kind === 'next' ||
+          (outcome.kind === 'completed' &&
+            (outcome.transition.action.type === 'DEFER' ||
+              outcome.transition.action.type === 'NEXT'));
+        if (!isLoopBack) return false;
+        // BREAK clears forStack → peekForStack returns undefined → naturally prevents loop-back
         const top = peekForStack(context.forStack);
         return top !== undefined && hasMoreIterations(top);
       },
@@ -1053,9 +1082,9 @@ function buildParentStateConfig(
         },
         iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] => {
           const results = context.iterationResults ?? [];
-          const selected = getIterationTransition(context).transition;
+          const outcome = getIterationOutcome(context);
           // DEFER accumulates iteration result; NEXT skips accumulation
-          if (selected.action.type === 'DEFER') {
+          if (outcome.kind === 'completed' && outcome.transition.action.type === 'DEFER') {
             return [...results, computeIterationResult(context)];
           }
           return results;
@@ -1083,10 +1112,11 @@ function buildParentStateConfig(
       // unless NEXT (which skips accumulation). DEFER and BREAK both include it.
       const allResults = hasFor
         ? (() => {
-            const selected = getIterationTransition(context).transition;
-            return selected.action.type === 'NEXT'
-              ? baseResults
-              : [...baseResults, computeIterationResult(context)];
+            const outcome = getIterationOutcome(context);
+            // NEXT skips accumulation of current iteration
+            if (outcome.kind === 'next') return baseResults;
+            // BREAK and completed both include current iteration
+            return [...baseResults, computeIterationResult(context)];
           })()
         : baseResults;
       const hasFailed = allResults.some((r) => r === 'fail');
@@ -1206,7 +1236,6 @@ function buildRetryStateConfig(
 function resolveActionTarget(action: Action, stepName: string, steps: Step[]): string {
   switch (action.type) {
     case 'CONTINUE':
-    case 'DEFER':
       return findNextStateId(stepName, undefined, steps);
     case 'COMPLETE':
       return 'COMPLETE';
@@ -1223,11 +1252,14 @@ function resolveActionTarget(action: Action, stepName: string, steps: Step[]): s
           : action.target.substep;
       return formatStateId(targetStep.name, substep);
     }
+    // DEFER/NEXT/BREAK are substep-only actions. This guard is the primary
+    // enforcement point for all parent-step paths (aggregation + direct exit).
     case 'NEXT':
     case 'BREAK':
+    case 'DEFER':
       throw new Error(
         `Compiler invariant violation: ${action.type} appeared as parent-step action. ` +
-          `This should be caught by parser validateNEXTUsage.`,
+          `DEFER is only valid in substep or FOR iteration contexts.`,
       );
   }
 }
@@ -1305,7 +1337,7 @@ function buildLoopControlTransition(
  * DEFER always routes substeps to the parent aggregation state with result
  * accumulation, enabling fail-fast ALL/ANY evaluation. For non-last substeps,
  * the parent's advance guards handle routing to the next sibling.
- * At the step level (no substep), DEFER acts like CONTINUE.
+ * DEFER at step level is invalid and rejected by the parser/validator.
  *
  * **Aggregation and `lastAction` reporting:**
  * - Non-last substeps: DEFER routes to parent, the advance guard advances to the
@@ -1321,6 +1353,7 @@ function buildLoopControlTransition(
  * @param steps - The full array of runbook steps
  * @param kind - Whether this is a 'pass' or 'fail' transition
  * @returns XState transition configuration
+ * @throws {Error} If DEFER is used at step level (invariant violation — should be rejected by parser/validator)
  */
 function buildDeferTransition(
   stepName: string,
@@ -1347,16 +1380,12 @@ function buildDeferTransition(
     };
   }
 
-  // Non-substep DEFER: behaves like CONTINUE (advance to next step)
-  const target = findNextStateId(stepName, substepId, steps);
-  return {
-    target,
-    actions: runbookSetup.assign({
-      lastAction: { type: 'DEFER' as const },
-      lastMessage: undefined as string | undefined,
-      substep: extractSubstepFromStateId(target),
-    }),
-  };
+  // Step-level DEFER should be rejected by the parser/validator.
+  // If we reach here, it's an invariant violation.
+  throw new Error(
+    `Invariant violation: DEFER at step level for "${stepName}". ` +
+      `DEFER is only valid in substep or FOR iteration contexts.`,
+  );
 }
 
 /**

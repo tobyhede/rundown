@@ -160,6 +160,15 @@ cases:
       - rd run for-iteration-transitions.runbook.md
     result: COMPLETE
 
+  for-substep-break-skips-retry:
+    description: Substep BREAK bypasses iteration-level retry
+    file: patterns/for-loops/for-substep-break-skips-retry.runbook.md
+    commands:
+      - rd run --prompted for-substep-break-skips-retry.runbook.md
+      - rd fail
+      - rd fail
+    result: STOP
+
   for-iteration-retry-after-retry:
     description: Each iteration fails once then passes on retry via iteration-level RETRY
     file: patterns/for-loops/for-iteration-retry.runbook.md

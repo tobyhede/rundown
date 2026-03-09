@@ -22,7 +22,10 @@ export {
   isPromptCodeBlock,
   escapeForShellSingleQuote,
   parseQuotedOrIdentifier,
+  validateLoopControlUsage,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- Re-exported for backward compatibility
   validateNEXTUsage,
+  validateDEFERUsage,
 } from './helpers.js';
 export type { ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
 export {

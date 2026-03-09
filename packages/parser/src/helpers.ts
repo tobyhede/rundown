@@ -643,7 +643,7 @@ function resolveAggregationMode(
 }
 
 /**
- * Validate that first-class NEXT/BREAK are only used in FOR contexts.
+ * Validate that loop control actions (NEXT/BREAK) are only used in FOR contexts.
  *
  * The first-class `NEXT` and `BREAK` actions are for FOR loop control flow
  * and are only valid within substeps of a FOR step.
@@ -652,13 +652,44 @@ function resolveAggregationMode(
  * @param isForContext - Whether the current context is within a FOR step
  * @throws {RunbookSyntaxError} When NEXT/BREAK used outside FOR context
  */
-export function validateNEXTUsage(conditionals: ParsedConditional[], isForContext: boolean): void {
+export function validateLoopControlUsage(
+  conditionals: ParsedConditional[],
+  isForContext: boolean,
+): void {
   for (const conditional of conditionals) {
     // Check first-class NEXT/BREAK — requires FOR context
     if (conditional.action.type === 'NEXT' || conditional.action.type === 'BREAK') {
       if (!isForContext) {
         throw new RunbookSyntaxError(
           `${conditional.action.type} is only valid within substeps of a FOR step`,
+        );
+      }
+    }
+  }
+}
+
+/** @deprecated Use {@link validateLoopControlUsage} instead. */
+export const validateNEXTUsage = validateLoopControlUsage;
+
+/**
+ * Validate that DEFER is only used in substep or FOR iteration-level contexts.
+ *
+ * DEFER propagates a result to a parent aggregation state (ALL/ANY). At step
+ * level there is no parent aggregation, so DEFER is meaningless.
+ *
+ * @param conditionals - Array of parsed conditionals to check for DEFER usage
+ * @param isSubstepContext - Whether the current context is within a substep or FOR iteration
+ * @throws {RunbookSyntaxError} When DEFER used at step level
+ */
+export function validateDEFERUsage(
+  conditionals: ParsedConditional[],
+  isSubstepContext: boolean,
+): void {
+  for (const conditional of conditionals) {
+    if (conditional.action.type === 'DEFER') {
+      if (!isSubstepContext) {
+        throw new RunbookSyntaxError(
+          'DEFER is only valid within substeps or FOR iteration-level transitions, not at step level',
         );
       }
     }
