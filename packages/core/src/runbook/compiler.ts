@@ -1316,6 +1316,7 @@ function buildLoopControlTransition(
  * @param steps - The full array of runbook steps
  * @param kind - Whether this is a 'pass' or 'fail' transition
  * @returns XState transition configuration
+ * @throws {Error} If DEFER is used at step level (invariant violation — should be rejected by parser/validator)
  */
 function buildDeferTransition(
   stepName: string,
