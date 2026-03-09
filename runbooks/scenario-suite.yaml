@@ -9,7 +9,7 @@ cases:
   # transitions/
   default-implicit-completed:
     description: Both steps pass with implicit transitions
-    file: patterns/transitions/default-implicit.runbook.md
+    file: transitions/default-implicit.runbook.md
     commands:
       - rd run --prompted default-implicit.runbook.md
       - rd pass
@@ -18,7 +18,7 @@ cases:
 
   pass-stop-stopped:
     description: PASS STOP halts the runbook
-    file: patterns/transitions/pass-stop.runbook.md
+    file: transitions/pass-stop.runbook.md
     commands:
       - rd run --prompted pass-stop.runbook.md
       - rd pass
@@ -26,7 +26,7 @@ cases:
 
   fail-continue-completed:
     description: FAIL CONTINUE proceeds to next step
-    file: patterns/transitions/fail-continue.runbook.md
+    file: transitions/fail-continue.runbook.md
     commands:
       - rd run --prompted fail-continue.runbook.md
       - rd fail
@@ -36,7 +36,7 @@ cases:
   # retries/
   retry-success-after-retry:
     description: Fails first, succeeds on retry
-    file: patterns/retries/retry-success.runbook.md
+    file: retries/retry-success.runbook.md
     commands:
       - rd run --prompted retry-success.runbook.md
       - rd fail
@@ -45,7 +45,7 @@ cases:
 
   retry-exhaustion-stop:
     description: Exhaustion with STOP halts the runbook
-    file: patterns/retries/retry-exhaustion-stop.runbook.md
+    file: retries/retry-exhaustion-stop.runbook.md
     commands:
       - rd run --prompted retry-exhaustion-stop.runbook.md
       - rd fail
@@ -55,7 +55,7 @@ cases:
   # goto/
   goto-step-completed:
     description: Jump from step 1 to step 3
-    file: patterns/goto/goto-step.runbook.md
+    file: goto/goto-step.runbook.md
     commands:
       - rd run --prompted goto-step.runbook.md
       - rd pass
@@ -64,7 +64,7 @@ cases:
 
   goto-from-fail-recovered:
     description: Fail triggers GOTO to recovery
-    file: patterns/goto/goto-from-fail.runbook.md
+    file: goto/goto-from-fail.runbook.md
     commands:
       - rd run --prompted goto-from-fail.runbook.md
       - rd fail
@@ -74,7 +74,7 @@ cases:
   # named-steps/
   named-step-basic-completed:
     description: Named step passes and completes
-    file: patterns/named-steps/named-step-basic.runbook.md
+    file: named-steps/named-step-basic.runbook.md
     commands:
       - rd run --prompted named-step-basic.runbook.md
       - rd pass
@@ -83,7 +83,7 @@ cases:
   # substeps/
   mixed-substeps-happy-path:
     description: All substeps pass through
-    file: patterns/substeps/mixed-substeps.runbook.md
+    file: substeps/mixed-substeps.runbook.md
     commands:
       - rd run --prompted mixed-substeps.runbook.md
       - rd pass
@@ -94,7 +94,7 @@ cases:
   # for-loops/
   for-range-to-completed:
     description: FOR loop iterates five times and completes
-    file: patterns/for-loops/for-range-to.runbook.md
+    file: for-loops/for-range-to.runbook.md
     commands:
       - rd run for-range-to.runbook.md
     result: COMPLETE
@@ -102,7 +102,7 @@ cases:
   # prompts/
   implicit-prompt-completed:
     description: Pass both implicit prompt steps
-    file: patterns/prompts/implicit-prompt.runbook.md
+    file: prompts/implicit-prompt.runbook.md
     commands:
       - rd run --prompted implicit-prompt.runbook.md
       - rd pass
@@ -112,28 +112,28 @@ cases:
   # delegation/
   delegate-basic-completed:
     description: Delegate substep to child, child auto-completes
-    file: patterns/delegation/delegate-basic.runbook.md
+    file: delegation/delegate-basic.runbook.md
     commands:
       - rd run delegate-basic.runbook.md
-      - rd delegate patterns/delegation/delegation-child-pass.runbook.md --step 1.1
+      - rd delegate delegation/delegation-child-pass.runbook.md --step 1.1
       - rd claim ${TOKEN}
     result: COMPLETE
 
   delegate-failure-child-fails:
     description: Child fails, failure propagates STOP to parent
-    file: patterns/delegation/delegate-failure.runbook.md
+    file: delegation/delegate-failure.runbook.md
     commands:
       - rd run delegate-failure.runbook.md
-      - rd delegate patterns/delegation/delegation-child-fail.runbook.md --step 1.1
+      - rd delegate delegation/delegation-child-fail.runbook.md --step 1.1
       - rd claim ${TOKEN}
     result: STOP
 
   delegate-abort-pending:
     description: Create delegation then abort before claim
-    file: patterns/delegation/delegate-abort.runbook.md
+    file: delegation/delegate-abort.runbook.md
     commands:
       - rd run --prompted delegate-abort.runbook.md
-      - rd delegate patterns/delegation/delegation-child-pass.runbook.md --step 1.1
+      - rd delegate delegation/delegation-child-pass.runbook.md --step 1.1
       - rd abort ${TOKEN}
       - rd pass
     result: COMPLETE
@@ -141,28 +141,28 @@ cases:
   # for-loops/ (new coverage)
   for-descending-completed:
     description: Descending range iterates 3, 2, 1
-    file: patterns/for-loops/for-descending.runbook.md
+    file: for-loops/for-descending.runbook.md
     commands:
       - rd run for-descending.runbook.md
     result: COMPLETE
 
   for-next-action-fail-skips:
     description: FAIL NEXT skips the failed iteration and loop continues
-    file: patterns/for-loops/for-next-action.runbook.md
+    file: for-loops/for-next-action.runbook.md
     commands:
       - rd run for-next-action.runbook.md
     result: COMPLETE
 
   for-iteration-transitions-continue:
     description: FAIL CONTINUE per iteration allows loop to complete
-    file: patterns/for-loops/for-iteration-transitions.runbook.md
+    file: for-loops/for-iteration-transitions.runbook.md
     commands:
       - rd run for-iteration-transitions.runbook.md
     result: COMPLETE
 
   for-substep-break-respects-retry:
     description: Substep BREAK respects iteration-level retry
-    file: patterns/for-loops/for-substep-break-respects-retry.runbook.md
+    file: for-loops/for-substep-break-respects-retry.runbook.md
     commands:
       - rd run --prompted for-substep-break-respects-retry.runbook.md
       - rd fail
@@ -171,14 +171,14 @@ cases:
 
   for-iteration-retry-after-retry:
     description: Each iteration fails once then passes on retry via iteration-level RETRY
-    file: patterns/for-loops/for-iteration-retry.runbook.md
+    file: for-loops/for-iteration-retry.runbook.md
     commands:
       - rd run for-iteration-retry.runbook.md
     result: COMPLETE
 
   for-variable-bounds-completed:
     description: Template variable bounds expand at parse time
-    file: patterns/for-loops/for-variable-bounds.runbook.md
+    file: for-loops/for-variable-bounds.runbook.md
     commands:
       - rd run --var Max=3 for-variable-bounds.runbook.md
     result: COMPLETE
@@ -186,7 +186,7 @@ cases:
   # goto/ (new coverage)
   goto-at-iteration-completed:
     description: GOTO AT jumps into FOR loop at iteration 3
-    file: patterns/goto/goto-at-iteration.runbook.md
+    file: goto/goto-at-iteration.runbook.md
     commands:
       - rd run goto-at-iteration.runbook.md
     result: COMPLETE
@@ -194,14 +194,14 @@ cases:
   # variables/ (new coverage)
   context-current-completed:
     description: Context position variables echo from substep
-    file: patterns/variables/context-current.runbook.md
+    file: variables/context-current.runbook.md
     commands:
       - rd run context-current.runbook.md
     result: COMPLETE
 
   variable-precedence-override:
     description: CLI --var overrides frontmatter default
-    file: patterns/variables/variable-precedence.runbook.md
+    file: variables/variable-precedence.runbook.md
     commands:
       - rd run --var greeting=overridden variable-precedence.runbook.md
     result: COMPLETE
@@ -209,14 +209,14 @@ cases:
   # transitions/ (new coverage)
   separator-syntax-completed:
     description: Each step uses a different separator and all pass
-    file: patterns/transitions/separator-syntax.runbook.md
+    file: transitions/separator-syntax.runbook.md
     commands:
       - rd run separator-syntax.runbook.md
     result: COMPLETE
 
   fail-all-standalone-completed:
     description: One substep passes so PASS ANY continues
-    file: patterns/transitions/fail-all-standalone.runbook.md
+    file: transitions/fail-all-standalone.runbook.md
     commands:
       - rd run --prompted fail-all-standalone.runbook.md
       - rd fail
@@ -226,7 +226,7 @@ cases:
 
   fail-all-standalone-stopped:
     description: All substeps fail and FAIL ALL stops
-    file: patterns/transitions/fail-all-standalone.runbook.md
+    file: transitions/fail-all-standalone.runbook.md
     commands:
       - rd run --prompted fail-all-standalone.runbook.md
       - rd fail
@@ -235,7 +235,7 @@ cases:
 
   all-modifier-one-fails-stopped:
     description: One substep fails, FAIL ANY fires STOP
-    file: patterns/transitions/all-modifier.runbook.md
+    file: transitions/all-modifier.runbook.md
     commands:
       - rd run --prompted all-modifier.runbook.md
       - rd fail
@@ -244,7 +244,7 @@ cases:
 
   any-modifier-mixed-completed:
     description: First fails, second passes, PASS ANY fires COMPLETE
-    file: patterns/transitions/any-modifier.runbook.md
+    file: transitions/any-modifier.runbook.md
     commands:
       - rd run --prompted any-modifier.runbook.md
       - rd fail
@@ -254,7 +254,7 @@ cases:
   # named-steps/ (new coverage)
   named-step-for-loop-completed:
     description: Named step iterates normally with FOR loop
-    file: patterns/named-steps/named-step-for-loop.runbook.md
+    file: named-steps/named-step-for-loop.runbook.md
     commands:
       - rd run named-step-for-loop.runbook.md
     result: COMPLETE
@@ -262,7 +262,7 @@ cases:
   # stash-pop/
   stash-pop-basic-resumed:
     description: Stash mid-execution, pop to resume, then complete
-    file: patterns/stash-pop/stash-pop-basic.runbook.md
+    file: stash-pop/stash-pop-basic.runbook.md
     commands:
       - rd run --prompted stash-pop-basic.runbook.md
       - rd pass
@@ -273,7 +273,7 @@ cases:
 
   stash-pop-interleave-completed:
     description: Stash A, run B to completion, pop A and complete
-    file: patterns/stash-pop/stash-pop-interleave.runbook.md
+    file: stash-pop/stash-pop-interleave.runbook.md
     commands:
       - rd run --prompted stash-pop-interleave.runbook.md
       - rd pass
@@ -286,7 +286,7 @@ cases:
   # delegation/ (cross-feature)
   delegate-named-step-completed:
     description: Named step delegates substep to child
-    file: patterns/delegation/delegate-named-step.runbook.md
+    file: delegation/delegate-named-step.runbook.md
     commands:
       - rd run delegate-named-step.runbook.md
       - rd delegate delegation-child-pass.runbook.md --step Review.1
@@ -296,7 +296,7 @@ cases:
   # composition/
   step-runbook-list-completed:
     description: All child workflows pass
-    file: patterns/composition/step-runbook-list.runbook.md
+    file: composition/step-runbook-list.runbook.md
     commands:
       - rd run --prompted step-runbook-list.runbook.md
       - rd pass

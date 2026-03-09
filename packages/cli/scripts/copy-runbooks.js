@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const sourceDir = join(__dirname, '..', '..', '..', 'runbooks', 'patterns');
+const sourceDir = join(__dirname, '..', '..', '..', 'runbooks');
 const destDir = join(__dirname, '..', 'dist', 'runbooks');
 
 // Check if source directory exists

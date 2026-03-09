@@ -47,7 +47,7 @@ function loadPatternsWithScenariosSync(): {
   withScenarios: { file: string; scenarios: Scenarios }[];
   allRunbookFiles: string[];
 } {
-  const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
+  const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks');
   let allFiles: string[];
   try {
     allFiles = getFilesSync(patternsDir);
@@ -105,7 +105,7 @@ function findFileByName(dir: string, filename: string): string | null {
  * Handles files in subdirectories by flattening them to the target directory.
  */
 function copyPatternToWorkspace(relativePath: string, workspace: TestWorkspace): void {
-  const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
+  const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks');
   const sourcePath = join(patternsDir, relativePath);
   const targetDir = join(workspace.cwd, '.claude', 'rundown', 'runbooks');
   const filename = relativePath.split('/').pop()!;
@@ -206,7 +206,7 @@ function copyPatternWithDependencies(
     }
   }
 
-  const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
+  const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks');
   const patternSubdir = dirname(filename);
   const varFileDirs = extractVarFileDirs(scenario);
   for (const dir of varFileDirs) {
@@ -338,7 +338,7 @@ describe('scenario runner', () => {
   if (allScenarios.length === 0) {
     it('has pattern scenarios to run', () => {
       console.warn(
-        'No patterns with scenarios found in runbooks/patterns/ — verify pattern files have scenarios in frontmatter',
+        'No patterns with scenarios found in runbooks/ — verify pattern files have scenarios in frontmatter',
       );
     });
   } else {

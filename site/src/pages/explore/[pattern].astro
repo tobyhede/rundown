@@ -7,7 +7,7 @@ import { parse as parseYaml } from 'yaml';
 import path from 'node:path';
 
 export async function getStaticPaths() {
-  const patternsDir = path.resolve('..', 'runbooks', 'patterns');
+  const patternsDir = path.resolve('..', 'runbooks');
 
   async function getFiles(dir: string): Promise<string[]> {
     const dirents = await fs.readdir(dir, { withFileTypes: true });

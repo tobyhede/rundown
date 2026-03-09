@@ -49,5 +49,5 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 
 ## See Also
 
-- [SPEC.md](../../docs/SPEC.md) - Full specification
-- [FORMAT.md](../../docs/FORMAT.md) - BNF grammar
+- [SPEC.md](../docs/SPEC.md) - Full specification
+- [FORMAT.md](../docs/FORMAT.md) - BNF grammar

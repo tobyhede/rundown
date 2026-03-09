@@ -206,20 +206,7 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
 *   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables.
 
-## 7. Scenarios
-
-Defined in `scenarios` block (YAML) for testing.
-
-```yaml
-scenarios:
-  test_name:
-    description: "Description"
-    commands: ["rd run doc.md", "rd pass"]
-    result: COMPLETE
-    tags: ["smoke", "deploy"]
-```
-
-## 8. Conformance
+## 7. Conformance
 
 1.  **Strict Hierarchy**: H2 -> H3. No H4.
 2.  **Sequential IDs**: 1, 2, 3... (gaps invalid).
@@ -232,6 +219,6 @@ scenarios:
 9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.
 10. **FOR Iteration Action Set**: FOR-level nested transitions only allow `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
 
-## 9. Compatibility
+## 8. Compatibility
 
 Step-level runbook lists are represented internally as sequential substeps (`N.1`, `N.2`, ...). In-progress sessions created before this model are not auto-migrated and must be restarted after upgrade.

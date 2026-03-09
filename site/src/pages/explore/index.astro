@@ -4,8 +4,8 @@ import { promises as fs } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 import path from 'node:path';
 
-// Read patterns from runbooks/patterns directory
-const patternsDir = path.resolve('..', 'runbooks', 'patterns');
+// Read patterns from runbooks directory
+const patternsDir = path.resolve('..', 'runbooks');
 
 async function getFiles(dir: string): Promise<string[]> {
   const dirents = await fs.readdir(dir, { withFileTypes: true });
