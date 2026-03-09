@@ -304,14 +304,19 @@ export function parseRunbookDocument(
           lang: codeNode.lang?.split(/\s+/)[0],
         };
       } else if (isPromptCodeBlock(fullLang)) {
-        // prompt → rd prompt command (outputs with fences)
+        // prompt or non-executable tagged → rd prompt command (outputs with fences)
         const escaped = escapeForShellSingleQuote(codeNode.value.trim());
         cmd = {
           code: `rd prompt '${escaped}'`,
           lang: 'prompt',
         };
+      } else {
+        // Bare code fence (no info string) — reject as invalid
+        throw new RunbookSyntaxError(
+          `Code block without language tag in Step ${currentStep.name}. ` +
+            `Use a language tag (e.g., \`\`\`bash) or \`\`\`prompt for display-only blocks.`,
+        );
       }
-      // Other code blocks (json, etc.) are ignored - not valid in runbooks
 
       if (cmd) {
         if (currentStep.pendingSubstep) {

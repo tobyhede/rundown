@@ -861,9 +861,12 @@ export function isExecutableCodeBlock(lang: string | null | undefined): boolean 
  * Check if a code block language tag indicates a prompt block.
  *
  * Prompt blocks contain text to be displayed or sent to an agent.
+ * Any non-executable tagged code block (json, yaml, typescript, etc.) is
+ * treated as a prompt block. Bare fences (no tag) return null so the
+ * caller can reject them as invalid.
  *
  * @param lang - The code block language tag
- * @returns True if "prompt", false if executable (bash/sh/shell), null for other/unknown types
+ * @returns True if prompt or non-executable tagged, false if executable (bash/sh/shell), null for bare fences (no tag)
  */
 export function isPromptCodeBlock(lang: string | null | undefined): boolean | null {
   if (!lang) return null;
@@ -876,7 +879,7 @@ export function isPromptCodeBlock(lang: string | null | undefined): boolean | nu
     if (parts.length > 1 && parts[1]?.toLowerCase() === 'prompt') return true;
     return false;
   }
-  return null;
+  return true;
 }
 
 /**
