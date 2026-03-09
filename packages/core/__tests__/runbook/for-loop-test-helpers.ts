@@ -331,36 +331,38 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
           ? 'pass'
           : 'fail';
 
-        // If BREAK at substep level, skip iteration-level retry and exit loop
+        // RETRY is universal — fires for ALL actions (BREAK/NEXT/DEFER/CONTINUE).
+        // Check retry BEFORE applying any action, based on iteration result.
+        if (
+          iterResult === 'fail' &&
+          config.iterationFailRetry > 0 &&
+          iterRetry < config.iterationFailRetry
+        ) {
+          // Retry iteration — continue inner loop (re-run substeps)
+          continue;
+        }
+
+        // Retries exhausted (or no retry configured). Apply substep loop control first.
         if (earlyExit === 'BREAK') {
-          // Check iteration-level transition for the result
-          const iterAction =
-            iterResult === 'pass' ? config.iterationPassAction : config.iterationFailAction;
-          if (iterAction === 'STOP') return 'STOPPED';
-          if (iterAction === 'COMPLETE') return 'COMPLETE';
-          // BREAK is non-accumulating — do NOT add to allIterationResults
+          // BREAK exits loop. Current iteration's DEFER'd results are included in aggregation.
+          allIterationResults.push(iterResult);
           return aggregateParent(config, allIterationResults);
         }
 
-        // Process iteration-level transition
+        if (earlyExit === 'NEXT') {
+          // NEXT is non-accumulating — skip current iteration, go to next.
+          break; // break out of retry loop to next iteration
+        }
+
+        // No substep loop control — process configured iteration-level transition
         const iterAction =
           iterResult === 'pass' ? config.iterationPassAction : config.iterationFailAction;
 
         if (iterAction === 'STOP') return 'STOPPED';
         if (iterAction === 'COMPLETE') return 'COMPLETE';
 
-        // Check iteration-level retry (only on fail)
-        if (
-          iterResult === 'fail' &&
-          config.iterationFailRetry > 0 &&
-          iterRetry < config.iterationFailRetry
-        ) {
-          // Retry iteration — continue inner loop
-          continue;
-        }
-
         if (iterAction === 'BREAK') {
-          // BREAK is non-accumulating — do NOT add to allIterationResults
+          // Configured BREAK is non-accumulating — do NOT add to allIterationResults
           return aggregateParent(config, allIterationResults);
         }
 
@@ -378,8 +380,6 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
     }
 
     // All iterations complete. Aggregate at parent level.
-    // The last iteration result is computed inline (not in allIterationResults for the compiler,
-    // but our oracle tracks all of them).
     const result = aggregateParentFromAll(config, allIterationResults);
     if (result !== null) return result;
 
@@ -391,8 +391,8 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
 }
 
 /**
- * Aggregate iteration results at the parent level on early loop exit (BREAK, CONTINUE, or substep-level BREAK).
- * Only previously DEFER'd results are aggregated — the current iteration's result is not included.
+ * Aggregate iteration results at the parent level on loop exit (BREAK, CONTINUE, or substep-level BREAK).
+ * Callers are responsible for including the current iteration's result in completedResults if applicable.
  */
 function aggregateParent(
   config: ForLoopConfig,

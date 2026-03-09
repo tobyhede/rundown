@@ -1,15 +1,22 @@
 ---
 name: for-substep-break-skips-retry
-description: Substep BREAK bypasses iteration-level retry
+description: Substep BREAK respects iteration-level retry before exiting
 scenarios:
   break-skips-retry:
     commands:
       - rd run --prompted for-substep-break-skips-retry.runbook.md
+      # Attempt 1: sub1 FAIL (DEFER), sub2 FAIL (BREAK) → retry fires
+      - rd fail
+      - rd fail
+      # Attempt 2 (retry 1): same → retry fires again
+      - rd fail
+      - rd fail
+      # Attempt 3 (retry 2): retries exhausted → BREAK exits loop
       - rd fail
       - rd fail
     result: STOP
 ---
-# Substep BREAK Skips Iteration Retry
+# Substep BREAK Respects Iteration Retry
 
 ## 1. Process items
 - FOR i IN 1 TO 3
