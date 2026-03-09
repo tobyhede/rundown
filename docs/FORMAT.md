@@ -76,9 +76,9 @@ where code_block is:
   "```"
 
 where info_string is:
-  [ language ] [ " " "prompt" ]
+  language [ ws "prompt" ]
 
-Note: `prompt` alone (without a language) is valid for text-only prompts, e.g., ` ```prompt `.
+Note: A language tag is required — bare code fences (no info string) are invalid. `prompt` alone (without a language prefix) is valid for text-only prompts, e.g., ` ```prompt `. Non-executable language tags (e.g., `json`, `yaml`) are treated as prompt blocks.
 
 where runbooks is:
   - runbook_path [ ... ]
@@ -102,7 +102,7 @@ where action is:
 
 Context constraints:
 - `DEFER` is only valid inside substeps or FOR iteration-level nested transitions
-- `NEXT` is only valid inside substeps of a FOR step
+- `NEXT` is only valid inside substeps of a FOR step and FOR iteration-level transitions
 - `BREAK` is valid inside substeps of a FOR step and FOR-level nested transitions
 - FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions: `CONTINUE` (exit loop), `DEFER`, `NEXT` (loop back without accumulation), `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
 
@@ -303,7 +303,8 @@ STOP and COMPLETE accept optional messages. Include a message only when it provi
 |------------------------|----------|
 | `bash`, `sh`, `shell`  | Execute; exit 0=PASS, non-zero=FAIL |
 | `{language} prompt`    | Output only  |
-| other / none           | Output only  |
+| other (e.g., `json`, `yaml`) | Output only (treated as prompt) |
+| *(none)*               | Invalid — bare code fences are rejected |
 
 Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
 
