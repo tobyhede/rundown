@@ -7698,7 +7698,7 @@ echo "processing"
         },
       ]);
 
-      expect(() => compileRunbookToMachine(steps)).toThrow(/invariant violation/i);
+      expect(() => compileRunbookToMachine(steps)).toThrow(/DEFER.*parent.step/i);
     });
 
     it('throws when DEFER appears as parent-step fail action (substeps)', () => {
@@ -7727,7 +7727,7 @@ echo "processing"
         },
       ]);
 
-      expect(() => compileRunbookToMachine(steps)).toThrow(/invariant violation/i);
+      expect(() => compileRunbookToMachine(steps)).toThrow(/DEFER.*parent.step/i);
     });
 
     it('throws when DEFER appears as parent FOR step action', () => {
@@ -7754,7 +7754,7 @@ echo "processing"
         },
       ]);
 
-      expect(() => compileRunbookToMachine(steps)).toThrow(/invariant violation/i);
+      expect(() => compileRunbookToMachine(steps)).toThrow(/DEFER.*parent.step/i);
     });
 
     it('allows DEFER at substep level (non-regression)', () => {
