@@ -280,7 +280,7 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
     for (let iter = 1; iter <= config.iterations; iter++) {
       // Iteration retry loop
       let iterResult: 'pass' | 'fail' = 'fail';
-      let skipAccumulation = false;
+
       for (let iterRetry = 0; iterRetry <= config.iterationFailRetry; iterRetry++) {
         const deferredResults: ('pass' | 'fail')[] = [];
         let earlyExit: 'BREAK' | 'NEXT' | 'STOP' | 'COMPLETE' | null = null;
@@ -333,15 +333,13 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
 
         // If BREAK at substep level, skip iteration-level retry and exit loop
         if (earlyExit === 'BREAK') {
-          allIterationResults.push(iterResult);
-          // BREAK exits the iteration loop entirely → go to aggregation
-          return aggregateParent(config, allIterationResults);
-        }
-
-        // If NEXT at substep level, skip iteration-level retry and loop back without accumulation
-        if (earlyExit === 'NEXT') {
-          skipAccumulation = true;
-          break; // break out of iteration retry loop, proceed to next iteration
+          // Check iteration-level transition for the result
+          const iterAction =
+            iterResult === 'pass' ? config.iterationPassAction : config.iterationFailAction;
+          if (iterAction === 'STOP') return 'STOPPED';
+          if (iterAction === 'COMPLETE') return 'COMPLETE';
+          // BREAK is non-accumulating — do NOT add to allIterationResults
+          return aggregateParent(config, allIterationResults, iterResult);
         }
 
         // Process iteration-level transition
@@ -362,30 +360,21 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
         }
 
         if (iterAction === 'BREAK') {
-          allIterationResults.push(iterResult);
-          return aggregateParent(config, allIterationResults);
-        }
-
-        // NEXT at iteration level: loop back without accumulation
-        if (iterAction === 'NEXT') {
-          skipAccumulation = true;
-          break; // break out of iteration retry loop, proceed to next iteration
+          // BREAK is non-accumulating — do NOT add to allIterationResults
+          return aggregateParent(config, allIterationResults, iterResult);
         }
 
         // CONTINUE exits the loop (goes to next step)
         if (iterAction === 'CONTINUE') {
-          allIterationResults.push(iterResult);
-          return aggregateParent(config, allIterationResults);
+          // CONTINUE is non-accumulating — do NOT add to allIterationResults
+          return aggregateParent(config, allIterationResults, iterResult);
         }
 
         // DEFER: record result and proceed to next iteration (loop back with accumulation)
         break; // break out of iteration retry loop
       }
 
-      // DEFER accumulates; NEXT (substep or iteration-level) skips accumulation
-      if (!skipAccumulation) {
-        allIterationResults.push(iterResult);
-      }
+      allIterationResults.push(iterResult);
     }
 
     // All iterations complete. Aggregate at parent level.
@@ -402,15 +391,16 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
 }
 
 /**
- * Aggregate iteration results at the parent level when the loop exits early.
- *
- * Called for BREAK (substep or iteration-level) and CONTINUE. The caller has
- * already pushed the current iteration result into `completedResults`.
+ * Aggregate iteration results at the parent level, handling BREAK mid-loop.
+ * Called when the loop exits early (BREAK).
  */
 function aggregateParent(
   config: ForLoopConfig,
   completedResults: ('pass' | 'fail')[],
+  _currentIterResult: 'pass' | 'fail',
 ): OracleResult {
+  // For BREAK, the current iteration is the last one. Include it in aggregation.
+  // completedResults already includes the current iteration (added by caller).
   return aggregateParentFromAll(config, completedResults) ?? 'STOPPED';
 }
 

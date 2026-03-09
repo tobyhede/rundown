@@ -43,6 +43,18 @@ export type { Substep } from '@rundown-org/parser';
  */
 export type { Action } from '@rundown-org/parser';
 
+/** Action that accumulates iteration results into parent aggregation (DEFER only). */
+export type { AccumulatingAction } from '@rundown-org/parser';
+
+/** FOR loop flow control action (NEXT or BREAK). */
+export type { LoopControlAction } from '@rundown-org/parser';
+
+/** Step-exit action valid inside and outside FOR loops (CONTINUE only). */
+export type { StepExitAction } from '@rundown-org/parser';
+
+/** Terminal action that bypasses aggregation (STOP, COMPLETE, or GOTO). */
+export type { TerminalAction } from '@rundown-org/parser';
+
 /**
  * Step transition configuration for pass/fail outcomes.
  *

@@ -15,9 +15,6 @@ scenarios:
           action: DEFER
           result: PASS
         - from: "1.2.1"
-          action: DEFER
-          result: PASS
-        - from: "1.3.1"
           action: CONTINUE
           result: PASS
           aggregated: true
@@ -25,7 +22,7 @@ scenarios:
           action: COMPLETE
           result: PASS
   stopped:
-    description: Second iteration fails, FAIL ANY triggers STOP on parent step
+    description: Second iteration fails, DEFER accumulates fail, PASS ALL fails → STOP
     commands:
       - rd run --prompted for-nested-transitions.runbook.md
       - rd pass
@@ -37,9 +34,9 @@ scenarios:
 
 ## 1. Validate items
 
-- FOR item IN 1 TO 3
+- FOR item IN 1 TO 2
   - PASS: DEFER
-  - FAIL: BREAK
+  - FAIL: DEFER
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP
 

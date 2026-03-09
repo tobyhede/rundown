@@ -179,7 +179,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause execute per iteration. Allowed actions: `DEFER` (default, loop back with accumulation), `NEXT` (loop back without accumulation), `CONTINUE` (exit loop), `BREAK` (exit loop), `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
 *   **Nested bullet rule**: Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid and fail parse.
 *   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action.
-*   **Exit semantics**: Iteration-level `BREAK` includes the current iteration result in parent aggregation. Iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation and exit directly.
+*   **Exit semantics**: Only `DEFER` accumulates the current iteration result into parent aggregation. `BREAK` and `CONTINUE` exit the loop — their iteration result is not propagated. `NEXT` loops back without accumulation. `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation and exit directly.
 
 ## 6. Templating
 

@@ -114,7 +114,7 @@ describe('FOR loop transitions integration', () => {
       expect(result.stdout).toContain('COMPLETE');
     });
 
-    it('PASS ALL — one iteration fails → STOP', async () => {
+    it('PASS ALL — one iteration fails via BREAK → BREAK does not accumulate', async () => {
       await writeForRunbook(workspace, 'agg-one-fail.runbook.md', {
         iterations: 2,
         iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: BREAK`,
@@ -129,9 +129,14 @@ describe('FOR loop transitions integration', () => {
       expect(runCli('pass', workspace).exitCode).toBe(0);
 
       // Iteration 2: fail → DEFER feeds 'fail' → BREAK at iteration level
-      // Parent aggregation: [pass, fail] → PASS ALL fails → FAIL ANY: STOP
-      const result = runCli('fail', workspace);
-      expect(result.exitCode).toBe(1);
+      // BREAK is non-accumulating — parent sees only ['pass'] → PASS ALL passes → CONTINUE → step 2
+      let result = runCli('fail', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Final step');
+
+      // Complete step 2
+      result = runCli('pass', workspace);
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('PASS ANY — one pass suffices', async () => {
@@ -161,7 +166,7 @@ describe('FOR loop transitions integration', () => {
       expect(result.stdout).toContain('COMPLETE');
     });
 
-    it('FAIL ANY: BREAK at iteration level — early exit skips remaining iterations', async () => {
+    it('FAIL ANY: BREAK at iteration level — BREAK does not accumulate', async () => {
       await writeForRunbook(workspace, 'agg-break.runbook.md', {
         iterations: 3,
         iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: BREAK`,
@@ -176,9 +181,14 @@ describe('FOR loop transitions integration', () => {
       expect(runCli('pass', workspace).exitCode).toBe(0);
 
       // Iteration 2: fail → DEFER feeds 'fail' → BREAK (skips iteration 3)
-      // Parent aggregation: [pass, fail] → PASS ALL fails → FAIL ANY: STOP
-      const result = runCli('fail', workspace);
-      expect(result.exitCode).toBe(1);
+      // BREAK is non-accumulating — parent sees only ['pass'] → PASS ALL passes → CONTINUE → step 2
+      let result = runCli('fail', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Final step');
+
+      // Complete step 2
+      result = runCli('pass', workspace);
+      expect(result.stdout).toContain('COMPLETE');
     });
   });
 
@@ -208,9 +218,14 @@ describe('FOR loop transitions integration', () => {
       expect(result.stdout).toContain('RETRY');
 
       // Iteration 1, attempt 3: fail → retries exhausted → BREAK
-      // Parent aggregation: [fail] → PASS ALL fails → FAIL ANY: STOP
+      // BREAK is non-accumulating — parent sees [] → PASS ALL passes (no fails) → CONTINUE → step 2
       result = runCli('fail', workspace);
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Final step');
+
+      // Complete step 2
+      result = runCli('pass', workspace);
+      expect(result.stdout).toContain('COMPLETE');
     });
 
     it('RETRY 1 DEFER — retries then defers to next iteration', async () => {

@@ -4,7 +4,14 @@ import {
   type ParseConditionalResult,
   type AggregationModifier,
 } from './types.js';
-import type { Action, Transitions } from './schemas.js';
+import type {
+  Action,
+  AccumulatingAction,
+  LoopControlAction,
+  StepExitAction,
+  TerminalAction,
+  Transitions,
+} from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
 import {
   parseStepIdFromString,
@@ -13,6 +20,46 @@ import {
   NAMED_IDENTIFIER_PATTERN,
 } from './step-id.js';
 import type { ForClause } from './ast.js';
+
+/**
+ * Check if an action accumulates results into parent aggregation (DEFER only).
+ *
+ * @param action - The action to check
+ * @returns True if the action is an AccumulatingAction
+ */
+export function isAccumulatingAction(action: Action): action is AccumulatingAction {
+  return action.type === 'DEFER';
+}
+
+/**
+ * Check if an action is a FOR loop flow control action (NEXT or BREAK).
+ *
+ * @param action - The action to check
+ * @returns True if the action is a LoopControlAction
+ */
+export function isLoopControlAction(action: Action): action is LoopControlAction {
+  return action.type === 'NEXT' || action.type === 'BREAK';
+}
+
+/**
+ * Check if an action is a step-exit action (CONTINUE only).
+ *
+ * @param action - The action to check
+ * @returns True if the action is a StepExitAction
+ */
+export function isStepExitAction(action: Action): action is StepExitAction {
+  return action.type === 'CONTINUE';
+}
+
+/**
+ * Check if an action is a terminal action (STOP, COMPLETE, or GOTO).
+ *
+ * @param action - The action to check
+ * @returns True if the action is a TerminalAction
+ */
+export function isTerminalAction(action: Action): action is TerminalAction {
+  return action.type === 'STOP' || action.type === 'COMPLETE' || action.type === 'GOTO';
+}
 
 /**
  * Parse a quoted string or single-word identifier.
@@ -658,7 +705,7 @@ export function validateLoopControlUsage(
 ): void {
   for (const conditional of conditionals) {
     // Check first-class NEXT/BREAK — requires FOR context
-    if (conditional.action.type === 'NEXT' || conditional.action.type === 'BREAK') {
+    if (isLoopControlAction(conditional.action)) {
       if (!isForContext) {
         throw new RunbookSyntaxError(
           `${conditional.action.type} is only valid within substeps of a FOR step`,

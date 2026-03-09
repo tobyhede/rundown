@@ -1288,7 +1288,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.deferredResults).toEqual([]);
     });
 
-    it('BREAK records the final iteration result before exiting', () => {
+    it('BREAK exits loop without accumulating the final iteration result', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -1352,8 +1352,8 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
       // Iteration 3: PASS (DEFER) → FAIL (BREAK) → exit loop
-      // BREAK does not populate deferredResults; only the DEFER'd pass from substep 1 is present
-      // deferredResults = ['pass'] → computeIterationResult = pass → all iterations pass → CONTINUE
+      // BREAK is non-accumulating — iteration 3's result is NOT added to iterationResults
+      // Parent aggregation sees only ['pass', 'pass'] from iterations 1 & 2 → all pass → CONTINUE
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step::1::2');
       actor.send({ type: 'FAIL' });
@@ -5748,10 +5748,10 @@ echo "processing"
       // Iteration 2: FAIL → BREAK triggered at iteration level
       actor.send({ type: 'FAIL' });
 
-      // After BREAK: loop exits, aggregates only 2 iterations with iteration 2 failing
-      // Iteration-level FAIL ANY (fail action is BREAK): iteration 2 failed → BREAK
+      // After BREAK: loop exits. BREAK is non-accumulating — iteration 2's fail
+      // is NOT added to iterationResults. Parent aggregation sees only ['pass'] → passes → CONTINUE → step 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
     });
@@ -5987,9 +5987,10 @@ echo "processing"
       // Retry 2 exhausted: FAIL → BREAK (terminal action)
       actor.send({ type: 'FAIL' });
 
-      // After BREAK: only 1 iteration (the failed one), step-level PASS ALL fails → STOP
+      // After BREAK: BREAK is non-accumulating — no iteration results reach parent.
+      // Parent aggregation sees [] → PASS ALL with no fails → passes → CONTINUE → step 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.value).toBe('step::2');
     });
 
     it('FOR with FAIL ANY: RETRY 1 DEFER retries once then defers', () => {
@@ -6492,7 +6493,7 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('step::2');
     });
 
-    it('CONTINUE at iteration level with failing aggregation routes to STOPPED', () => {
+    it('CONTINUE at iteration level does not accumulate — only DEFER results reach parent', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -6538,9 +6539,10 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
       // Iteration 2: FAIL → substep DEFER feeds 'fail' → iteration CONTINUE → exits loop
-      // Parent aggregation: ['pass', 'fail'] → PASS ALL → fails → FAIL: STOP → STOPPED
+      // CONTINUE is non-accumulating — iteration 2's fail is NOT added to iterationResults
+      // Parent aggregation sees only ['pass'] from iteration 1 → passes → CONTINUE → step 2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::2');
     });
   });
 
