@@ -1037,7 +1037,8 @@ function buildParentStateConfig(
     always.push({
       guard: ({ context }: { context: RunbookContext }) => {
         if (context.substep !== undefined) return false; // mid-iteration — not ready
-        // BREAK clears forStack, so peekForStack returns undefined → naturally prevents loop-back
+        // Only DEFER (accumulating) and NEXT (skip accumulation) should loop back.
+        // BREAK must NOT loop back — it exits the loop via a separate transition.
         const selected = getIterationTransition(context).transition;
         if (!isAccumulatingAction(selected.action) && selected.action.type !== 'NEXT') return false;
         const top = peekForStack(context.forStack);

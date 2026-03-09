@@ -339,7 +339,7 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
           if (iterAction === 'STOP') return 'STOPPED';
           if (iterAction === 'COMPLETE') return 'COMPLETE';
           // BREAK is non-accumulating — do NOT add to allIterationResults
-          return aggregateParent(config, allIterationResults, iterResult);
+          return aggregateParent(config, allIterationResults);
         }
 
         // Process iteration-level transition
@@ -361,13 +361,13 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
 
         if (iterAction === 'BREAK') {
           // BREAK is non-accumulating — do NOT add to allIterationResults
-          return aggregateParent(config, allIterationResults, iterResult);
+          return aggregateParent(config, allIterationResults);
         }
 
         // CONTINUE exits the loop (goes to next step)
         if (iterAction === 'CONTINUE') {
           // CONTINUE is non-accumulating — do NOT add to allIterationResults
-          return aggregateParent(config, allIterationResults, iterResult);
+          return aggregateParent(config, allIterationResults);
         }
 
         // DEFER: record result and proceed to next iteration (loop back with accumulation)
@@ -391,16 +391,13 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
 }
 
 /**
- * Aggregate iteration results at the parent level, handling BREAK mid-loop.
- * Called when the loop exits early (BREAK).
+ * Aggregate iteration results at the parent level on early loop exit (BREAK, CONTINUE, or substep-level BREAK).
+ * Only previously DEFER'd results are aggregated — the current iteration's result is not included.
  */
 function aggregateParent(
   config: ForLoopConfig,
   completedResults: ('pass' | 'fail')[],
-  _currentIterResult: 'pass' | 'fail',
 ): OracleResult {
-  // For BREAK, the current iteration is the last one. Include it in aggregation.
-  // completedResults already includes the current iteration (added by caller).
   return aggregateParentFromAll(config, completedResults) ?? 'STOPPED';
 }
 
