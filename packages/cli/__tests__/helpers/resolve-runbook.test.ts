@@ -90,7 +90,7 @@ describe('resolveRunbookFile', () => {
       // Clear plugin root to isolate test (restored by afterEach)
       delete process.env.CLAUDE_PLUGIN_ROOT;
 
-      // Use a known bundled runbook filename (retry-success exists in runbooks/patterns/retries/)
+      // Use a known bundled runbook filename (retry-success exists in runbooks/retries/)
       const result = await resolveRunbookFile(testDir, 'retry-success.runbook.md');
 
       expect(result).not.toBeNull();

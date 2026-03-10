@@ -19,7 +19,7 @@ describe('integration: GOTO patterns', () => {
     workspace = await createTestWorkspace();
 
     // Copy pattern runbooks to test workspace
-    const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
+    const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks');
     const targetDir = join(workspace.cwd, '.claude', 'rundown', 'runbooks');
 
     // Ensure target directory exists

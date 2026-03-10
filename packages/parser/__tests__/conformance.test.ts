@@ -7,10 +7,10 @@ import type { Step } from '../src/ast.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// Point to the root runbooks/patterns directory
+// Point to the conformance test fixtures directory
 const FIXTURES_DIR = path.join(__dirname, '../fixtures/conformance');
-// Point to the root runbooks/patterns directory relative to fixtures
-const PATTERNS_DIR = path.resolve(FIXTURES_DIR, '../../../../runbooks/patterns');
+// Point to the root runbooks directory relative to fixtures
+const PATTERNS_DIR = path.resolve(FIXTURES_DIR, '../../../../runbooks');
 
 function getFilesRecursively(dir: string): string[] {
   let results: string[] = [];

@@ -5,7 +5,7 @@ How Rundown orchestrates work through agents. This document covers the five orch
 **Related docs:**
 - [RUNDOWN.md](./RUNDOWN.md) - CLI reference including subagent commands
 - [SPEC.md](./SPEC.md) - Rundown format specification (steps, substeps, transitions)
-- [runbooks/patterns/](../runbooks/patterns/) - Concrete runbook pattern examples
+- [runbooks/](../runbooks/) - Concrete runbook pattern examples
 
 ---
 

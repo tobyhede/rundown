@@ -1,8 +1,39 @@
-# Declarative Test Runbook Standard
+# Scenarios
 
-Test runbooks in `runbooks/patterns/` serve a dual purpose: they are **test data** providing comprehensive coverage of every Rundown feature and permutation, and **living documentation** serving as the authoritative reference for how every feature behaves. A single runbook both exercises a feature through its scenarios and documents expected behavior through its assertion-style titles and transition assertions.
+Scenarios are a testing and verification feature for Rundown runbooks. They are **not** part of the public Rundown format specification — they exist to exercise and document runbook behavior through repeatable CLI command sequences.
 
-This document defines the conventions for authoring test runbooks and scenarios.
+Test runbooks in `runbooks/` serve a dual purpose: they are **test data** providing comprehensive coverage of every Rundown feature and permutation, and **living documentation** serving as the authoritative reference for how every feature behaves. A single runbook both exercises a feature through its scenarios and documents expected behavior through its assertion-style titles and transition assertions.
+
+This document defines the scenario schema, conventions for authoring test runbooks, and the assertion model.
+
+## Scenario Schema
+
+Scenarios are defined in the `scenarios` block of runbook frontmatter (YAML):
+
+```yaml
+scenarios:
+  test_name:
+    description: "Description"
+    commands: ["rd run doc.md", "rd pass"]
+    result: COMPLETE
+    tags: ["smoke", "deploy"]
+```
+
+### BNF Grammar
+
+```bnf
+scenarios =
+  "scenarios:"
+    scenario { scenario }
+
+scenario =
+  slug ":"
+    [ "description:" text ]
+    "commands:"
+      "- " text { "- " text }
+    "result:" ( "COMPLETE" | "STOP" )
+    [ "tags:" tag_list ]
+```
 
 ## Design Principles
 
@@ -21,7 +52,7 @@ This document defines the conventions for authoring test runbooks and scenarios.
 ## Directory Structure
 
 ```text
-runbooks/patterns/
+runbooks/
   transitions/       # PASS/FAIL, CONTINUE/STOP/COMPLETE, defaults, ALL/ANY
   retries/           # RETRY N, exhaustion actions, counter reset
   goto/              # Static, named, substep targets

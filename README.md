@@ -160,8 +160,8 @@ The `rd` command is an alias for `rundown`.
 - [AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
 - [PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
 - [DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
-- [TEST-RUNBOOK-STANDARD.md](docs/TEST-RUNBOOK-STANDARD.md) - Declarative test runbook standard
-- [Runbook Patterns](runbooks/patterns/README.md) - Runbook authoring patterns
+- [SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
+- [Runbook Patterns](runbooks/README.md) - Runbook authoring patterns
 
 ## Contributing
 

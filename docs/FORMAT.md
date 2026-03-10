@@ -147,7 +147,6 @@ where frontmatter is:
     [ "author:" text ]
     [ "tags:" tag_list ]
     [ "vars:" vars_map ]
-    [ scenarios ]
   "---"
 
 Additional fields beyond those listed are preserved in the parsed frontmatter (open schema). This allows forward-compatible extensions and user-defined metadata.
@@ -166,18 +165,6 @@ where tag is:
 where vars_map is:
   variable_name ":" value { variable_name ":" value }
   (YAML mapping of variable names to string, number, or boolean values)
-
-where scenarios is:
-  "scenarios:"
-    scenario { scenario }
-
-where scenario is:
-  slug ":"
-    [ "description:" text ]
-    "commands:"
-      "- " text { "- " text }
-    "result:" ( "COMPLETE" | "STOP" )
-    [ "tags:" tag_list ]
 
 ---
 
