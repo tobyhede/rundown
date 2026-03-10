@@ -214,6 +214,7 @@ export async function prepareRunbook(
   cwd: string,
   options?: {
     inheritedContextVars?: Readonly<Record<string, string>>;
+    inheritedUserVars?: Readonly<Record<string, string>>;
   },
 ): Promise<
   | { ok: true; prepared: PreparedRunbook }
@@ -262,9 +263,10 @@ export async function prepareRunbook(
     throw error;
   }
   const templateVars: Record<string, string> = {
-    ...mergedVariables,
-    ...buildContextVars(mergedVariables),
-    ...(options?.inheritedContextVars ?? {}),
+    ...(options?.inheritedUserVars ?? {}), // delegate --var (overridable by child/claim)
+    ...mergedVariables, // child frontmatter + claim --var
+    ...buildContextVars(mergedVariables), // context.vars.* aliases
+    ...(options?.inheritedContextVars ?? {}), // context.parent.vars.* etc.
   };
 
   // Pre-expand FOR clause bounds (parser needs numeric values)
@@ -279,7 +281,17 @@ export async function prepareRunbook(
 
   // Substitute variables into parsed AST
   const runbook = substituteRunbookVariables(rawRunbook, templateVars);
-  warnUnresolvedRunbookVariables(runbook);
+  const forVars = new Set<string>();
+  for (const step of rawRunbook.steps) {
+    if (step.kind === 'for') {
+      if (step.forClause.variable) forVars.add(step.forClause.variable);
+      forVars.add('Index');
+      forVars.add('index');
+    }
+  }
+  warnUnresolvedRunbookVariables(runbook, {
+    suppressedVariables: forVars.size > 0 ? forVars : undefined,
+  });
 
   // Validate sourced FOR clauses reference defined data sources
   try {
@@ -603,9 +615,18 @@ export async function claimAndLaunch(
     // 4e. Reconstitute context vars from frozen snapshot
     const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
 
+    // Extract parent user-level vars for top-level inheritance in child
+    const inheritedUserVars: Record<string, string> = {};
+    for (const [key, value] of Object.entries(freshDelegation.contextSnapshot.vars)) {
+      if (!key.startsWith('context.')) {
+        inheritedUserVars[key] = value;
+      }
+    }
+
     // 4f. Prepare child runbook
     const prepResult = await prepareRunbook(freshDelegation.childRunbookPath, varOpts, cwd, {
       inheritedContextVars,
+      inheritedUserVars,
     });
     if (!prepResult.ok) {
       return {
