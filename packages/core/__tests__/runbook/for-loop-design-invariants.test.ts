@@ -15,12 +15,7 @@
 import fc from 'fast-check';
 import { createActor, type AnyStateMachine } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
-import {
-  buildForLoopSteps,
-  runForLoop,
-  type ForLoopConfig,
-  type EventType,
-} from './for-loop-test-helpers.js';
+import { runForLoop, type ForLoopConfig, type EventType } from './for-loop-test-helpers.js';
 import type {
   Step,
   Substep,

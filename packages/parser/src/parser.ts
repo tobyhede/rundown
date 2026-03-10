@@ -318,25 +318,23 @@ export function parseRunbookDocument(
         );
       }
 
-      if (cmd) {
-        if (currentStep.pendingSubstep) {
-          if (currentStep.pendingSubstep.command) {
-            throw new RunbookSyntaxError(
-              `Multiple code blocks per substep not allowed in substep ${currentStep.pendingSubstep.id}`,
-            );
-          }
-          currentStep.pendingSubstep.command = cmd;
-          currentStep.pendingSubstep.hasSeenContent = true;
-        } else {
-          if (currentStep.command) {
-            const stepLabel = currentStep.name;
-            throw new RunbookSyntaxError(
-              `Multiple code blocks per step not allowed in Step ${stepLabel}.`,
-            );
-          }
-          currentStep.command = cmd;
-          currentStep.hasSeenContent = true;
+      if (currentStep.pendingSubstep) {
+        if (currentStep.pendingSubstep.command) {
+          throw new RunbookSyntaxError(
+            `Multiple code blocks per substep not allowed in substep ${currentStep.pendingSubstep.id}`,
+          );
         }
+        currentStep.pendingSubstep.command = cmd;
+        currentStep.pendingSubstep.hasSeenContent = true;
+      } else {
+        if (currentStep.command) {
+          const stepLabel = currentStep.name;
+          throw new RunbookSyntaxError(
+            `Multiple code blocks per step not allowed in Step ${stepLabel}.`,
+          );
+        }
+        currentStep.command = cmd;
+        currentStep.hasSeenContent = true;
       }
     }
 
