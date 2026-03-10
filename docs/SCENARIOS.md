@@ -40,7 +40,7 @@ expect_block =
   [ "steps:" step_assertion { step_assertion } ]
 
 step_assertion =
-  "- " [ "at:" text ] [ "from:" text ] [ "action:" text ] [ "result:" ( "PASS" | "FAIL" ) ]
+  "- " [ "at:" text ] [ "from:" text ] [ "action:" text ] [ "result:" ( "PASS" | "FAIL" ) ] [ "command:" text ] [ "aggregated:" boolean ]
 ```
 
 At least one of top-level `result:` or `expect.result` must be specified. If both are present, they must match.
