@@ -136,6 +136,8 @@ Whitespace inside `{{ }}` delimiters is optional.
 
 Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal positive integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result). Source references in `FOR var IN {{ source }}` and `... OF {{ source }}` are NOT expanded — they are parsed as data source identifiers resolved at runtime.
 
+When a template-variable bound cannot be resolved (undefined variable), the FOR clause line is preserved as literal prompt text rather than producing a parse error. This enables orchestrating agents to handle unresolved bounds.
+
 where variable_name is:
   `[a-zA-Z_][a-zA-Z0-9_]*`
 
@@ -267,7 +269,7 @@ Canonical runtime targeting is `step + substep + iteration`.
 
 | Input | Expands To |
 |-------|------------|
-| `GOTO N` (FOR step) | `GOTO N AT 1` |
+| `GOTO N` (FOR step) | `GOTO N AT <start>` (loop's start value) |
 | `GOTO N AT I` (FOR step) | `GOTO N AT I` |
 
 ### Implicit Transitions
