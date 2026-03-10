@@ -57,7 +57,17 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
     const forExpanded = expandForClauseVariables(state.runbookSrc, state.templateVars, sourceKeys);
     const runbook = parseRunbookDocument(forExpanded, state.runbook);
     const substituted = substituteRunbookVariables(runbook, state.templateVars);
-    warnUnresolvedRunbookVariables(substituted);
+    const forVars = new Set<string>();
+    for (const step of substituted.steps) {
+      if (step.kind === 'for') {
+        if (step.forClause.variable) forVars.add(step.forClause.variable);
+        forVars.add('Index');
+        forVars.add('index');
+      }
+    }
+    warnUnresolvedRunbookVariables(substituted, {
+      suppressedVariables: forVars.size > 0 ? forVars : undefined,
+    });
     return substituted.steps;
   }
 

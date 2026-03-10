@@ -308,8 +308,13 @@ export function collectUnresolvedVariables(text: string): string[] {
  * then emits a deduplicated warning per variable to stderr.
  *
  * @param runbook - Runbook AST after variable substitution
+ * @param options - Optional settings for warning suppression
+ * @param options.suppressedVariables - Set of variable names to skip warnings for
  */
-export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
+export function warnUnresolvedRunbookVariables(
+  runbook: Runbook,
+  options?: { suppressedVariables?: ReadonlySet<string> },
+): void {
   const unresolved = new Set<string>();
 
   const collect = (text: string | undefined): void => {
@@ -348,6 +353,7 @@ export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
   }
 
   for (const name of unresolved) {
+    if (options?.suppressedVariables?.has(name)) continue;
     console.warn(`Warning: Undefined variable "{{${name}}}" preserved as literal text`);
   }
 }
