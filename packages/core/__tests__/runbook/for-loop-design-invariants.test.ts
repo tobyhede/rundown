@@ -442,6 +442,40 @@ describe('FOR loop design invariants', () => {
     });
   });
 
+  // Property: Iteration-level BREAK is non-accumulating
+  //
+  // When iterationFailAction is BREAK, the loop exits without adding the
+  // current iteration's result to iterationResults.
+  describe('iteration-level BREAK is non-accumulating', () => {
+    it('iterationFailAction BREAK exits loop without accumulating current iteration', () => {
+      fc.assert(
+        fc.property(fc.integer({ min: 2, max: 4 }), (iterations) => {
+          const opts: CustomForOpts = {
+            iterations,
+            substeps: [{ passAction: 'DEFER', failAction: 'DEFER' }],
+            iterationTransitions: {
+              passAction: 'DEFER',
+              failAction: 'BREAK',
+              aggMode: 'ALL',
+            },
+            parentTransitions: { passAction: 'CONTINUE', failAction: 'STOP', aggMode: 'ALL' },
+          };
+
+          // First iteration passes (DEFER'd), second fails → iteration BREAK
+          const events: EventType[] = ['PASS', 'FAIL'];
+          for (let i = 0; i < 20; i++) events.push('PASS');
+
+          const result = runFromSteps(buildCustomSteps(opts), events);
+          // Only iteration 1 accumulated (DEFER'd 'pass'). Iteration 2 BREAK'd — non-accumulating.
+          // Parent sees ['pass'] → ALL passes → CONTINUE → COMPLETE
+          expect(result.terminalState).toBe('COMPLETE');
+          expect(result.iterationResults.length).toBe(1);
+        }),
+        { numRuns: 200 },
+      );
+    });
+  });
+
   // Property 4: Only DEFER accumulates at iteration level
   //
   // CONTINUE at iteration level exits the loop without adding the current

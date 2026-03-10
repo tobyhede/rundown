@@ -60,11 +60,11 @@ const fullConfigArb: fc.Arbitrary<ForLoopConfig> = fc.record({
   substepFailRetry: fc.integer({ min: 0, max: 2 }),
   iterationPassAction: iterationActionArb,
   iterationFailAction: iterationActionArb,
-  iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
+  iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
   iterationFailRetry: fc.integer({ min: 0, max: 2 }),
   parentPassAction: parentActionArb,
   parentFailAction: parentActionArb,
-  parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
+  parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
   parentFailRetry: fc.integer({ min: 0, max: 2 }),
 });
 
@@ -270,6 +270,58 @@ describe('FOR loop properties', () => {
         // The machine records loop-backed iterations in iterationResults.
         // Iteration 1 is loop-backed, so it should appear.
         expect(result.terminalState).toMatch(/^(COMPLETE|STOPPED)$/);
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  // Property 9: Termination with random event sequences (mixed patterns)
+  it('always terminates with random event sequences', () => {
+    fc.assert(
+      fc.property(
+        fullConfigArb,
+        fc.array(eventArb, { minLength: 1, maxLength: 50 }),
+        (config, events) => {
+          // Pad with PASS to ensure enough events to drive any config to completion
+          const padded: EventType[] = [
+            ...events,
+            ...Array.from({ length: 50 }, () => 'PASS' as EventType),
+          ];
+          const result = runForLoop(config, padded);
+          expect(result.terminalState).toMatch(/^(COMPLETE|STOPPED)$/);
+        },
+      ),
+      { numRuns: 500 },
+    );
+  });
+
+  // Property 10: parentPassAction COMPLETE produces COMPLETE in FOR loop
+  it('parentPassAction COMPLETE produces COMPLETE in FOR loop', () => {
+    const completeParentConfig = fc.record({
+      iterations: fc.integer({ min: 1, max: 5 }),
+      numSubsteps: fc.integer({ min: 1, max: 3 }),
+      substepPassAction: fc.constant<SubstepAction>('DEFER'),
+      substepFailAction: fc.constant<SubstepAction>('DEFER'),
+      substepFailRetry: fc.constant(0),
+      iterationPassAction: fc.constant<IterationAction>('DEFER'),
+      iterationFailAction: fc.constant<IterationAction>('DEFER'),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
+      iterationFailRetry: fc.constant(0),
+      parentPassAction: fc.constant<ParentAction>('COMPLETE'),
+      parentFailAction: fc.constant<ParentAction>('STOP'),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
+      parentFailRetry: fc.constant(0),
+    });
+
+    fc.assert(
+      fc.property(completeParentConfig, (cfg) => {
+        const events = Array.from(
+          { length: cfg.iterations * cfg.numSubsteps + 10 },
+          () => 'PASS' as EventType,
+        );
+        const result = runForLoop(cfg, events);
+        // All pass → parent passes → COMPLETE (not CONTINUE → step 2 → COMPLETE)
+        expect(result.terminalState).toBe('COMPLETE');
       }),
       { numRuns: 200 },
     );

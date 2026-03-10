@@ -33,7 +33,6 @@ codecov
 codeql
 commonjs
 coreutils
-covertable
 ctx
 delegatable
 deps
