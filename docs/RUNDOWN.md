@@ -47,7 +47,7 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
 - [Integration with Claude Code](#integration-with-claude-code)
   - [Context Injection](#context-injection)
   - [Session Persistence](#session-persistence)
-- [Quick Reference](#quick-reference)
+- [CLI Quick Reference](#cli-quick-reference)
 
 ---
 
@@ -73,7 +73,7 @@ The CLI is an orchestration and control interface. Claude executes the actual wo
 
 ### Design Principles
 
-**Type-driven dispatch:** The state machine uses types and events to drive logic. Steps raise typed events; parent states dispatch on event type via `on:` handlers. Guards express domain conditions (e.g., "has more iterations"), never action-type checks. If a guard inspects `lastAction.type` to decide routing, that is a code smell — the event type system should handle the dispatch instead. `if` statements checking action types indicate missing structure in the state graph. Example: `IterationOutcome` is a discriminated union (`completed | break | next`) that encodes *why* an iteration ended. Retry config only exists on the `completed` variant, so TypeScript prevents accessing retry on loop-control exits at compile time. The single `lastAction.type` check is encapsulated inside `getIterationOutcome` — guards narrow on `outcome.kind` instead.
+**Type-driven dispatch:** The state machine uses types and events to drive logic. Steps raise typed events; parent states dispatch on event type via `on:` handlers. Guards express domain conditions (e.g., "has more iterations"), never action-type checks. If a guard inspects `lastAction.type` to decide routing, that is a code smell — the event type system should handle the dispatch instead. `if` statements checking action types indicate missing structure in the state graph. Example: `LastAction` is a discriminated union whose variants encode the full transition context. The `GOTO` variant carries `target`, `substep`, and `at` fields that don't exist on other variants like `CONTINUE` or `DEFER`, so TypeScript prevents accessing them without narrowing first.
 
 ---
 
@@ -437,7 +437,6 @@ Each runbook state file contains:
   "frameEntries": { "2|2": 1 },
   "activeFrameKey": "2|2",
   "activeEntry": 1,
-  "substepStates": [],
   "forStack": [
     {
       "stepId": "2",
@@ -752,7 +751,7 @@ rundown goto 3.1     # Jump to substep 3.1
 | `GOTO N.M AT I` | Any step | Jump to substep M of FOR step N at iteration I |
 | `GOTO Name AT I` | Any step | Enter named FOR step at iteration I |
 
-The `AT` qualifier is only valid when the target is a step with a FOR annotation. If `AT` is omitted for a FOR step, it defaults to iteration 1 (restart from beginning). See [SPEC.md GOTO](./SPEC.md#goto) for full details.
+The `AT` qualifier is only valid when the target is a step with a FOR annotation. If `AT` is omitted for a FOR step, it defaults to iteration 1 (restart from beginning). See [SPEC.md Actions](./SPEC.md#42-actions) for full details.
 
 ### Status Commands
 
@@ -1172,7 +1171,7 @@ Both runbook state and session tracking survive:
 
 ---
 
-## Quick Reference
+## CLI Quick Reference
 
 ```bash
 # Lifecycle

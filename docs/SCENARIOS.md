@@ -31,9 +31,19 @@ scenario =
     [ "description:" text ]
     "commands:"
       "- " text { "- " text }
-    "result:" ( "COMPLETE" | "STOP" )
+    [ "result:" ( "COMPLETE" | "STOP" ) ]
+    [ "expect:" expect_block ]
     [ "tags:" tag_list ]
+
+expect_block =
+  "result:" ( "COMPLETE" | "STOP" )
+  [ "steps:" step_assertion { step_assertion } ]
+
+step_assertion =
+  "- " [ "at:" text ] [ "from:" text ] [ "action:" text ] [ "result:" ( "PASS" | "FAIL" ) ]
 ```
+
+At least one of top-level `result:` or `expect.result` must be specified. If both are present, they must match.
 
 ## Design Principles
 
@@ -62,6 +72,8 @@ runbooks/
   prompts/           # Explicit/implicit prompts, YES/NO, prompt code blocks
   composition/       # Runbook lists, substep runbook references
   delegation/        # Delegate, claim, abort, token lifecycle
+  stash-pop/         # Stash/pop enforcement control
+  variables/         # Template variables, built-ins, and context
   examples/          # Curated real-world runbooks (docs/explore reference)
 ```
 
