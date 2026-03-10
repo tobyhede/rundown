@@ -51,7 +51,7 @@ export interface ForLoopConfig {
 // Step builder — converts ForLoopConfig to parser Step[]
 // ---------------------------------------------------------------------------
 
-function makeAction(type: string): Action {
+export function makeAction(type: string): Action {
   switch (type) {
     case 'CONTINUE':
       return { type: 'CONTINUE' };
@@ -70,11 +70,15 @@ function makeAction(type: string): Action {
   }
 }
 
-function makeTransitionObject(kind: 'pass' | 'fail', action: string, retry = 0): TransitionObject {
+export function makeTransitionObject(
+  kind: 'pass' | 'fail',
+  action: string,
+  retry = 0,
+): TransitionObject {
   return { kind, retry, action: makeAction(action) };
 }
 
-function makeTransitions(
+export function makeTransitions(
   aggregation: 'ALL' | 'ANY' | 'none',
   passAction: string,
   failAction: string,
@@ -156,14 +160,13 @@ export interface RunResult {
 }
 
 /**
- * Compile a ForLoopConfig into a machine, send events, and return the result.
+ * Compile raw steps into a machine, send events, and return the result.
  *
  * Sends the provided events only while the machine is in the FOR loop step
  * (step 1). Once the machine exits the FOR loop (reaches step 2 or terminal),
  * pads with PASS to drive it to completion.
  */
-export function runForLoop(config: ForLoopConfig, events: EventType[]): RunResult {
-  const steps = buildForLoopSteps(config);
+export function runFromSteps(steps: Step[], events: EventType[]): RunResult {
   const machine = compileRunbookToMachine(steps);
   const actor = createActor(machine as AnyStateMachine);
   actor.start();
@@ -198,4 +201,13 @@ export function runForLoop(config: ForLoopConfig, events: EventType[]): RunResul
     iterationResults: snap.context.iterationResults ?? [],
     eventsConsumed: consumed,
   };
+}
+
+/**
+ * Compile a ForLoopConfig into a machine, send events, and return the result.
+ *
+ * Convenience wrapper that builds steps from config, then delegates to runFromSteps.
+ */
+export function runForLoop(config: ForLoopConfig, events: EventType[]): RunResult {
+  return runFromSteps(buildForLoopSteps(config), events);
 }

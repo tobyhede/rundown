@@ -14,56 +14,16 @@
  */
 
 import fc from 'fast-check';
-import { createActor, type AnyStateMachine } from 'xstate';
-import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
-import { runForLoop, type ForLoopConfig, type EventType } from './for-loop-test-helpers.js';
-import type {
-  Step,
-  Substep,
-  Transitions,
-  TransitionObject,
-  Action,
-} from '../../src/runbook/types.js';
-
-// ---------------------------------------------------------------------------
-// Local helpers — duplicated from test-helpers to keep this file self-contained
-// ---------------------------------------------------------------------------
-
-function makeAction(type: string): Action {
-  switch (type) {
-    case 'CONTINUE':
-      return { type: 'CONTINUE' };
-    case 'DEFER':
-      return { type: 'DEFER' };
-    case 'NEXT':
-      return { type: 'NEXT' };
-    case 'BREAK':
-      return { type: 'BREAK' };
-    case 'STOP':
-      return { type: 'STOP' };
-    case 'COMPLETE':
-      return { type: 'COMPLETE' };
-    default:
-      return { type: 'CONTINUE' };
-  }
-}
-
-function makeTransitionObject(kind: 'pass' | 'fail', action: string, retry = 0): TransitionObject {
-  return { kind, retry, action: makeAction(action) };
-}
-
-function makeTransitions(
-  aggregation: 'ALL' | 'ANY' | 'none',
-  passAction: string,
-  failAction: string,
-  failRetry = 0,
-): Transitions {
-  return {
-    aggregation,
-    pass: makeTransitionObject('pass', passAction),
-    fail: makeTransitionObject('fail', failAction, failRetry),
-  };
-}
+import {
+  runForLoop,
+  runFromSteps,
+  makeTransitions,
+  makeTransitionObject,
+  type ForLoopConfig,
+  type EventType,
+  type RunResult,
+} from './for-loop-test-helpers.js';
+import type { Step, Substep } from '../../src/runbook/types.js';
 
 // ---------------------------------------------------------------------------
 // Custom step builder for non-uniform substep configs
@@ -132,51 +92,6 @@ function buildCustomSteps(opts: CustomForOpts): Step[] {
   };
 
   return [forStep, terminalStep];
-}
-
-// ---------------------------------------------------------------------------
-// Runner for custom steps
-// ---------------------------------------------------------------------------
-
-interface RunResult {
-  terminalState: string;
-  forStackLength: number;
-  iterationResults: readonly ('pass' | 'fail')[];
-  eventsConsumed: number;
-}
-
-function runFromSteps(steps: Step[], events: EventType[]): RunResult {
-  const machine = compileRunbookToMachine(steps);
-  const actor = createActor(machine as AnyStateMachine);
-  actor.start();
-
-  let consumed = 0;
-  let eventIdx = 0;
-
-  while (eventIdx < events.length) {
-    const snap = actor.getSnapshot();
-    if (snap.status === 'done') break;
-    const state = String(snap.value);
-    if (!state.startsWith('step::1')) break;
-    actor.send({ type: events[eventIdx++] });
-    consumed++;
-  }
-
-  const maxPad = 200;
-  for (let i = 0; i < maxPad; i++) {
-    const snap = actor.getSnapshot();
-    if (snap.status === 'done') break;
-    actor.send({ type: 'PASS' });
-    consumed++;
-  }
-
-  const snap = actor.getSnapshot();
-  return {
-    terminalState: String(snap.value),
-    forStackLength: snap.context.forStack.length,
-    iterationResults: snap.context.iterationResults ?? [],
-    eventsConsumed: consumed,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +358,7 @@ describe('FOR loop design invariants', () => {
     });
   });
 
-  // Property: Iteration-level BREAK is non-accumulating
+  // Property 4: Iteration-level BREAK is non-accumulating
   //
   // When iterationFailAction is BREAK, the loop exits without adding the
   // current iteration's result to iterationResults.
@@ -477,7 +392,7 @@ describe('FOR loop design invariants', () => {
     });
   });
 
-  // Property 4: Only DEFER accumulates at iteration level
+  // Property 5: Only DEFER accumulates at iteration level
   //
   // CONTINUE at iteration level exits the loop without adding the current
   // iteration to iterationResults.
