@@ -23,6 +23,9 @@ import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'no
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Centralized path to runbooks directory for all test operations
+const RUNBOOKS_DIR = join(__dirname, '..', '..', '..', '..', 'runbooks');
+
 /**
  * Recursively get all files in a directory synchronously.
  */
@@ -47,10 +50,9 @@ function loadPatternsWithScenariosSync(): {
   withScenarios: { file: string; scenarios: Scenarios }[];
   allRunbookFiles: string[];
 } {
-  const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks');
   let allFiles: string[];
   try {
-    allFiles = getFilesSync(patternsDir);
+    allFiles = getFilesSync(RUNBOOKS_DIR);
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
       return { withScenarios: [], allRunbookFiles: [] };
@@ -65,7 +67,7 @@ function loadPatternsWithScenariosSync(): {
 
   for (const filePath of allFiles) {
     if (!filePath.endsWith('.runbook.md')) continue;
-    const relativePath = filePath.substring(patternsDir.length + 1);
+    const relativePath = filePath.substring(RUNBOOKS_DIR.length + 1);
     allRunbookFiles.push(relativePath);
     const content = readFileSync(filePath, 'utf-8');
     const { frontmatter } = extractRawFrontmatter(content);
@@ -105,8 +107,7 @@ function findFileByName(dir: string, filename: string): string | null {
  * Handles files in subdirectories by flattening them to the target directory.
  */
 function copyPatternToWorkspace(relativePath: string, workspace: TestWorkspace): void {
-  const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks');
-  const sourcePath = join(patternsDir, relativePath);
+  const sourcePath = join(RUNBOOKS_DIR, relativePath);
   const targetDir = join(workspace.cwd, '.claude', 'rundown', 'runbooks');
   const filename = relativePath.split('/').pop()!;
 
@@ -116,7 +117,7 @@ function copyPatternToWorkspace(relativePath: string, workspace: TestWorkspace):
     copyFileSync(sourcePath, join(targetDir, filename));
   } catch (err) {
     console.warn(`Pattern file not at expected path ${sourcePath}, using fallback search`);
-    const foundPath = findFileByName(patternsDir, filename);
+    const foundPath = findFileByName(RUNBOOKS_DIR, filename);
     if (foundPath) {
       copyFileSync(foundPath, join(targetDir, filename));
     } else {
@@ -206,7 +207,6 @@ function copyPatternWithDependencies(
     }
   }
 
-  const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks');
   const patternSubdir = dirname(filename);
   const varFileDirs = extractVarFileDirs(scenario);
   for (const dir of varFileDirs) {
@@ -214,11 +214,11 @@ function copyPatternWithDependencies(
     if (isAbsolute(dir) || normalize(dir).startsWith('..')) {
       throw new Error(`Unsafe var-file directory in scenario: ${dir}`);
     }
-    const srcDir = join(patternsDir, patternSubdir, dir);
+    const srcDir = join(RUNBOOKS_DIR, patternSubdir, dir);
     const destDir = join(workspace.cwd, dir);
     const resolvedSrc = resolve(srcDir);
     const resolvedDest = resolve(destDir);
-    const srcRoot = resolve(patternsDir, patternSubdir);
+    const srcRoot = resolve(RUNBOOKS_DIR, patternSubdir);
     if (!resolvedSrc.startsWith(srcRoot + sep) && resolvedSrc !== srcRoot) {
       throw new Error(`Var-file source escapes pattern root: ${dir}`);
     }
