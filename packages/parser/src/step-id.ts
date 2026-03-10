@@ -114,6 +114,38 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
     return null;
   }
 
+  // === THREE-LEVEL NUMERIC: 1.2.1, 1.2.Cleanup (step.iteration.substep) ===
+  const threeLevelPattern = requireSeparator
+    ? /^(\d+)\.(\d+)\.(\d+|[A-Za-z_][A-Za-z0-9_]*)[\s\-:]/
+    : /^(\d+)\.(\d+)\.(\d+|[A-Za-z_][A-Za-z0-9_]*)$/;
+
+  const threeLevelMatch = stepInput.match(threeLevelPattern);
+  if (threeLevelMatch) {
+    // Three-level with explicit AT suffix is contradictory — reject
+    if (atValue !== undefined) return null;
+
+    const stepStr = threeLevelMatch[1];
+    const iterationStr = threeLevelMatch[2];
+    const substep = threeLevelMatch[3];
+
+    const stepNum = parseInt(stepStr, 10);
+    if (stepNum <= 0) return null;
+
+    const iterationNum = parseInt(iterationStr, 10);
+    if (iterationNum < 1) return null;
+
+    if (substep && NAMED_IDENTIFIER_PATTERN.test(substep) && isReservedWord(substep)) {
+      return null;
+    }
+
+    if (substep && /^\d+$/.test(substep)) {
+      const substepNum = parseInt(substep, 10);
+      if (substepNum < 1) return null;
+    }
+
+    return { step: stepStr, substep, at: iterationNum };
+  }
+
   // === NUMERIC STEP HANDLING: 1, 1.2, 1.Name ===
   const numericPattern = requireSeparator
     ? /^(\d+)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?[\s\-:]/

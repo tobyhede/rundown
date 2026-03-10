@@ -52,6 +52,28 @@ describe('stepIdEquals', () => {
   });
 });
 
+describe('three-level positions (step.iteration.substep)', () => {
+  it('parses 1.2.1', () => {
+    expect(parseStepIdFromString('1.2.1')).toEqual({ step: '1', substep: '1', at: 2 });
+  });
+
+  it('parses 3.1.1', () => {
+    expect(parseStepIdFromString('3.1.1')).toEqual({ step: '3', substep: '1', at: 1 });
+  });
+
+  it('parses named substep 1.2.Cleanup', () => {
+    expect(parseStepIdFromString('1.2.Cleanup')).toEqual({ step: '1', substep: 'Cleanup', at: 2 });
+  });
+
+  it('rejects iteration 0', () => {
+    expect(parseStepIdFromString('1.0.1')).toBeNull();
+  });
+
+  it('rejects contradictory AT suffix', () => {
+    expect(parseStepIdFromString('1.2.1 AT 3')).toBeNull();
+  });
+});
+
 describe('removed dynamic formats', () => {
   it('rejects {N} format', () => {
     expect(parseStepIdFromString('{N}')).toBeNull();

@@ -79,11 +79,6 @@ function loadPatternsWithScenariosSync(): {
   return { withScenarios, allRunbookFiles };
 }
 
-/** Runbooks without scenarios that are known exceptions (with tracking references). */
-const KNOWN_EXCEPTIONS = new Set([
-  'delegation/delegate-for-loop.runbook.md', // BUG-267: delegation in FOR loops
-]);
-
 const { withScenarios: patternsWithScenarios, allRunbookFiles } = loadPatternsWithScenariosSync();
 
 const allScenarios = patternsWithScenarios.flatMap(({ file, scenarios }) =>
@@ -336,9 +331,7 @@ async function executeScenario(
 describe('scenario runner', () => {
   it('every pattern runbook defines scenarios', () => {
     const withScenarioFiles = new Set(patternsWithScenarios.map((p) => p.file));
-    const missing = allRunbookFiles.filter(
-      (f) => !withScenarioFiles.has(f) && !KNOWN_EXCEPTIONS.has(f),
-    );
+    const missing = allRunbookFiles.filter((f) => !withScenarioFiles.has(f));
     expect(missing).toEqual([]);
   });
 

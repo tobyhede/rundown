@@ -1,21 +1,34 @@
 ---
 name: delegate-for-loop
-description: FOR loop with delegation — each iteration delegates to a child runbook (NOT YET SUPPORTED)
+description: FOR loop with delegation — each iteration delegates to a child runbook
 tags:
   - delegation
   - for-loops
-  - pending
-# NOTE: No scenarios — delegation within FOR loop iterations is not yet supported.
-# The delegate command fails when the cursor is at a FOR loop iteration substep.
-# This file documents the desired pattern for future implementation.
+
+scenarios:
+  completed:
+    description: All iterations delegated and completed successfully
+    commands:
+      - rd run delegate-for-loop.runbook.md
+      - rd delegate
+      - rd claim ${TOKEN}
+      - rd delegate
+      - rd claim ${TOKEN_2}
+    result: COMPLETE
+    expect:
+      steps:
+        - from: "1.1.1"
+          action: DEFER
+          result: PASS
+        - from: "1.2.1"
+          action: COMPLETE
+          result: PASS
+          aggregated: true
 ---
 
 # FOR Delegation
 
 Each iteration delegates to a child runbook.
-
-**Status**: Not yet supported. Delegation within FOR loop iterations fails because
-the delegation system does not handle FOR-qualified step positions.
 
 ## 1. Process items
 
