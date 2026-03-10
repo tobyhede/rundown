@@ -309,6 +309,54 @@ describe('prepareRunbook', () => {
     );
   });
 
+  it('adds context.vars.* aliases for inherited user vars', async () => {
+    resolveRunbookFile.mockResolvedValue('/test/child.md');
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({ steps: [makeStep()] } as any);
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: {},
+      sources: {},
+    });
+
+    const result = await prepareRunbook('child.md', {}, '/test', {
+      inheritedUserVars: { Region: 'us-west' },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        Region: 'us-west',
+        'context.vars.Region': 'us-west',
+      }),
+    );
+  });
+
+  it('child vars override inherited in context.vars.* aliases', async () => {
+    resolveRunbookFile.mockResolvedValue('/test/child.md');
+    (
+      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    ).mockReturnValue({ steps: [makeStep()] } as any);
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { Region: 'eu-central' },
+      sources: {},
+    });
+
+    const result = await prepareRunbook('child.md', {}, '/test', {
+      inheritedUserVars: { Region: 'us-west' },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        Region: 'eu-central',
+        'context.vars.Region': 'eu-central',
+      }),
+    );
+  });
+
   it('returns error when validateSources throws', async () => {
     resolveRunbookFile.mockResolvedValue('/test/sourced.md');
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);

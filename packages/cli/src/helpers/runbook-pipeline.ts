@@ -196,6 +196,36 @@ function buildContextVars(vars: Readonly<Record<string, string>>): Record<string
 }
 
 /**
+ * Build the complete template variable map from all sources.
+ *
+ * Merges inherited user vars with locally resolved vars, computes `context.vars.*`
+ * aliases from the full user-var set, and overlays inherited context vars.
+ *
+ * @param localVars - Variables resolved from this runbook's frontmatter, config, and CLI flags
+ * @param options - Optional inherited variables from parent delegation
+ * @param options.inheritedUserVars - User variables inherited from a parent delegation
+ * @param options.inheritedContextVars - Context variables inherited from a parent delegation
+ * @returns Complete template variable map ready for substitution
+ */
+function buildTemplateVars(
+  localVars: Readonly<Record<string, string>>,
+  options?: {
+    inheritedUserVars?: Readonly<Record<string, string>>;
+    inheritedContextVars?: Readonly<Record<string, string>>;
+  },
+): Record<string, string> {
+  const effectiveUserVars: Record<string, string> = {
+    ...(options?.inheritedUserVars ?? {}), // parent --var (overridable)
+    ...localVars, // child frontmatter + claim --var (overrides)
+  };
+  return {
+    ...effectiveUserVars,
+    ...buildContextVars(effectiveUserVars), // aliases from FULL user-var set
+    ...(options?.inheritedContextVars ?? {}), // context.parent.vars.* etc.
+  };
+}
+
+/**
  * Prepare a runbook from file: resolve, load, parse, substitute variables.
  *
  * This is the shared pipeline used by file start and delegation claim.
@@ -263,12 +293,7 @@ export async function prepareRunbook(
     }
     throw error;
   }
-  const templateVars: Record<string, string> = {
-    ...(options?.inheritedUserVars ?? {}), // delegate --var (overridable by child/claim)
-    ...mergedVariables, // child frontmatter + claim --var
-    ...buildContextVars(mergedVariables), // context.vars.* aliases
-    ...(options?.inheritedContextVars ?? {}), // context.parent.vars.* etc.
-  };
+  const templateVars = buildTemplateVars(mergedVariables, options);
 
   // Pre-expand FOR clause bounds (parser needs numeric values)
   const forExpandedContent = expandForClauseVariables(
@@ -282,17 +307,7 @@ export async function prepareRunbook(
 
   // Substitute variables into parsed AST
   const runbook = substituteRunbookVariables(rawRunbook, templateVars);
-  const forVars = new Set<string>();
-  for (const step of rawRunbook.steps) {
-    if (step.kind === 'for') {
-      if (step.forClause.variable) forVars.add(step.forClause.variable);
-      forVars.add('Index');
-      forVars.add('index');
-    }
-  }
-  warnUnresolvedRunbookVariables(runbook, {
-    suppressedVariables: forVars.size > 0 ? forVars : undefined,
-  });
+  warnUnresolvedRunbookVariables(runbook);
 
   // Validate sourced FOR clauses reference defined data sources
   try {

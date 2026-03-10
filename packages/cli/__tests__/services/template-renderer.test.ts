@@ -523,6 +523,135 @@ describe('warnUnresolvedRunbookVariables', () => {
       'Warning: Undefined variable "{{region}}" preserved as literal text',
     );
   });
+
+  it('should suppress FOR variable inside own substeps', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Deploy',
+      '- FOR item IN 1 TO 3',
+      '',
+      '### 1.1 Process',
+      '',
+      'Handle {{item}}.',
+    ].join('\n');
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('should warn for FOR variable referenced outside FOR scope', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Before',
+      '',
+      'Use {{item}} here.',
+      '',
+      '## 2. Loop',
+      '- FOR item IN 1 TO 3',
+      '',
+      '### 2.1 Process',
+      '',
+      'Handle {{item}}.',
+    ].join('\n');
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(console.warn).toHaveBeenCalledWith(
+      'Warning: Undefined variable "{{item}}" preserved as literal text',
+    );
+  });
+
+  it('should scope Index/index suppression to FOR substeps only', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Before',
+      '',
+      'At {{Index}} position.',
+      '',
+      '## 2. Loop',
+      '- FOR item IN 1 TO 3',
+      '',
+      '### 2.1 Process',
+      '',
+      'Iteration {{Index}}.',
+    ].join('\n');
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(console.warn).toHaveBeenCalledWith(
+      'Warning: Undefined variable "{{Index}}" preserved as literal text',
+    );
+  });
+
+  it('should warn for FOR variable in FOR step own description', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Process {{item}}',
+      '- FOR item IN 1 TO 3',
+      '',
+      '### 1.1 Sub',
+      '',
+      'Handle {{item}}.',
+    ].join('\n');
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(console.warn).toHaveBeenCalledWith(
+      'Warning: Undefined variable "{{item}}" preserved as literal text',
+    );
+  });
+
+  it('should scope multiple FOR steps independently', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Servers',
+      '- FOR server IN 1 TO 2',
+      '',
+      '### 1.1 Deploy',
+      '',
+      'Deploy to {{server}}.',
+      '',
+      '## 2. Environments',
+      '- FOR env IN 1 TO 2',
+      '',
+      '### 2.1 Check',
+      '',
+      'Check {{server}} in {{env}}.',
+    ].join('\n');
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(console.warn).toHaveBeenCalledWith(
+      'Warning: Undefined variable "{{server}}" preserved as literal text',
+    );
+  });
+
+  it('should suppress dotted FOR variable paths inside FOR scope', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Deploy',
+      '- FOR item IN 1 TO 3',
+      '',
+      '### 1.1 Process',
+      '',
+      'Name: {{item.name}}, Region: {{item.region}}.',
+    ].join('\n');
+    const runbook = parseRunbookDocument(rawMarkdown);
+    warnUnresolvedRunbookVariables(runbook);
+    expect(console.warn).not.toHaveBeenCalled();
+  });
 });
 
 describe('expandForClauseVariables', () => {
