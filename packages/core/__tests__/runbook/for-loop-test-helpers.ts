@@ -160,8 +160,7 @@ export interface RunResult {
  *
  * Sends the provided events only while the machine is in the FOR loop step
  * (step 1). Once the machine exits the FOR loop (reaches step 2 or terminal),
- * pads with PASS to drive it to completion. This matches the oracle which
- * only models the FOR loop and assumes step 2 always passes.
+ * pads with PASS to drive it to completion.
  */
 export function runForLoop(config: ForLoopConfig, events: EventType[]): RunResult {
   const steps = buildForLoopSteps(config);

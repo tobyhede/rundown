@@ -9,7 +9,8 @@
  * 1. RETRY is universal — fires for every substep action type
  * 2. NEXT never accumulates iteration results
  * 3. BREAK includes current iteration's deferred results in aggregation
- * 4. Only DEFER accumulates at iteration level
+ * 4. Iteration-level BREAK is non-accumulating
+ * 5. Only DEFER accumulates at iteration level
  */
 
 import fc from 'fast-check';

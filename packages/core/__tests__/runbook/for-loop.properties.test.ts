@@ -1,7 +1,7 @@
 /**
  * fast-check property tests for FOR loop compilation.
  *
- * Eight invariant properties that hold for ANY valid ForLoopConfig:
+ * Ten invariant properties that hold for ANY valid ForLoopConfig:
  * 1. Termination — always reaches COMPLETE or STOPPED
  * 2. forStack empty at terminal — no dangling loop context
  * 3. PASS ALL + all pass → parent passes
@@ -10,6 +10,8 @@
  * 6. COMPLETE at substep → COMPLETE regardless
  * 7. BREAK tallies result before exit
  * 8. Iteration monotonicity (no RETRY)
+ * 9. Termination with random event sequences (mixed patterns)
+ * 10. parentPassAction COMPLETE produces COMPLETE in FOR loop
  */
 
 import fc from 'fast-check';
@@ -99,11 +101,11 @@ describe('FOR loop properties', () => {
       substepFailRetry: fc.integer({ min: 0, max: 2 }),
       iterationPassAction: fc.constantFrom('CONTINUE' as const, 'BREAK' as const),
       iterationFailAction: fc.constantFrom('CONTINUE' as const, 'BREAK' as const),
-      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
       iterationFailRetry: fc.integer({ min: 0, max: 2 }),
       parentPassAction: fc.constantFrom('CONTINUE' as const, 'COMPLETE' as const),
       parentFailAction: fc.constantFrom('STOP' as const, 'COMPLETE' as const),
-      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
       parentFailRetry: fc.integer({ min: 0, max: 2 }),
     });
     fc.assert(
@@ -191,11 +193,11 @@ describe('FOR loop properties', () => {
       substepFailRetry: fc.constant(0),
       iterationPassAction: iterationActionArb,
       iterationFailAction: iterationActionArb,
-      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
       iterationFailRetry: fc.constant(0),
       parentPassAction: parentActionArb,
       parentFailAction: parentActionArb,
-      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
       parentFailRetry: fc.constant(0),
     });
 
@@ -218,11 +220,11 @@ describe('FOR loop properties', () => {
       substepFailRetry: fc.constant(0),
       iterationPassAction: iterationActionArb,
       iterationFailAction: iterationActionArb,
-      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
       iterationFailRetry: fc.constant(0),
       parentPassAction: parentActionArb,
       parentFailAction: parentActionArb,
-      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
       parentFailRetry: fc.constant(0),
     });
 
@@ -275,6 +277,52 @@ describe('FOR loop properties', () => {
     );
   });
 
+  // Property 8: Iteration monotonicity (no retry configs) — iterations advance
+  it('iterations advance monotonically without retry', () => {
+    const noRetryConfig = fc.record({
+      iterations: fc.integer({ min: 2, max: 4 }),
+      numSubsteps: fc.constant(1),
+      substepPassAction: fc.constant<SubstepAction>('CONTINUE'),
+      substepFailAction: fc.constant<SubstepAction>('CONTINUE'),
+      substepFailRetry: fc.constant(0),
+      iterationPassAction: fc.constant<IterationAction>('CONTINUE'),
+      iterationFailAction: fc.constant<IterationAction>('CONTINUE'),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
+      iterationFailRetry: fc.constant(0),
+      parentPassAction: fc.constant<ParentAction>('CONTINUE'),
+      parentFailAction: fc.constant<ParentAction>('CONTINUE'),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
+      parentFailRetry: fc.constant(0),
+    });
+
+    fc.assert(
+      fc.property(noRetryConfig, (config) => {
+        const steps = buildForLoopSteps(config);
+        const machine = compileRunbookToMachine(steps);
+        const actor = createActor(machine as AnyStateMachine);
+        actor.start();
+
+        const iterations: number[] = [];
+        const top = actor.getSnapshot().context.forStack[0];
+        if (top) iterations.push(top.iteration);
+
+        for (let i = 0; i < config.iterations; i++) {
+          actor.send({ type: 'PASS' });
+          const snap = actor.getSnapshot();
+          if (snap.status === 'done') break;
+          const currentTop = snap.context.forStack[snap.context.forStack.length - 1];
+          if (currentTop) iterations.push(currentTop.iteration);
+        }
+
+        // Verify monotonicity
+        for (let i = 1; i < iterations.length; i++) {
+          expect(iterations[i]).toBeGreaterThanOrEqual(iterations[i - 1]);
+        }
+      }),
+      { numRuns: 300 },
+    );
+  });
+
   // Property 9: Termination with random event sequences (mixed patterns)
   it('always terminates with random event sequences', () => {
     fc.assert(
@@ -324,52 +372,6 @@ describe('FOR loop properties', () => {
         expect(result.terminalState).toBe('COMPLETE');
       }),
       { numRuns: 200 },
-    );
-  });
-
-  // Property 8: Iteration monotonicity (no retry configs) — iterations advance
-  it('iterations advance monotonically without retry', () => {
-    const noRetryConfig = fc.record({
-      iterations: fc.integer({ min: 2, max: 4 }),
-      numSubsteps: fc.constant(1),
-      substepPassAction: fc.constant<SubstepAction>('CONTINUE'),
-      substepFailAction: fc.constant<SubstepAction>('CONTINUE'),
-      substepFailRetry: fc.constant(0),
-      iterationPassAction: fc.constant<IterationAction>('CONTINUE'),
-      iterationFailAction: fc.constant<IterationAction>('CONTINUE'),
-      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
-      iterationFailRetry: fc.constant(0),
-      parentPassAction: fc.constant<ParentAction>('CONTINUE'),
-      parentFailAction: fc.constant<ParentAction>('CONTINUE'),
-      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
-      parentFailRetry: fc.constant(0),
-    });
-
-    fc.assert(
-      fc.property(noRetryConfig, (config) => {
-        const steps = buildForLoopSteps(config);
-        const machine = compileRunbookToMachine(steps);
-        const actor = createActor(machine as AnyStateMachine);
-        actor.start();
-
-        const iterations: number[] = [];
-        const top = actor.getSnapshot().context.forStack[0];
-        if (top) iterations.push(top.iteration);
-
-        for (let i = 0; i < config.iterations; i++) {
-          actor.send({ type: 'PASS' });
-          const snap = actor.getSnapshot();
-          if (snap.status === 'done') break;
-          const currentTop = snap.context.forStack[snap.context.forStack.length - 1];
-          if (currentTop) iterations.push(currentTop.iteration);
-        }
-
-        // Verify monotonicity
-        for (let i = 1; i < iterations.length; i++) {
-          expect(iterations[i]).toBeGreaterThanOrEqual(iterations[i - 1]);
-        }
-      }),
-      { numRuns: 300 },
     );
   });
 });
