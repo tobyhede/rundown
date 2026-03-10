@@ -1,11 +1,11 @@
 ---
 name: for-iter-pass-break
-description: Iteration-level PASS BREAK exits loop without accumulating result.
+description: Iteration-level PASS BREAK exits loop after recording iteration result.
 tags:
   - for-loops
 scenarios:
   break-fires:
-    description: Pass triggers BREAK — result not accumulated, parent sees empty → passes
+    description: Pass triggers BREAK — iteration result recorded, parent sees pass → CONTINUE
     commands:
       - rd run --prompted for-iter-pass-break.runbook.md
       - rd pass

@@ -22,7 +22,7 @@ scenarios:
           action: COMPLETE
           result: PASS
   stopped:
-    description: Second iteration fails, DEFER accumulates fail, PASS ALL fails → STOP
+    description: Second iteration fails, DEFER accumulates fail, FAIL ANY fires → STOP
     commands:
       - rd run --prompted for-nested-transitions.runbook.md
       - rd pass

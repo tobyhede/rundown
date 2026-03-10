@@ -1,10 +1,10 @@
 ---
-name: for-substep-break-skips-retry
+name: for-substep-break-respects-retry
 description: Substep BREAK respects iteration-level retry before exiting
 scenarios:
-  break-skips-retry:
+  break-respects-retry:
     commands:
-      - rd run --prompted for-substep-break-skips-retry.runbook.md
+      - rd run --prompted for-substep-break-respects-retry.runbook.md
       # Attempt 1: sub1 FAIL (DEFER), sub2 FAIL (BREAK) → retry fires
       - rd fail
       - rd fail

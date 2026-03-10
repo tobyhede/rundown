@@ -182,7 +182,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
     *   `BREAK` → exit loop, go to parent aggregation (current iteration's DEFER'd results included)
     *   `NEXT` → skip to next iteration (or aggregation at end, non-accumulating)
     *   `DEFER`/`CONTINUE` → configured iteration-level transition applies
-*   **Exit semantics**: Only `DEFER` accumulates the current iteration result into parent aggregation. `BREAK` exits the loop — its iteration's DEFER'd substep results are computed inline during aggregation but not persisted to iterationResults. `CONTINUE` exits the loop — its iteration result is not propagated. `NEXT` loops back without accumulation. `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation and exit directly.
+*   **Exit semantics**: Only `DEFER` accumulates the current iteration result into parent aggregation. `BREAK` exits the loop — its iteration's DEFER'd substep results are persisted to iterationResults before exiting. `CONTINUE` exits the loop — its iteration result is not propagated. `NEXT` loops back without accumulation. `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation and exit directly.
 
 ## 6. Templating
 
@@ -225,7 +225,7 @@ scenarios:
 2.  **Sequential IDs**: 1, 2, 3... (gaps invalid).
 3.  **Strict Ordering**: FOR -> Transitions -> Prompt -> Body.
 4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
-5.  **Single Command**: Max one executable block per step.
+5.  **Single Code Block**: Max one code block per step (executable or display-only).
 6.  **Loop Safety**: `NEXT` and `BREAK` are valid in FOR substeps and FOR iteration-level transitions.
 7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.

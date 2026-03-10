@@ -321,7 +321,7 @@ export function parseRunbookDocument(
       if (currentStep.pendingSubstep) {
         if (currentStep.pendingSubstep.command) {
           throw new RunbookSyntaxError(
-            `Multiple code blocks per substep not allowed in substep ${currentStep.pendingSubstep.id}`,
+            `Multiple code blocks per substep not allowed in substep ${currentStep.pendingSubstep.id} (display-only fences like json/yaml count as code blocks)`,
           );
         }
         currentStep.pendingSubstep.command = cmd;
@@ -330,7 +330,7 @@ export function parseRunbookDocument(
         if (currentStep.command) {
           const stepLabel = currentStep.name;
           throw new RunbookSyntaxError(
-            `Multiple code blocks per step not allowed in Step ${stepLabel}.`,
+            `Multiple code blocks per step not allowed in Step ${stepLabel} (display-only fences like json/yaml count as code blocks).`,
           );
         }
         currentStep.command = cmd;

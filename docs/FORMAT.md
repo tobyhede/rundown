@@ -205,7 +205,7 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 
 **Rules:**
 - FOR must appear before transitions in the step's bullet list
-- `NEXT` is only valid within substeps of a FOR step
+- `NEXT` is only valid inside substeps of a FOR step and FOR iteration-level transitions
 - `BREAK` is valid within substeps and FOR-level nested transitions
 - `AT` is only valid when the GOTO target is a FOR step (cross-step allowed, but the target must be FOR and have substeps)
 - Step-level runbook lists satisfy the FOR-substep requirement via implicit sequential substeps
