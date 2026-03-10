@@ -156,7 +156,17 @@ export async function resolveRunbookFile(cwd: string, identifier: string): Promi
   // Detect if identifier is path-based or name-based
   if (isPathIdentifier(name)) {
     // Path-based resolution: use existing logic
-    return resolveByPath(cwd, name);
+    const result = await resolveByPath(cwd, name);
+    if (result) return result;
+
+    // Bare .runbook.md filename not found by path — try name-based discovery
+    // (handles bundled runbooks in subdirectories)
+    if (!name.includes('/') && name.endsWith('.runbook.md')) {
+      const stem = name.replace(/\.runbook\.md$/, '');
+      const discovered = await findRunbookByName(cwd, stem);
+      return discovered ? discovered.path : null;
+    }
+    return null;
   } else {
     // Name-based resolution: use discovery service
     const discovered = await findRunbookByName(cwd, name);

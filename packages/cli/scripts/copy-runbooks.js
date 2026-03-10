@@ -4,7 +4,7 @@
  * Preserves the category directory structure for path-based resolution.
  * Detects filename collisions to prevent silent overwrites.
  */
-import { cpSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
+import { cpSync, mkdirSync, rmSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,6 +19,9 @@ if (!existsSync(sourceDir)) {
   console.log('No source runbooks directory found, skipping copy.');
   process.exit(0);
 }
+
+// Clean previous bundled runbooks to avoid stale flat files
+rmSync(destDir, { recursive: true, force: true });
 
 // Ensure destination exists
 mkdirSync(destDir, { recursive: true });
