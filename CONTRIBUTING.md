@@ -9,6 +9,8 @@ Rundown is a monorepo managed with npm workspaces:
 - `packages/parser`: Markdown runbook parser and validator.
 - `packages/core`: Core runbook logic and CLI output formatting.
 - `packages/cli`: The `rd` command-line interface.
+- `packages/mcp`: MCP server for AI agent integration.
+- `packages/claude-code-plugin`: Claude Code plugin for runbook orchestration.
 - `site`: The Astro-based documentation and interactive demo site.
 - `runbooks`: A collection of pattern and example runbooks.
 
@@ -47,7 +49,7 @@ npm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-run
 
 ### Prerequisites
 
-- **Node.js**: v18 or later.
+- **Node.js**: v20.12.0 or later.
 - **npm**: v9 or later (for monorepo management).
 - **pnpm**: v9 or later (specifically used for the `site` package).
 
@@ -185,7 +187,7 @@ GitHub Actions runs on all pull requests and pushes to `main`:
 
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
-| `ci.yml` | PRs and pushes to main | Builds, lints, and tests across Node.js 18, 20, and 22 |
+| `ci.yml` | PRs and pushes to main | PRs run on Node.js 22; pushes to `main` and manual dispatch run on Node.js 20 and 22 |
 | `mutation.yml` | Manual dispatch or weekly schedule | Runs Stryker mutation testing per package |
 | `release.yml` | Pushes to main | Handles npm publishing via Changesets |
 
@@ -243,10 +245,12 @@ Releases are managed with [Changesets](https://github.com/changesets/changesets)
 
 ### Package Versioning
 
-All three npm packages use **fixed versioning** - they release together with the same version number:
+All npm packages use **fixed versioning** - they release together with the same version number:
 - `@rundown-org/parser`
 - `@rundown-org/core`
 - `@rundown-org/cli`
+- `@rundown-org/mcp`
+- `@rundown-org/claude-code-plugin`
 
 The `site` package is private and never published to npm.
 

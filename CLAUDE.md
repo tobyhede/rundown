@@ -215,7 +215,7 @@ rundown run [file] --sandbox-strict       # Fail if sandbox unavailable
 
 ## Policy Configuration
 
-Policy files are discovered from: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, `rundown.config.js`, `rundown.config.cjs`, `rundown.config.mjs`, `package.json` (rundown field).
+Policy files are auto-discovered from: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, `package.json` (rundown field). JavaScript config files (`.js`, `.cjs`, `.mjs`) are not auto-discovered — they require explicit `--policy <path>` with `--trust-js-policy`.
 
 See [docs/SECURITY.md](docs/SECURITY.md) for full security policy documentation.
 

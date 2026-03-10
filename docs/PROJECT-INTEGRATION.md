@@ -167,7 +167,7 @@ Not:
 - FAIL: STOP "Compilation failed."
 ```
 
-See [SPEC.md Authoring Conventions](./SPEC.md#authoring-conventions) for the full rationale.
+See [FORMAT.md Message Convention](./FORMAT.md#message-convention) for the full rationale.
 
 ## Worked Example: `pr-feedback`
 

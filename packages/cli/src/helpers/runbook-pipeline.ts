@@ -196,6 +196,36 @@ function buildContextVars(vars: Readonly<Record<string, string>>): Record<string
 }
 
 /**
+ * Build the complete template variable map from all sources.
+ *
+ * Merges inherited user vars with locally resolved vars, computes `context.vars.*`
+ * aliases from the full user-var set, and overlays inherited context vars.
+ *
+ * @param localVars - Variables resolved from this runbook's frontmatter, config, and CLI flags
+ * @param options - Optional inherited variables from parent delegation
+ * @param options.inheritedUserVars - User variables inherited from a parent delegation
+ * @param options.inheritedContextVars - Context variables inherited from a parent delegation
+ * @returns Complete template variable map ready for substitution
+ */
+function buildTemplateVars(
+  localVars: Readonly<Record<string, string>>,
+  options?: {
+    inheritedUserVars?: Readonly<Record<string, string>>;
+    inheritedContextVars?: Readonly<Record<string, string>>;
+  },
+): Record<string, string> {
+  const effectiveUserVars: Record<string, string> = {
+    ...(options?.inheritedUserVars ?? {}), // parent --var (overridable)
+    ...localVars, // child frontmatter + claim --var (overrides)
+  };
+  return {
+    ...effectiveUserVars,
+    ...buildContextVars(effectiveUserVars), // aliases from FULL user-var set
+    ...(options?.inheritedContextVars ?? {}), // context.parent.vars.* etc.
+  };
+}
+
+/**
  * Prepare a runbook from file: resolve, load, parse, substitute variables.
  *
  * This is the shared pipeline used by file start and delegation claim.
@@ -203,8 +233,9 @@ function buildContextVars(vars: Readonly<Record<string, string>>): Record<string
  * @param file - Runbook file path or name
  * @param varOpts - Variable options from CLI flags
  * @param cwd - Current working directory
- * @param options - Optional settings including inherited context variables from parent runbook
+ * @param options - Optional settings including inherited variables from parent runbook
  * @param options.inheritedContextVars - Context variables inherited from a parent delegation
+ * @param options.inheritedUserVars - User variables inherited from a parent delegation
  * @returns PreparedRunbook or error result
  * @throws {Error} On unexpected errors during variable resolution or parsing
  */
@@ -214,6 +245,7 @@ export async function prepareRunbook(
   cwd: string,
   options?: {
     inheritedContextVars?: Readonly<Record<string, string>>;
+    inheritedUserVars?: Readonly<Record<string, string>>;
   },
 ): Promise<
   | { ok: true; prepared: PreparedRunbook }
@@ -261,11 +293,7 @@ export async function prepareRunbook(
     }
     throw error;
   }
-  const templateVars: Record<string, string> = {
-    ...mergedVariables,
-    ...buildContextVars(mergedVariables),
-    ...(options?.inheritedContextVars ?? {}),
-  };
+  const templateVars = buildTemplateVars(mergedVariables, options);
 
   // Pre-expand FOR clause bounds (parser needs numeric values)
   const forExpandedContent = expandForClauseVariables(
@@ -603,9 +631,18 @@ export async function claimAndLaunch(
     // 4e. Reconstitute context vars from frozen snapshot
     const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
 
+    // Extract parent user-level vars for top-level inheritance in child
+    const inheritedUserVars: Record<string, string> = {};
+    for (const [key, value] of Object.entries(freshDelegation.contextSnapshot.vars)) {
+      if (!key.startsWith('context.')) {
+        inheritedUserVars[key] = value;
+      }
+    }
+
     // 4f. Prepare child runbook
     const prepResult = await prepareRunbook(freshDelegation.childRunbookPath, varOpts, cwd, {
       inheritedContextVars,
+      inheritedUserVars,
     });
     if (!prepResult.ok) {
       return {

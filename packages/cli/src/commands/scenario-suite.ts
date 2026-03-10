@@ -8,7 +8,7 @@
  */
 
 import type { Command } from 'commander';
-import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rm } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
@@ -96,20 +96,53 @@ async function executeSuiteCase(
       };
     }
 
+    // Also copy flat to runbooks root so bare-filename commands resolve
+    const flatDest = join(runbooksDir, basename(suiteCase.file));
+    if (flatDest !== destPath) {
+      copyFileSync(runbookPath, flatDest);
+    }
+
     // Copy any referenced child runbooks into the isolated workspace
     const runbookPattern = /(?:^|[\s])([^\s=]+\.runbook\.md)/g;
+    const mainBasename = basename(suiteCase.file);
     const referenced = new Set<string>();
     for (const cmd of suiteCase.commands) {
       for (const match of cmd.matchAll(runbookPattern)) {
-        if (match[1] !== suiteCase.file) referenced.add(match[1]);
+        if (match[1] !== suiteCase.file && match[1] !== mainBasename) referenced.add(match[1]);
       }
     }
+    const mainRunbookSourceDir = dirname(resolve(suiteDir, suiteCase.file));
     for (const ref of referenced) {
       try {
         validateRelativePath(ref);
         const dest = join(runbooksDir, ref);
         mkdirSync(dirname(dest), { recursive: true });
-        copyFileSync(resolve(suiteDir, ref), dest);
+        // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
+        let copied = false;
+        for (const base of [mainRunbookSourceDir, suiteDir]) {
+          try {
+            copyFileSync(resolve(base, ref), dest);
+            copied = true;
+            break;
+          } catch (e: unknown) {
+            if (
+              e instanceof Error &&
+              'code' in e &&
+              (e as NodeJS.ErrnoException).code === 'ENOENT'
+            ) {
+              continue; // try next base
+            }
+            throw e; // permission/IO errors propagate immediately
+          }
+        }
+        if (!copied) {
+          return {
+            passed: false,
+            scenario: caseName,
+            expected: effectiveResult,
+            actual: `CHILD_RUNBOOK_NOT_FOUND: ${ref}`,
+          };
+        }
       } catch (err: unknown) {
         if (
           err instanceof Error &&

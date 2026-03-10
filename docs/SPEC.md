@@ -70,9 +70,9 @@ Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and 
 ### 3.2 Substeps
 
 Nested steps defined by H3 (`###`) headers.
-*   **Identifiers**: `### 1` (bare numeric), `### Name` (bare named), `### 1.1` (qualified numeric), or `### Step.Name` (qualified named). Bare forms inherit their parent step from document position — they belong to the H2 step they appear under. Qualified forms explicitly specify their parent.
-*   **Strict H3 rule**: When a step contains any valid substep, all H3 headers within that step must be valid substep identifiers.
-*   **Aggregation**: Parent step outcome is derived from substeps via transitions (`ALL`/`ANY`).
+* **Identifiers**: `### 1` (bare numeric), `### Name` (bare named), `### 1.1` (qualified numeric), or `### Step.Name` (qualified named). Bare forms inherit their parent step from document position — they belong to the H2 step they appear under. Qualified forms explicitly specify their parent.
+* **Strict H3 rule**: When a step contains any valid substep, all H3 headers within that step must be valid substep identifiers.
+* **Aggregation**: Parent step outcome is derived from substeps via transitions (`ALL`/`ANY`).
 
 ### 3.3 Runbook List Shorthand
 
@@ -185,11 +185,11 @@ Steps annotated with `FOR` execute their substeps repeatedly.
     *   `BREAK` → exit loop, go to parent aggregation (current iteration's DEFER'd results included)
     *   `NEXT` → skip to next iteration (or aggregation at end, non-accumulating)
     *   `DEFER`/`CONTINUE` → configured iteration-level transition applies
-*   **Execution model**: Each iteration executes its substeps. Each substep produces a **result** (pass/fail). Substep **handlers** map results to **actions**. Only two actions are loop control: `NEXT` (advance to next iteration) and `BREAK` (exit loop). All other actions (`CONTINUE`, `GOTO`, `STOP`, `COMPLETE`) are general flow control that exit the loop as a side effect.
+* **Execution model**: Each iteration executes its substeps. Each substep produces a **result** (pass/fail). Substep **handlers** map results to **actions**. Only two actions are loop control: `NEXT` (advance to next iteration) and `BREAK` (exit loop). All other actions (`CONTINUE`, `GOTO`, `STOP`, `COMPLETE`) are general flow control that exit the loop as a side effect.
 
 **Iteration execution flow:**
 
-```
+```text
 Substeps execute → each produces RESULT (pass/fail)
                  → substep HANDLER maps RESULT to ACTION
                  → DEFER'd results accumulate within iteration

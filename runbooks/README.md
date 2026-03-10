@@ -38,6 +38,7 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 | `prompts/` | User prompts and input handling |
 | `composition/` | Parent runbooks, agents, and delegation |
 | `delegation/` | Delegate/claim patterns for child runbooks |
+| `stash-pop/` | Stash/pop enforcement control |
 | `variables/` | Template variables, built-ins, and context |
 
 ## Creating New Patterns
@@ -45,7 +46,7 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 1. Choose the appropriate category directory
 2. Use descriptive filename: `feature-variant.runbook.md`
 3. Add scenarios following the naming taxonomy above
-4. Include `result: pass` or `result: fail` in scenario metadata
+4. Include `result: COMPLETE` or `result: STOP` in scenario metadata (or use `expect:` block for step-level assertions)
 
 ## See Also
 

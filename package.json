@@ -41,7 +41,7 @@
     "check:lint:typed": "eslint .",
     "fix:lint:fast": "biome lint --write .",
     "fix:lint:typed": "eslint . --fix",
-    "fix:lint": "npm run lint:fast:fix && npm run lint:typed:fix",
+    "fix:lint": "npm run fix:lint:fast && npm run fix:lint:typed",
     "lint": "npm run check:lint:fast && npm run check:lint:typed",
     "verify": "run-s check:format check:spell check:lint:fast check:lint:typed test",
     "cli": "node packages/cli/dist/cli.js",
@@ -57,6 +57,9 @@
       "biome format --write --no-errors-on-unmatched",
       "biome lint --no-errors-on-unmatched"
     ]
+  },
+  "engines": {
+    "node": ">=20.12.0"
   },
   "overrides": {
     "hono": "^4.12.0",

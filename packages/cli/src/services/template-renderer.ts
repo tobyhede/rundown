@@ -302,10 +302,28 @@ export function collectUnresolvedVariables(text: string): string[] {
 }
 
 /**
+ * Check whether a variable name is a dotted path rooted at a FOR loop variable.
+ *
+ * For example, if `forVars` contains `"item"`, then `"item.name"` returns `true`
+ * but `"item"` alone returns `false` (exact matches are handled by `Set.has`).
+ *
+ * @param name - Unresolved variable name (possibly dotted, e.g. `"item.name"`)
+ * @param forVars - Set of FOR loop variable names to match against
+ * @returns `true` if `name` is a dotted path whose root segment is in `forVars`
+ */
+function isForVariablePath(name: string, forVars: ReadonlySet<string>): boolean {
+  const dotIndex = name.indexOf('.');
+  if (dotIndex === -1) return false;
+  return forVars.has(name.slice(0, dotIndex));
+}
+
+/**
  * Emit warnings for any unresolved template variables in a substituted runbook.
  *
  * Walks the runbook AST collecting all remaining `{{...}}` placeholders,
- * then emits a deduplicated warning per variable to stderr.
+ * then emits a deduplicated warning per variable to stderr. FOR loop variables
+ * (including `Index`/`index`) are only suppressed within their own FOR step's
+ * substeps — they still produce warnings when referenced outside FOR scope.
  *
  * @param runbook - Runbook AST after variable substitution
  */
@@ -316,6 +334,15 @@ export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
     if (!text) return;
     for (const name of collectUnresolvedVariables(text)) {
       unresolved.add(name);
+    }
+  };
+
+  const collectScoped = (text: string | undefined, suppressed: ReadonlySet<string>): void => {
+    if (!text) return;
+    for (const name of collectUnresolvedVariables(text)) {
+      if (!suppressed.has(name) && !isForVariablePath(name, suppressed)) {
+        unresolved.add(name);
+      }
     }
   };
 
@@ -330,20 +357,26 @@ export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
         collect(step.command.code);
         break;
       case 'substeps':
-      case 'for':
         for (const ss of step.substeps) {
           collect(ss.description);
           collect(ss.prompt);
-          if (ss.command) {
-            collect(ss.command.code);
-          }
-          if (ss.runbooks) {
-            for (const rb of ss.runbooks) {
-              collect(rb);
-            }
-          }
+          if (ss.command) collect(ss.command.code);
+          if (ss.runbooks) for (const rb of ss.runbooks) collect(rb);
         }
         break;
+      case 'for': {
+        const forSuppressed = new Set<string>();
+        if (step.forClause.variable) forSuppressed.add(step.forClause.variable);
+        forSuppressed.add('Index');
+        forSuppressed.add('index');
+        for (const ss of step.substeps) {
+          collectScoped(ss.description, forSuppressed);
+          collectScoped(ss.prompt, forSuppressed);
+          if (ss.command) collectScoped(ss.command.code, forSuppressed);
+          if (ss.runbooks) for (const rb of ss.runbooks) collectScoped(rb, forSuppressed);
+        }
+        break;
+      }
     }
   }
 
