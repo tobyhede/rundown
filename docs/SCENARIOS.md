@@ -273,7 +273,7 @@ Numeric-looking values (e.g., `1.1`) should be quoted to prevent YAML 1.2 from p
 
 ```yaml
 expect:
-  result: COMPLETE              # Terminal outcome (required)
+  result: COMPLETE              # Terminal outcome (optional if top-level result: present)
 
   steps:                        # Transition assertions (optional, ordered)
     - at: "1.1"

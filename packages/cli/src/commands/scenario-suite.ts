@@ -124,8 +124,15 @@ async function executeSuiteCase(
             copyFileSync(resolve(base, ref), dest);
             copied = true;
             break;
-          } catch {
-            // try next base
+          } catch (e: unknown) {
+            if (
+              e instanceof Error &&
+              'code' in e &&
+              (e as NodeJS.ErrnoException).code === 'ENOENT'
+            ) {
+              continue; // try next base
+            }
+            throw e; // permission/IO errors propagate immediately
           }
         }
         if (!copied) {

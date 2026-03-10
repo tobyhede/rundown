@@ -2,7 +2,15 @@
   "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [["@rundown-org/parser", "@rundown-org/core", "@rundown-org/cli"]],
+  "fixed": [
+    [
+      "@rundown-org/parser",
+      "@rundown-org/core",
+      "@rundown-org/cli",
+      "@rundown-org/mcp",
+      "@rundown-org/claude-code-plugin"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
