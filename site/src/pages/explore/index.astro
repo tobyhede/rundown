@@ -1,5 +1,6 @@
 ---
 import Layout from '../../layouts/Layout.astro';
+import { getFilesRecursively } from '../../lib/utils';
 import { promises as fs } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 import path from 'node:path';
@@ -7,16 +8,7 @@ import path from 'node:path';
 // Read patterns from runbooks directory
 const patternsDir = path.resolve('..', 'runbooks');
 
-async function getFiles(dir: string): Promise<string[]> {
-  const dirents = await fs.readdir(dir, { withFileTypes: true });
-  const files = await Promise.all(dirents.map((dirent) => {
-    const res = path.join(dir, dirent.name);
-    return dirent.isDirectory() ? getFiles(res) : Promise.resolve([res]);
-  }));
-  return Array.prototype.concat(...files);
-}
-
-const allFiles = await getFiles(patternsDir);
+const allFiles = await getFilesRecursively(patternsDir);
 const runbookFiles = allFiles.filter((f) => f.endsWith('.runbook.md'));
 
 interface PatternMeta {

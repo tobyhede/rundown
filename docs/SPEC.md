@@ -148,7 +148,7 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 
 **GOTO Syntax**:
 *   `GOTO 3`: Jump to Step 3.
-*   `GOTO 3` (FOR step, no AT): Defaults to iteration 1.
+*   `GOTO 3` (FOR step, no AT): Defaults to the loop's start value (e.g., `1` for `FOR 1 TO 10`, `5` for `FOR 5 TO 1`).
 *   `GOTO 3 AT 1`: Jump to Step 3, iteration 1 (if FOR step).
 *   `GOTO 3 AT {{Index}}`: Re-enter Step 3 at current iteration.
 
@@ -171,6 +171,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Direction**: When `start > end`, iteration descends (step −1). When `start <= end`, it ascends (step +1). Single-number shorthand (`FOR N`) always ascends from 1.
 *   **Limits**: Open-ended data source iteration is capped at 10,000 iterations. Numeric bounds are capped at 10,000 at parse time.
 *   **Source references**: `{{ source }}` in FOR clauses is NOT template-expanded. It is a data source identifier resolved at runtime. Template-variable bounds (`{{ Max }}`) ARE expanded before parsing.
+*   **Unresolved bounds**: When a template-variable bound in a FOR clause cannot be resolved (undefined variable), the FOR clause is not parsed and the line is preserved as literal prompt text. This allows an orchestrating agent to handle unresolved FOR bounds manually.
 *   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
 *   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
 *   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.

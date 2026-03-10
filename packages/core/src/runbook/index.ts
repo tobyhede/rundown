@@ -51,4 +51,4 @@ export {
 } from './delegation-token.js';
 export { DelegationLock } from './delegation-lock.js';
 export { DelegationScanService, type TokenScanResult } from './delegation-scan.js';
-export { reconstituteContextVars } from './delegation-context.js';
+export { reconstituteContextVars, MAX_ANCESTOR_DEPTH } from './delegation-context.js';
