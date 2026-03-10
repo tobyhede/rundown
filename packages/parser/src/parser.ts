@@ -304,34 +304,37 @@ export function parseRunbookDocument(
           lang: codeNode.lang?.split(/\s+/)[0],
         };
       } else if (isPromptCodeBlock(fullLang)) {
-        // prompt → rd prompt command (outputs with fences)
+        // prompt or non-executable tagged → rd prompt command (outputs with fences)
         const escaped = escapeForShellSingleQuote(codeNode.value.trim());
         cmd = {
           code: `rd prompt '${escaped}'`,
           lang: 'prompt',
         };
+      } else {
+        // Bare code fence (no info string) — reject as invalid
+        throw new RunbookSyntaxError(
+          `Code block without language tag in Step ${currentStep.name}. ` +
+            `Use a language tag (e.g., \`\`\`bash) or \`\`\`prompt for display-only blocks.`,
+        );
       }
-      // Other code blocks (json, etc.) are ignored - not valid in runbooks
 
-      if (cmd) {
-        if (currentStep.pendingSubstep) {
-          if (currentStep.pendingSubstep.command) {
-            throw new RunbookSyntaxError(
-              `Multiple code blocks per substep not allowed in substep ${currentStep.pendingSubstep.id}`,
-            );
-          }
-          currentStep.pendingSubstep.command = cmd;
-          currentStep.pendingSubstep.hasSeenContent = true;
-        } else {
-          if (currentStep.command) {
-            const stepLabel = currentStep.name;
-            throw new RunbookSyntaxError(
-              `Multiple code blocks per step not allowed in Step ${stepLabel}.`,
-            );
-          }
-          currentStep.command = cmd;
-          currentStep.hasSeenContent = true;
+      if (currentStep.pendingSubstep) {
+        if (currentStep.pendingSubstep.command) {
+          throw new RunbookSyntaxError(
+            `Multiple code blocks per substep not allowed in substep ${currentStep.pendingSubstep.id} (display-only fences like json/yaml count as code blocks)`,
+          );
         }
+        currentStep.pendingSubstep.command = cmd;
+        currentStep.pendingSubstep.hasSeenContent = true;
+      } else {
+        if (currentStep.command) {
+          const stepLabel = currentStep.name;
+          throw new RunbookSyntaxError(
+            `Multiple code blocks per step not allowed in Step ${stepLabel} (display-only fences like json/yaml count as code blocks).`,
+          );
+        }
+        currentStep.command = cmd;
+        currentStep.hasSeenContent = true;
       }
     }
 

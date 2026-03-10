@@ -119,16 +119,39 @@ Please look at this example.
     expect(steps[0].prompt).toBeUndefined(); // No prompt text from prompt blocks
   });
 
-  it('treats other tags as passive prose', () => {
+  it('converts non-executable tagged code blocks to prompt commands', () => {
     const markdown = `## 1. Example
 \`\`\`json
 {"key": "value"}
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    // JSON code blocks are ignored - not valid for execution
-    expect(steps[0].command).toBeUndefined();
-    expect(steps[0].prompt).toBeUndefined();
+    expect(steps[0].command).toEqual({
+      code: 'rd prompt \'{"key": "value"}\'',
+      lang: 'prompt',
+    });
+  });
+
+  it('converts yaml code blocks to prompt commands', () => {
+    const markdown = `## 1. Example
+\`\`\`yaml
+key: value
+\`\`\`
+`;
+    const steps = parseRunbook(markdown);
+    expect(steps[0].command).toEqual({
+      code: "rd prompt 'key: value'",
+      lang: 'prompt',
+    });
+  });
+
+  it('rejects bare code fences (no info string) as invalid', () => {
+    const markdown = `## 1. Example
+\`\`\`
+some content
+\`\`\`
+`;
+    expect(() => parseRunbook(markdown)).toThrow(RunbookSyntaxError);
   });
 
   it('treats prompt code blocks as rd prompt commands', () => {

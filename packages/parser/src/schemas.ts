@@ -121,22 +121,74 @@ export const StepIdSchema = z
  */
 export type StepId = Readonly<z.output<typeof StepIdSchema>>;
 
+// Individual action schemas
+const ContinueActionSchema = z.object({ type: z.literal('CONTINUE') });
+const DeferActionSchema = z.object({ type: z.literal('DEFER') });
+const CompleteActionSchema = z.object({
+  type: z.literal('COMPLETE'),
+  message: z.string().optional(),
+});
+const StopActionSchema = z.object({ type: z.literal('STOP'), message: z.string().optional() });
+const GotoActionSchema = z.object({ type: z.literal('GOTO'), target: StepIdSchema });
+const NextActionSchema = z.object({ type: z.literal('NEXT') });
+const BreakActionSchema = z.object({ type: z.literal('BREAK') });
+
 /**
- * Zod schema for Action (terminal actions only)
+ * Schema for actions that accumulate iteration results into parent aggregation.
+ * Only DEFER passes results upward for aggregate evaluation.
+ */
+export const AccumulatingActionSchema = DeferActionSchema;
+
+/**
+ * Schema for FOR loop flow control actions.
+ * NEXT loops back; BREAK exits the loop. Neither accumulates results.
+ */
+export const LoopControlActionSchema = z.union([NextActionSchema, BreakActionSchema]);
+
+/**
+ * Schema for step-exit actions valid both inside and outside FOR loops.
+ * CONTINUE advances to the next step without accumulating results.
+ */
+export const StepExitActionSchema = ContinueActionSchema;
+
+/**
+ * Schema for terminal actions that bypass aggregation entirely.
+ * STOP, COMPLETE, and GOTO route directly to their targets.
+ */
+export const TerminalActionSchema = z.union([
+  CompleteActionSchema,
+  StopActionSchema,
+  GotoActionSchema,
+]);
+
+/**
+ * Zod schema for Action (all action types).
  *
  * RETRY is now a property on TransitionObject, not an action type.
  */
 export const ActionSchema = z.union([
-  z.object({ type: z.literal('CONTINUE') }),
-  z.object({ type: z.literal('DEFER') }),
-  z.object({ type: z.literal('COMPLETE'), message: z.string().optional() }),
-  z.object({ type: z.literal('STOP'), message: z.string().optional() }),
-  z.object({ type: z.literal('GOTO'), target: StepIdSchema }),
-  z.object({ type: z.literal('NEXT') }),
-  z.object({ type: z.literal('BREAK') }),
+  ContinueActionSchema,
+  DeferActionSchema,
+  CompleteActionSchema,
+  StopActionSchema,
+  GotoActionSchema,
+  NextActionSchema,
+  BreakActionSchema,
 ]);
 
-/** Terminal action type (CONTINUE, STOP, COMPLETE, GOTO, DEFER, NEXT, BREAK) inferred from ActionSchema. */
+/** Action that accumulates iteration results into parent aggregation (DEFER only). */
+export type AccumulatingAction = Readonly<z.output<typeof AccumulatingActionSchema>>;
+
+/** FOR loop flow control action (NEXT or BREAK). */
+export type LoopControlAction = Readonly<z.output<typeof LoopControlActionSchema>>;
+
+/** Step-exit action valid inside and outside FOR loops (CONTINUE only). */
+export type StepExitAction = Readonly<z.output<typeof StepExitActionSchema>>;
+
+/** Terminal action that bypasses aggregation (STOP, COMPLETE, or GOTO). */
+export type TerminalAction = Readonly<z.output<typeof TerminalActionSchema>>;
+
+/** Union of all action types. */
 export type Action = Readonly<z.output<typeof ActionSchema>>;
 
 /**

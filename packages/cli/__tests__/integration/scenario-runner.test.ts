@@ -43,41 +43,45 @@ function getFilesSync(dir: string): string[] {
 /**
  * Load pattern files that have scenarios defined (synchronous for test registration).
  */
-function loadPatternsWithScenariosSync(): { file: string; scenarios: Scenarios }[] {
+function loadPatternsWithScenariosSync(): {
+  withScenarios: { file: string; scenarios: Scenarios }[];
+  allRunbookFiles: string[];
+} {
   const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks', 'patterns');
   let allFiles: string[];
   try {
     allFiles = getFilesSync(patternsDir);
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
+      return { withScenarios: [], allRunbookFiles: [] };
     }
     console.warn(
       `Warning: failed to load patterns: ${err instanceof Error ? err.message : String(err)}`,
     );
-    return [];
+    return { withScenarios: [], allRunbookFiles: [] };
   }
-  const results: { file: string; scenarios: Scenarios }[] = [];
+  const withScenarios: { file: string; scenarios: Scenarios }[] = [];
+  const allRunbookFiles: string[] = [];
 
   for (const filePath of allFiles) {
     if (!filePath.endsWith('.runbook.md')) continue;
+    const relativePath = filePath.substring(patternsDir.length + 1);
+    allRunbookFiles.push(relativePath);
     const content = readFileSync(filePath, 'utf-8');
     const { frontmatter } = extractRawFrontmatter(content);
     if (!frontmatter) continue;
     const { scenarios } = parseScenarios(frontmatter);
     if (scenarios && Object.keys(scenarios).length > 0) {
-      const relativePath = filePath.substring(patternsDir.length + 1);
-      results.push({ file: relativePath, scenarios });
+      withScenarios.push({ file: relativePath, scenarios });
     }
   }
 
-  return results;
+  return { withScenarios, allRunbookFiles };
 }
 
-/**
- * Flatten all scenarios into individual test cases for it.each.
- */
-const allScenarios = loadPatternsWithScenariosSync().flatMap(({ file, scenarios }) =>
+const { withScenarios: patternsWithScenarios, allRunbookFiles } = loadPatternsWithScenariosSync();
+
+const allScenarios = patternsWithScenarios.flatMap(({ file, scenarios }) =>
   Object.entries(scenarios).map(([name, scenario]) => ({ file, name, scenario })),
 );
 
@@ -325,6 +329,12 @@ async function executeScenario(
  * Each scenario runs as its own test for better diagnostics and independent timeouts.
  */
 describe('scenario runner', () => {
+  it('every pattern runbook defines scenarios', () => {
+    const withScenarioFiles = new Set(patternsWithScenarios.map((p) => p.file));
+    const missing = allRunbookFiles.filter((f) => !withScenarioFiles.has(f));
+    expect(missing).toEqual([]);
+  });
+
   if (allScenarios.length === 0) {
     it('has pattern scenarios to run', () => {
       console.warn(

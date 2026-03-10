@@ -1,6 +1,22 @@
-import type { StepId, Action, Transitions } from './schemas.js';
+import type {
+  StepId,
+  Action,
+  AccumulatingAction,
+  LoopControlAction,
+  StepExitAction,
+  TerminalAction,
+  Transitions,
+} from './schemas.js';
 
-export type { StepId, Action, Transitions };
+export type {
+  StepId,
+  Action,
+  AccumulatingAction,
+  LoopControlAction,
+  StepExitAction,
+  TerminalAction,
+  Transitions,
+};
 
 /**
  * Code block command - always executable (bash/sh/shell only)

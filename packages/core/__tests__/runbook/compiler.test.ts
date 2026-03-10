@@ -997,7 +997,12 @@ describe('runbook compiler', () => {
       // Iteration 4: PASS (forIteration=4, 4 < 4? NO, exit loop — FAIL ANY: STOP)
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail', 'pass']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual([
+        'pass',
+        'fail',
+        'pass',
+        'pass',
+      ]);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
@@ -1224,11 +1229,11 @@ describe('runbook compiler', () => {
       expect(topBreak1.iteration).toBe(1);
 
       // Iteration 1: FAIL on substep 1 → BREAK → exit loop
-      // BREAK does not populate deferredResults → vacuous pass → PASS ALL → CONTINUE to step 4
+      // BREAK exits loop and includes current iteration result
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::4');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
-      expect(actor.getSnapshot().context.iterationResults).toEqual([]);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual([]);
     });
 
@@ -1288,7 +1293,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.deferredResults).toEqual([]);
     });
 
-    it('BREAK records the final iteration result before exiting', () => {
+    it('BREAK exits loop and includes current iteration result', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -1352,14 +1357,14 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
       // Iteration 3: PASS (DEFER) → FAIL (BREAK) → exit loop
-      // BREAK does not populate deferredResults; only the DEFER'd pass from substep 1 is present
-      // deferredResults = ['pass'] → computeIterationResult = pass → all iterations pass → CONTINUE
+      // BREAK includes current iteration result — iteration 3's result IS added to iterationResults
+      // Parent aggregation sees ['pass', 'pass', 'pass'] from all 3 iterations → all pass → CONTINUE
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step::1::2');
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
@@ -2142,11 +2147,11 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('step::1::1');
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(3);
 
-      // Iteration 3 (last) — final iteration computed inline
+      // Iteration 3 (last)
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step::2'); // exits
       expect(actor.getSnapshot().context.forStack).toEqual([]);
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
@@ -2458,7 +2463,7 @@ describe('runbook compiler', () => {
 
       // PASS ALL with one failure → aggregation fails → STOP
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.iterationResults).toEqual(['pass', 'fail']);
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'fail', 'pass']);
       expect(snapshot.context.deferredResults).toEqual(['pass']);
     });
 
@@ -2506,7 +2511,7 @@ describe('runbook compiler', () => {
 
       // FAIL ANY with one failure → aggregation fails → STOP
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass', 'pass']);
       expect(snapshot.context.deferredResults).toEqual(['pass']);
     });
 
@@ -2551,7 +2556,7 @@ describe('runbook compiler', () => {
       // Should reach step 2 (PASS ALL with all passes → CONTINUE)
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
-      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(snapshot.context.deferredResults).toEqual(['pass']);
     });
 
@@ -2602,7 +2607,7 @@ describe('runbook compiler', () => {
       // PASS ANY with one pass → aggregation passes → CONTINUE to step 2
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
-      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass', 'fail']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
     });
 
@@ -2658,12 +2663,12 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' });
       actor.send({ type: 'FAIL' });
 
-      // BREAK at iter 3: only substep 1's DEFER'd result is in deferredResults (BREAK doesn't append)
+      // BREAK at iter 3: substep 1's DEFER'd result is in deferredResults
       // deferredResults = ['pass'] → computeIterationResult = pass → all iterations pass
       // PASS ALL: allResults [pass, pass, pass] → passes → CONTINUE to step 2
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
-      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(snapshot.context.deferredResults).toEqual(['pass']);
     });
 
@@ -2767,7 +2772,7 @@ describe('runbook compiler', () => {
       // PASS ANY with zero passes → aggregation fails → STOP
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.iterationResults).toEqual(['fail', 'fail']);
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'fail', 'fail']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
     });
 
@@ -2998,7 +3003,7 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3');
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
-      expect(snapshot.context.iterationResults).toEqual(['pass']);
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'fail']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
       expect(snapshot.context.forStack).toEqual([]);
     });
@@ -3135,7 +3140,7 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3');
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
-      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass', 'fail']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
       expect(snapshot.context.forStack).toEqual([]);
     });
@@ -3204,7 +3209,7 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3');
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
-      expect(snapshot.context.iterationResults).toEqual([]);
+      expect(snapshot.context.iterationResults).toEqual(['pass']);
       expect(snapshot.context.deferredResults).toEqual(['pass']);
       expect(snapshot.context.forStack).toEqual([]);
     });
@@ -3262,11 +3267,11 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(1);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
-      // Iteration 1 (last) → exit loop (final iteration computed inline)
+      // Iteration 1 (last) → exit loop
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
@@ -3524,7 +3529,7 @@ describe('runbook compiler', () => {
       // Iteration 1 (last): PASS → exit → FAIL ANY: STOP
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail', 'pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
@@ -3589,9 +3594,9 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' });
 
       snapshot = actor.getSnapshot();
-      // Should have exited to step 2 (final iteration computed inline)
+      // Should have exited to step 2
       expect(snapshot.value).toBe('step::2');
-      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(snapshot.context.deferredResults).toEqual(['pass', 'pass']);
     });
   });
@@ -4325,7 +4330,7 @@ echo "processing"
 
       actor.send({ type: 'PASS' }); // iteration 2 complete (final) -> PASS ALL -> step 2
       expect(actor.getSnapshot().value).toBe('step::2');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
@@ -4353,7 +4358,7 @@ echo "processing"
       actor.send({ type: 'FAIL' }); // iteration 2 (final) -> FAIL ANY -> GOTO Synthesize
 
       expect(actor.getSnapshot().value).toBe('step::Synthesize');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['fail']);
     });
 
@@ -4781,7 +4786,7 @@ echo "processing"
       actor.send({ type: 'PASS' }); // iteration 3 (final) -> parent -> PASS ALL -> step::2
 
       expect(actor.getSnapshot().value).toBe('step::2');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
 
@@ -5693,11 +5698,10 @@ echo "processing"
 
       // Iteration-level transitions are PASS ALL (aggregation: 'ALL') with DEFER on both pass/fail
       // Iteration 1 failed, but action is DEFER, so loop continues
-      // iterationResults has iteration 1 only (loop-backed); iteration 2 is computed inline
       // Step-level PASS ALL: [fail, pass] aggregates to fail (not all passed) → STOP
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.iterationResults).toEqual(['fail']);
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
       expect(snapshot.context.deferredResults).toEqual(['pass', 'pass']);
     });
 
@@ -5748,10 +5752,10 @@ echo "processing"
       // Iteration 2: FAIL → BREAK triggered at iteration level
       actor.send({ type: 'FAIL' });
 
-      // After BREAK: loop exits, aggregates only 2 iterations with iteration 2 failing
-      // Iteration-level FAIL ANY (fail action is BREAK): iteration 2 failed → BREAK
+      // After BREAK: loop exits. BREAK is non-accumulating — iteration 2's fail
+      // is NOT added to iterationResults. Parent aggregation sees only ['pass'] → passes → CONTINUE → step 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
     });
@@ -5927,11 +5931,10 @@ echo "processing"
       // Iteration-level PASS ANY (aggregation: 'ANY'):
       //   Iteration 1 result = fail (0 passes), action = CONTINUE
       //   Iteration 2 result = pass (1 pass), action = CONTINUE
-      // iterationResults has iteration 1 only (loop-backed); iteration 2 computed inline
       // Step-level PASS ALL (aggregation: 'ALL'): [fail, pass] includes a failure → STOP
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.iterationResults).toEqual(['fail']);
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
       expect(snapshot.context.deferredResults).toEqual(['pass', 'fail']);
     });
 
@@ -5987,9 +5990,10 @@ echo "processing"
       // Retry 2 exhausted: FAIL → BREAK (terminal action)
       actor.send({ type: 'FAIL' });
 
-      // After BREAK: only 1 iteration (the failed one), step-level PASS ALL fails → STOP
+      // After BREAK: BREAK is non-accumulating — no iteration results reach parent.
+      // Parent aggregation sees [] → PASS ALL with no fails → passes → CONTINUE → step 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.value).toBe('step::2');
     });
 
     it('FOR with FAIL ANY: RETRY 1 DEFER retries once then defers', () => {
@@ -6185,11 +6189,11 @@ echo "processing"
   });
 
   describe('substep loop-control bypasses iteration-level retry', () => {
-    it('substep BREAK bypasses iteration-level retry', () => {
+    it('substep BREAK respects iteration-level retry before exiting', () => {
       // FOR with 3 items, 2 substeps: 1.1 DEFER (accumulates), 1.2 BREAK on fail
-      // Iteration FAIL ANY: RETRY 2 BREAK
-      // Iteration 1: 1.1 FAIL (DEFER accumulates 'fail'), 1.2 FAIL (BREAK exits)
-      // Without the fix, iteration-level RETRY 2 would fire; with the fix, BREAK bypasses it.
+      // Iteration FAIL ALL: RETRY 2 BREAK
+      // RETRY is universal — fires for ALL actions including BREAK. After retries
+      // exhausted, BREAK exits the loop.
       const steps = inferSteps([
         {
           name: '1',
@@ -6239,15 +6243,24 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // Iteration 1: substep 1.1 FAIL (DEFER accumulates 'fail'), substep 1.2 FAIL (BREAK)
+      // Attempt 1: substep 1.1 FAIL (DEFER), substep 1.2 FAIL (BREAK) → retry fires
+      actor.send({ type: 'FAIL' });
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(1);
+
+      // Attempt 2 (retry 1): same events → retry fires again
+      actor.send({ type: 'FAIL' });
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(2);
+
+      // Attempt 3 (retry 2): retries exhausted → BREAK exits loop
       actor.send({ type: 'FAIL' });
       actor.send({ type: 'FAIL' });
 
       const snapshot = actor.getSnapshot();
-      // Retry never fired — substep BREAK bypassed iteration-level RETRY 2
-      expect(snapshot.context.iterationRetryCount).toBe(0);
-      // BREAK exits loop → aggregation with deferredResults=[fail] → fail
-      // [fail] → PASS ALL fails → STOP
+      // iterationRetryCount reset to 0 by parent exit assign (intermediate checks proved retry fired)
+      // BREAK exits loop → aggregation: iterationResults=[] + current iter ['fail'] = ['fail']
+      // PASS ALL: fails → STOP
       expect(snapshot.value).toBe('STOPPED');
     });
 
@@ -6310,12 +6323,13 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('step::2');
     });
 
-    it('substep BREAK with iteration retry configured — retry never fires on BREAK', () => {
+    it('substep BREAK with iteration retry — retry fires before BREAK exits', () => {
       // FOR with 2 items, 2 substeps:
       //   1.1 DEFER (accumulates result), 1.2 BREAK on fail (exits loop)
-      // Iteration FAIL ANY: RETRY 2 BREAK
-      // Iteration 1: 1.1 PASS (DEFER accumulates pass), 1.2 PASS (DEFER) → iteration pass → loop back
-      // Iteration 2: 1.1 FAIL (DEFER accumulates fail), 1.2 FAIL (BREAK) → bypasses retry
+      // Iteration FAIL ALL: RETRY 2 BREAK
+      // RETRY is universal — fires for ALL actions including BREAK.
+      // Iteration 1: 1.1 PASS (DEFER), 1.2 PASS (DEFER) → pass → DEFER loops back
+      // Iteration 2: 1.1 FAIL (DEFER), 1.2 FAIL (BREAK) → fail → retry fires
       const steps = inferSteps([
         {
           name: '1',
@@ -6370,18 +6384,26 @@ echo "processing"
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().context.iterationRetryCount).toBe(0);
 
-      // Iteration 2: substep 1.1 FAIL (DEFER accumulates 'fail'), substep 1.2 FAIL (BREAK)
+      // Iteration 2, attempt 1: substep 1.1 FAIL (DEFER), substep 1.2 FAIL (BREAK) → retry fires
+      actor.send({ type: 'FAIL' });
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(1);
+
+      // Iteration 2, attempt 2 (retry 1): FAIL, FAIL → retry fires again
+      actor.send({ type: 'FAIL' });
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().context.iterationRetryCount).toBe(2);
+
+      // Iteration 2, attempt 3 (retry 2): retries exhausted → BREAK exits loop
       actor.send({ type: 'FAIL' });
       actor.send({ type: 'FAIL' });
 
       const snapshot = actor.getSnapshot();
-      // Substep BREAK bypasses iteration-level RETRY 2 — retry never fired
-      expect(snapshot.context.iterationRetryCount).toBe(0);
-      // iterationResults: [pass] (iteration 1 from loop-back)
-      // Current iteration computed from deferredResults=[fail] → fail
+      // iterationRetryCount reset to 0 by parent exit assign (intermediate checks proved retry fired)
+      // iterationResults: [pass, fail] (iteration 1 from loop-back, iteration 2 from BREAK exit)
       // Aggregation: [pass, fail] → PASS ALL fails → STOP
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.iterationResults).toEqual(['pass']);
+      expect(snapshot.context.iterationResults).toEqual(['pass', 'fail']);
     });
   });
 
@@ -6492,7 +6514,7 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('step::2');
     });
 
-    it('CONTINUE at iteration level with failing aggregation routes to STOPPED', () => {
+    it('CONTINUE at iteration level does not accumulate — only DEFER results reach parent', () => {
       const steps = inferSteps([
         {
           name: '1',
@@ -6538,9 +6560,10 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
       // Iteration 2: FAIL → substep DEFER feeds 'fail' → iteration CONTINUE → exits loop
-      // Parent aggregation: ['pass', 'fail'] → PASS ALL → fails → FAIL: STOP → STOPPED
+      // CONTINUE is non-accumulating — iteration 2's fail is NOT added to iterationResults
+      // Parent aggregation sees only ['pass'] from iteration 1 → passes → CONTINUE → step 2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      expect(actor.getSnapshot().value).toBe('step::2');
     });
   });
 
@@ -6975,14 +6998,16 @@ echo "processing"
 
       it.each([
         // [substep action, iter1 event, iter2 event, expected iterationResults, expected final]
-        ['DEFER', 'PASS', 'PASS', ['pass'], 'COMPLETE'],
-        ['DEFER', 'PASS', 'FAIL', ['pass'], 'STOPPED'],
-        ['DEFER', 'FAIL', 'PASS', ['fail'], 'STOPPED'],
-        ['DEFER', 'FAIL', 'FAIL', ['fail'], 'STOPPED'],
-        ['CONTINUE', 'PASS', 'PASS', ['pass'], 'COMPLETE'],
-        ['CONTINUE', 'FAIL', 'PASS', ['pass'], 'COMPLETE'],
-        ['CONTINUE', 'PASS', 'FAIL', ['pass'], 'COMPLETE'],
-        ['CONTINUE', 'FAIL', 'FAIL', ['pass'], 'COMPLETE'],
+        // Every iteration is treated uniformly — all DEFER'd results are in iterationResults.
+        ['DEFER', 'PASS', 'PASS', ['pass', 'pass'], 'COMPLETE'],
+        ['DEFER', 'PASS', 'FAIL', ['pass', 'fail'], 'STOPPED'],
+        ['DEFER', 'FAIL', 'PASS', ['fail', 'pass'], 'STOPPED'],
+        ['DEFER', 'FAIL', 'FAIL', ['fail', 'fail'], 'STOPPED'],
+        // CONTINUE substep: no DEFER → deferredResults empty → vacuous pass per iteration
+        ['CONTINUE', 'PASS', 'PASS', ['pass', 'pass'], 'COMPLETE'],
+        ['CONTINUE', 'FAIL', 'PASS', ['pass', 'pass'], 'COMPLETE'],
+        ['CONTINUE', 'PASS', 'FAIL', ['pass', 'pass'], 'COMPLETE'],
+        ['CONTINUE', 'FAIL', 'FAIL', ['pass', 'pass'], 'COMPLETE'],
       ])('substep %s: iter1=%s iter2=%s → iterationResults=%j, final=%s (PASS ALL, 2 iters)', (action, event1, event2, expectedIterResults, expectedState) => {
         const steps = inferSteps([
           {
@@ -7187,7 +7212,7 @@ echo "processing"
         actor.send({ type: 'PASS' }); // sub2 → CONTINUE (invisible)
         actor.send({ type: 'PASS' }); // sub3 → DEFER feeds 'pass'
         // deferredResults=['pass','pass'] → ALL: pass → iter pass
-        // Parent: iterationResults=['pass'] + inline pass → ALL: pass → COMPLETE
+        // Parent: iterationResults=['pass','pass'] → ALL: pass → COMPLETE
         expect(actor.getSnapshot().value).toBe('COMPLETE');
       });
 
@@ -7320,8 +7345,9 @@ echo "processing"
         actor.send({ type: 'FAIL' }); // sub1 → CONTINUE (invisible)
         actor.send({ type: 'FAIL' }); // sub2 → DEFER feeds 'fail'
         // deferredResults=['fail'] → ALL: fail → iter fail → CONTINUE → exits loop
-        // Parent: iterationResults=['pass','pass'] + inline fail → ALL fails → STOPPED
-        expect(actor.getSnapshot().value).toBe('STOPPED');
+        // CONTINUE is non-accumulating — iter 3's fail is NOT added to iterationResults
+        // Parent: iterationResults=['pass','pass'] → ALL passes → COMPLETE
+        expect(actor.getSnapshot().value).toBe('COMPLETE');
       });
 
       it('S5: 3 substeps CONTINUE+CONTINUE+DEFER — only last feeds results', () => {
@@ -7411,7 +7437,7 @@ echo "processing"
         actor.send({ type: 'FAIL' }); // sub2 → CONTINUE (invisible)
         actor.send({ type: 'PASS' }); // sub3 → DEFER feeds 'pass'
         // deferredResults=['fail','pass'] → ANY: 1 pass → pass → iter pass
-        // Parent: iterationResults=['fail'] + inline pass → ALL fails → STOPPED
+        // Parent: iterationResults=['fail','pass'] → ALL fails → STOPPED
         expect(actor.getSnapshot().value).toBe('STOPPED');
       });
 
@@ -7451,7 +7477,7 @@ echo "processing"
         expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
         // Iter 3: both FAIL → both CONTINUE → deferredResults=[] → ALL vacuous pass
-        // Parent: iterationResults=['pass','pass'] + inline pass → ANY: 3 passes → COMPLETE
+        // Parent: iterationResults=['pass','pass','pass'] → ANY: 3 passes → COMPLETE
         actor.send({ type: 'FAIL' });
         actor.send({ type: 'FAIL' });
         expect(actor.getSnapshot().value).toBe('COMPLETE');
@@ -7499,7 +7525,7 @@ echo "processing"
         actor.send({ type: 'PASS' }); // sub2 → CONTINUE (hidden)
         actor.send({ type: 'PASS' }); // sub3 → CONTINUE (hidden)
         // deferredResults=[] → ALL vacuous pass → iter pass
-        // Parent: iterationResults=['fail'] + inline pass → ALL fails → STOPPED
+        // Parent: iterationResults=['fail','pass'] → ALL fails → STOPPED
         expect(actor.getSnapshot().value).toBe('STOPPED');
       });
 

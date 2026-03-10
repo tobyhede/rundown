@@ -34,7 +34,7 @@ Steps must be identified sequentially or by name.
 | `## 1` | Static | Sequential execution. Must start at 1. |
 | `## Name` | Named | GOTO target only. Skipped by default flow. |
 
-**Reserved Names**: `NEXT`, `CONTINUE`, `COMPLETE`, `STOP`, `GOTO`, `RETRY`, `PASS`, `FAIL`, `YES`, `NO`, `ALL`, `ANY`, `BREAK`, `FOR`, `IN`, `TO`, `AT`.
+**Reserved Names**: `NEXT`, `CONTINUE`, `DEFER`, `COMPLETE`, `STOP`, `GOTO`, `RETRY`, `PASS`, `FAIL`, `YES`, `NO`, `ALL`, `ANY`, `BREAK`, `FOR`, `IN`, `TO`, `AT`.
 
 Reserved word matching is case-sensitive. `NEXT` is reserved; `Next` and `NextStep` are valid.
 
@@ -58,7 +58,8 @@ Executes a command or displays a prompt. Max one code block per step.
 | :--- | :--- | :--- |
 | `bash`, `sh`, `shell` | Executable | Runs in shell. Exit 0 = PASS, else FAIL. |
 | `bash prompt`, `prompt` | Display | Output only. Not executed. |
-| `json`, etc. | Display | Output only. |
+| `json`, `yaml`, etc. | Display | Output only. Treated as prompt. |
+| *(none)* | Invalid | Bare code fences (no info string) are rejected. |
 
 Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
 
@@ -171,15 +172,17 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Limits**: Open-ended data source iteration is capped at 10,000 iterations. Numeric bounds are capped at 10,000 at parse time.
 *   **Source references**: `{{ source }}` in FOR clauses is NOT template-expanded. It is a data source identifier resolved at runtime. Template-variable bounds (`{{ Max }}`) ARE expanded before parsing.
 *   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
-*   **No descending data sources**: Descending windows (`start > end`) are not supported for data sources.
 *   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
 *   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
 *   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.
 *   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause execute per iteration. Allowed actions: `DEFER` (default, loop back with accumulation), `NEXT` (loop back without accumulation), `CONTINUE` (exit loop), `BREAK` (exit loop), `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
 *   **Nested bullet rule**: Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid and fail parse.
-*   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action.
-*   **Exit semantics**: Iteration-level `BREAK` includes the current iteration result in parent aggregation. Iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation and exit directly.
+*   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action. RETRY is universal — it fires for ALL substep actions (including `BREAK` and `NEXT`) based on the iteration result, not the substep action. After retries are exhausted, the substep's action takes effect:
+    *   `BREAK` → exit loop, go to parent aggregation (current iteration's DEFER'd results included)
+    *   `NEXT` → skip to next iteration (or aggregation at end, non-accumulating)
+    *   `DEFER`/`CONTINUE` → configured iteration-level transition applies
+*   **Exit semantics**: Only `DEFER` accumulates the current iteration result into parent aggregation. `BREAK` exits the loop — its iteration's DEFER'd substep results are persisted to iterationResults before exiting. `CONTINUE` exits the loop — its iteration result is not propagated. `NEXT` loops back without accumulation. `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation and exit directly.
 
 ## 6. Templating
 
@@ -222,7 +225,7 @@ scenarios:
 2.  **Sequential IDs**: 1, 2, 3... (gaps invalid).
 3.  **Strict Ordering**: FOR -> Transitions -> Prompt -> Body.
 4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
-5.  **Single Command**: Max one executable block per step.
+5.  **Single Code Block**: Max one code block per step (executable or display-only).
 6.  **Loop Safety**: `NEXT` and `BREAK` are valid in FOR substeps and FOR iteration-level transitions.
 7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.

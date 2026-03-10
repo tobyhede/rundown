@@ -4,7 +4,14 @@ import {
   type ParseConditionalResult,
   type AggregationModifier,
 } from './types.js';
-import type { Action, Transitions } from './schemas.js';
+import type {
+  Action,
+  AccumulatingAction,
+  LoopControlAction,
+  StepExitAction,
+  TerminalAction,
+  Transitions,
+} from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
 import {
   parseStepIdFromString,
@@ -13,6 +20,46 @@ import {
   NAMED_IDENTIFIER_PATTERN,
 } from './step-id.js';
 import type { ForClause } from './ast.js';
+
+/**
+ * Check if an action accumulates results into parent aggregation (DEFER only).
+ *
+ * @param action - The action to check
+ * @returns True if the action is an AccumulatingAction
+ */
+export function isAccumulatingAction(action: Action): action is AccumulatingAction {
+  return action.type === 'DEFER';
+}
+
+/**
+ * Check if an action is a FOR loop flow control action (NEXT or BREAK).
+ *
+ * @param action - The action to check
+ * @returns True if the action is a LoopControlAction
+ */
+export function isLoopControlAction(action: Action): action is LoopControlAction {
+  return action.type === 'NEXT' || action.type === 'BREAK';
+}
+
+/**
+ * Check if an action is a step-exit action (CONTINUE only).
+ *
+ * @param action - The action to check
+ * @returns True if the action is a StepExitAction
+ */
+export function isStepExitAction(action: Action): action is StepExitAction {
+  return action.type === 'CONTINUE';
+}
+
+/**
+ * Check if an action is a terminal action (STOP, COMPLETE, or GOTO).
+ *
+ * @param action - The action to check
+ * @returns True if the action is a TerminalAction
+ */
+export function isTerminalAction(action: Action): action is TerminalAction {
+  return action.type === 'STOP' || action.type === 'COMPLETE' || action.type === 'GOTO';
+}
 
 /**
  * Parse a quoted string or single-word identifier.
@@ -658,7 +705,7 @@ export function validateLoopControlUsage(
 ): void {
   for (const conditional of conditionals) {
     // Check first-class NEXT/BREAK — requires FOR context
-    if (conditional.action.type === 'NEXT' || conditional.action.type === 'BREAK') {
+    if (isLoopControlAction(conditional.action)) {
       if (!isForContext) {
         throw new RunbookSyntaxError(
           `${conditional.action.type} is only valid within substeps of a FOR step`,
@@ -814,9 +861,12 @@ export function isExecutableCodeBlock(lang: string | null | undefined): boolean 
  * Check if a code block language tag indicates a prompt block.
  *
  * Prompt blocks contain text to be displayed or sent to an agent.
+ * Any non-executable tagged code block (json, yaml, typescript, etc.) is
+ * treated as a prompt block. Bare fences (no tag) return null so the
+ * caller can reject them as invalid.
  *
  * @param lang - The code block language tag
- * @returns True if "prompt", false if executable (bash/sh/shell), null for other/unknown types
+ * @returns True if prompt or non-executable tagged, false if executable (bash/sh/shell), null for bare fences (no tag)
  */
 export function isPromptCodeBlock(lang: string | null | undefined): boolean | null {
   if (!lang) return null;
@@ -829,7 +879,7 @@ export function isPromptCodeBlock(lang: string | null | undefined): boolean | nu
     if (parts.length > 1 && parts[1]?.toLowerCase() === 'prompt') return true;
     return false;
   }
-  return null;
+  return true;
 }
 
 /**

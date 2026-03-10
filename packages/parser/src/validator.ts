@@ -1,5 +1,6 @@
 import { StepSchema, ActionSchema } from './schemas.js';
 import type { Step, Action } from './ast.js';
+import { isLoopControlAction, isAccumulatingAction } from './helpers.js';
 
 /**
  * Represents a validation diagnostic found during runbook analysis.
@@ -177,10 +178,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
 
       // Parent FOR step must not use NEXT/BREAK in its own transitions
       if (step.transitions) {
-        if (
-          step.transitions.pass.action.type === 'NEXT' ||
-          step.transitions.pass.action.type === 'BREAK'
-        ) {
+        if (isLoopControlAction(step.transitions.pass.action)) {
           diagnostics.push(
             error(
               step.line,
@@ -188,10 +186,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
             ),
           );
         }
-        if (
-          step.transitions.fail.action.type === 'NEXT' ||
-          step.transitions.fail.action.type === 'BREAK'
-        ) {
+        if (isLoopControlAction(step.transitions.fail.action)) {
           diagnostics.push(
             error(
               step.line,
@@ -247,8 +242,8 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
       if (step.transitions && step.transitions.aggregation !== 'none' && step.kind !== 'for') {
         const allSubstepsExplicitNonDefer = step.substeps.every((sub) => {
           if (!sub.transitions) return false; // no explicit transitions → will auto-DEFER
-          const passIsDefer = sub.transitions.pass.action.type === 'DEFER';
-          const failIsDefer = sub.transitions.fail.action.type === 'DEFER';
+          const passIsDefer = isAccumulatingAction(sub.transitions.pass.action);
+          const failIsDefer = isAccumulatingAction(sub.transitions.fail.action);
           return !passIsDefer && !failIsDefer;
         });
 
@@ -336,7 +331,7 @@ export function validateAction(
   }
 
   // Validate NEXT/BREAK - only valid in substeps of FOR steps
-  if (action.type === 'NEXT' || action.type === 'BREAK') {
+  if (isLoopControlAction(action)) {
     // Must be in a substep (currentSubstepId defined)
     if (!currentSubstepId) {
       diagnostics.push(

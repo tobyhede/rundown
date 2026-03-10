@@ -148,15 +148,16 @@ describe('FOR loop properties', () => {
   });
 
   // Property 4: PASS ANY + at least one pass → parent passes
+  // Iteration-level DEFER accumulates results; CONTINUE would not accumulate.
   it('PASS ANY with at least one pass yields COMPLETE when parent CONTINUE', () => {
     const constrainedConfig = fc.record({
       iterations: fc.integer({ min: 2, max: 5 }),
       numSubsteps: fc.constant(1),
-      substepPassAction: fc.constant<SubstepAction>('CONTINUE'),
-      substepFailAction: fc.constant<SubstepAction>('CONTINUE'),
+      substepPassAction: fc.constant<SubstepAction>('DEFER'),
+      substepFailAction: fc.constant<SubstepAction>('DEFER'),
       substepFailRetry: fc.constant(0),
-      iterationPassAction: fc.constant<IterationAction>('CONTINUE'),
-      iterationFailAction: fc.constant<IterationAction>('CONTINUE'),
+      iterationPassAction: fc.constant<IterationAction>('DEFER'),
+      iterationFailAction: fc.constant<IterationAction>('DEFER'),
       iterationAggMode: fc.constant('ALL' as const), // ALL — iteration aggregation passes each iter individually
       iterationFailRetry: fc.constant(0),
       parentPassAction: fc.constant<ParentAction>('CONTINUE'),

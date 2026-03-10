@@ -347,6 +347,18 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
 - [docs/TEST-RUNBOOK-STANDARD.md](docs/TEST-RUNBOOK-STANDARD.md) - Declarative test runbook standard
 
+## Conceptual Model
+
+Three distinct concepts govern step execution. Never conflate them:
+
+| Concept | Domain | Examples |
+|---------|--------|----------|
+| **RESULT** | Outcome of execution | `pass`, `fail` |
+| **HANDLER** | Configured mapping from result to action | `PASS CONTINUE`, `FAIL DEFER` |
+| **ACTION** | What to do next | `CONTINUE`, `NEXT`, `BREAK`, `DEFER`, `STOP`, `COMPLETE` |
+
+A step produces a **result** (pass/fail). The runbook's **handler** for that result determines the **action** to take. These are separate layers — a result is not an action, and a handler is not a result.
+
 ## Design Principles
 
 **Type-driven dispatch.** Types drive logic everywhere possible. Use discriminated unions and type narrowing to make invalid states unrepresentable. Guards express domain conditions through typed return values, never raw action-type string checks. If logic branches on a string discriminant, that discriminant should be encoded in a purpose-built type that forces callers to narrow before accessing variant-specific fields. `if` statements checking action types in guards are code smells — missing type structure. See [docs/RUNDOWN.md](docs/RUNDOWN.md#design-principles) for state machine specifics.

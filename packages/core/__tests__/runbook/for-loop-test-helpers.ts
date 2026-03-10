@@ -280,7 +280,7 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
     for (let iter = 1; iter <= config.iterations; iter++) {
       // Iteration retry loop
       let iterResult: 'pass' | 'fail' = 'fail';
-      let skipAccumulation = false;
+
       for (let iterRetry = 0; iterRetry <= config.iterationFailRetry; iterRetry++) {
         const deferredResults: ('pass' | 'fail')[] = [];
         let earlyExit: 'BREAK' | 'NEXT' | 'STOP' | 'COMPLETE' | null = null;
@@ -331,50 +331,44 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
           ? 'pass'
           : 'fail';
 
-        // If BREAK at substep level, skip iteration-level retry and exit loop
+        // RETRY is universal — fires for ALL actions (BREAK/NEXT/DEFER/CONTINUE).
+        // Check retry BEFORE applying any action, based on iteration result.
+        if (
+          iterResult === 'fail' &&
+          config.iterationFailRetry > 0 &&
+          iterRetry < config.iterationFailRetry
+        ) {
+          // Retry iteration — continue inner loop (re-run substeps)
+          continue;
+        }
+
+        // Retries exhausted (or no retry configured). Apply substep loop control first.
         if (earlyExit === 'BREAK') {
+          // BREAK exits loop. Current iteration's DEFER'd results are included in aggregation.
           allIterationResults.push(iterResult);
-          // BREAK exits the iteration loop entirely → go to aggregation
           return aggregateParent(config, allIterationResults);
         }
 
-        // If NEXT at substep level, skip iteration-level retry and loop back without accumulation
         if (earlyExit === 'NEXT') {
-          skipAccumulation = true;
-          break; // break out of iteration retry loop, proceed to next iteration
+          // NEXT is non-accumulating — skip current iteration, go to next.
+          break; // break out of retry loop to next iteration
         }
 
-        // Process iteration-level transition
+        // No substep loop control — process configured iteration-level transition
         const iterAction =
           iterResult === 'pass' ? config.iterationPassAction : config.iterationFailAction;
 
         if (iterAction === 'STOP') return 'STOPPED';
         if (iterAction === 'COMPLETE') return 'COMPLETE';
 
-        // Check iteration-level retry (only on fail)
-        if (
-          iterResult === 'fail' &&
-          config.iterationFailRetry > 0 &&
-          iterRetry < config.iterationFailRetry
-        ) {
-          // Retry iteration — continue inner loop
-          continue;
-        }
-
         if (iterAction === 'BREAK') {
-          allIterationResults.push(iterResult);
+          // Configured BREAK is non-accumulating — do NOT add to allIterationResults
           return aggregateParent(config, allIterationResults);
-        }
-
-        // NEXT at iteration level: loop back without accumulation
-        if (iterAction === 'NEXT') {
-          skipAccumulation = true;
-          break; // break out of iteration retry loop, proceed to next iteration
         }
 
         // CONTINUE exits the loop (goes to next step)
         if (iterAction === 'CONTINUE') {
-          allIterationResults.push(iterResult);
+          // CONTINUE is non-accumulating — do NOT add to allIterationResults
           return aggregateParent(config, allIterationResults);
         }
 
@@ -382,15 +376,10 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
         break; // break out of iteration retry loop
       }
 
-      // DEFER accumulates; NEXT (substep or iteration-level) skips accumulation
-      if (!skipAccumulation) {
-        allIterationResults.push(iterResult);
-      }
+      allIterationResults.push(iterResult);
     }
 
     // All iterations complete. Aggregate at parent level.
-    // The last iteration result is computed inline (not in allIterationResults for the compiler,
-    // but our oracle tracks all of them).
     const result = aggregateParentFromAll(config, allIterationResults);
     if (result !== null) return result;
 
@@ -402,10 +391,8 @@ export function predictOutcome(config: ForLoopConfig, events: EventType[]): Orac
 }
 
 /**
- * Aggregate iteration results at the parent level when the loop exits early.
- *
- * Called for BREAK (substep or iteration-level) and CONTINUE. The caller has
- * already pushed the current iteration result into `completedResults`.
+ * Aggregate iteration results at the parent level on loop exit (BREAK, CONTINUE, or substep-level BREAK).
+ * Callers are responsible for including the current iteration's result in completedResults if applicable.
  */
 function aggregateParent(
   config: ForLoopConfig,

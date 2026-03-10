@@ -168,15 +168,29 @@ describe('isPromptCodeBlock', () => {
     });
   });
 
-  describe('passive/other tags (returns null)', () => {
-    it('returns null for json', () => {
-      expect(isPromptCodeBlock('json')).toBeNull();
+  describe('non-executable language tags (returns true)', () => {
+    it('returns true for json', () => {
+      expect(isPromptCodeBlock('json')).toBe(true);
     });
 
-    it('returns null for typescript', () => {
-      expect(isPromptCodeBlock('typescript')).toBeNull();
+    it('returns true for typescript', () => {
+      expect(isPromptCodeBlock('typescript')).toBe(true);
     });
 
+    it('returns true for yaml', () => {
+      expect(isPromptCodeBlock('yaml')).toBe(true);
+    });
+
+    it('returns true for python', () => {
+      expect(isPromptCodeBlock('python')).toBe(true);
+    });
+
+    it('returns true for unknown language', () => {
+      expect(isPromptCodeBlock('foobar')).toBe(true);
+    });
+  });
+
+  describe('bare code fences (returns null)', () => {
     it('returns null for empty string', () => {
       expect(isPromptCodeBlock('')).toBeNull();
     });
@@ -1337,6 +1351,53 @@ describe('parseStepIdFromString with AT syntax', () => {
 
   it('parses AT with leading whitespace only in template', () => {
     expect(parseStepIdFromString('3 AT {{ Index}}')).toEqual({ step: '3', at: '{{ Index}}' });
+  });
+});
+
+describe('parseStepIdFromString with three-level positions', () => {
+  it('parses 1.2.1 as step=1, substep=1, at=2', () => {
+    expect(parseStepIdFromString('1.2.1')).toEqual({ step: '1', substep: '1', at: 2 });
+  });
+
+  it('parses 1.3.2 as step=1, substep=2, at=3', () => {
+    expect(parseStepIdFromString('1.3.2')).toEqual({ step: '1', substep: '2', at: 3 });
+  });
+
+  it('parses 3.1.1 as step=3, substep=1, at=1', () => {
+    expect(parseStepIdFromString('3.1.1')).toEqual({ step: '3', substep: '1', at: 1 });
+  });
+
+  it('parses 1.2.Cleanup as step=1, substep=Cleanup, at=2', () => {
+    expect(parseStepIdFromString('1.2.Cleanup')).toEqual({ step: '1', substep: 'Cleanup', at: 2 });
+  });
+
+  describe('validation', () => {
+    it('rejects step 0', () => {
+      expect(parseStepIdFromString('0.1.1')).toBeNull();
+    });
+
+    it('rejects iteration 0', () => {
+      expect(parseStepIdFromString('1.0.1')).toBeNull();
+    });
+
+    it('rejects substep 0', () => {
+      expect(parseStepIdFromString('1.2.0')).toBeNull();
+    });
+
+    it('rejects reserved word as substep', () => {
+      expect(parseStepIdFromString('1.2.CONTINUE')).toBeNull();
+    });
+
+    it('rejects contradictory AT suffix', () => {
+      expect(parseStepIdFromString('1.2.1 AT 3')).toBeNull();
+    });
+  });
+
+  describe('requireSeparator option', () => {
+    it('parses 1.2.1 with separator when followed by space', () => {
+      const result = parseStepIdFromString('1.2.1 Desc', { requireSeparator: true });
+      expect(result).toEqual({ step: '1', substep: '1', at: 2 });
+    });
   });
 });
 

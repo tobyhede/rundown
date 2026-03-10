@@ -37,12 +37,11 @@ function findRunbooks(dir: string): string[] {
 describe('Built-in Runbook Validation', () => {
   const runbooks = findRunbooks(runbooksDir);
 
-  if (runbooks.length === 0) {
-    it.skip('no runbooks found in runbooks/ directory', () => {
-      expect(true).toBe(true);
-    });
-    return;
-  }
+  it('runbooks directory is not empty', () => {
+    expect(runbooks.length).toBeGreaterThan(0);
+  });
+
+  if (runbooks.length === 0) return;
 
   // Use relative paths for cleaner test names
   const runbookEntries = runbooks.map((p) => [relative(projectRoot, p), p] as const);
