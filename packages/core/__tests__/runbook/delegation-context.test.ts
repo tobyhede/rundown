@@ -1,5 +1,8 @@
 import { describe, it, expect } from '@jest/globals';
-import { reconstituteContextVars } from '../../src/runbook/delegation-context.js';
+import {
+  reconstituteContextVars,
+  MAX_ANCESTOR_DEPTH,
+} from '../../src/runbook/delegation-context.js';
 import type { ContextSnapshot, AncestorSnapshot } from '../../src/runbook/types.js';
 
 describe('reconstituteContextVars', () => {
@@ -199,6 +202,49 @@ describe('reconstituteContextVars', () => {
     expect(result['context.ancestors.1.substep']).toBeUndefined();
     expect(result['context.parent.parent.step']).toBe('5');
     expect(result['context.parent.parent.substep']).toBeUndefined();
+  });
+
+  it('throws when ancestor chain exceeds MAX_ANCESTOR_DEPTH', () => {
+    const ancestors: AncestorSnapshot[] = [];
+    for (let i = 0; i < MAX_ANCESTOR_DEPTH + 1; i++) {
+      ancestors.push({
+        runId: `run-${String(i)}`,
+        runbook: `runbook-${String(i)}.md`,
+        step: String(i + 1),
+        substep: null,
+        vars: {},
+      });
+    }
+
+    const snapshot: ContextSnapshot = {
+      vars: {},
+      ancestors,
+    };
+
+    expect(() => reconstituteContextVars(snapshot)).toThrow(
+      `Parent context chain depth (${String(MAX_ANCESTOR_DEPTH + 1)}) exceeds maximum of ${String(MAX_ANCESTOR_DEPTH)} levels`,
+    );
+  });
+
+  it('accepts ancestor chain at exactly MAX_ANCESTOR_DEPTH', () => {
+    const ancestors: AncestorSnapshot[] = [];
+    for (let i = 0; i < MAX_ANCESTOR_DEPTH; i++) {
+      ancestors.push({
+        runId: `run-${String(i)}`,
+        runbook: `runbook-${String(i)}.md`,
+        step: String(i + 1),
+        substep: null,
+        vars: {},
+      });
+    }
+
+    const snapshot: ContextSnapshot = {
+      vars: {},
+      ancestors,
+    };
+
+    // Should not throw
+    expect(() => reconstituteContextVars(snapshot)).not.toThrow();
   });
 
   it('handles snapshot with large number of ancestors (depth limit)', () => {

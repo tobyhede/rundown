@@ -1,5 +1,8 @@
 import type { ContextSnapshot } from './types.js';
 
+/** Maximum depth for parent context chain addressing. */
+export const MAX_ANCESTOR_DEPTH = 32;
+
 /**
  * Reconstitute inherited context variables from a frozen delegation snapshot.
  *
@@ -19,6 +22,12 @@ import type { ContextSnapshot } from './types.js';
  * @returns Variable map keyed by `context.parent.vars.*`, `context.ancestors.N.*`, etc.
  */
 export function reconstituteContextVars(snapshot: ContextSnapshot): Record<string, string> {
+  if (snapshot.ancestors.length > MAX_ANCESTOR_DEPTH) {
+    throw new Error(
+      `Parent context chain depth (${String(snapshot.ancestors.length)}) exceeds maximum of ${String(MAX_ANCESTOR_DEPTH)} levels`,
+    );
+  }
+
   const result: Record<string, string> = {};
 
   // Parent structural fields: step, substep, at, index
