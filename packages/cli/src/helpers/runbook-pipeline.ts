@@ -203,8 +203,9 @@ function buildContextVars(vars: Readonly<Record<string, string>>): Record<string
  * @param file - Runbook file path or name
  * @param varOpts - Variable options from CLI flags
  * @param cwd - Current working directory
- * @param options - Optional settings including inherited context variables from parent runbook
+ * @param options - Optional settings including inherited variables from parent runbook
  * @param options.inheritedContextVars - Context variables inherited from a parent delegation
+ * @param options.inheritedUserVars - User variables inherited from a parent delegation
  * @returns PreparedRunbook or error result
  * @throws {Error} On unexpected errors during variable resolution or parsing
  */

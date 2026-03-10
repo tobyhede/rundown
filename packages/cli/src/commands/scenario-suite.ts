@@ -117,7 +117,7 @@ async function executeSuiteCase(
         validateRelativePath(ref);
         const dest = join(runbooksDir, ref);
         mkdirSync(dirname(dest), { recursive: true });
-        // Try main runbook's directory first (bare filenames), then suite directory (paths with subdirs)
+        // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
         let copied = false;
         for (const base of [mainRunbookSourceDir, suiteDir]) {
           try {
