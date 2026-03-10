@@ -153,6 +153,8 @@ where frontmatter is:
 
 Additional fields beyond those listed are preserved in the parsed frontmatter (open schema). This allows forward-compatible extensions and user-defined metadata.
 
+Note: The frontmatter `description` field is used for runbook discovery and listing (e.g., `rd ls --all`). The Runbook's structural `description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
+
 where slug is:
   [a-zA-Z0-9_-]+
   (alphanumeric with underscores and hyphens)
@@ -167,6 +169,8 @@ where tag is:
 where vars_map is:
   variable_name ":" value { variable_name ":" value }
   (YAML mapping of variable names to string, number, or boolean values)
+
+Note: Frontmatter `vars` are not included in the parsed Runbook AST. They are consumed by the CLI template rendering pipeline.
 
 ---
 
@@ -264,6 +268,8 @@ Canonical runtime targeting is `step + substep + iteration`.
 | `RETRY`          | `RETRY 1 STOP` |
 | `RETRY n`        | `RETRY n STOP` |
 | `RETRY n action` | `RETRY n action` |
+
+The fallback action cannot be RETRY (nested RETRY is invalid).
 
 ### GOTO AT Defaults
 
