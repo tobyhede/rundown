@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Copy bundled runbooks from monorepo to dist directory.
- * Flattens the category structure for simpler resolution.
+ * Preserves the category directory structure for path-based resolution.
  * Detects filename collisions to prevent silent overwrites.
  */
 import { cpSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
@@ -36,18 +36,20 @@ function copyRunbooks(dir) {
     if (entry.isDirectory()) {
       copyRunbooks(srcPath);
     } else if (entry.name.endsWith('.runbook.md')) {
-      const destPath = join(destDir, entry.name);
+      const relPath = srcPath.slice(sourceDir.length + 1);
+      const destPath = join(destDir, relPath);
 
       // Check for collision
-      if (seen.has(entry.name)) {
+      if (seen.has(relPath)) {
         throw new Error(
-          `Duplicate runbook filename "${entry.name}":\n` +
-            `  - ${seen.get(entry.name)}\n` +
+          `Duplicate runbook path "${relPath}":\n` +
+            `  - ${seen.get(relPath)}\n` +
             `  - ${srcPath}`,
         );
       }
-      seen.set(entry.name, srcPath);
+      seen.set(relPath, srcPath);
 
+      mkdirSync(dirname(destPath), { recursive: true });
       cpSync(srcPath, destPath);
       count++;
     }
