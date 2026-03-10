@@ -187,7 +187,7 @@ GitHub Actions runs on all pull requests and pushes to `main`:
 
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
-| `ci.yml` | PRs and pushes to main | Builds, lints, and tests across Node.js 20 and 22 |
+| `ci.yml` | PRs and pushes to main | PRs run on Node.js 22; pushes to `main` and manual dispatch run on Node.js 20 and 22 |
 | `mutation.yml` | Manual dispatch or weekly schedule | Runs Stryker mutation testing per package |
 | `release.yml` | Pushes to main | Handles npm publishing via Changesets |
 

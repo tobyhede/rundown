@@ -36,7 +36,7 @@ scenario =
     [ "tags:" tag_list ]
 
 expect_block =
-  "result:" ( "COMPLETE" | "STOP" )
+  [ "result:" ( "COMPLETE" | "STOP" ) ]
   [ "steps:" step_assertion { step_assertion } ]
 
 step_assertion =
