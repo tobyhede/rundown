@@ -20,6 +20,7 @@ export const MAX_ANCESTOR_DEPTH = 32;
  *
  * @param snapshot - The frozen context snapshot from delegation metadata
  * @returns Variable map keyed by `context.parent.vars.*`, `context.ancestors.N.*`, etc.
+ * @throws {Error} When the ancestor chain exceeds {@link MAX_ANCESTOR_DEPTH} levels
  */
 export function reconstituteContextVars(snapshot: ContextSnapshot): Record<string, string> {
   if (snapshot.ancestors.length > MAX_ANCESTOR_DEPTH) {
