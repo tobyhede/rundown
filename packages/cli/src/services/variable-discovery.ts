@@ -571,7 +571,7 @@ async function enforceFileSourcePolicy(
  * Resolve variables into dual maps: string vars for templates + data sources for FOR loops.
  *
  * Processes variable layers in precedence order (lowest to highest):
- * 1. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath, RunId, ContextId)
+ * 1. Built-in defaults (Date, DateTime, Year, Month, Day, Branch, WorkPath, RunId, ContextId)
  * 1b. Inherited vars from parent delegation (overrides builtins)
  * 2. Frontmatter vars
  * 3. Auto-discovered .rundown/config.yaml

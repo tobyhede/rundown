@@ -113,11 +113,14 @@ describe('getBuiltinVariables', () => {
   });
 
   it('should include sanitized branch in WorkPath when in git repo', () => {
-    // We're running in a git repo, so WorkPath should include the branch
-    const builtins = getBuiltinVariables();
+    setExecFileSyncImpl((() => 'feature/my-branch\n') as typeof nodeExecFileSync);
 
-    if (builtins.Branch) {
-      expect(builtins.WorkPath).toMatch(/^\.work\/.+/);
+    try {
+      const builtins = getBuiltinVariables();
+      expect(builtins.WorkPath).toBe('.work/feature-my-branch');
+      expect(builtins.Branch).toBe('feature/my-branch');
+    } finally {
+      setExecFileSyncImpl(nodeExecFileSync);
     }
   });
 
@@ -125,6 +128,18 @@ describe('getBuiltinVariables', () => {
     setExecFileSyncImpl((() => {
       throw new Error('not a git repo');
     }) as typeof nodeExecFileSync);
+
+    try {
+      const builtins = getBuiltinVariables();
+      expect(builtins.WorkPath).toBe('.work');
+      expect(builtins.Branch).toBe('');
+    } finally {
+      setExecFileSyncImpl(nodeExecFileSync);
+    }
+  });
+
+  it('should fall back to .work on detached HEAD', () => {
+    setExecFileSyncImpl((() => 'HEAD\n') as typeof nodeExecFileSync);
 
     try {
       const builtins = getBuiltinVariables();
@@ -817,6 +832,10 @@ describe('resolveVariables', () => {
 });
 
 describe('sanitizeBranchName', () => {
+  it('should return empty string for empty input', () => {
+    expect(sanitizeBranchName('')).toBe('');
+  });
+
   it('should pass through simple names unchanged', () => {
     expect(sanitizeBranchName('main')).toBe('main');
     expect(sanitizeBranchName('develop')).toBe('develop');
