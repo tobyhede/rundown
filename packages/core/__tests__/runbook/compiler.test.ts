@@ -7730,6 +7730,7 @@ echo "processing"
         actor.send({ type: 'FAIL' });
         expect(actor.getSnapshot().context.deferredResults).toEqual([]);
         // BREAK is non-accumulating — iterationResults stays ['pass'] (from iteration 1)
+        expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
         // PASS ALL with ['pass'] → all pass → COMPLETE
         expect(actor.getSnapshot().value).toBe('COMPLETE');
       });
