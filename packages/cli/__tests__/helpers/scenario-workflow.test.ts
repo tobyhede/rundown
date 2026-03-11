@@ -34,10 +34,12 @@ jest.unstable_mockModule('shell-quote', () => ({
   parse: jest.fn().mockImplementation((str: string) => str.split(/\s+/)),
 }));
 
-// Mock command-sequence
+// Mock command-sequence (pass through extractRunbookReferences so extractReferencedRunbooks works)
+const actualCommandSequence = await import('../../src/helpers/command-sequence');
 jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   executeCommandSequence: jest.fn(),
   matchStepAssertions: jest.fn(),
+  extractRunbookReferences: actualCommandSequence.extractRunbookReferences,
 }));
 
 // Import after mocking
@@ -301,6 +303,42 @@ describe('extractReferencedRunbooks', () => {
     };
 
     expect(extractReferencedRunbooks(scenario)).toEqual([]);
+  });
+
+  it('strips double quotes from runbook filenames', () => {
+    const scenario: any = {
+      result: 'COMPLETE',
+      commands: ['rd run --prompted "child.runbook.md"'],
+    };
+
+    expect(extractReferencedRunbooks(scenario)).toEqual(['child.runbook.md']);
+  });
+
+  it('strips single quotes from runbook filenames', () => {
+    const scenario: any = {
+      result: 'COMPLETE',
+      commands: ["rd run --prompted 'child.runbook.md'"],
+    };
+
+    expect(extractReferencedRunbooks(scenario)).toEqual(['child.runbook.md']);
+  });
+
+  it('extracts paths with slashes', () => {
+    const scenario: any = {
+      result: 'COMPLETE',
+      commands: ['rd delegate delegation/child.runbook.md --step 1'],
+    };
+
+    expect(extractReferencedRunbooks(scenario)).toEqual(['delegation/child.runbook.md']);
+  });
+
+  it('extracts filenames with hyphens', () => {
+    const scenario: any = {
+      result: 'COMPLETE',
+      commands: ['rd run my-cool-thing.runbook.md'],
+    };
+
+    expect(extractReferencedRunbooks(scenario)).toEqual(['my-cool-thing.runbook.md']);
   });
 });
 
