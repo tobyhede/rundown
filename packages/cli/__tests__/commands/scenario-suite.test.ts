@@ -345,6 +345,31 @@ cases:
       expect(failedCase.actual).toContain('CHILD_RUNBOOK_NOT_FOUND');
     }, 30000);
 
+    it('reports child runbook error with ERROR prefix in single-case --json mode', async () => {
+      const suiteWithChild = `version: 1
+name: Child Test Single
+cases:
+  needs-child:
+    file: suite-test.runbook.md
+    commands:
+      - rd run --prompted suite-test.runbook.md
+      - rd delegate nonexistent-child.runbook.md --step 1
+    result: COMPLETE
+`;
+      await writeFile(join(workspace.cwd, 'child-single.scenario-suite.yaml'), suiteWithChild);
+
+      const result = await runCliInProcess(
+        'scenario-suite run child-single.scenario-suite.yaml needs-child --json',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(false);
+      expect(parsed.actual).toContain('ERROR:');
+      expect(parsed.actual).toContain('CHILD_RUNBOOK_NOT_FOUND');
+    }, 30000);
+
     it('errors for invalid suite file', async () => {
       await writeFile(join(workspace.cwd, 'bad.scenario-suite.yaml'), 'not: valid\n');
 

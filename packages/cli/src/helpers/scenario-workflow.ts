@@ -214,7 +214,19 @@ export async function executeScenario(
     const sourceDir = dirname(filePath);
     for (const ref of referenced) {
       if (ref !== runbookFilename) {
-        copyFileSync(join(sourceDir, ref), join(runbooksDir, ref));
+        try {
+          copyFileSync(join(sourceDir, ref), join(runbooksDir, ref));
+        } catch (err: unknown) {
+          if (
+            typeof err === 'object' &&
+            err !== null &&
+            'code' in err &&
+            (err as { code: unknown }).code === 'ENOENT'
+          ) {
+            throw new Error(`Referenced runbook not found: ${ref} (searched in: ${sourceDir})`);
+          }
+          throw err;
+        }
       }
     }
 

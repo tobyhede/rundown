@@ -405,7 +405,21 @@ export function registerScenarioSuiteCommand(program: Command): void {
             }
 
             const c = result.suite.cases[caseName];
-            const caseResult = await executeSuiteCase(caseName, c, suiteDir, runQuiet, output);
+            let caseResult: Awaited<ReturnType<typeof executeSuiteCase>>;
+            try {
+              caseResult = await executeSuiteCase(caseName, c, suiteDir, runQuiet, output);
+            } catch (err: unknown) {
+              const msg =
+                typeof err === 'object' && err !== null && 'message' in err
+                  ? String((err as { message: unknown }).message)
+                  : String(err);
+              caseResult = {
+                passed: false,
+                scenario: caseName,
+                expected: getEffectiveResult(c),
+                actual: `ERROR: ${msg}`,
+              };
+            }
 
             const detailData: Record<string, unknown> = {
               result: caseResult.passed,

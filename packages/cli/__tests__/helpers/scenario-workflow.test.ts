@@ -47,6 +47,7 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook')
 const { extractRawFrontmatter } = await import('../../src/helpers/extract-raw-frontmatter');
 const { parseScenarios } = await import('../../src/schemas/scenarios');
 const { readFile, rm } = await import('node:fs/promises');
+const { copyFileSync } = await import('node:fs');
 const { executeCommandSequence, matchStepAssertions } = await import(
   '../../src/helpers/command-sequence'
 );
@@ -503,5 +504,27 @@ describe('executeScenario', () => {
       recursive: true,
       force: true,
     });
+  });
+
+  it('throws informative error when referenced child runbook is missing', async () => {
+    const enoentError = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    jest.mocked(copyFileSync).mockImplementation((src: any) => {
+      // Succeed for main runbook, throw ENOENT for child
+      if (String(src).includes('child.runbook.md')) {
+        throw enoentError;
+      }
+    });
+
+    const loaded = makeLoadedRunbook({
+      commands: ['rd run my.runbook.md', 'rd delegate child.runbook.md --step 1'],
+    });
+
+    await expect(
+      executeScenario(loaded as any, 'happy', true, mockOutput, '/cli/dist/cli.js'),
+    ).rejects.toThrow(/Referenced runbook not found: child\.runbook\.md/);
+
+    await expect(
+      executeScenario(loaded as any, 'happy', true, mockOutput, '/cli/dist/cli.js'),
+    ).rejects.toThrow(/searched in:/);
   });
 });

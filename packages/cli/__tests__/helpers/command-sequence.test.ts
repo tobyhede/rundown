@@ -5,6 +5,7 @@ import {
   formatStepAssertionDescription,
   substituteTokens,
   injectJsonFlag,
+  extractRunbookReferences,
 } from '../../src/helpers/command-sequence.js';
 
 describe('parseJsonLines', () => {
@@ -279,5 +280,22 @@ describe('substituteTokens', () => {
 
   it('returns original string unchanged when no placeholders', () => {
     expect(substituteTokens('rd pass', [])).toBe('rd pass');
+  });
+});
+
+describe('extractRunbookReferences', () => {
+  it('extracts dot-prefixed relative path ./child.runbook.md', () => {
+    const refs = extractRunbookReferences(['rd delegate ./child.runbook.md --step 1']);
+    expect(refs).toContain('./child.runbook.md');
+  });
+
+  it('extracts dot-prefixed nested path ./path/to/child.runbook.md', () => {
+    const refs = extractRunbookReferences(['rd run ./path/to/child.runbook.md']);
+    expect(refs).toContain('./path/to/child.runbook.md');
+  });
+
+  it('still extracts bare filename (regression)', () => {
+    const refs = extractRunbookReferences(['rd run child.runbook.md']);
+    expect(refs).toContain('child.runbook.md');
   });
 });
