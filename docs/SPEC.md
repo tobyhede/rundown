@@ -127,7 +127,7 @@ Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` 
 **Defaults**:
 *   If only `PASS` defined: `FAIL` -> `STOP`.
 *   If only `FAIL` defined: `PASS` -> `CONTINUE`.
-*   If neither is defined: `PASS: CONTINUE`, `FAIL: STOP`.
+*   If neither is defined: `PASS CONTINUE`, `FAIL STOP`.
 
 When only one transition side specifies an aggregation modifier, the defaulted side receives its complement (`PASS ALL` defaults `FAIL ANY`, and vice versa).
 
@@ -144,7 +144,7 @@ When only one transition side specifies an aggregation modifier, the defaulted s
 | `NEXT` | FOR Substep, FOR Iteration-Level | Skip to next iteration (no result accumulation). |
 | `BREAK` | FOR Substep, FOR Iteration-Level | Exit loop immediately. |
 
-> **Shorthand:** A standalone `- DEFER` bullet (without PASS/FAIL prefix) expands to `- PASS: DEFER` + `- FAIL: DEFER`. This is convenient for substeps where both outcomes should propagate to parent aggregation. DEFER is not valid at step level.
+> **Shorthand:** A standalone `- DEFER` bullet (without PASS/FAIL prefix) expands to `- PASS DEFER` + `- FAIL DEFER`. This is convenient for substeps where both outcomes should propagate to parent aggregation. DEFER is not valid at step level.
 
 GOTO targeting the containing step (self-reference) without an AT qualifier may create an infinite loop. Use RETRY for bounded re-execution.
 
@@ -182,7 +182,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause execute per iteration. Allowed actions: `DEFER` (default, loop back with accumulation), `NEXT` (loop back without accumulation), `CONTINUE` (exit loop), `BREAK` (exit loop), `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
 *   **Nested bullet rule**: Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid and fail parse.
 *   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action. RETRY is universal — it fires for ALL substep actions (including `BREAK` and `NEXT`) based on the iteration result, not the substep action. After retries are exhausted, the substep's action takes effect:
-    *   `BREAK` → exit loop, go to parent aggregation (current iteration's DEFER'd results included)
+    *   `BREAK` → exit loop (non-accumulating, same as NEXT)
     *   `NEXT` → skip to next iteration (or aggregation at end, non-accumulating)
     *   `DEFER`/`CONTINUE` → configured iteration-level transition applies
 * **Execution model**: Each iteration executes its substeps. Each substep produces a **result** (pass/fail). Substep **handlers** map results to **actions**. Only two actions are loop control: `NEXT` (advance to next iteration) and `BREAK` (exit loop). All other actions (`CONTINUE`, `GOTO`, `STOP`, `COMPLETE`) are general flow control that exit the loop as a side effect.
@@ -198,7 +198,7 @@ Substeps execute → each produces RESULT (pass/fail)
 
     DEFER     → record iteration result, advance to next iteration
     NEXT      → advance to next iteration (do NOT record result)
-    BREAK     → record iteration result, exit loop → step-level HANDLER
+    BREAK     → exit loop (do NOT record result) → step-level HANDLER
     CONTINUE  → exit loop → step-level HANDLER (current iteration result NOT recorded)
     GOTO/STOP/COMPLETE → exit loop, bypass step-level HANDLER entirely
 ```
@@ -209,7 +209,7 @@ Substeps execute → each produces RESULT (pass/fail)
 | :--- | :--- | :--- | :--- |
 | `DEFER` | No (accumulate + loop back) | Yes | After final iteration |
 | `NEXT` | Yes (skip + loop back) | No | After final iteration |
-| `BREAK` | Yes (exit) | Yes | Yes |
+| `BREAK` | Yes (exit) | No | Yes |
 | `CONTINUE` | No (flow control) | No | Yes |
 | `GOTO` | No (flow control) | No | No (bypassed) |
 | `STOP` | No (flow control) | No | No (bypassed) |

@@ -7,6 +7,7 @@ import {
 import type {
   Action,
   AccumulatingAction,
+  BreakAction,
   LoopControlAction,
   StepExitAction,
   TerminalAction,
@@ -59,6 +60,16 @@ export function isStepExitAction(action: Action): action is StepExitAction {
  */
 export function isTerminalAction(action: Action): action is TerminalAction {
   return action.type === 'STOP' || action.type === 'COMPLETE' || action.type === 'GOTO';
+}
+
+/**
+ * Check if an action is a BREAK action (exits FOR loop without accumulation).
+ *
+ * @param action - The action to check
+ * @returns True if the action is a BreakAction
+ */
+export function isBreakAction(action: Action): action is BreakAction {
+  return action.type === 'BREAK';
 }
 
 /**

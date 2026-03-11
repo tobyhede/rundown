@@ -55,6 +55,9 @@ export type { StepExitAction } from '@rundown-org/parser';
 /** Terminal action that bypasses aggregation (STOP, COMPLETE, or GOTO). */
 export type { TerminalAction } from '@rundown-org/parser';
 
+/** FOR loop BREAK action — exits the loop without accumulation. */
+export type { BreakAction } from '@rundown-org/parser';
+
 /**
  * Step transition configuration for pass/fail outcomes.
  *

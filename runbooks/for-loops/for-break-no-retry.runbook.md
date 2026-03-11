@@ -1,6 +1,6 @@
 ---
 name: for-break-no-retry
-description: Substep BREAK with no retry configured — BREAK exits immediately
+description: Substep BREAK with no retry configured — BREAK exits immediately (non-accumulating)
 scenarios:
   break-immediate:
     commands:
@@ -8,12 +8,14 @@ scenarios:
       # Iter 1: sub1 FAIL (DEFER feeds 'fail'), sub2 FAIL (BREAK exits loop)
       - rd fail
       - rd fail
-    result: STOP
+      # BREAK is non-accumulating → iterationResults=[] → vacuous pass → CONTINUE → step 2
+      - rd pass
+    result: COMPLETE
 ---
 # BREAK Without Retry
 
 BREAK exits the loop immediately when no iteration-level retry is configured.
-Current iteration's DEFER'd results are included in parent aggregation.
+BREAK is non-accumulating — the current iteration's result is not added to parent aggregation.
 
 ## 1. Process items
 - FOR i IN 1 TO 3

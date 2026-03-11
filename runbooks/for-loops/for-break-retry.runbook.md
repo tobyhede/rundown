@@ -1,6 +1,6 @@
 ---
 name: for-break-retry
-description: Substep BREAK + iteration RETRY — retry fires, then BREAK exits
+description: Substep BREAK + iteration RETRY — retry fires, then BREAK exits (non-accumulating)
 scenarios:
   break-after-retry:
     commands:
@@ -11,7 +11,9 @@ scenarios:
       # Attempt 2 (retry): sub1 FAIL, sub2 FAIL (BREAK) → retries exhausted, BREAK exits
       - rd fail
       - rd fail
-    result: STOP
+      # BREAK is non-accumulating → iterationResults=[] → vacuous pass → CONTINUE → step 2
+      - rd pass
+    result: COMPLETE
 ---
 # BREAK + Iteration RETRY
 
