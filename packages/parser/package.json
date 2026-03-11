@@ -36,7 +36,7 @@
     "directory": "packages/parser"
   },
   "engines": {
-    "node": ">=20.12.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "gray-matter": "^4.0.3",
