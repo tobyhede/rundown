@@ -205,7 +205,7 @@ export function runFromSteps(steps: Step[], events: EventType[]): RunResult {
   const snap = actor.getSnapshot();
   if (snap.status !== 'done') {
     throw new Error(
-      `runForLoop: machine did not reach terminal state after ${String(consumed)} events. ` +
+      `runFromSteps: machine did not reach terminal state after ${String(consumed)} events. ` +
         `Current state: ${String(snap.value)}`,
     );
   }
