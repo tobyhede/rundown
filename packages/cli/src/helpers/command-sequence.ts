@@ -350,7 +350,7 @@ export function formatStepAssertionDescription(sa: StepAssertionResult): string 
 export function extractRunbookReferences(commands: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
-  const pattern = /((?:\.\/)?[\w][\w.\-/]*\.runbook\.md)/g;
+  const pattern = /((?:\.\/)?[\w][\w.\-/]*\.runbook\.md)(?![\w.\-/])/g;
 
   for (const cmd of commands) {
     for (const match of cmd.matchAll(pattern)) {
