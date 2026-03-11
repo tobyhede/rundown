@@ -168,6 +168,10 @@ export interface RunResult {
  * Sends the provided events only while the machine is in the FOR loop step
  * (step 1). Once the machine exits the FOR loop (reaches step 2 or terminal),
  * pads with PASS to drive it to completion.
+ *
+ * @param steps - Runbook steps to compile into a state machine
+ * @param events - Sequence of PASS/FAIL events to send while the machine is in the FOR loop step
+ * @returns Terminal state, forStack length, accumulated iteration results, and total events consumed
  */
 export function runFromSteps(steps: Step[], events: EventType[]): RunResult {
   const machine = compileRunbookToMachine(steps);
