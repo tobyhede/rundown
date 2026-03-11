@@ -4,45 +4,43 @@ description: Review and validate an implementation plan
 tags:
   - planning
   - review
+vars:
+  PlanPath: .work/plan.md
 ---
 
 # Review Implementation Plan
 
-Systematically review an implementation plan for quality and completeness.
+Review the plan at `{{ PlanPath }}`.
 
-**OBJECTIVE:** Validate the plan before implementation begins.
+## 1. Context and scope
 
-**DONE WHEN:** Plan is approved or feedback provided.
+- PASS: CONTINUE
+- FAIL: STOP "Plan lacks clear goal or scope."
 
-## 1 Check Completeness
+Verify the plan includes:
+- A specific, testable goal (one sentence)
+- Explicit success criteria
+- Defined scope boundaries (in-scope and out-of-scope)
+- Accurate assumptions about current state
 
-- PASS CONTINUE
-- FAIL STOP "Plan is incomplete."
+Read the plan at `{{ PlanPath }}` and validate these elements exist and are coherent.
 
-Verify the plan includes all required sections:
+## 2. Review the plan
 
-- Overview
-- File changes
-- Testing approach
-- Verification steps
+- FOR pass IN 1 TO 2
+- FAIL ANY: GOTO Synthesize
 
-## 2 Verify Feasibility
+- review-technical-accuracy.runbook.md
+- review-structural-integrity.runbook.md
+- review-build-runtime.runbook.md
+- review-risk-safety.runbook.md
 
-- PASS CONTINUE
-- FAIL STOP "Plan has feasibility issues."
+## 3. Approved
 
-Check that the proposed changes are technically feasible.
+- PASS: COMPLETE "Plan approved — no issues found."
 
-## 3 Review Dependencies
+Plan approved — no issues found across both review passes.
 
-- PASS CONTINUE
-- FAIL STOP "Dependency issues found."
+## Synthesize Collate findings and produce verdict
 
-Verify dependencies are correctly identified and ordered.
-
-## 4 Final Decision
-
-- YES COMPLETE "Plan approved for implementation."
-- NO STOP "Plan requires revisions."
-
-Is the plan ready for implementation?
+- review-synthesize.runbook.md
