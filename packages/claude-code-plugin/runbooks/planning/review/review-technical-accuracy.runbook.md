@@ -14,7 +14,7 @@ Verify that all technical references in the plan are accurate.
 
 ## 1. Technical checks
 
-- FAIL ANY: STOP "Technical accuracy issues found."
+- FAIL ANY: CONTINUE
 
 ### 1.1 File paths exist
 

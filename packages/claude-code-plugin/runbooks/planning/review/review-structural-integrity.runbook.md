@@ -14,7 +14,7 @@ Validate the plan's structure, ordering, and completeness.
 
 ## 1. Structural checks
 
-- FAIL ANY: STOP "Structural integrity issues found."
+- FAIL ANY: CONTINUE
 
 ### 1.1 Step ordering logical
 

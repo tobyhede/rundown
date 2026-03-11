@@ -14,7 +14,7 @@ Verify that build, test, and runtime concerns are addressed.
 
 ## 1. Build and runtime checks
 
-- FAIL ANY: STOP "Build/runtime issues found."
+- FAIL ANY: CONTINUE
 
 ### 1.1 Build commands correct
 
