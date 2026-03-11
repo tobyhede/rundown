@@ -6,6 +6,7 @@ import {
   isSourced,
   stepHasSubsteps,
   isAccumulatingAction,
+  isBreakAction,
   isTerminalAction,
   isStepExitAction,
 } from '@rundown-org/parser';
@@ -1067,7 +1068,7 @@ function buildParentStateConfig(
       kind: 'pass' | 'fail',
       transition: { retry: number; action: Action },
     ): void => {
-      if (transition.action.type !== 'BREAK') return;
+      if (!isBreakAction(transition.action)) return;
 
       always.push({
         guard: ({ context }: { context: RunbookContext }) => {

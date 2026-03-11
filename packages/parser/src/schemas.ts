@@ -131,7 +131,7 @@ const CompleteActionSchema = z.object({
 const StopActionSchema = z.object({ type: z.literal('STOP'), message: z.string().optional() });
 const GotoActionSchema = z.object({ type: z.literal('GOTO'), target: StepIdSchema });
 const NextActionSchema = z.object({ type: z.literal('NEXT') });
-const BreakActionSchema = z.object({ type: z.literal('BREAK') });
+export const BreakActionSchema = z.object({ type: z.literal('BREAK') });
 
 /**
  * Schema for actions that accumulate iteration results into parent aggregation.
@@ -187,6 +187,9 @@ export type StepExitAction = Readonly<z.output<typeof StepExitActionSchema>>;
 
 /** Terminal action that bypasses aggregation (STOP, COMPLETE, or GOTO). */
 export type TerminalAction = Readonly<z.output<typeof TerminalActionSchema>>;
+
+/** FOR loop BREAK action — exits the loop without accumulation. */
+export type BreakAction = Readonly<z.output<typeof BreakActionSchema>>;
 
 /** Union of all action types. */
 export type Action = Readonly<z.output<typeof ActionSchema>>;

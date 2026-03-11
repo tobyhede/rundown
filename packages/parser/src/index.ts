@@ -27,6 +27,7 @@ export {
   validateNEXTUsage,
   validateDEFERUsage,
   isAccumulatingAction,
+  isBreakAction,
   isLoopControlAction,
   isStepExitAction,
   isTerminalAction,
