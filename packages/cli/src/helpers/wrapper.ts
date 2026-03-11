@@ -1,4 +1,4 @@
-import { isNodeError, getErrorMessage, RundownError, Errors } from '@rundown-org/core';
+import { isNodeError, isError, getErrorMessage, RundownError, Errors } from '@rundown-org/core';
 import { RunbookSyntaxError } from '@rundown-org/parser';
 
 /**
@@ -40,7 +40,7 @@ function toRundownError(error: unknown): RundownError {
 
   // Generic error - wrap it
   const message = getErrorMessage(error);
-  return Errors.unknown(message, Error.isError(error) ? error : undefined);
+  return Errors.unknown(message, isError(error) ? error : undefined);
 }
 
 /**

@@ -4,6 +4,9 @@
  */
 export const mockErrorHelpers = {
   getErrorMessage: (error: unknown) => (Error.isError(error) ? error.message : String(error)),
-  isNodeError: (error: unknown) => Error.isError(error) && 'code' in error,
+  isNodeError: (error: unknown) =>
+    Error.isError(error) &&
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'string',
   isError: (error: unknown) => Error.isError(error),
 };

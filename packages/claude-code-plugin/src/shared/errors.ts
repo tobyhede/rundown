@@ -6,7 +6,11 @@
  * @returns True if error is a NodeJS.ErrnoException with 'code' property
  */
 export function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return Error.isError(error) && 'code' in error;
+  return (
+    Error.isError(error) &&
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'string'
+  );
 }
 
 /**
