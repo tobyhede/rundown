@@ -1365,7 +1365,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('step::2');
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
-      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
+      expect(actor.getSnapshot().context.deferredResults).toEqual([]);
     });
 
     it('NEXT outside FOR loop goes to STOPPED', () => {
@@ -2669,7 +2669,7 @@ describe('runbook compiler', () => {
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
-      expect(snapshot.context.deferredResults).toEqual(['pass']);
+      expect(snapshot.context.deferredResults).toEqual([]);
     });
 
     it('NEXT at last iteration triggers aggregation', () => {
@@ -3209,7 +3209,7 @@ describe('runbook compiler', () => {
       expect(snapshot.value).toBe('step::3');
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
       expect(snapshot.context.iterationResults).toEqual([]);
-      expect(snapshot.context.deferredResults).toEqual(['pass']);
+      expect(snapshot.context.deferredResults).toEqual([]);
       expect(snapshot.context.forStack).toEqual([]);
     });
   });
@@ -5756,7 +5756,7 @@ echo "processing"
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.iterationResults).toEqual(['pass']);
-      expect(snapshot.context.deferredResults).toEqual(['fail']);
+      expect(snapshot.context.deferredResults).toEqual([]);
     });
 
     it('default FOR transitions (no explicit nested transitions) — DEFER loops back', () => {
@@ -6908,10 +6908,10 @@ echo "processing"
         actor.send({ type: 'PASS' });
         expect(actor.getSnapshot().value).toBe('step::1::2');
 
-        // Sub 2: FAIL → BREAK (does NOT feed deferredResults, ends loop)
+        // Sub 2: FAIL → BREAK (clears deferredResults, exits loop)
         actor.send({ type: 'FAIL' });
-        expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
-        // computeIterationResult(['pass']) → ALL: pass → PASS ALL → COMPLETE
+        expect(actor.getSnapshot().context.deferredResults).toEqual([]);
+        // BREAK is non-accumulating → iterationResults = [] → PASS ALL: vacuous pass → COMPLETE
         expect(actor.getSnapshot().value).toBe('COMPLETE');
       });
 
@@ -6951,9 +6951,9 @@ echo "processing"
 
         // Sub 1: FAIL → DEFER feeds ['fail']
         actor.send({ type: 'FAIL' });
-        // Sub 2: PASS → BREAK (flow control only)
+        // Sub 2: PASS → BREAK (clears deferredResults, exits loop)
         actor.send({ type: 'PASS' });
-        expect(actor.getSnapshot().context.deferredResults).toEqual(['fail']);
+        expect(actor.getSnapshot().context.deferredResults).toEqual([]);
         // BREAK is non-accumulating → iterationResults = [] → PASS ALL: vacuous pass → COMPLETE
         expect(actor.getSnapshot().value).toBe('COMPLETE');
       });

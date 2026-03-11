@@ -991,6 +991,7 @@ function buildParentStateConfig(
         lastAction: { type: 'BREAK' as const },
         iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
           context.iterationResults ?? [],
+        deferredResults: [] as ('pass' | 'fail')[],
       }),
     });
 
@@ -1081,6 +1082,7 @@ function buildParentStateConfig(
           lastAction: { type: 'BREAK' as const },
           iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
             context.iterationResults ?? [],
+          deferredResults: [] as ('pass' | 'fail')[],
         }),
       });
     };
