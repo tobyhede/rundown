@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { mockErrorHelpers } from '../helpers/mock-error-helpers';
 
 // Mock dependencies
 const mockActorService = {
@@ -126,9 +127,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       getLogFilePath: jest.fn().mockReturnValue('/tmp/rundown-test.log'),
       getLogDir: jest.fn().mockReturnValue('/tmp'),
     },
-    getErrorMessage: (error: unknown) => (Error.isError(error) ? error.message : String(error)),
-    isNodeError: (error: unknown) => Error.isError(error) && 'code' in error,
-    isError: (error: unknown) => Error.isError(error),
+    ...mockErrorHelpers,
   };
 });
 

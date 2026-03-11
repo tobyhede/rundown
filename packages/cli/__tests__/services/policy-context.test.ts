@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { mockErrorHelpers } from '../helpers/mock-error-helpers';
 
 // Mock core dependencies using unstable_mockModule for ESM
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -6,9 +7,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   PolicyEvaluator: jest.fn(),
   PolicyPrompter: jest.fn(),
   DEFAULT_POLICY: { allow: [], deny: [] },
-  getErrorMessage: (error: unknown) => (Error.isError(error) ? error.message : String(error)),
-  isNodeError: (error: unknown) => Error.isError(error) && 'code' in error,
-  isError: (error: unknown) => Error.isError(error),
+  ...mockErrorHelpers,
 }));
 
 // Dynamic imports are needed after mocking
