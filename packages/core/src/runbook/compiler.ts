@@ -1052,6 +1052,9 @@ function buildParentStateConfig(
         actions: runbookSetup.assign({
           forStack: [] as readonly ForContext[],
           lastAction: { type: 'CONTINUE' as const },
+          iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
+            context.iterationResults ?? [],
+          deferredResults: [] as ('pass' | 'fail')[],
         }),
       });
     };
