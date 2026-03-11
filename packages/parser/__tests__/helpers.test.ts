@@ -944,7 +944,6 @@ describe('parseConditional error cases', () => {
   });
 });
 
-
 describe('convertToTransitions aggregation conflicts', () => {
   it('throws for conflicting ALL/ALL modifiers', () => {
     const conditionals: ParsedConditional[] = [
