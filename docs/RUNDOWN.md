@@ -168,8 +168,8 @@ The state machine responds to these events:
 #### Transitions
 Default transitions when none specified:
 ```
-PASS ALL: CONTINUE
-FAIL ANY: STOP
+PASS ALL CONTINUE
+FAIL ANY STOP
 ```
 
 Transition evaluation:
