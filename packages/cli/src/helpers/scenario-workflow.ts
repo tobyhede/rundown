@@ -23,6 +23,7 @@ import { extractRawFrontmatter } from './extract-raw-frontmatter.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import {
   executeCommandSequence,
+  extractRunbookReferences,
   matchStepAssertions,
   type StepAssertionResult,
 } from './command-sequence.js';
@@ -168,19 +169,7 @@ export function buildScenarioDetail(
  * @returns Array of runbook filenames referenced in commands
  */
 export function extractReferencedRunbooks(scenario: Scenario): string[] {
-  const referenced: string[] = [];
-  const runbookPattern = /(?:^|[\s])([^\s=]+\.runbook\.md)/g;
-
-  for (const cmd of scenario.commands) {
-    for (const match of cmd.matchAll(runbookPattern)) {
-      const ref = match[1];
-      if (!referenced.includes(ref)) {
-        referenced.push(ref);
-      }
-    }
-  }
-
-  return referenced;
+  return extractRunbookReferences(scenario.commands);
 }
 
 /**
@@ -225,19 +214,7 @@ export async function executeScenario(
     const sourceDir = dirname(filePath);
     for (const ref of referenced) {
       if (ref !== runbookFilename) {
-        try {
-          copyFileSync(join(sourceDir, ref), join(runbooksDir, ref));
-        } catch (err: unknown) {
-          if (
-            !(
-              err instanceof Error &&
-              'code' in err &&
-              (err as NodeJS.ErrnoException).code === 'ENOENT'
-            )
-          ) {
-            throw err;
-          }
-        }
+        copyFileSync(join(sourceDir, ref), join(runbooksDir, ref));
       }
     }
 
