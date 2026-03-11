@@ -15,6 +15,7 @@ import {
   type ActionBlockData,
   type Step,
   type Substep,
+  type ResolveSourceInfo,
   getWriter,
   printMetadata,
   printActionBlock,
@@ -397,20 +398,19 @@ export class TextRenderer implements OutputRenderer {
   }
 
   /**
-   * Render runbook check/validation result.
+   * Render shared PASS/FAIL + errors + warnings for structural validation results.
    *
-   * Formats as "PASS: N steps, M substeps" or "FAIL: N errors".
-   * Warnings are not included in the summary line but are rendered as
-   * separate lines below the summary when present.
-   * @param data - Check result data with validity flag, stats, errors, and warnings
+   * Used by both `renderCheckDetail` and `renderResolveDetail` for the common
+   * structural result rendering (validity line, error details, warning lines).
+   * @param data - Structural result data with validity flag, stats, errors, and warnings
    */
-  private renderCheckDetail(data: Record<string, unknown>): void {
-    const { valid, stats, errors, warnings } = data as {
-      valid?: boolean;
-      stats?: { steps?: number; substeps?: number };
-      errors?: { line?: number; message: string }[];
-      warnings?: { line?: number; message: string }[];
-    };
+  private renderStructuralResult(data: {
+    valid?: boolean;
+    stats?: { steps?: number; substeps?: number };
+    errors?: { line?: number; message: string }[];
+    warnings?: { line?: number; message: string }[];
+  }): void {
+    const { valid, stats, errors, warnings } = data;
 
     if (valid) {
       const stepCount = stats?.steps ?? 0;
@@ -440,6 +440,25 @@ export class TextRenderer implements OutputRenderer {
   }
 
   /**
+   * Render runbook check/validation result.
+   *
+   * Formats as "PASS: N steps, M substeps" or "FAIL: N errors".
+   * Warnings are not included in the summary line but are rendered as
+   * separate lines below the summary when present.
+   * @param data - Check result data with validity flag, stats, errors, and warnings
+   */
+  private renderCheckDetail(data: Record<string, unknown>): void {
+    const { valid, stats, errors, warnings } = data as {
+      valid?: boolean;
+      stats?: { steps?: number; substeps?: number };
+      errors?: { line?: number; message: string }[];
+      warnings?: { line?: number; message: string }[];
+    };
+
+    this.renderStructuralResult({ valid, stats, errors, warnings });
+  }
+
+  /**
    * Render resolve command result.
    *
    * Shows structural validation result, resolved variables, data sources,
@@ -453,29 +472,12 @@ export class TextRenderer implements OutputRenderer {
       errors?: { line?: number; message: string }[];
       warnings?: { line?: number; message: string }[];
       variables?: Record<string, string>;
-      sources?: Record<string, { kind: string; items?: number; path?: string; format?: string }>;
+      sources?: Record<string, ResolveSourceInfo>;
       unresolved?: string[];
     };
 
     // Structural result (same as check)
-    if (valid) {
-      const stepCount = stats?.steps ?? 0;
-      const substepCount = stats?.substeps ?? 0;
-      const statsMessage =
-        substepCount > 0
-          ? `PASS: ${String(stepCount)} step${stepCount !== 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount !== 1 ? 's' : ''}`
-          : `PASS: ${String(stepCount)} step${stepCount !== 1 ? 's' : ''}`;
-      this.writer.writeLine(success(statsMessage));
-    } else if (errors && errors.length > 0) {
-      const errorCount = errors.length;
-      this.writer.writeLine(
-        failure(`FAIL: ${String(errorCount)} error${errorCount !== 1 ? 's' : ''}`),
-      );
-      for (const err of errors) {
-        const linePrefix = err.line ? `Line ${String(err.line)}: ` : '';
-        this.writer.writeLine(`  ${linePrefix}${err.message}`);
-      }
-    }
+    this.renderStructuralResult({ valid, stats, errors });
 
     // Variables section
     if (variables && Object.keys(variables).length > 0) {

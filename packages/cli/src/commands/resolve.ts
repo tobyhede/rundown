@@ -10,7 +10,12 @@
 
 import * as path from 'node:path';
 import type { Command } from 'commander';
-import { parseRunbookDocument, type DataSource, getErrorMessage } from '@rundown-org/core';
+import {
+  parseRunbookDocument,
+  type DataSource,
+  type ResolveSourceInfo,
+  getErrorMessage,
+} from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadAndValidateRunbook } from '../helpers/runbook-validator.js';
 import { collect } from './echo.js';
@@ -35,9 +40,8 @@ import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-contex
  */
 function buildSourceInfo(
   sources: Readonly<Record<string, DataSource>>,
-): Record<string, { kind: string; items?: number; path?: string; format?: string }> {
-  const result: Record<string, { kind: string; items?: number; path?: string; format?: string }> =
-    {};
+): Record<string, ResolveSourceInfo> {
+  const result: Record<string, ResolveSourceInfo> = {};
   for (const [key, source] of Object.entries(sources)) {
     if (source.kind === 'array') {
       result[key] = { kind: 'array', items: source.items.length };
@@ -46,6 +50,16 @@ function buildSourceInfo(
     }
   }
   return result;
+}
+
+/** Options for the resolve command. */
+interface ResolveOptions {
+  /** Path to YAML variable file */
+  varFile?: string;
+  /** CLI variable assignments (key=value) */
+  var?: string[];
+  /** Output as JSON */
+  json?: boolean;
 }
 
 /**
@@ -60,7 +74,7 @@ export function registerResolveCommand(program: Command): void {
     .option('--var-file <path>', 'Load variables from YAML file')
     .option('--var <key=value>', 'Set variable (repeatable)', collect, [])
     .option('--json', 'Output as JSON')
-    .action(async (file: string, options: { varFile?: string; var?: string[]; json?: boolean }) => {
+    .action(async (file: string, options: ResolveOptions) => {
       const output = new OutputEmitter({ json: options.json });
       const cwd = process.cwd();
 
@@ -139,7 +153,10 @@ export function registerResolveCommand(program: Command): void {
         // Validate sourced FOR clauses reference defined data sources
         validateSources(substituted.steps, sources);
       } catch (error) {
-        errors.push({ line: undefined, message: getErrorMessage(error) });
+        errors.push({
+          line: undefined,
+          message: `During FOR expansion: ${getErrorMessage(error)}`,
+        });
       }
 
       // Phase 4: Build output
