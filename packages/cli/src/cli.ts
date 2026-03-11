@@ -14,6 +14,7 @@ import { registerStashCommand } from './commands/stash.js';
 import { registerPopCommand } from './commands/pop.js';
 import { registerEchoCommand } from './commands/echo.js';
 import { registerCheckCommand } from './commands/check.js';
+import { registerResolveCommand } from './commands/resolve.js';
 import { registerPruneCommand } from './commands/prune.js';
 import { registerPromptCommand } from './commands/prompt.js';
 import { registerScenariosCommand } from './commands/scenarios.js';
@@ -113,6 +114,7 @@ export function createProgram(): Command {
   registerPopCommand(program);
   registerEchoCommand(program);
   registerCheckCommand(program);
+  registerResolveCommand(program);
   registerPruneCommand(program);
   registerPromptCommand(program);
   registerScenariosCommand(program);

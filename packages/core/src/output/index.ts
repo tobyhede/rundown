@@ -111,6 +111,14 @@ export {
   type CheckResponse,
 } from './schema.js';
 
+// Resolve schemas
+export {
+  ResolveSourceInfoSchema,
+  ResolveResponseSchema,
+  type ResolveSourceInfo,
+  type ResolveResponse,
+} from './schema.js';
+
 // Scenario schemas
 export {
   StepAssertionInputSchema,

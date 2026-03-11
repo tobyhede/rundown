@@ -237,6 +237,124 @@ describe('TextRenderer', () => {
       });
     });
 
+    describe('resolve format', () => {
+      it('renders PASS with variables', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 3, substeps: 2 },
+            variables: { environment: 'staging', port: '3000' },
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('PASS');
+        expect(output).toContain('3 steps');
+        expect(output).toContain('Variables:');
+        expect(output).toContain('environment');
+        expect(output).toContain('staging');
+        expect(output).toContain('port');
+        expect(output).toContain('3000');
+      });
+
+      it('renders FAIL with errors and variables', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: false,
+            errors: [{ message: 'Step numbering error' }],
+            stats: { steps: 1, substeps: 0 },
+            variables: { name: 'test' },
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('FAIL');
+        expect(output).toContain('Step numbering error');
+        expect(output).toContain('Variables:');
+        expect(output).toContain('name');
+      });
+
+      it('renders sources section', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 1, substeps: 1 },
+            variables: {},
+            sources: {
+              items: { kind: 'array', items: 3 },
+              hosts: { kind: 'file', path: 'data/hosts.txt', format: 'text' },
+            },
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('Sources:');
+        expect(output).toContain('items');
+        expect(output).toContain('array (3 items)');
+        expect(output).toContain('hosts');
+        expect(output).toContain('file (data/hosts.txt, text)');
+      });
+
+      it('renders unresolved variables section', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 1, substeps: 0 },
+            variables: {},
+            unresolved: ['missingVar', 'otherVar'],
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('Unresolved:');
+        expect(output).toContain('{{missingVar}}');
+        expect(output).toContain('{{otherVar}}');
+      });
+
+      it('omits empty sections', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 1, substeps: 0 },
+            variables: {},
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).not.toContain('Sources:');
+        expect(output).not.toContain('Unresolved:');
+      });
+    });
+
     describe('scenario format', () => {
       it('renders name, description, expected, and tags', () => {
         const writer = createMockWriter();

@@ -206,6 +206,9 @@ export class TextRenderer implements OutputRenderer {
       case 'check':
         this.renderCheckDetail(data);
         break;
+      case 'resolve':
+        this.renderResolveDetail(data);
+        break;
       default:
         this.renderGenericDetail(data);
     }
@@ -432,6 +435,92 @@ export class TextRenderer implements OutputRenderer {
       for (const w of warnings) {
         const linePrefix = w.line ? `Line ${String(w.line)}: ` : '';
         this.writer.writeLine(warning(`  Warning: ${linePrefix}${w.message}`));
+      }
+    }
+  }
+
+  /**
+   * Render resolve command result.
+   *
+   * Shows structural validation result, resolved variables, data sources,
+   * and unresolved variable warnings.
+   * @param data - Resolve result data
+   */
+  private renderResolveDetail(data: Record<string, unknown>): void {
+    const { valid, stats, errors, warnings, variables, sources, unresolved } = data as {
+      valid?: boolean;
+      stats?: { steps?: number; substeps?: number };
+      errors?: { line?: number; message: string }[];
+      warnings?: { line?: number; message: string }[];
+      variables?: Record<string, string>;
+      sources?: Record<string, { kind: string; items?: number; path?: string; format?: string }>;
+      unresolved?: string[];
+    };
+
+    // Structural result (same as check)
+    if (valid) {
+      const stepCount = stats?.steps ?? 0;
+      const substepCount = stats?.substeps ?? 0;
+      const statsMessage =
+        substepCount > 0
+          ? `PASS: ${String(stepCount)} step${stepCount !== 1 ? 's' : ''}, ${String(substepCount)} substep${substepCount !== 1 ? 's' : ''}`
+          : `PASS: ${String(stepCount)} step${stepCount !== 1 ? 's' : ''}`;
+      this.writer.writeLine(success(statsMessage));
+    } else if (errors && errors.length > 0) {
+      const errorCount = errors.length;
+      this.writer.writeLine(
+        failure(`FAIL: ${String(errorCount)} error${errorCount !== 1 ? 's' : ''}`),
+      );
+      for (const err of errors) {
+        const linePrefix = err.line ? `Line ${String(err.line)}: ` : '';
+        this.writer.writeLine(`  ${linePrefix}${err.message}`);
+      }
+    }
+
+    // Variables section
+    if (variables && Object.keys(variables).length > 0) {
+      this.writer.writeLine('');
+      this.writer.writeLine('Variables:');
+      const maxKeyLen = Math.max(...Object.keys(variables).map((k) => k.length));
+      for (const [key, value] of Object.entries(variables)) {
+        this.writer.writeLine(`  ${key.padEnd(maxKeyLen + 2)}${value}`);
+      }
+    }
+
+    // Sources section
+    if (sources && Object.keys(sources).length > 0) {
+      this.writer.writeLine('');
+      this.writer.writeLine('Sources:');
+      const maxKeyLen = Math.max(...Object.keys(sources).map((k) => k.length));
+      for (const [key, info] of Object.entries(sources)) {
+        let desc: string;
+        if (info.kind === 'array') {
+          desc = `array (${String(info.items ?? 0)} item${(info.items ?? 0) !== 1 ? 's' : ''})`;
+        } else {
+          desc = `file (${info.path ?? 'unknown'}, ${info.format ?? 'text'})`;
+        }
+        this.writer.writeLine(`  ${key.padEnd(maxKeyLen + 2)}${desc}`);
+      }
+    }
+
+    // Unresolved variables
+    if (unresolved && unresolved.length > 0) {
+      this.writer.writeLine('');
+      this.writer.writeLine('Unresolved:');
+      for (const name of unresolved) {
+        this.writer.writeLine(warning(`  {{${name}}}`));
+      }
+    }
+
+    // Warnings (excluding unresolved, which are shown above)
+    if (warnings && warnings.length > 0) {
+      // Filter out unresolved variable warnings since they're shown in their own section
+      const otherWarnings = warnings.filter((w) => !w.message.startsWith('Unresolved variable:'));
+      if (otherWarnings.length > 0) {
+        for (const w of otherWarnings) {
+          const linePrefix = w.line ? `Line ${String(w.line)}: ` : '';
+          this.writer.writeLine(warning(`  Warning: ${linePrefix}${w.message}`));
+        }
       }
     }
   }

@@ -426,6 +426,56 @@ export const CheckResponseSchema = z
   .describe('Response from the check command');
 
 // ============================================================================
+// Resolve Command Schemas
+// ============================================================================
+
+/**
+ * Data source information from resolve command.
+ */
+export const ResolveSourceInfoSchema = z
+  .object({
+    /** Source type: array (in-memory) or file (file-backed) */
+    kind: z.enum(['array', 'file']).describe('Data source type'),
+    /** Number of items (for array sources) or file line count */
+    items: z.number().int().nonnegative().optional().describe('Number of items in the source'),
+    /** File path (for file sources) */
+    path: z.string().optional().describe('File path for file-backed sources'),
+    /** File format (for file sources) */
+    format: z.enum(['text', 'jsonl']).optional().describe('File format for file-backed sources'),
+  })
+  .describe('Data source information');
+
+/**
+ * Resolve response schema.
+ *
+ * Result of running the full variable/source resolution pipeline
+ * without executing the runbook.
+ */
+export const ResolveResponseSchema = z
+  .object({
+    /** Whether the runbook resolved without errors */
+    valid: z.boolean().describe('Whether the runbook resolved without errors'),
+    /** Structural and resolution errors */
+    errors: z
+      .array(CheckValidationErrorSchema)
+      .describe('List of validation and resolution errors'),
+    /** Warnings (including unresolved variables) */
+    warnings: z.array(CheckValidationWarningSchema).optional().describe('List of warnings'),
+    /** Runbook statistics (only present when structurally valid) */
+    stats: RunbookStatsSchema.optional().describe('Runbook statistics'),
+    /** Resolved template variables */
+    variables: z.record(z.string(), z.string()).optional().describe('Resolved template variables'),
+    /** Data sources for FOR loop iteration */
+    sources: z
+      .record(z.string(), ResolveSourceInfoSchema)
+      .optional()
+      .describe('Resolved data sources'),
+    /** Unresolved template variable names */
+    unresolved: z.array(z.string()).optional().describe('Unresolved template variable names'),
+  })
+  .describe('Response from the resolve command');
+
+// ============================================================================
 // Scenario Command Schemas
 // ============================================================================
 
@@ -884,6 +934,12 @@ export type RunbookStats = z.infer<typeof RunbookStatsSchema>;
 /** Check response */
 export type CheckResponse = z.infer<typeof CheckResponseSchema>;
 
+/** Resolve source info */
+export type ResolveSourceInfo = z.infer<typeof ResolveSourceInfoSchema>;
+
+/** Resolve response */
+export type ResolveResponse = z.infer<typeof ResolveResponseSchema>;
+
 /** Scenario entry */
 export type ScenarioEntry = z.infer<typeof ScenarioEntrySchema>;
 
@@ -944,6 +1000,7 @@ export type CLIResponse =
   | ErrorResponse
   | StatusResponse
   | CheckResponse
+  | ResolveResponse
   | ScenarioRunResponse
   | ScenarioSuiteRunResponse
   | StashResponse

@@ -188,7 +188,7 @@ function emitRunbookStarted(
  * @param vars - User/config template variables to namespace under `context.vars.*`
  * @returns Record mapping `context.vars.{key}` to corresponding values
  */
-function buildContextVars(vars: Readonly<Record<string, string>>): Record<string, string> {
+export function buildContextVars(vars: Readonly<Record<string, string>>): Record<string, string> {
   const contextVars: Record<string, string> = {};
   for (const [key, value] of Object.entries(vars)) {
     contextVars[`context.vars.${key}`] = value;
@@ -208,7 +208,7 @@ function buildContextVars(vars: Readonly<Record<string, string>>): Record<string
  * @param options.inheritedContextVars - Context variables inherited from a parent delegation
  * @returns Complete template variable map ready for substitution
  */
-function buildTemplateVars(
+export function buildTemplateVars(
   localVars: Readonly<Record<string, string>>,
   options?: {
     inheritedUserVars?: Readonly<Record<string, string>>;

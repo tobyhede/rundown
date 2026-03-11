@@ -318,16 +318,17 @@ function isForVariablePath(name: string, forVars: ReadonlySet<string>): boolean 
 }
 
 /**
- * Emit warnings for any unresolved template variables in a substituted runbook.
+ * Collect unresolved template variable names from a substituted runbook.
  *
- * Walks the runbook AST collecting all remaining `{{...}}` placeholders,
- * then emits a deduplicated warning per variable to stderr. FOR loop variables
- * (including `Index`/`index`) are only suppressed within their own FOR step's
- * substeps — they still produce warnings when referenced outside FOR scope.
+ * Walks the runbook AST collecting all remaining `{{...}}` placeholders
+ * and returns them as a deduplicated set. FOR loop variables (including
+ * `Index`/`index`) are only suppressed within their own FOR step's substeps —
+ * they still produce warnings when referenced outside FOR scope.
  *
  * @param runbook - Runbook AST after variable substitution
+ * @returns Set of unresolved variable names found in the runbook
  */
-export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
+export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string> {
   const unresolved = new Set<string>();
 
   const collect = (text: string | undefined): void => {
@@ -380,6 +381,19 @@ export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
     }
   }
 
+  return unresolved;
+}
+
+/**
+ * Emit warnings for any unresolved template variables in a substituted runbook.
+ *
+ * Collects unresolved variables from the runbook and emits a deduplicated warning
+ * per variable to stderr.
+ *
+ * @param runbook - Runbook AST after variable substitution
+ */
+export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
+  const unresolved = collectUnresolvedRunbookVariables(runbook);
   for (const name of unresolved) {
     console.warn(`Warning: Undefined variable "{{${name}}}" preserved as literal text`);
   }

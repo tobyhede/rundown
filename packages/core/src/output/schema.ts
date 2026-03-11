@@ -44,6 +44,9 @@ export {
   CheckValidationWarningSchema,
   RunbookStatsSchema,
   CheckResponseSchema,
+  // Resolve schemas
+  ResolveSourceInfoSchema,
+  ResolveResponseSchema,
   // Scenario schemas
   StepAssertionInputSchema,
   CapturedTransitionSchema,
@@ -90,6 +93,8 @@ export {
   type CheckValidationWarning,
   type RunbookStats,
   type CheckResponse,
+  type ResolveSourceInfo,
+  type ResolveResponse,
   type StepAssertionInput,
   type CapturedTransition,
   type ScenarioStepAssertionResult,
