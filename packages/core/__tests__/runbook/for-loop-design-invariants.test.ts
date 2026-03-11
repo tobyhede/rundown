@@ -9,60 +9,20 @@
  * 1. RETRY is universal — fires for every substep action type
  * 2. NEXT never accumulates iteration results
  * 3. BREAK includes current iteration's deferred results in aggregation
- * 4. Only DEFER accumulates at iteration level
+ * 4. Iteration-level BREAK is non-accumulating
+ * 5. Only DEFER accumulates at iteration level
  */
 
 import fc from 'fast-check';
-import { createActor, type AnyStateMachine } from 'xstate';
-import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
-import { runForLoop, type ForLoopConfig, type EventType } from './for-loop-test-helpers.js';
-import type {
-  Step,
-  Substep,
-  Transitions,
-  TransitionObject,
-  Action,
-} from '../../src/runbook/types.js';
-
-// ---------------------------------------------------------------------------
-// Local helpers — duplicated from test-helpers to keep this file self-contained
-// ---------------------------------------------------------------------------
-
-function makeAction(type: string): Action {
-  switch (type) {
-    case 'CONTINUE':
-      return { type: 'CONTINUE' };
-    case 'DEFER':
-      return { type: 'DEFER' };
-    case 'NEXT':
-      return { type: 'NEXT' };
-    case 'BREAK':
-      return { type: 'BREAK' };
-    case 'STOP':
-      return { type: 'STOP' };
-    case 'COMPLETE':
-      return { type: 'COMPLETE' };
-    default:
-      return { type: 'CONTINUE' };
-  }
-}
-
-function makeTransitionObject(kind: 'pass' | 'fail', action: string, retry = 0): TransitionObject {
-  return { kind, retry, action: makeAction(action) };
-}
-
-function makeTransitions(
-  aggregation: 'ALL' | 'ANY' | 'none',
-  passAction: string,
-  failAction: string,
-  failRetry = 0,
-): Transitions {
-  return {
-    aggregation,
-    pass: makeTransitionObject('pass', passAction),
-    fail: makeTransitionObject('fail', failAction, failRetry),
-  };
-}
+import {
+  runForLoop,
+  runFromSteps,
+  makeTransitions,
+  makeTransitionObject,
+  type ForLoopConfig,
+  type EventType,
+} from './for-loop-test-helpers.js';
+import type { Step, Substep } from '../../src/runbook/types.js';
 
 // ---------------------------------------------------------------------------
 // Custom step builder for non-uniform substep configs
@@ -131,51 +91,6 @@ function buildCustomSteps(opts: CustomForOpts): Step[] {
   };
 
   return [forStep, terminalStep];
-}
-
-// ---------------------------------------------------------------------------
-// Runner for custom steps
-// ---------------------------------------------------------------------------
-
-interface RunResult {
-  terminalState: string;
-  forStackLength: number;
-  iterationResults: readonly ('pass' | 'fail')[];
-  eventsConsumed: number;
-}
-
-function runFromSteps(steps: Step[], events: EventType[]): RunResult {
-  const machine = compileRunbookToMachine(steps);
-  const actor = createActor(machine as AnyStateMachine);
-  actor.start();
-
-  let consumed = 0;
-  let eventIdx = 0;
-
-  while (eventIdx < events.length) {
-    const snap = actor.getSnapshot();
-    if (snap.status === 'done') break;
-    const state = String(snap.value);
-    if (!state.startsWith('step::1')) break;
-    actor.send({ type: events[eventIdx++] });
-    consumed++;
-  }
-
-  const maxPad = 200;
-  for (let i = 0; i < maxPad; i++) {
-    const snap = actor.getSnapshot();
-    if (snap.status === 'done') break;
-    actor.send({ type: 'PASS' });
-    consumed++;
-  }
-
-  const snap = actor.getSnapshot();
-  return {
-    terminalState: String(snap.value),
-    forStackLength: snap.context.forStack.length,
-    iterationResults: snap.context.iterationResults ?? [],
-    eventsConsumed: consumed,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +357,42 @@ describe('FOR loop design invariants', () => {
     });
   });
 
-  // Property 4: Only DEFER accumulates at iteration level
+  // Property 4: Iteration-level BREAK is non-accumulating
+  //
+  // When iterationFailAction is BREAK, the loop exits without adding the
+  // current iteration's result to iterationResults.
+  describe('iteration-level BREAK is non-accumulating', () => {
+    it('iterationFailAction BREAK exits loop without accumulating current iteration', () => {
+      fc.assert(
+        fc.property(fc.integer({ min: 2, max: 4 }), (iterations) => {
+          const opts: CustomForOpts = {
+            iterations,
+            substeps: [{ passAction: 'DEFER', failAction: 'DEFER' }],
+            iterationTransitions: {
+              passAction: 'DEFER',
+              failAction: 'BREAK',
+              aggMode: 'ALL',
+            },
+            parentTransitions: { passAction: 'CONTINUE', failAction: 'STOP', aggMode: 'ALL' },
+          };
+
+          // First iteration passes (DEFER'd), second fails → iteration BREAK
+          const events: EventType[] = ['PASS', 'FAIL'];
+          for (let i = 0; i < 20; i++) events.push('PASS');
+
+          const result = runFromSteps(buildCustomSteps(opts), events);
+          // Only iteration 1 accumulated (DEFER'd 'pass'). Iteration 2 BREAK'd — non-accumulating.
+          // Parent sees ['pass'] → ALL passes → CONTINUE → COMPLETE
+          expect(result.terminalState).toBe('COMPLETE');
+          expect(result.iterationResults.length).toBe(1);
+          expect(result.iterationResults[0]).toBe('pass');
+        }),
+        { numRuns: 200 },
+      );
+    });
+  });
+
+  // Property 5: Only DEFER accumulates at iteration level
   //
   // CONTINUE at iteration level exits the loop without adding the current
   // iteration to iterationResults.

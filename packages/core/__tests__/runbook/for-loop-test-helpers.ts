@@ -1,16 +1,14 @@
 /**
- * Shared helpers for FOR loop property and pairwise tests.
+ * Shared helpers for FOR loop property tests.
  *
  * Provides:
  * - ForLoopConfig — captures all 3 transition layers as data
  * - buildForLoopSteps — converts config to parser Step[]
  * - runForLoop — compiles, creates actor, sends events, returns result
- * - predictOutcome — oracle that simulates the 3-layer transition system
  */
 
 import { createActor, type AnyStateMachine } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
-import { shouldAggregationPass } from '../../src/runbook/transition-handler.js';
 import type {
   Step,
   Substep,
@@ -53,7 +51,7 @@ export interface ForLoopConfig {
 // Step builder — converts ForLoopConfig to parser Step[]
 // ---------------------------------------------------------------------------
 
-function makeAction(type: string): Action {
+export function makeAction(type: string): Action {
   switch (type) {
     case 'CONTINUE':
       return { type: 'CONTINUE' };
@@ -72,11 +70,15 @@ function makeAction(type: string): Action {
   }
 }
 
-function makeTransitionObject(kind: 'pass' | 'fail', action: string, retry = 0): TransitionObject {
+export function makeTransitionObject(
+  kind: 'pass' | 'fail',
+  action: string,
+  retry = 0,
+): TransitionObject {
   return { kind, retry, action: makeAction(action) };
 }
 
-function makeTransitions(
+export function makeTransitions(
   aggregation: 'ALL' | 'ANY' | 'none',
   passAction: string,
   failAction: string,
@@ -90,7 +92,10 @@ function makeTransitions(
 }
 
 /**
- * Convert a ForLoopConfig to a 2-step runbook: step 1 = FOR loop, step 2 = terminal.
+ * Convert a ForLoopConfig to a two-step runbook (FOR loop + terminal).
+ *
+ * @param config - Loop dimensions, transition actions, aggregation modes, and retry counts
+ * @returns Two-element Step array: step 1 is the FOR loop with substeps, step 2 is a terminal step
  */
 export function buildForLoopSteps(config: ForLoopConfig): Step[] {
   const substeps: Substep[] = [];
@@ -158,15 +163,17 @@ export interface RunResult {
 }
 
 /**
- * Compile a ForLoopConfig into a machine, send events, and return the result.
+ * Compile raw steps into a machine, send events, and return the result.
  *
  * Sends the provided events only while the machine is in the FOR loop step
  * (step 1). Once the machine exits the FOR loop (reaches step 2 or terminal),
- * pads with PASS to drive it to completion. This matches the oracle which
- * only models the FOR loop and assumes step 2 always passes.
+ * pads with PASS to drive it to completion.
+ *
+ * @param steps - Runbook steps to compile into a state machine
+ * @param events - Sequence of PASS/FAIL events to send while the machine is in the FOR loop step
+ * @returns Terminal state, forStack length, accumulated iteration results, and total events consumed
  */
-export function runForLoop(config: ForLoopConfig, events: EventType[]): RunResult {
-  const steps = buildForLoopSteps(config);
+export function runFromSteps(steps: Step[], events: EventType[]): RunResult {
   const machine = compileRunbookToMachine(steps);
   const actor = createActor(machine as AnyStateMachine);
   actor.start();
@@ -203,227 +210,15 @@ export function runForLoop(config: ForLoopConfig, events: EventType[]): RunResul
   };
 }
 
-// ---------------------------------------------------------------------------
-// Event pattern generators
-// ---------------------------------------------------------------------------
-
-export type EventPattern = 'all-pass' | 'all-fail' | 'first-fail' | 'last-fail' | 'alternate';
-
 /**
- * Generate an event sequence for the given config and pattern.
+ * Compile a ForLoopConfig into a machine, send events, and return the result.
  *
- * Generates enough events to cover all iterations × substeps plus retries.
- */
-export function generateEvents(config: ForLoopConfig, pattern: EventPattern): EventType[] {
-  // Upper bound: each substep may retry, each iteration may retry
-  const maxSubstepEvents = config.numSubsteps * (1 + config.substepFailRetry);
-  const maxIterationEvents = maxSubstepEvents * (1 + config.iterationFailRetry);
-  const maxEvents = config.iterations * maxIterationEvents * (1 + config.parentFailRetry) + 10; // extra padding
-
-  const events: EventType[] = [];
-  let globalIndex = 0;
-
-  for (let i = 0; i < maxEvents; i++) {
-    let event: EventType;
-    switch (pattern) {
-      case 'all-pass':
-        event = 'PASS';
-        break;
-      case 'all-fail':
-        event = 'FAIL';
-        break;
-      case 'first-fail':
-        event = globalIndex === 0 ? 'FAIL' : 'PASS';
-        break;
-      case 'last-fail':
-        // Put a FAIL near the expected end
-        event = globalIndex === config.iterations * config.numSubsteps - 1 ? 'FAIL' : 'PASS';
-        break;
-      case 'alternate':
-        event = globalIndex % 2 === 0 ? 'PASS' : 'FAIL';
-        break;
-    }
-    events.push(event);
-    globalIndex++;
-  }
-  return events;
-}
-
-// ---------------------------------------------------------------------------
-// Oracle — predicts terminal state by simulating the 3-layer transition system
-// ---------------------------------------------------------------------------
-
-type OracleResult = 'COMPLETE' | 'STOPPED';
-
-/**
- * Simulate the 3-layer FOR loop transition system to predict terminal state.
+ * Convenience wrapper that builds steps from config, then delegates to runFromSteps.
  *
- * Layer 1: substep transitions — each substep's PASS/FAIL action
- * Layer 2: iteration transitions — aggregation of substep results per iteration
- * Layer 3: parent transitions — aggregation of iteration results
+ * @param config - Full FOR loop configuration covering substep, iteration, and parent layers
+ * @param events - Sequence of PASS/FAIL events to send while the machine is in the FOR loop step
+ * @returns Terminal state, forStack length, accumulated iteration results, and total events consumed
  */
-export function predictOutcome(config: ForLoopConfig, events: EventType[]): OracleResult {
-  let eventIdx = 0;
-
-  const nextEvent = (): EventType => {
-    if (eventIdx >= events.length) return 'PASS'; // pad with PASS
-    return events[eventIdx++];
-  };
-
-  const allIterationResults: ('pass' | 'fail')[] = [];
-
-  // Outer: parent retry loop
-  for (let parentRetry = 0; parentRetry <= config.parentFailRetry; parentRetry++) {
-    allIterationResults.length = 0;
-
-    // Iteration loop
-    for (let iter = 1; iter <= config.iterations; iter++) {
-      // Iteration retry loop
-      let iterResult: 'pass' | 'fail' = 'fail';
-
-      for (let iterRetry = 0; iterRetry <= config.iterationFailRetry; iterRetry++) {
-        const deferredResults: ('pass' | 'fail')[] = [];
-        let earlyExit: 'BREAK' | 'NEXT' | 'STOP' | 'COMPLETE' | null = null;
-
-        // Substep loop
-        for (let sub = 0; sub < config.numSubsteps; sub++) {
-          let event = nextEvent();
-          let substepAction: SubstepAction = config.substepFailAction;
-          let kind: 'pass' | 'fail' = 'fail';
-
-          if (event === 'PASS') {
-            substepAction = config.substepPassAction;
-            kind = 'pass';
-          } else {
-            // Handle substep fail retry
-            for (let r = 0; r < config.substepFailRetry; r++) {
-              // Retry: consume next event
-              event = nextEvent();
-              if (event === 'PASS') {
-                substepAction = config.substepPassAction;
-                kind = 'pass';
-                break;
-              }
-            }
-          }
-
-          // Process substep action
-          if (substepAction === 'STOP') return 'STOPPED';
-          if (substepAction === 'COMPLETE') return 'COMPLETE';
-          if (substepAction === 'BREAK') {
-            earlyExit = 'BREAK';
-            break;
-          }
-          if (substepAction === 'NEXT') {
-            earlyExit = 'NEXT';
-            break;
-          }
-          // Only DEFER contributes to aggregation; CONTINUE is flow control only
-          if (substepAction === 'DEFER') {
-            deferredResults.push(kind);
-          }
-        }
-
-        // Aggregate deferred results for this iteration using iteration-level aggregation
-        const hasFailed = deferredResults.some((r) => r === 'fail');
-        const passCount = deferredResults.filter((r) => r === 'pass').length;
-        iterResult = shouldAggregationPass(hasFailed, passCount, config.iterationAggMode)
-          ? 'pass'
-          : 'fail';
-
-        // RETRY is universal — fires for ALL actions (BREAK/NEXT/DEFER/CONTINUE).
-        // Check retry BEFORE applying any action, based on iteration result.
-        if (
-          iterResult === 'fail' &&
-          config.iterationFailRetry > 0 &&
-          iterRetry < config.iterationFailRetry
-        ) {
-          // Retry iteration — continue inner loop (re-run substeps)
-          continue;
-        }
-
-        // Retries exhausted (or no retry configured). Apply substep loop control first.
-        if (earlyExit === 'BREAK') {
-          // BREAK exits loop. Current iteration's DEFER'd results are included in aggregation.
-          allIterationResults.push(iterResult);
-          return aggregateParent(config, allIterationResults);
-        }
-
-        if (earlyExit === 'NEXT') {
-          // NEXT is non-accumulating — skip current iteration, go to next.
-          break; // break out of retry loop to next iteration
-        }
-
-        // No substep loop control — process configured iteration-level transition
-        const iterAction =
-          iterResult === 'pass' ? config.iterationPassAction : config.iterationFailAction;
-
-        if (iterAction === 'STOP') return 'STOPPED';
-        if (iterAction === 'COMPLETE') return 'COMPLETE';
-
-        if (iterAction === 'BREAK') {
-          // Configured BREAK is non-accumulating — do NOT add to allIterationResults
-          return aggregateParent(config, allIterationResults);
-        }
-
-        // CONTINUE exits the loop (goes to next step)
-        if (iterAction === 'CONTINUE') {
-          // CONTINUE is non-accumulating — do NOT add to allIterationResults
-          return aggregateParent(config, allIterationResults);
-        }
-
-        // DEFER: record result and proceed to next iteration (loop back with accumulation)
-        break; // break out of iteration retry loop
-      }
-
-      allIterationResults.push(iterResult);
-    }
-
-    // All iterations complete. Aggregate at parent level.
-    const result = aggregateParentFromAll(config, allIterationResults);
-    if (result !== null) return result;
-
-    // Parent retry: if we get here, parent retried. Retry events should continue.
-  }
-
-  // Exhausted parent retries — use the final aggregation
-  return aggregateParentFromAll(config, allIterationResults) ?? 'STOPPED';
-}
-
-/**
- * Aggregate iteration results at the parent level on loop exit (BREAK, CONTINUE, or substep-level BREAK).
- * Callers are responsible for including the current iteration's result in completedResults if applicable.
- */
-function aggregateParent(
-  config: ForLoopConfig,
-  completedResults: ('pass' | 'fail')[],
-): OracleResult {
-  return aggregateParentFromAll(config, completedResults) ?? 'STOPPED';
-}
-
-/**
- * Aggregate all iteration results and apply parent-level transitions.
- * Returns null if parent should retry.
- */
-function aggregateParentFromAll(
-  config: ForLoopConfig,
-  allResults: ('pass' | 'fail')[],
-): OracleResult | null {
-  const hasFailed = allResults.some((r) => r === 'fail');
-  const passCount = allResults.filter((r) => r === 'pass').length;
-  const parentPassed = shouldAggregationPass(hasFailed, passCount, config.parentAggMode);
-
-  const parentAction = parentPassed ? config.parentPassAction : config.parentFailAction;
-
-  switch (parentAction) {
-    case 'STOP':
-      return 'STOPPED';
-    case 'COMPLETE':
-      return 'COMPLETE';
-    case 'CONTINUE':
-      // CONTINUE at parent → next step (step 2) → PASS → COMPLETE
-      return 'COMPLETE';
-    default:
-      return 'STOPPED';
-  }
+export function runForLoop(config: ForLoopConfig, events: EventType[]): RunResult {
+  return runFromSteps(buildForLoopSteps(config), events);
 }
