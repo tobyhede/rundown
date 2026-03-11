@@ -15,6 +15,7 @@ import {
 } from '../../src/schemas/scenarios.js';
 import {
   executeCommandSequence,
+  extractRunbookReferences,
   matchStepAssertions,
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
@@ -166,24 +167,10 @@ function extractVarFileDirs(scenario: Scenario): string[] {
 
 /**
  * Extract referenced runbook files from scenario commands.
- * Finds patterns like: rd delegate child-task.runbook.md --step 1
+ * Delegates to the shared extractRunbookReferences utility.
  */
 function extractReferencedRunbooks(scenario: Scenario): string[] {
-  const referenced: string[] = [];
-  const runbookPattern = /([\w][\w.\-/]*\.runbook\.md)/g;
-
-  for (const cmd of scenario.commands) {
-    const matches = cmd.match(runbookPattern);
-    if (matches) {
-      for (const match of matches) {
-        if (!referenced.includes(match)) {
-          referenced.push(match);
-        }
-      }
-    }
-  }
-
-  return referenced;
+  return extractRunbookReferences(scenario.commands);
 }
 
 /**
@@ -199,11 +186,7 @@ function copyPatternWithDependencies(
   const referenced = extractReferencedRunbooks(scenario);
   for (const ref of referenced) {
     if (ref !== basename(filename)) {
-      try {
-        copyPatternToWorkspace(ref, workspace);
-      } catch (err) {
-        console.warn(`Failed to copy referenced runbook ${ref}:`, err);
-      }
+      copyPatternToWorkspace(ref, workspace);
     }
   }
 
@@ -225,11 +208,7 @@ function copyPatternWithDependencies(
     if (!resolvedDest.startsWith(workspace.cwd + sep) && resolvedDest !== workspace.cwd) {
       throw new Error(`Var-file destination escapes workspace root: ${dir}`);
     }
-    try {
-      copyDirSync(srcDir, destDir);
-    } catch (err) {
-      console.warn(`Failed to copy data directory ${dir}:`, err);
-    }
+    copyDirSync(srcDir, destDir);
   }
 }
 

@@ -17,6 +17,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { loadScenarioSuite, type ScenarioSuiteCase } from '../schemas/scenario-suite.js';
 import {
   executeCommandSequence,
+  extractRunbookReferences,
   matchStepAssertions,
   formatStepAssertionDescription,
   type StepAssertionResult,
@@ -32,6 +33,24 @@ const CLI_PATH = (() => {
   if (existsSync(adjacent)) return adjacent;
   return join(__dirname, '..', '..', 'dist', 'cli.js');
 })();
+
+/**
+ * Check if an error is an ENOENT filesystem error using duck-typing.
+ *
+ * Avoids `instanceof Error` which fails across ESM realm boundaries
+ * (e.g., Jest's experimental VM modules).
+ *
+ * @param err - The caught error value
+ * @returns True if the error has an ENOENT code
+ */
+function isEnoent(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code: unknown }).code === 'ENOENT'
+  );
+}
 
 /**
  * Validate that a relative path does not escape its parent directory.
@@ -87,76 +106,59 @@ async function executeSuiteCase(
 
     try {
       copyFileSync(runbookPath, destPath);
-    } catch {
-      return {
-        passed: false,
-        scenario: caseName,
-        expected: effectiveResult,
-        actual: `RUNBOOK_NOT_FOUND: ${suiteCase.file}`,
-      };
+    } catch (err: unknown) {
+      if (isEnoent(err)) {
+        return {
+          passed: false,
+          scenario: caseName,
+          expected: effectiveResult,
+          actual: `RUNBOOK_NOT_FOUND: ${suiteCase.file}`,
+        };
+      }
+      throw err;
     }
 
     // Also copy flat to runbooks root so bare-filename commands resolve
     const flatDest = join(runbooksDir, basename(suiteCase.file));
     if (flatDest !== destPath) {
-      copyFileSync(runbookPath, flatDest);
+      try {
+        copyFileSync(runbookPath, flatDest);
+      } catch (err: unknown) {
+        if (!isEnoent(err)) {
+          throw err;
+        }
+        // ENOENT non-fatal: structured copy at destPath already succeeded
+      }
     }
 
     // Copy any referenced child runbooks into the isolated workspace
-    const runbookPattern = /(?:^|[\s])([^\s=]+\.runbook\.md)/g;
     const mainBasename = basename(suiteCase.file);
-    const referenced = new Set<string>();
-    for (const cmd of suiteCase.commands) {
-      for (const match of cmd.matchAll(runbookPattern)) {
-        if (match[1] !== suiteCase.file && match[1] !== mainBasename) referenced.add(match[1]);
-      }
-    }
+    const allRefs = extractRunbookReferences(suiteCase.commands);
+    const referenced = allRefs.filter((r) => r !== suiteCase.file && r !== mainBasename);
     const mainRunbookSourceDir = dirname(resolve(suiteDir, suiteCase.file));
     for (const ref of referenced) {
-      try {
-        validateRelativePath(ref);
-        const dest = join(runbooksDir, ref);
-        mkdirSync(dirname(dest), { recursive: true });
-        // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
-        let copied = false;
-        for (const base of [mainRunbookSourceDir, suiteDir]) {
-          try {
-            copyFileSync(resolve(base, ref), dest);
-            copied = true;
-            break;
-          } catch (e: unknown) {
-            if (
-              e instanceof Error &&
-              'code' in e &&
-              (e as NodeJS.ErrnoException).code === 'ENOENT'
-            ) {
-              continue; // try next base
-            }
-            throw e; // permission/IO errors propagate immediately
+      validateRelativePath(ref);
+      const dest = join(runbooksDir, ref);
+      mkdirSync(dirname(dest), { recursive: true });
+      // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
+      let copied = false;
+      for (const base of [mainRunbookSourceDir, suiteDir]) {
+        try {
+          copyFileSync(resolve(base, ref), dest);
+          copied = true;
+          break;
+        } catch (e: unknown) {
+          if (isEnoent(e)) {
+            continue; // try next base
           }
+          throw e; // permission/IO errors propagate immediately
         }
-        if (!copied) {
-          return {
-            passed: false,
-            scenario: caseName,
-            expected: effectiveResult,
-            actual: `CHILD_RUNBOOK_NOT_FOUND: ${ref}`,
-          };
-        }
-      } catch (err: unknown) {
-        if (
-          err instanceof Error &&
-          'code' in err &&
-          (err as NodeJS.ErrnoException).code === 'ENOENT'
-        ) {
-          return {
-            passed: false,
-            scenario: caseName,
-            expected: effectiveResult,
-            actual: `CHILD_RUNBOOK_NOT_FOUND: ${ref}`,
-          };
-        }
-        throw err;
+      }
+      if (!copied) {
+        throw new Error(
+          `CHILD_RUNBOOK_NOT_FOUND: ${ref} (required by case "${caseName}", ` +
+            `searched in: ${[mainRunbookSourceDir, suiteDir].join(', ')})`,
+        );
       }
     }
 
@@ -337,11 +339,25 @@ export function registerScenarioSuiteCommand(program: Command): void {
             let failedCount = 0;
 
             for (const [name, c] of Object.entries(result.suite.cases)) {
-              const caseResult = await executeSuiteCase(name, c, suiteDir, runQuiet, output);
-              caseResults.push(caseResult);
-              if (caseResult.passed) {
-                passedCount++;
-              } else {
+              try {
+                const caseResult = await executeSuiteCase(name, c, suiteDir, runQuiet, output);
+                caseResults.push(caseResult);
+                if (caseResult.passed) {
+                  passedCount++;
+                } else {
+                  failedCount++;
+                }
+              } catch (err: unknown) {
+                const msg =
+                  typeof err === 'object' && err !== null && 'message' in err
+                    ? String((err as { message: unknown }).message)
+                    : String(err);
+                caseResults.push({
+                  passed: false,
+                  scenario: name,
+                  expected: getEffectiveResult(c),
+                  actual: `ERROR: ${msg}`,
+                });
                 failedCount++;
               }
             }
@@ -389,7 +405,21 @@ export function registerScenarioSuiteCommand(program: Command): void {
             }
 
             const c = result.suite.cases[caseName];
-            const caseResult = await executeSuiteCase(caseName, c, suiteDir, runQuiet, output);
+            let caseResult: Awaited<ReturnType<typeof executeSuiteCase>>;
+            try {
+              caseResult = await executeSuiteCase(caseName, c, suiteDir, runQuiet, output);
+            } catch (err: unknown) {
+              const msg =
+                typeof err === 'object' && err !== null && 'message' in err
+                  ? String((err as { message: unknown }).message)
+                  : String(err);
+              caseResult = {
+                passed: false,
+                scenario: caseName,
+                expected: getEffectiveResult(c),
+                actual: `ERROR: ${msg}`,
+              };
+            }
 
             const detailData: Record<string, unknown> = {
               result: caseResult.passed,

@@ -34,10 +34,12 @@ jest.unstable_mockModule('shell-quote', () => ({
   parse: jest.fn().mockImplementation((str: string) => str.split(/\s+/)),
 }));
 
-// Mock command-sequence
+// Mock command-sequence (pass through extractRunbookReferences so extractReferencedRunbooks works)
+const actualCommandSequence = await import('../../src/helpers/command-sequence');
 jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   executeCommandSequence: jest.fn(),
   matchStepAssertions: jest.fn(),
+  extractRunbookReferences: actualCommandSequence.extractRunbookReferences,
 }));
 
 // Import after mocking
@@ -45,6 +47,7 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook')
 const { extractRawFrontmatter } = await import('../../src/helpers/extract-raw-frontmatter');
 const { parseScenarios } = await import('../../src/schemas/scenarios');
 const { readFile, rm } = await import('node:fs/promises');
+const { copyFileSync } = await import('node:fs');
 const { executeCommandSequence, matchStepAssertions } = await import(
   '../../src/helpers/command-sequence'
 );
@@ -302,6 +305,42 @@ describe('extractReferencedRunbooks', () => {
 
     expect(extractReferencedRunbooks(scenario)).toEqual([]);
   });
+
+  it('strips double quotes from runbook filenames', () => {
+    const scenario: any = {
+      result: 'COMPLETE',
+      commands: ['rd run --prompted "child.runbook.md"'],
+    };
+
+    expect(extractReferencedRunbooks(scenario)).toEqual(['child.runbook.md']);
+  });
+
+  it('strips single quotes from runbook filenames', () => {
+    const scenario: any = {
+      result: 'COMPLETE',
+      commands: ["rd run --prompted 'child.runbook.md'"],
+    };
+
+    expect(extractReferencedRunbooks(scenario)).toEqual(['child.runbook.md']);
+  });
+
+  it('extracts paths with slashes', () => {
+    const scenario: any = {
+      result: 'COMPLETE',
+      commands: ['rd delegate delegation/child.runbook.md --step 1'],
+    };
+
+    expect(extractReferencedRunbooks(scenario)).toEqual(['delegation/child.runbook.md']);
+  });
+
+  it('extracts filenames with hyphens', () => {
+    const scenario: any = {
+      result: 'COMPLETE',
+      commands: ['rd run my-cool-thing.runbook.md'],
+    };
+
+    expect(extractReferencedRunbooks(scenario)).toEqual(['my-cool-thing.runbook.md']);
+  });
 });
 
 describe('executeScenario', () => {
@@ -465,5 +504,27 @@ describe('executeScenario', () => {
       recursive: true,
       force: true,
     });
+  });
+
+  it('throws informative error when referenced child runbook is missing', async () => {
+    const enoentError = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    jest.mocked(copyFileSync).mockImplementation((src: any) => {
+      // Succeed for main runbook, throw ENOENT for child
+      if (String(src).includes('child.runbook.md')) {
+        throw enoentError;
+      }
+    });
+
+    const loaded = makeLoadedRunbook({
+      commands: ['rd run my.runbook.md', 'rd delegate child.runbook.md --step 1'],
+    });
+
+    await expect(
+      executeScenario(loaded as any, 'happy', true, mockOutput, '/cli/dist/cli.js'),
+    ).rejects.toThrow(/Referenced runbook not found: child\.runbook\.md/);
+
+    await expect(
+      executeScenario(loaded as any, 'happy', true, mockOutput, '/cli/dist/cli.js'),
+    ).rejects.toThrow(/searched in:/);
   });
 });

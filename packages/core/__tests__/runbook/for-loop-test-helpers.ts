@@ -172,6 +172,7 @@ export interface RunResult {
  * @param steps - Runbook steps to compile into a state machine
  * @param events - Sequence of PASS/FAIL events to send while the machine is in the FOR loop step
  * @returns Terminal state, forStack length, accumulated iteration results, and total events consumed
+ * @throws {Error} When padding fails to drive the machine to terminal state within 200 events
  */
 export function runFromSteps(steps: Step[], events: EventType[]): RunResult {
   const machine = compileRunbookToMachine(steps);
@@ -202,6 +203,12 @@ export function runFromSteps(steps: Step[], events: EventType[]): RunResult {
   }
 
   const snap = actor.getSnapshot();
+  if (snap.status !== 'done') {
+    throw new Error(
+      `runFromSteps: machine did not reach terminal state after ${String(consumed)} events. ` +
+        `Current state: ${String(snap.value)}`,
+    );
+  }
   return {
     terminalState: String(snap.value),
     forStackLength: snap.context.forStack.length,
@@ -218,6 +225,7 @@ export function runFromSteps(steps: Step[], events: EventType[]): RunResult {
  * @param config - Full FOR loop configuration covering substep, iteration, and parent layers
  * @param events - Sequence of PASS/FAIL events to send while the machine is in the FOR loop step
  * @returns Terminal state, forStack length, accumulated iteration results, and total events consumed
+ * @throws {Error} When padding fails to drive the machine to terminal state within 200 events
  */
 export function runForLoop(config: ForLoopConfig, events: EventType[]): RunResult {
   return runFromSteps(buildForLoopSteps(config), events);

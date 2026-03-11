@@ -338,6 +338,34 @@ export function formatStepAssertionDescription(sa: StepAssertionResult): string 
 }
 
 /**
+ * Extract runbook file references from a list of command strings.
+ *
+ * Scans each command for patterns matching `*.runbook.md` filenames,
+ * naturally excluding surrounding shell quote characters. Returns
+ * deduplicated results preserving insertion order.
+ *
+ * @param commands - Array of command strings to scan
+ * @returns Array of unique runbook filenames found in the commands
+ */
+export function extractRunbookReferences(commands: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  const pattern = /((?:\.\/)?[\w][\w.\-/]*\.runbook\.md)(?![\w.\-/])/g;
+
+  for (const cmd of commands) {
+    for (const match of cmd.matchAll(pattern)) {
+      const ref = match[1];
+      if (!seen.has(ref)) {
+        seen.add(ref);
+        result.push(ref);
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Execute a sequence of commands in order, accumulating transitions and tokens.
  *
  * Handles `rd` commands (routed through the CLI with `--json`) and generic
