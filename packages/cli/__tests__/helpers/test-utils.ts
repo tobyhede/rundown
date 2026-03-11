@@ -597,8 +597,8 @@ export function createRunbook(options: CreateRunbookOptions): string {
     const hasAggregation = step.for != null || step.substeps != null;
     const allQualifier = step.all !== false ? ' ALL' : ' ANY';
     const anyQualifier = step.all !== false ? ' ANY' : ' ALL';
-    if (step.pass) lines.push(`- PASS${hasAggregation ? allQualifier : ''}: ${step.pass}`);
-    if (step.fail) lines.push(`- FAIL${hasAggregation ? anyQualifier : ''}: ${step.fail}`);
+    if (step.pass) lines.push(`- PASS${hasAggregation ? allQualifier : ''} ${step.pass}`);
+    if (step.fail) lines.push(`- FAIL${hasAggregation ? anyQualifier : ''} ${step.fail}`);
     lines.push('');
 
     if (step.substeps) {
