@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@rundown-org/core": "*",
     "zod": "^3.25.0"
   },
   "devDependencies": {

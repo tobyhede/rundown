@@ -269,7 +269,7 @@ async function handleHookDispatch(): Promise<void> {
     console.error(
       JSON.stringify({
         continue: false,
-        stopReason: `Unexpected error: ${String(error)}`,
+        stopReason: `Unexpected error: ${errorMessage}`,
       }),
     );
     process.exit(1);

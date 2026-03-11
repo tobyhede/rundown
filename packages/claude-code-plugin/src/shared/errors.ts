@@ -41,7 +41,8 @@ export function getErrorMessage(error: unknown): string {
 export type SessionLoadError =
   | { type: 'file_not_found'; path: string }
   | { type: 'parse_error'; path: string; message: string }
-  | { type: 'validation_error'; path: string; message: string };
+  | { type: 'validation_error'; path: string; message: string }
+  | { type: 'io_error'; path: string; message: string };
 
 /**
  * Result type for session load operations

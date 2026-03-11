@@ -135,7 +135,7 @@ export class Session {
       return {
         success: false,
         error: {
-          type: 'parse_error',
+          type: 'io_error',
           path: this.stateFile,
           message: getErrorMessage(error),
         },
