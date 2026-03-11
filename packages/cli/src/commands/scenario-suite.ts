@@ -44,7 +44,12 @@ const CLI_PATH = (() => {
  * @returns True if the error has an ENOENT code
  */
 function isEnoent(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'code' in err && (err as { code: unknown }).code === 'ENOENT';
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code: unknown }).code === 'ENOENT'
+  );
 }
 
 /**
@@ -343,9 +348,10 @@ export function registerScenarioSuiteCommand(program: Command): void {
                   failedCount++;
                 }
               } catch (err: unknown) {
-                const msg = typeof err === 'object' && err !== null && 'message' in err
-                  ? String((err as { message: unknown }).message)
-                  : String(err);
+                const msg =
+                  typeof err === 'object' && err !== null && 'message' in err
+                    ? String((err as { message: unknown }).message)
+                    : String(err);
                 caseResults.push({
                   passed: false,
                   scenario: name,
