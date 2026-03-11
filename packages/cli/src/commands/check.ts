@@ -7,6 +7,7 @@ import {
   validateRunbook,
   type Step,
 } from '@rundown-org/parser';
+import { getErrorMessage } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
@@ -90,7 +91,7 @@ export function registerCheckCommand(program: Command): void {
         );
         output.flush();
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         output.detail(
           {
             valid: false,

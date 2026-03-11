@@ -40,7 +40,7 @@ function toRundownError(error: unknown): RundownError {
 
   // Generic error - wrap it
   const message = getErrorMessage(error);
-  return Errors.unknown(message, error instanceof Error ? error : undefined);
+  return Errors.unknown(message, Error.isError(error) ? error : undefined);
 }
 
 /**

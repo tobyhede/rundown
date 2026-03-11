@@ -6,6 +6,7 @@ import {
   loadConfig,
   logger,
   isPathInside,
+  getErrorMessage,
 } from './shared/index.js';
 import { injectContext } from './context.js';
 import { executeGate } from './gate-loader.js';
@@ -173,7 +174,7 @@ export async function gateMatchesFilePattern(
     // FIX: Invalid glob pattern - log warning and skip gate
     await logger.warn('Invalid file pattern - gate skipped', {
       pattern: gateConfig.file_patterns,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
       relativePath,
     });
     return false;
@@ -232,7 +233,7 @@ async function updateSessionState(input: HookInput): Promise<void> {
     // Session state is best-effort, don't fail the hook if it errors
     // Structured error logging for debugging
     const errorData = {
-      error_type: error instanceof Error ? error.constructor.name : 'UnknownError',
+      error_type: Error.isError(error) ? error.constructor.name : 'UnknownError',
       error_message: error instanceof Error ? error.message : String(error),
       hook_event: event,
       cwd: input.cwd,

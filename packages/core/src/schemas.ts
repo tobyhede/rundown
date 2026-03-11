@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { FrameKey } from './runbook/targeting.js';
 import type { JsonValue } from './runbook/types.js';
+import { getErrorMessage } from './errors.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
 const FrameKeySchema = z.string().transform((v) => v as FrameKey);
@@ -75,7 +76,7 @@ export function parseHookInput(json: string): ParseResult<HookInput> {
   } catch (e) {
     return {
       success: false,
-      error: `Invalid JSON input: ${e instanceof Error ? e.message : String(e)}`,
+      error: `Invalid JSON input: ${getErrorMessage(e)}`,
     };
   }
 

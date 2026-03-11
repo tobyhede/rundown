@@ -9,6 +9,7 @@ import {
   isNodeError,
   isFileNotFoundError,
   logger,
+  getErrorMessage,
 } from './shared/index.js';
 
 /**
@@ -106,7 +107,7 @@ export class Session {
           error: {
             type: 'parse_error',
             path: this.stateFile,
-            message: e instanceof Error ? e.message : String(e),
+            message: getErrorMessage(e),
           },
         };
       }
@@ -136,7 +137,7 @@ export class Session {
         error: {
           type: 'parse_error',
           path: this.stateFile,
-          message: error instanceof Error ? error.message : String(error),
+          message: getErrorMessage(error),
         },
       };
     }

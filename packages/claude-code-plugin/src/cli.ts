@@ -5,6 +5,7 @@ import {
   SESSION_STATE_KEYS,
   parseHookInput,
   logger,
+  getErrorMessage,
 } from './shared/index.js';
 import { dispatch } from './dispatcher.js';
 import { buildHookOutput } from './hook-output.js';
@@ -109,7 +110,7 @@ async function handleSessionCommand(args: string[]): Promise<void> {
           try {
             parsed = JSON.parse(value);
           } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
+            const message = getErrorMessage(e);
             console.error(`Invalid JSON for metadata: ${message}`);
             process.exit(1);
           }
@@ -170,7 +171,7 @@ async function handleSessionCommand(args: string[]): Promise<void> {
         process.exit(1);
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = getErrorMessage(error);
     await logger.error('Session command failed', { command, error: errorMessage });
     console.error(`Session error: ${errorMessage}`);
     process.exit(1);
@@ -263,7 +264,7 @@ async function handleHookDispatch(): Promise<void> {
       console.log(JSON.stringify(output));
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = getErrorMessage(error);
     await logger.error('Hook dispatch failed', { error: errorMessage });
     console.error(
       JSON.stringify({

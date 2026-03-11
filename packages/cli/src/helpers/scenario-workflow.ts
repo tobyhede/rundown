@@ -11,6 +11,7 @@ import { readFile, rm } from 'node:fs/promises';
 import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { isNodeError } from '@rundown-org/core';
 import {
   parseScenarios,
   getEffectiveResult,
@@ -217,12 +218,7 @@ export async function executeScenario(
         try {
           copyFileSync(join(sourceDir, ref), join(runbooksDir, ref));
         } catch (err: unknown) {
-          if (
-            typeof err === 'object' &&
-            err !== null &&
-            'code' in err &&
-            (err as { code: unknown }).code === 'ENOENT'
-          ) {
+          if (isNodeError(err) && err.code === 'ENOENT') {
             throw new Error(`Referenced runbook not found: ${ref} (searched in: ${sourceDir})`);
           }
           throw err;

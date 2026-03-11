@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { rm } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { getErrorMessage, isNodeError } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadScenarioSuite, type ScenarioSuiteCase } from '../schemas/scenario-suite.js';
 import {
@@ -33,24 +34,6 @@ const CLI_PATH = (() => {
   if (existsSync(adjacent)) return adjacent;
   return join(__dirname, '..', '..', 'dist', 'cli.js');
 })();
-
-/**
- * Check if an error is an ENOENT filesystem error using duck-typing.
- *
- * Avoids `instanceof Error` which fails across ESM realm boundaries
- * (e.g., Jest's experimental VM modules).
- *
- * @param err - The caught error value
- * @returns True if the error has an ENOENT code
- */
-function isEnoent(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code: unknown }).code === 'ENOENT'
-  );
-}
 
 /**
  * Validate that a relative path does not escape its parent directory.
@@ -107,7 +90,7 @@ async function executeSuiteCase(
     try {
       copyFileSync(runbookPath, destPath);
     } catch (err: unknown) {
-      if (isEnoent(err)) {
+      if (isNodeError(err) && err.code === 'ENOENT') {
         return {
           passed: false,
           scenario: caseName,
@@ -124,7 +107,7 @@ async function executeSuiteCase(
       try {
         copyFileSync(runbookPath, flatDest);
       } catch (err: unknown) {
-        if (!isEnoent(err)) {
+        if (!(isNodeError(err) && err.code === 'ENOENT')) {
           throw err;
         }
         // ENOENT non-fatal: structured copy at destPath already succeeded
@@ -148,7 +131,7 @@ async function executeSuiteCase(
           copied = true;
           break;
         } catch (e: unknown) {
-          if (isEnoent(e)) {
+          if (isNodeError(e) && e.code === 'ENOENT') {
             continue; // try next base
           }
           throw e; // permission/IO errors propagate immediately
@@ -250,7 +233,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
         ]);
         output.flush();
       } catch (error) {
-        output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
+        output.error(getErrorMessage(error), 'UNKNOWN_ERROR');
         output.flush();
         process.exit(1);
       }
@@ -296,7 +279,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
         output.detail(detailData, 'custom');
         output.flush();
       } catch (error) {
-        output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
+        output.error(getErrorMessage(error), 'UNKNOWN_ERROR');
         output.flush();
         process.exit(1);
       }
@@ -459,7 +442,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
             process.exit(1);
           }
         } catch (error) {
-          output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
+          output.error(getErrorMessage(error), 'UNKNOWN_ERROR');
           output.flush();
           process.exit(1);
         }

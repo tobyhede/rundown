@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { getErrorMessage } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { formatStepAssertionDescription } from '../helpers/command-sequence.js';
 import {
@@ -75,7 +76,7 @@ export function registerScenariosCommand(program: Command): void {
         ]);
         output.flush();
       } catch (error) {
-        output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
+        output.error(getErrorMessage(error), 'UNKNOWN_ERROR');
         output.flush();
         process.exit(1);
       }
@@ -119,7 +120,7 @@ export function registerScenariosCommand(program: Command): void {
         output.detail(detailData, 'scenario');
         output.flush();
       } catch (error) {
-        output.error(error instanceof Error ? error.message : 'Unknown error', 'UNKNOWN_ERROR');
+        output.error(getErrorMessage(error), 'UNKNOWN_ERROR');
         output.flush();
         process.exit(1);
       }

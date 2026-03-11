@@ -150,7 +150,7 @@ export class DelegationLock {
         return true;
       }
       // Corrupted lock file (invalid JSON) — unlink and reclaim
-      if (err instanceof SyntaxError) {
+      if (Error.isError(err) && err.name === 'SyntaxError') {
         try {
           await fs.unlink(lockFile);
         } catch (unlinkErr: unknown) {
