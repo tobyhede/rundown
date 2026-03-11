@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { CommanderError } from 'commander';
 import { createProgram } from '../../src/cli.js';
 import { resetPolicyContext } from '../../src/services/policy-context.js';
-import { resetColorCache, setWriter, ConsoleWriter } from '@rundown-org/core';
+import { resetColorCache, setWriter, ConsoleWriter, getErrorMessage } from '@rundown-org/core';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -234,7 +234,7 @@ export async function runCliInProcess(
       exitCode = err.exitCode;
     } else {
       exitCode = 1;
-      stderrBuf += err instanceof Error ? err.message : String(err);
+      stderrBuf += getErrorMessage(err);
     }
   } finally {
     // Restore everything

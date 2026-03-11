@@ -504,7 +504,7 @@ describe('RunbookStateManager', () => {
         await manager.load(state.id);
         throw new Error('Should have thrown');
       } catch (e) {
-        if (e instanceof Error) {
+        if (Error.isError(e)) {
           expect(e.message).toContain('dynamic-step snapshots');
           expect(e.message).toContain('no longer supported');
           expect(e.message).toContain('restart execution');

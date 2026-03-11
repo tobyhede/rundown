@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import type { RundownPluginConfig, GateConfig } from './types.js';
 import { fileExists } from './utils.js';
 import { logger } from './logger.js';
+import { getErrorMessage } from './errors.js';
 
 const KNOWN_HOOK_EVENTS = [
   'PreToolUse',
@@ -121,9 +122,7 @@ export function validateConfig(config: RundownPluginConfig): void {
     try {
       validateFilePatterns(gateConfig);
     } catch (error) {
-      throw new Error(
-        `Gate "${gateName}" has invalid configuration: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new Error(`Gate "${gateName}" has invalid configuration: ${getErrorMessage(error)}`);
     }
 
     for (const action of [gateConfig.on_pass, gateConfig.on_fail]) {

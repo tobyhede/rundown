@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { mockErrorHelpers } from './mock-error-helpers';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -15,6 +16,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
   ),
   countNumberedSteps: jest.fn().mockReturnValue(5),
+  ...mockErrorHelpers,
 }));
 
 import type { RunbookState } from '@rundown-org/core';

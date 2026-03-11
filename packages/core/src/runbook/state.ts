@@ -164,7 +164,7 @@ export class RunbookStateManager {
       return result.data as RunbookState;
     } catch (e) {
       // Re-throw legacy snapshot errors
-      if (e instanceof Error && e.message.includes('dynamic-step snapshots')) {
+      if (Error.isError(e) && e.message.includes('dynamic-step snapshots')) {
         throw e;
       }
       return null;

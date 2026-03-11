@@ -1,6 +1,7 @@
 // packages/cli/src/commands/echo.ts
 
 import type { Command } from 'commander';
+import { getErrorMessage } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { DEFAULT_RESULT_SEQUENCE, executeEchoLogic } from '../helpers/echo-command.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -58,12 +59,7 @@ export function registerEchoCommand(program: Command): void {
           // in-process test execution where process.exit is intercepted.
           process.exitCode = result.exitCode;
         } catch (error) {
-          let message = 'Failed to process test command';
-          if (error instanceof Error) {
-            message = error.message;
-          } else if (typeof error === 'string') {
-            message = error;
-          }
+          const message = getErrorMessage(error);
 
           // Emit error unconditionally - renderer handles formatting
           output.detail(

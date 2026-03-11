@@ -13,6 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { type PolicyConfig, parsePolicy, safeParsePolicyConfig, DEFAULT_POLICY } from './schema.js';
+import { getErrorMessage } from '../errors.js';
 
 const requireFromModule = createRequire(import.meta.url);
 
@@ -195,7 +196,7 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
   } catch (error) {
     // If search failed but we have defaults, use them
     if (useDefaults) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      const errorMsg = getErrorMessage(error);
       warnings.push(`Error loading policy config: ${errorMsg}`);
       warnings.push('Using built-in defaults instead.');
       return {
@@ -357,7 +358,7 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
     }
   } catch (error) {
     if (useDefaults) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      const errorMsg = getErrorMessage(error);
       warnings.push(`Error loading policy config: ${errorMsg}`);
       warnings.push('Using built-in defaults instead.');
       return {

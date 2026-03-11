@@ -226,6 +226,10 @@ See [docs/SECURITY.md](docs/SECURITY.md) for full security policy documentation.
 - `NO_COLOR=1` - Disable colored output (standard convention)
 - `FORCE_COLOR=1` - Force colored output even in non-TTY environments
 
+## CI / Workflow Conventions
+
+- **SHA-pinned actions**: GitHub Actions are pinned by commit SHA with a version comment (e.g., `actions/checkout@<sha> # v6`). This is intentional for supply-chain security. Do not replace SHAs with version tags.
+
 ## Development Commands
 
 ```bash

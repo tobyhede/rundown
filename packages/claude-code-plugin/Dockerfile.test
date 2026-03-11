@@ -2,7 +2,7 @@
 # Build: docker build -f Dockerfile.test -t claude-code-plugin-test .
 # Run: docker run --rm claude-code-plugin-test
 
-FROM node:20-slim
+FROM node:24-slim
 
 # Set working directory
 WORKDIR /app

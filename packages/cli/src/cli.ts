@@ -130,7 +130,7 @@ if (isEntryPoint) {
   program.parseAsync().catch((error: unknown) => {
     if (error instanceof PolicyConfigTrustRequiredError) {
       console.error(error.message);
-    } else if (error instanceof Error) {
+    } else if (Error.isError(error)) {
       console.error(error.message);
     } else {
       console.error(String(error));

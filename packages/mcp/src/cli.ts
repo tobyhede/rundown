@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { getErrorMessage } from '@rundown-org/core';
 
 const execFileAsync = promisify(execFile);
 
@@ -154,6 +155,6 @@ export async function runCli(args: string[]): Promise<CliResult> {
         return { success: false, error: message.trim() };
       }
     }
-    return { success: false, error: error instanceof Error ? error.message : String(error) };
+    return { success: false, error: getErrorMessage(error) };
   }
 }

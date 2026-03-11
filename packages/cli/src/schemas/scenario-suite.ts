@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
+import { getErrorMessage, isNodeError } from '@rundown-org/core';
 import { ScenarioExpectSchema } from './scenarios.js';
 
 /**
@@ -78,17 +79,12 @@ export async function loadScenarioSuite(filePath: string): Promise<ScenarioSuite
   try {
     content = await readFile(filePath, 'utf-8');
   } catch (err: unknown) {
-    if (
-      err &&
-      typeof err === 'object' &&
-      'code' in err &&
-      (err as NodeJS.ErrnoException).code === 'ENOENT'
-    ) {
+    if (isNodeError(err) && err.code === 'ENOENT') {
       return { ok: false, error: `Suite file not found: ${filePath}` };
     }
     return {
       ok: false,
-      error: `Failed to read suite file: ${err instanceof Error ? err.message : 'unknown error'}`,
+      error: `Failed to read suite file: ${getErrorMessage(err)}`,
     };
   }
 
@@ -98,7 +94,7 @@ export async function loadScenarioSuite(filePath: string): Promise<ScenarioSuite
   } catch (err) {
     return {
       ok: false,
-      error: `Invalid YAML in suite file: ${err instanceof Error ? err.message : 'parse error'}`,
+      error: `Invalid YAML in suite file: ${getErrorMessage(err)}`,
     };
   }
 

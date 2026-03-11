@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { mockErrorHelpers } from './mock-error-helpers';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -54,6 +55,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     TOKEN_CANCELLED: { code: 'RD-809' },
     DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
   },
+  ...mockErrorHelpers,
 }));
 
 // Mock @rundown-org/parser

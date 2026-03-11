@@ -8,7 +8,11 @@
  * @returns True if the value is a NodeJS.ErrnoException, false otherwise
  */
 export function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && 'code' in error;
+  return (
+    Error.isError(error) &&
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'string'
+  );
 }
 
 /**
@@ -20,7 +24,7 @@ export function isNodeError(error: unknown): error is NodeJS.ErrnoException {
  * @returns True if the value is an Error instance, false otherwise
  */
 export function isError(error: unknown): error is Error {
-  return error instanceof Error;
+  return Error.isError(error);
 }
 
 /**

@@ -6,7 +6,11 @@
  * @returns True if error is a NodeJS.ErrnoException with 'code' property
  */
 export function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && 'code' in error;
+  return (
+    Error.isError(error) &&
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'string'
+  );
 }
 
 /**
@@ -17,7 +21,7 @@ export function isNodeError(error: unknown): error is NodeJS.ErrnoException {
  * @returns True if error is an Error instance
  */
 export function isError(error: unknown): error is Error {
-  return error instanceof Error;
+  return Error.isError(error);
 }
 
 /**
@@ -41,7 +45,8 @@ export function getErrorMessage(error: unknown): string {
 export type SessionLoadError =
   | { type: 'file_not_found'; path: string }
   | { type: 'parse_error'; path: string; message: string }
-  | { type: 'validation_error'; path: string; message: string };
+  | { type: 'validation_error'; path: string; message: string }
+  | { type: 'io_error'; path: string; message: string };
 
 /**
  * Result type for session load operations

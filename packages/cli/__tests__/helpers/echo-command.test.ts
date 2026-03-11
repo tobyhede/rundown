@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { mockErrorHelpers } from './mock-error-helpers';
 
 // Mock @rundown-org/core
 const mockGetActive = jest.fn();
@@ -7,6 +8,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   SessionService: jest.fn().mockImplementation(() => ({
     getActive: mockGetActive,
   })),
+  ...mockErrorHelpers,
 }));
 
 // Mock execution service for isValidResult

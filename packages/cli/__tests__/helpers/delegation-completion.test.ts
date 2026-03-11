@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { mockErrorHelpers } from './mock-error-helpers';
 import type { RunbookState, DelegationLinkage } from '@rundown-org/core';
 
 // Mock @rundown-org/core
@@ -21,6 +22,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   findSubstepState: jest.fn((substepStates: any[], substepId: string, frameKey: string) =>
     substepStates.find((ss: any) => ss.id === substepId && ss.frameKey === frameKey),
   ),
+  ...mockErrorHelpers,
 }));
 
 // Mock runbook-loader

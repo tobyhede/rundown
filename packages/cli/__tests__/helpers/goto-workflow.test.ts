@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { mockErrorHelpers } from './mock-error-helpers';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -19,6 +20,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
   ),
   countNumberedSteps: jest.fn().mockReturnValue(3),
+  ...mockErrorHelpers,
 }));
 
 // Mock execution service

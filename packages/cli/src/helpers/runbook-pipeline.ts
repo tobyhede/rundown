@@ -31,6 +31,7 @@ import {
   truncateDelegationToken,
   DELEGATION_TOKEN_PREFIX,
   ErrorCodes,
+  getErrorMessage,
 } from '@rundown-org/core';
 import { isSourced, stepHasSubsteps, type Step } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
@@ -315,7 +316,7 @@ export async function prepareRunbook(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
       code: 'VALIDATION_ERROR',
       details: { runbook: file },
     };
@@ -548,7 +549,7 @@ export async function claimAndLaunch(
   } catch (err) {
     // acquire() throws "Delegation lock timeout ..." for deadline expiry.
     // Re-throw anything else (EACCES, EIO, etc.) as an unexpected error.
-    if (err instanceof Error && err.message.startsWith('Delegation lock timeout')) {
+    if (Error.isError(err) && err.message.startsWith('Delegation lock timeout')) {
       return {
         ok: false,
         error: `Could not acquire delegation lock for run ${parentState.id}. Another operation may be in progress.`,

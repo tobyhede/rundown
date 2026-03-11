@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getErrorMessage } from './errors.js';
 
 /**
  * Zod schema for tool_input in tool hook events
@@ -72,7 +73,7 @@ export function parseHookInput(json: string): ParseResult<HookInput> {
   } catch (e) {
     return {
       success: false,
-      error: `Invalid JSON input: ${e instanceof Error ? e.message : String(e)}`,
+      error: `Invalid JSON input: ${getErrorMessage(e)}`,
     };
   }
 
