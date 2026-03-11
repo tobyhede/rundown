@@ -296,7 +296,7 @@ describe('prune command', () => {
       const runbookContent = `# My Titled Runbook
 
 ## 1. Only step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 \`\`\`bash
 rd echo --result pass

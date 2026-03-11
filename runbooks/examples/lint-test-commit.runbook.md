@@ -42,7 +42,7 @@ Lint, Test and Fix in a loop until `PASS`, then commit.
 
 ## 1. Run Lint Checks
 
-- FAIL: GOTO FixLint
+- FAIL GOTO FixLint
 
 Run the test suite to verify the implementation.
 
@@ -52,7 +52,7 @@ rd echo npm lint
 
 ## 2. Run Tests
 
-- FAIL: GOTO FixTest
+- FAIL GOTO FixTest
 
 Run the test suite to verify the implementation.
 
@@ -62,7 +62,7 @@ rd echo npm test
 
 ## 3. Commit Changes
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Commit the changes to the repository.
 
@@ -72,14 +72,14 @@ rd echo git commit -m 'feat: implement new logic'
 
 ## FixLint. Fix lint issues
 
-- YES: GOTO 1
-- NO: STOP "Unable to fix lint issues"
+- YES GOTO 1
+- NO STOP "Unable to fix lint issues"
 
 Follow the project guidelines and address all lint issues.
 
 ## FixTest. Fix all failing tests
 
-- YES: GOTO 2
-- NO: STOP "Unable to fix failing test/s"
+- YES GOTO 2
+- NO STOP "Unable to fix failing test/s"
 
 Fix all failing tests

@@ -13,14 +13,14 @@ scenarios:
 
 # FOR DEFER Shorthand
 
-`- DEFER` under FOR clause is shorthand for `- PASS: DEFER` + `- FAIL: DEFER`.
+`- DEFER` under FOR clause is shorthand for `- PASS DEFER` + `- FAIL DEFER`.
 
 ## 1. Validate items
 
 - FOR item IN 1 TO 3
   - DEFER
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Check {{item}}
 

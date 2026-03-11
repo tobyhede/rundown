@@ -23,8 +23,8 @@ describe('claim command', () => {
   /** Helper: write parent runbook with substeps */
   async function writeParentRunbook(): Promise<void> {
     const content = `## 1. Review
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Code review
 Do code review.
@@ -33,7 +33,7 @@ Do code review.
 Do security review.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step.
 `;
@@ -43,8 +43,8 @@ Final step.
   /** Helper: write child runbook */
   async function writeChildRunbook(): Promise<void> {
     const content = `## 1. Execute
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Run the child task.
 `;
@@ -218,7 +218,7 @@ Run the child task.
 
       // Child that uses a variable
       const childContent = `## 1. Task
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Execute with {{Env}} environment.
 `;
@@ -255,7 +255,7 @@ Execute with {{Env}} environment.
     /** Helper: write child that auto-completes via command */
     async function writeAutoCompleteChild(): Promise<void> {
       const content = `## 1. Execute
-- PASS: COMPLETE
+- PASS COMPLETE
 
 \`\`\`bash
 rd echo --result pass
@@ -295,7 +295,7 @@ rd echo --result pass
       await writeParentRunbook();
 
       const failChild = `## 1. Execute
-- FAIL: STOP
+- FAIL STOP
 
 \`\`\`bash
 rd echo --result fail
@@ -430,7 +430,7 @@ Region: us-west
 ---
 
 ## 1. Review
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Code review
 Review code.
@@ -439,7 +439,7 @@ Review code.
 
       // Child that references parent vars
       const childWithContext = `## 1. Task
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Parent region: {{context.parent.vars.Region}}
 Plan: {{context.parent.vars.PlanPath}}

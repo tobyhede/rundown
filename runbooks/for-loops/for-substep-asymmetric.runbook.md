@@ -26,13 +26,13 @@ This creates asymmetric routing where success is silent but failure is recorded.
 ## 1. Process items
 
 - FOR item IN 1 TO 2
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Validate {{item}}
 
-- PASS: CONTINUE
-- FAIL: DEFER
+- PASS CONTINUE
+- FAIL DEFER
 
 ```bash
 rd echo "validate={{item}}"
@@ -40,7 +40,7 @@ rd echo "validate={{item}}"
 
 ## 2. Done
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "done"

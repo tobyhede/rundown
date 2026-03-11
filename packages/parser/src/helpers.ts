@@ -586,13 +586,13 @@ function parseConditionalPrefix(
   let modifier: AggregationModifier = null;
   let remaining = rest;
 
-  const modifierMatch = /^\s+(ALL|ANY)[\s:→-]/.exec(remaining);
+  const modifierMatch = /^\s+(ALL|ANY)\s/.exec(remaining);
   if (modifierMatch) {
     modifier = modifierMatch[1] as 'ALL' | 'ANY';
     remaining = remaining.slice(modifierMatch[0].length);
   }
 
-  const actionStr = stripSeparator(remaining);
+  const actionStr = remaining.trimStart();
 
   // Try to parse as RETRY first
   let retry = 0;
@@ -624,10 +624,10 @@ function parseConditionalPrefix(
  * Parse a conditional transition line into a ParsedConditional object.
  *
  * Recognizes these formats:
- * - PASS/YES: triggers on step success (e.g., "PASS: CONTINUE", "YES → GOTO 2")
- * - FAIL/NO: triggers on step failure (e.g., "FAIL: STOP", "NO → RETRY 3")
- * - With aggregation: "PASS ALL: CONTINUE", "FAIL ANY: STOP"
- * - Standalone DEFER: shorthand for PASS: DEFER + FAIL: DEFER
+ * - PASS/YES: triggers on step success (e.g., "PASS CONTINUE", "YES GOTO 2")
+ * - FAIL/NO: triggers on step failure (e.g., "FAIL STOP", "NO RETRY 3")
+ * - With aggregation: "PASS ALL CONTINUE", "FAIL ANY STOP"
+ * - Standalone DEFER: shorthand for PASS DEFER + FAIL DEFER
  *
  * @param text - The conditional line to parse
  * @returns Parsed conditional (single or array for DEFER shorthand), or null if not a conditional
@@ -636,7 +636,7 @@ function parseConditionalPrefix(
 export function parseConditional(text: string): ParseConditionalResult {
   const trimmed = text.trim();
 
-  // Standalone DEFER shorthand: expands to PASS: DEFER + FAIL: DEFER
+  // Standalone DEFER shorthand: expands to PASS DEFER + FAIL DEFER
   if (trimmed === 'DEFER') {
     return [
       { type: 'pass', retry: 0, action: { type: 'DEFER' }, modifier: null, raw: 'DEFER' },

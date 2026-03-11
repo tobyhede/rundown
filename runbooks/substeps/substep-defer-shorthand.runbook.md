@@ -22,12 +22,12 @@ scenarios:
 
 # Substep DEFER Shorthand
 
-`- DEFER` is shorthand for `- PASS: DEFER` + `- FAIL: DEFER`.
+`- DEFER` is shorthand for `- PASS DEFER` + `- FAIL DEFER`.
 
 ## 1. Validate
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 First check
 

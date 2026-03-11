@@ -22,7 +22,7 @@ Stash this runbook, run a different one to completion, then resume.
 
 ## 1. Start work
 
-- PASS: CONTINUE
+- PASS CONTINUE
 
 ```bash
 rd echo "A: step one"
@@ -30,7 +30,7 @@ rd echo "A: step one"
 
 ## 2. Finish work
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "A: step two"

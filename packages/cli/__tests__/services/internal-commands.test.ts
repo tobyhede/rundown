@@ -53,8 +53,8 @@ describe('internal-commands', () => {
 
     const runbookContent = `## 1. Test step
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Test step description.
 

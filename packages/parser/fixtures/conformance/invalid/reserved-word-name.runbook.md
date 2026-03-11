@@ -1,7 +1,7 @@
 # Invalid: Reserved Word as Step Name
 
 ## 1 Main step
-- PASS: CONTINUE
+- PASS CONTINUE
 
 ## NEXT
 

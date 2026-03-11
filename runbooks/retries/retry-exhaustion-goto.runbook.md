@@ -47,8 +47,8 @@ Tests that RETRY exhaustion with GOTO jumps to a recovery step.
 
 ## 1. Flaky step
 
-- PASS: COMPLETE
-- FAIL: RETRY 2 GOTO 2
+- PASS COMPLETE
+- FAIL RETRY 2 GOTO 2
 
 Fails up to 2 times. If it exhausts, it jumps to the recovery step.
 
@@ -58,7 +58,7 @@ rd echo --result fail --result fail --result fail
 
 ## 2. Recovery
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Recovery step reached from step 1 exhaustion.
 

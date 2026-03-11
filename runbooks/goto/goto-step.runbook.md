@@ -20,8 +20,8 @@ Jump from step 1 to step 3, skipping step 2.
 
 ## 1. Step Jump
 
-- PASS: GOTO 3
-- FAIL: STOP
+- PASS GOTO 3
+- FAIL STOP
 
 ```bash
 rd echo "jump start"
@@ -29,8 +29,8 @@ rd echo "jump start"
 
 ## 2. Skipped Step
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 This step should be skipped.
 
@@ -40,7 +40,7 @@ rd echo --result fail
 
 ## 3. Jump Target
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Target of step jump.
 

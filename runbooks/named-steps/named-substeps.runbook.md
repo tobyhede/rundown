@@ -30,7 +30,7 @@ Execute second action.
 
 ### 1.Cleanup Cleanup
 
-- PASS: COMPLETE
-- FAIL: STOP "Cleanup failed"
+- PASS COMPLETE
+- FAIL STOP "Cleanup failed"
 
 Clean up resources

@@ -16,7 +16,7 @@ scenarios:
 ## 1. Count down
 
 - FOR item IN 3 TO 1
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 1.1 Process {{item}}
 

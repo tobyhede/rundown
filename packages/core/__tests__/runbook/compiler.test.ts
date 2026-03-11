@@ -118,7 +118,7 @@ describe('runbook compiler', () => {
 - review-fail.runbook.md
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 `).steps,
       ];
 
@@ -3605,10 +3605,10 @@ describe('runbook compiler', () => {
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo "processing"
@@ -3635,10 +3635,10 @@ echo "processing"
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo "processing"
@@ -3683,10 +3683,10 @@ echo "processing"
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN 1 TO 100 OF {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo "processing"
@@ -3711,10 +3711,10 @@ echo "processing"
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN {{ missing }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo "processing"
@@ -3741,10 +3741,10 @@ echo "processing"
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo "processing"
@@ -3771,10 +3771,10 @@ echo "processing"
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN 2 TO 4 OF {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo "processing"
@@ -4006,10 +4006,10 @@ echo "processing"
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN 4 TO 2 OF {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo "processing"
@@ -4303,13 +4303,13 @@ echo "processing"
       const steps = createRunbook(`
 ## 1. Review the plan
 - FOR pass IN 1 TO 2
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 - review-technical-accuracy.runbook.md
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 `);
 
       expect((steps[0] as any).substeps?.[0]).toMatchObject({
@@ -4337,16 +4337,16 @@ echo "processing"
       const steps = createRunbook(`
 ## 1. Review the plan
 - FOR pass IN 1 TO 2
-- PASS ALL: CONTINUE
-- FAIL ANY: GOTO Synthesize
+- PASS ALL CONTINUE
+- FAIL ANY GOTO Synthesize
 
 - review-technical-accuracy.runbook.md
 
 ## 2. Skipped
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ## Synthesize
-- PASS: COMPLETE
+- PASS COMPLETE
 `);
 
       const machine = compileRunbookToMachine(steps);
@@ -4364,18 +4364,18 @@ echo "processing"
     it('GOTO to shorthand-canonicalized FOR step enters substep .1', () => {
       const steps = createRunbook(`
 ## 1. Start
-- PASS: GOTO 2
-- FAIL: STOP
+- PASS GOTO 2
+- FAIL STOP
 
 ## 2. Review the plan
 - FOR pass IN 1 TO 2
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 - review-technical-accuracy.runbook.md
 
 ## 3. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 `);
 
       const machine = compileRunbookToMachine(steps);
@@ -4393,8 +4393,8 @@ echo "processing"
       const steps = createRunbook(`
 ## 1. Review the plan
 - FOR pass IN 1 TO 2
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 - review-technical-accuracy.runbook.md
 - review-structural-integrity.runbook.md
@@ -4402,7 +4402,7 @@ echo "processing"
 - review-risk-safety.runbook.md
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 `);
 
       // All four runbooks canonicalized into four implicit substeps (one runbook each)

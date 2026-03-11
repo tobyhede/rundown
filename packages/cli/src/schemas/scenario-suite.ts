@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
-import { parse as parseYaml } from 'yaml';
+import { load as parseYaml } from 'js-yaml';
 import { getErrorMessage, isNodeError } from '@rundown-org/core';
 import { ScenarioExpectSchema } from './scenarios.js';
 

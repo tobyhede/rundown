@@ -27,8 +27,8 @@ Aggregation waits for all DEFER'd results before evaluating. Any pass triggers C
 
 ## 1. Check any item
 
-- PASS ANY: COMPLETE
-- FAIL ALL: STOP "All checks failed"
+- PASS ANY COMPLETE
+- FAIL ALL STOP "All checks failed"
 
 ### 1.1 First check
 

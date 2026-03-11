@@ -15,15 +15,15 @@ scenarios:
 
 FOR iteration-level transitions default to DEFER. These two forms are equivalent:
 - Bare FOR clause (no nested transitions) — implicit DEFER
-- Explicit `- PASS: DEFER` / `- FAIL: DEFER` nested under FOR
+- Explicit `- PASS DEFER` / `- FAIL DEFER` nested under FOR
 
 ## 1. Validate items
 
 - FOR item IN 1 TO 3
-  - PASS: DEFER
-  - FAIL: DEFER
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+  - PASS DEFER
+  - FAIL DEFER
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Check {{item}}
 

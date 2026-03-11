@@ -15,7 +15,7 @@ scenarios:
 
 ## 1. Entry
 
-- PASS: GOTO 2 AT 3
+- PASS GOTO 2 AT 3
 
 Check passes and jumps to step 2 at iteration 3.
 
@@ -26,7 +26,7 @@ rd echo "entry"
 ## 2. Process items
 
 - FOR item IN 1 TO 5
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 2.1 Handle {{item}}
 

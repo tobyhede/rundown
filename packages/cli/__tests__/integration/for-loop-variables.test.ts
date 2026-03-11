@@ -307,8 +307,8 @@ name: Step Named
 # Named Step Test
 
 ## 1. Setup
-- PASS: GOTO ErrorHandler
-- FAIL: STOP
+- PASS GOTO ErrorHandler
+- FAIL STOP
 
 \`\`\`bash
 rd echo setup

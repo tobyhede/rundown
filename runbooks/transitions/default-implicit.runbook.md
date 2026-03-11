@@ -37,7 +37,7 @@ rd echo --result pass
 
 ## 2. Final step
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo --result pass

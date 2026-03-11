@@ -27,10 +27,10 @@ scenarios:
 ## 1. Process items
 
 - FOR item IN 1 TO 3
-  - PASS: DEFER
-  - FAIL: BREAK
-- PASS ALL: CONTINUE
-- FAIL: STOP
+  - PASS DEFER
+  - FAIL BREAK
+- PASS ALL CONTINUE
+- FAIL STOP
 
 ### 1.1 Check {{item}}
 
@@ -42,7 +42,7 @@ rd echo "item={{item}}"
 
 ## 2. Done
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "done"

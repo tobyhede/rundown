@@ -33,8 +33,8 @@ Tests that RETRY on the PASS path retries when a step succeeds.
 
 ## 1. Polling step
 
-- PASS: RETRY 2 CONTINUE
-- FAIL: STOP
+- PASS RETRY 2 CONTINUE
+- FAIL STOP
 
 Passes and retries up to 2 times. After exhaustion, CONTINUES to the next step.
 This pattern is useful for polling or repeated checks.
@@ -45,7 +45,7 @@ rd echo --result pass --result pass --result pass
 
 ## 2. Finish
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step reached after pass-retry exhaustion.
 

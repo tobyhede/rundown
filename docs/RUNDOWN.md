@@ -168,8 +168,8 @@ The state machine responds to these events:
 #### Transitions
 Default transitions when none specified:
 ```
-PASS ALL: CONTINUE
-FAIL ANY: STOP
+PASS ALL CONTINUE
+FAIL ANY STOP
 ```
 
 Transition evaluation:
@@ -225,8 +225,8 @@ Steps can iterate their substeps over a numeric range using a FOR annotation. FO
 ````markdown
 ## 3. Process batches
 - FOR batch IN 1 TO 5
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1. Process item
 - PASS CONTINUE
@@ -238,7 +238,7 @@ Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `
 ````markdown
 ## 2. Review the plan
 - FOR pass IN 1 TO 2
-- FAIL ANY: GOTO Synthesize
+- FAIL ANY GOTO Synthesize
 
 - review-technical-accuracy.runbook.md
 - review-structural-integrity.runbook.md
@@ -247,7 +247,7 @@ Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `
 ````markdown
 ## 2. Review the plan
 - FOR pass IN 1 TO 2
-- FAIL ANY: GOTO Synthesize
+- FAIL ANY GOTO Synthesize
 
 ### 2.1
 - review-technical-accuracy.runbook.md
@@ -348,8 +348,8 @@ log_file: file:data/results.jsonl
 ````markdown
 ## 2 Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 ### 1 Handle item
 - PASS CONTINUE
 - FAIL BREAK
@@ -970,8 +970,8 @@ Main agent runs runbook, dispatches subagents for substeps.
 **Runbook structure:**
 ```markdown
 ## 2. Execute batch
-- PASS ALL: CONTINUE
-- FAIL ANY: GOTO 4
+- PASS ALL CONTINUE
+- FAIL ANY GOTO 4
 
 ### 2.1 Process item
   - task.runbook.md

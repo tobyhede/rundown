@@ -22,7 +22,7 @@ scenarios:
 
 ## 1. Echo greeting
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "greeting={{greeting}}"

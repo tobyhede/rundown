@@ -21,7 +21,7 @@ Demonstrates stashing a runbook mid-execution and resuming with pop.
 
 ## 1. Initial work
 
-- PASS: CONTINUE
+- PASS CONTINUE
 
 ```bash
 rd echo "step one"
@@ -29,7 +29,7 @@ rd echo "step one"
 
 ## 2. Final work
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "step two"

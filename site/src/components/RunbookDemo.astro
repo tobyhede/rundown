@@ -5,20 +5,20 @@ const simpleRunbook = `# Simple Runbook
 
 Create an implementation plan.
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ## 2. Implement
 
 Write the code.
 
-- PASS: CONTINUE
+- PASS CONTINUE
 
 ## 3. Verify
 
 Run tests.
 
-- PASS: COMPLETE`;
+- PASS COMPLETE`;
 
 
 
@@ -28,28 +28,28 @@ const complexRunbook = `# Code Review Runbook
 
 Run code-review-agent.
 
-- PASS: CONTINUE
-- FAIL: RETRY 2
+- PASS CONTINUE
+- FAIL RETRY 2
 
 ## 2. Categorize issues
 
 Sort as BLOCKING or NON-BLOCKING.
 
-- PASS: CONTINUE
-- FAIL: STOP "Review failed"
+- PASS CONTINUE
+- FAIL STOP "Review failed"
 
 ## 3. Handle blocking
 
 Fix BLOCKING issues first.
 
-- YES: CONTINUE
-- NO: GOTO 4
+- YES CONTINUE
+- NO GOTO 4
 
 ## 4. Address feedback
 
 Implement NON-BLOCKING fixes.
 
-- PASS: COMPLETE`;
+- PASS COMPLETE`;
 
 
 ---

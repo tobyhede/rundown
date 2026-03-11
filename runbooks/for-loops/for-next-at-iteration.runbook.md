@@ -19,10 +19,10 @@ scenarios:
 ## 1. Process items
 
 - FOR item IN 1 TO 3
-  - PASS: DEFER
-  - FAIL: NEXT
-- PASS ANY: COMPLETE
-- FAIL ALL: STOP
+  - PASS DEFER
+  - FAIL NEXT
+- PASS ANY COMPLETE
+- FAIL ALL STOP
 
 ### 1.1 Attempt {{item}}
 

@@ -26,8 +26,8 @@ Fail step 1 to jump to the recovery step, or pass directly.
 
 ## 1. Risky Operation
 
-- PASS: COMPLETE
-- FAIL: GOTO 2
+- PASS COMPLETE
+- FAIL GOTO 2
 
 ```bash
 rd echo "risky operation"
@@ -35,7 +35,7 @@ rd echo "risky operation"
 
 ## 2. Recovery
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "recovery"

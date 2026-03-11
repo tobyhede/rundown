@@ -1,7 +1,7 @@
 ## 1. Execute failing command
 
-- PASS: CONTINUE
-- FAIL: RETRY 2
+- PASS CONTINUE
+- FAIL RETRY 2
 
 Run a command that fails then succeeds.
 
@@ -11,8 +11,8 @@ rd echo --result fail --result fail --result pass
 
 ## 2. Complete step
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 ```bash
 rd echo --result pass

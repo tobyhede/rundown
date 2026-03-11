@@ -33,10 +33,10 @@ Each iteration delegates to a child runbook.
 ## 1. Process items
 
 - FOR item IN 1 TO 2
-  - PASS: DEFER
-  - FAIL: BREAK
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+  - PASS DEFER
+  - FAIL BREAK
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Handle {{item}}
 

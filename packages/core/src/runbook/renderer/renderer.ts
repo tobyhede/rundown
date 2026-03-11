@@ -68,8 +68,8 @@ export function renderTransitions(transitions: Transitions): string {
   const lines: string[] = [];
   const passAgg = aggregationModifier(transitions.aggregation, 'pass');
   const failAgg = aggregationModifier(transitions.aggregation, 'fail');
-  lines.push(`- PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
-  lines.push(`- FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
+  lines.push(`- PASS${passAgg} ${renderTransitionAction(transitions.pass)}`);
+  lines.push(`- FAIL${failAgg} ${renderTransitionAction(transitions.fail)}`);
   return lines.join('\n');
 }
 
@@ -103,7 +103,7 @@ export function renderSubstep(substep: Substep, parentStepName: string): string 
  * present, they are appended as indented nested bullets.
  *
  * @param forClause - The FOR clause to render
- * @returns Array of DSL strings (e.g., ["- FOR pass IN 1 TO 2", "  - PASS ANY: CONTINUE"])
+ * @returns Array of DSL strings (e.g., ["- FOR pass IN 1 TO 2", "  - PASS ANY CONTINUE"])
  */
 function renderForClause(forClause: ForClause): string[] {
   const lines: string[] = [];
@@ -136,8 +136,8 @@ function renderForClause(forClause: ForClause): string[] {
   if (transitions) {
     const passAgg = aggregationModifier(transitions.aggregation, 'pass');
     const failAgg = aggregationModifier(transitions.aggregation, 'fail');
-    lines.push(`  - PASS${passAgg}: ${renderTransitionAction(transitions.pass)}`);
-    lines.push(`  - FAIL${failAgg}: ${renderTransitionAction(transitions.fail)}`);
+    lines.push(`  - PASS${passAgg} ${renderTransitionAction(transitions.pass)}`);
+    lines.push(`  - FAIL${failAgg} ${renderTransitionAction(transitions.fail)}`);
   }
 
   return lines;

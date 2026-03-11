@@ -1,7 +1,7 @@
 ## 1. First step
 
-- PASS: CONTINUE
-- FAIL: GOTO 3
+- PASS CONTINUE
+- FAIL GOTO 3
 
 May fail and jump to recovery.
 
@@ -11,8 +11,8 @@ rd echo --result fail
 
 ## 2. Normal path
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Skipped on failure.
 
@@ -22,8 +22,8 @@ rd echo --result pass
 
 ## 3. Recovery step
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Jumped here on failure.
 

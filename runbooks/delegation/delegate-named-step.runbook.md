@@ -18,8 +18,8 @@ scenarios:
 
 ## Review. Code review
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### Review.1 Automated check
 

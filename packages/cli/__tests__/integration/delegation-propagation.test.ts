@@ -23,8 +23,8 @@ describe('Delegation propagation integration', () => {
   /** Helper: write a parent runbook with substeps. */
   async function writeParentRunbook(): Promise<void> {
     const content = `## 1. Review
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Code review
 Do code review.
@@ -33,7 +33,7 @@ Do code review.
 Do security review.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step.
 `;
@@ -43,8 +43,8 @@ Final step.
   /** Helper: write a single-step child runbook (prompted). */
   async function writeChildRunbook(): Promise<void> {
     const content = `## 1. Execute
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Run the child task.
 `;
@@ -208,8 +208,8 @@ Run the child task.
     it('child completion cascades through parent to grandparent', async () => {
       // Grandparent with 2 substeps
       const grandparentContent = `## 1. Pipeline
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Deploy
 Deploy step.
@@ -221,8 +221,8 @@ Verify step.
 
       // Parent with 2 substeps
       const parentContent = `## 1. Review
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Task
 Review the deployment.
@@ -354,8 +354,8 @@ Approve the deployment.
     it('3 delegated substeps completed in reverse order — parent completes after all resolve', async () => {
       // Parent with 3 substeps
       const tripleParentContent = `## 1. Pipeline
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Task A
 Task A.
@@ -426,8 +426,8 @@ Task C.
     it('handles completion when parent has no substep states', async () => {
       // Create a parent runbook without substeps
       const simpleParentContent = `## 1. Task
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Do the task.
 `;

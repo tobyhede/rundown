@@ -22,8 +22,8 @@ Jump from substep 1.1 to substep 2.2 in a different parent step.
 
 ### 1.1 Start
 
-- PASS: GOTO 2.2
-- FAIL: STOP
+- PASS GOTO 2.2
+- FAIL STOP
 
 ```bash
 rd echo "start"
@@ -33,7 +33,7 @@ rd echo "start"
 
 ### 2.1 Skipped
 
-- PASS: CONTINUE
+- PASS CONTINUE
 
 ```bash
 rd echo --result fail
@@ -41,7 +41,7 @@ rd echo --result fail
 
 ### 2.2 Target
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "landed"

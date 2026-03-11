@@ -94,7 +94,11 @@ export function RunbookRunner({
   const isResetting = useRef(false);
 
   const [runbookStep, setRunbookStep] = useState<string>('—');
-  const [runbookTotal, setRunbookTotal] = useState<string>('—');
+  const [runbookTotal] = useState<string>(() => {
+    // Derive total step count from H2 headings in runbook content
+    const h2Count = (runbookContent.match(/^## /gm) || []).length;
+    return h2Count > 0 ? String(h2Count) : '—';
+  });
   const [runbookResult, setRunbookResult] = useState<string | null>(null);
 
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -184,7 +188,6 @@ export function RunbookRunner({
 
   const resetInternalState = useCallback(() => {
     setRunbookStep('—');
-    setRunbookTotal('—');
     setRunbookResult(null);
     setCurrentStep(0);
     xtermInstance.current?.clear();
@@ -250,12 +253,10 @@ export function RunbookRunner({
         const lines = cleanChunk.split('\n');
 
         for (const line of lines) {
-          // CLI outputs "At: X/Y" for step position
-          const stepMatch = line.match(/At:\s+(\d+\/\d+)/);
+          // CLI outputs "At: X" for step position (just the step number)
+          const stepMatch = line.match(/At:\s+(\d+)/);
           if (stepMatch) {
-            const parts = stepMatch[1].split('/');
-            setRunbookStep(parts[0]);
-            setRunbookTotal(parts[1]);
+            setRunbookStep(stepMatch[1]);
           }
           const resultMatch = line.match(/Runbook:\s+([A-Z]+)/);
           if (resultMatch) {

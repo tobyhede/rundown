@@ -16,8 +16,8 @@ Create an isolated worktree for focused development work.
 
 ## 1 Verify Git Repository
 
-- PASS: CONTINUE
-- FAIL: STOP "Not in a git repository."
+- PASS CONTINUE
+- FAIL STOP "Not in a git repository."
 
 Verify we're in a valid git repository.
 
@@ -27,8 +27,8 @@ git rev-parse --git-dir
 
 ## 2 Create Worktree
 
-- PASS: CONTINUE
-- FAIL: STOP "Failed to create worktree."
+- PASS CONTINUE
+- FAIL STOP "Failed to create worktree."
 
 Create the new worktree with the specified branch.
 
@@ -38,8 +38,8 @@ rd echo git worktree add -b feature/new-work ../new-worktree
 
 ## 3 Verify Setup
 
-- PASS: COMPLETE "Worktree created successfully."
-- FAIL: STOP "Worktree verification failed."
+- PASS COMPLETE "Worktree created successfully."
+- FAIL STOP "Worktree verification failed."
 
 Confirm the worktree was created correctly.
 

@@ -32,13 +32,13 @@ Both DEFER substeps feed iteration results.
 ## 1. Process items
 
 - FOR item IN 1 TO 2
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Prepare {{item}}
 
-- PASS: DEFER
-- FAIL: DEFER
+- PASS DEFER
+- FAIL DEFER
 
 ```bash
 rd echo "prepare={{item}}"
@@ -46,8 +46,8 @@ rd echo "prepare={{item}}"
 
 ### 1.2 Notify {{item}}
 
-- PASS: CONTINUE
-- FAIL: CONTINUE
+- PASS CONTINUE
+- FAIL CONTINUE
 
 ```bash
 rd echo "notify={{item}}"
@@ -55,8 +55,8 @@ rd echo "notify={{item}}"
 
 ### 1.3 Finalize {{item}}
 
-- PASS: DEFER
-- FAIL: DEFER
+- PASS DEFER
+- FAIL DEFER
 
 ```bash
 rd echo "finalize={{item}}"
@@ -64,7 +64,7 @@ rd echo "finalize={{item}}"
 
 ## 2. Done
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "done"

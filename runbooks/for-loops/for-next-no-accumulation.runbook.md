@@ -22,16 +22,16 @@ All NEXT iterations produce a vacuous pass at parent aggregation.
 
 ## 1. Process items
 - FOR i IN 1 TO 3
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Check
-- PASS: NEXT
-- FAIL: NEXT
+- PASS NEXT
+- FAIL NEXT
 
 Check item.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 All items processed.

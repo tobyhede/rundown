@@ -56,8 +56,8 @@ Given a runbook `deploy.md`:
 
 ````markdown
 ## 1. Run tests
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
 npm test

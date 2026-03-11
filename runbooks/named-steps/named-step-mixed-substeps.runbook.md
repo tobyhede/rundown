@@ -28,8 +28,8 @@ Demonstrates named steps with both static and named substeps.
 
 ## 1. Setup
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
+- PASS CONTINUE
+- FAIL GOTO ErrorHandler
 
 Initial setup.
 
@@ -41,8 +41,8 @@ rd echo "initial setup"
 
 ### ErrorHandler.1 Prepare
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Prepare for error handling.
 
@@ -52,8 +52,8 @@ rd echo "prepare error handling"
 
 ### ErrorHandler.Cleanup
 
-- PASS: GOTO 1
-- FAIL: STOP
+- PASS GOTO 1
+- FAIL STOP
 
 Named cleanup substep.
 

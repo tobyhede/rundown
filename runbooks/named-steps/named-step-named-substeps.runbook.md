@@ -27,8 +27,8 @@ Demonstrates named steps containing named substeps.
 
 ## 1. Setup
 
-- PASS: CONTINUE
-- FAIL: GOTO ErrorHandler
+- PASS CONTINUE
+- FAIL GOTO ErrorHandler
 
 Initial setup.
 
@@ -40,8 +40,8 @@ rd echo "initial setup"
 
 ### ErrorHandler.Prepare
 
-- PASS: GOTO ErrorHandler.Execute
-- FAIL: STOP
+- PASS GOTO ErrorHandler.Execute
+- FAIL STOP
 
 Prepare for error handling.
 
@@ -51,8 +51,8 @@ rd echo "prepare error handling"
 
 ### ErrorHandler.Execute
 
-- PASS: GOTO ErrorHandler.Verify
-- FAIL: STOP
+- PASS GOTO ErrorHandler.Verify
+- FAIL STOP
 
 Execute error recovery.
 
@@ -62,8 +62,8 @@ rd echo "execute recovery"
 
 ### ErrorHandler.Verify
 
-- PASS: GOTO 1
-- FAIL: STOP
+- PASS GOTO 1
+- FAIL STOP
 
 Verify recovery succeeded.
 

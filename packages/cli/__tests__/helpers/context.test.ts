@@ -63,8 +63,8 @@ Do the first thing.
 Do the second thing.
 
 ## RECOVER Recovery Step
-- PASS: STOP
-- FAIL: STOP
+- PASS STOP
+- FAIL STOP
 
 Handle recovery.
 `;

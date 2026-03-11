@@ -198,7 +198,7 @@ describe('start --prompted', () => {
         `# Prompt Block Test
 
 ## 1. Step with prompt block
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Show this command to the agent.
 

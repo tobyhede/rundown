@@ -21,8 +21,8 @@ describe('abort command - unit tests', () => {
 
   async function writeParentRunbook(): Promise<void> {
     const content = `## 1. Review
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Code review
 Do code review.
@@ -31,7 +31,7 @@ Do code review.
 Do security review.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step.
 `;
@@ -40,7 +40,7 @@ Final step.
 
   async function writeChildRunbook(): Promise<void> {
     const content = `## 1. Execute
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Run the child task.
 `;

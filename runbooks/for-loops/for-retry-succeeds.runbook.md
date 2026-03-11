@@ -22,23 +22,23 @@ Retry gives the iteration another chance. If substeps pass on retry, BREAK never
 
 ## 1. Process items
 - FOR i IN 1 TO 2
-  - FAIL ANY: RETRY 1 BREAK
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+  - FAIL ANY RETRY 1 BREAK
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 First check
-- PASS: DEFER
-- FAIL: DEFER
+- PASS DEFER
+- FAIL DEFER
 
 Check item.
 
 ### 1.2 Second check
-- PASS: DEFER
-- FAIL: BREAK
+- PASS DEFER
+- FAIL BREAK
 
 Validate item.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 All items processed.

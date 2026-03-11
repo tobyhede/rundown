@@ -29,13 +29,13 @@ This produces a vacuous pass (empty deferredResults → pass by default).
 ## 1. Process items
 
 - FOR item IN 1 TO 2
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Check {{item}}
 
-- PASS: CONTINUE
-- FAIL: CONTINUE
+- PASS CONTINUE
+- FAIL CONTINUE
 
 ```bash
 rd echo "check={{item}}"
@@ -43,8 +43,8 @@ rd echo "check={{item}}"
 
 ### 1.2 Log {{item}}
 
-- PASS: CONTINUE
-- FAIL: CONTINUE
+- PASS CONTINUE
+- FAIL CONTINUE
 
 ```bash
 rd echo "log={{item}}"
@@ -52,7 +52,7 @@ rd echo "log={{item}}"
 
 ## 2. Done
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "done"

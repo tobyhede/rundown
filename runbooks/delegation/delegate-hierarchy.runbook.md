@@ -22,8 +22,8 @@ Sequential multi-delegation — two substeps each delegated and claimed independ
 
 ## 1. Multi-delegation
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 First child task
 

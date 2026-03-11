@@ -15,7 +15,7 @@ scenarios:
 
 ## 1. Check position
 
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 1.1 Echo context
 

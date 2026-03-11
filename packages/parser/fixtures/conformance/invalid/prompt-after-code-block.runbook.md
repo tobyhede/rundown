@@ -1,6 +1,6 @@
 ## 1. Bad ordering
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
 npm test

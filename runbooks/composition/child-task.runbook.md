@@ -17,7 +17,7 @@ tags:
 
 ## 1. Execute Task
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Execute child runbook task.
