@@ -19,6 +19,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
   ),
   countNumberedSteps: jest.fn().mockReturnValue(3),
+  getErrorMessage: (error: unknown) => (Error.isError(error) ? error.message : String(error)),
+  isNodeError: (error: unknown) => Error.isError(error) && 'code' in error,
+  isError: (error: unknown) => Error.isError(error),
 }));
 
 // Mock execution service

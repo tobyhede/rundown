@@ -15,6 +15,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
   ),
   countNumberedSteps: jest.fn().mockReturnValue(5),
+  getErrorMessage: (error: unknown) => (Error.isError(error) ? error.message : String(error)),
+  isNodeError: (error: unknown) => Error.isError(error) && 'code' in error,
+  isError: (error: unknown) => Error.isError(error),
 }));
 
 import type { RunbookState } from '@rundown-org/core';

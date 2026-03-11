@@ -6,6 +6,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   PolicyEvaluator: jest.fn(),
   PolicyPrompter: jest.fn(),
   DEFAULT_POLICY: { allow: [], deny: [] },
+  getErrorMessage: (error: unknown) => (Error.isError(error) ? error.message : String(error)),
+  isNodeError: (error: unknown) => Error.isError(error) && 'code' in error,
+  isError: (error: unknown) => Error.isError(error),
 }));
 
 // Dynamic imports are needed after mocking

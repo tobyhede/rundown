@@ -6,6 +6,7 @@ import {
 } from '../helpers/test-utils.js';
 import { join, dirname, basename, delimiter, isAbsolute, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isNodeError, getErrorMessage } from '@rundown-org/core';
 import { extractRawFrontmatter } from '../../src/helpers/extract-raw-frontmatter.js';
 import {
   parseScenarios,
@@ -55,12 +56,10 @@ function loadPatternsWithScenariosSync(): {
   try {
     allFiles = getFilesSync(RUNBOOKS_DIR);
   } catch (err: unknown) {
-    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (isNodeError(err) && err.code === 'ENOENT') {
       return { withScenarios: [], allRunbookFiles: [] };
     }
-    console.warn(
-      `Warning: failed to load patterns: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    console.warn(`Warning: failed to load patterns: ${getErrorMessage(err)}`);
     return { withScenarios: [], allRunbookFiles: [] };
   }
   const withScenarios: { file: string; scenarios: Scenarios }[] = [];

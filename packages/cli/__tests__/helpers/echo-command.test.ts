@@ -7,6 +7,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   SessionService: jest.fn().mockImplementation(() => ({
     getActive: mockGetActive,
   })),
+  getErrorMessage: (error: unknown) => (Error.isError(error) ? error.message : String(error)),
+  isNodeError: (error: unknown) => Error.isError(error) && 'code' in error,
+  isError: (error: unknown) => Error.isError(error),
 }));
 
 // Mock execution service for isValidResult
