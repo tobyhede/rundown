@@ -581,15 +581,7 @@ function parseConditionalPrefix(
     remaining = remaining.slice(modifierMatch[0].length);
   }
 
-  const trimmedRemaining = remaining.trimStart();
-
-  // Detect legacy separators and produce helpful error
-  if (/^[:\u2014\u2192]/.test(trimmedRemaining)) {
-    throw new RunbookSyntaxError(
-      `Separator character not allowed in transitions. Use "PASS CONTINUE" instead of "PASS: CONTINUE"`,
-    );
-  }
-  const actionStr = trimmedRemaining;
+  const actionStr = remaining.trimStart();
 
   // Try to parse as RETRY first
   let retry = 0;

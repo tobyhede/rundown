@@ -944,14 +944,6 @@ describe('parseConditional error cases', () => {
   });
 });
 
-describe('parseConditional colon separator rejection', () => {
-  it('should reject colon separator with helpful error message', () => {
-    expect(() => parseConditional('PASS: CONTINUE')).toThrow('Separator character not allowed');
-    expect(() => parseConditional('FAIL: STOP')).toThrow('Separator character not allowed');
-    expect(() => parseConditional('YES: CONTINUE')).toThrow('Separator character not allowed');
-    expect(() => parseConditional('NO: STOP')).toThrow('Separator character not allowed');
-  });
-});
 
 describe('convertToTransitions aggregation conflicts', () => {
   it('throws for conflicting ALL/ALL modifiers', () => {
