@@ -92,7 +92,10 @@ export function makeTransitions(
 }
 
 /**
- * Convert a ForLoopConfig to a 2-step runbook: step 1 = FOR loop, step 2 = terminal.
+ * Convert a ForLoopConfig to a two-step runbook (FOR loop + terminal).
+ *
+ * @param config - Loop dimensions, transition actions, aggregation modes, and retry counts
+ * @returns Two-element Step array: step 1 is the FOR loop with substeps, step 2 is a terminal step
  */
 export function buildForLoopSteps(config: ForLoopConfig): Step[] {
   const substeps: Substep[] = [];
@@ -207,6 +210,10 @@ export function runFromSteps(steps: Step[], events: EventType[]): RunResult {
  * Compile a ForLoopConfig into a machine, send events, and return the result.
  *
  * Convenience wrapper that builds steps from config, then delegates to runFromSteps.
+ *
+ * @param config - Full FOR loop configuration covering substep, iteration, and parent layers
+ * @param events - Sequence of PASS/FAIL events to send while the machine is in the FOR loop step
+ * @returns Terminal state, forStack length, accumulated iteration results, and total events consumed
  */
 export function runForLoop(config: ForLoopConfig, events: EventType[]): RunResult {
   return runFromSteps(buildForLoopSteps(config), events);

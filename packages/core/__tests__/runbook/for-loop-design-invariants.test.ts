@@ -21,7 +21,6 @@ import {
   makeTransitionObject,
   type ForLoopConfig,
   type EventType,
-  type RunResult,
 } from './for-loop-test-helpers.js';
 import type { Step, Substep } from '../../src/runbook/types.js';
 

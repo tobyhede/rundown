@@ -324,18 +324,16 @@ describe('FOR loop properties', () => {
   });
 
   // Property 9: Termination with random event sequences (mixed patterns)
+  // runForLoop already pads with up to 200 PASS events after the supplied
+  // sequence, so no extra padding is needed here — the test verifies that
+  // any random event sequence terminates.
   it('always terminates with random event sequences', () => {
     fc.assert(
       fc.property(
         fullConfigArb,
         fc.array(eventArb, { minLength: 1, maxLength: 50 }),
         (config, events) => {
-          // Pad with PASS to ensure enough events to drive any config to completion
-          const padded: EventType[] = [
-            ...events,
-            ...Array.from({ length: 50 }, () => 'PASS' as EventType),
-          ];
-          const result = runForLoop(config, padded);
+          const result = runForLoop(config, events);
           expect(result.terminalState).toMatch(/^(COMPLETE|STOPPED)$/);
         },
       ),
@@ -370,6 +368,11 @@ describe('FOR loop properties', () => {
         const result = runForLoop(cfg, events);
         // All pass → parent passes → COMPLETE (not CONTINUE → step 2 → COMPLETE)
         expect(result.terminalState).toBe('COMPLETE');
+        // Verify COMPLETE came directly from the FOR loop, not from advancing
+        // to step 2. The FOR loop consumes exactly iterations * numSubsteps
+        // events; if it continued to step 2, eventsConsumed would be higher.
+        const forLoopEvents = cfg.iterations * cfg.numSubsteps;
+        expect(result.eventsConsumed).toBe(forLoopEvents);
       }),
       { numRuns: 200 },
     );
