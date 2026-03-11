@@ -385,6 +385,7 @@ describe('FOR loop design invariants', () => {
           // Parent sees ['pass'] → ALL passes → CONTINUE → COMPLETE
           expect(result.terminalState).toBe('COMPLETE');
           expect(result.iterationResults.length).toBe(1);
+          expect(result.iterationResults[0]).toBe('pass');
         }),
         { numRuns: 200 },
       );

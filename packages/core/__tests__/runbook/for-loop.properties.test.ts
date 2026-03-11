@@ -1,7 +1,7 @@
 /**
  * fast-check property tests for FOR loop compilation.
  *
- * Ten invariant properties that hold for ANY valid ForLoopConfig:
+ * Thirteen invariant properties that hold for ANY valid ForLoopConfig:
  * 1. Termination — always reaches COMPLETE or STOPPED
  * 2. forStack empty at terminal — no dangling loop context
  * 3. PASS ALL + all pass → parent passes
@@ -12,6 +12,9 @@
  * 8. Iteration monotonicity (no RETRY)
  * 9. Termination with random event sequences (mixed patterns)
  * 10. parentPassAction COMPLETE produces COMPLETE in FOR loop
+ * 11. PASS ALL + all fail → STOPPED
+ * 12. PASS ANY + all fail → STOPPED
+ * 13. parentFailAction COMPLETE produces COMPLETE on fail path
  */
 
 import fc from 'fast-check';
@@ -245,8 +248,8 @@ describe('FOR loop properties', () => {
       substepPassAction: fc.constant<SubstepAction>('CONTINUE'),
       substepFailAction: fc.constant<SubstepAction>('BREAK'),
       substepFailRetry: fc.constant(0),
-      iterationPassAction: fc.constant<IterationAction>('CONTINUE'),
-      iterationFailAction: fc.constant<IterationAction>('CONTINUE'),
+      iterationPassAction: fc.constant<IterationAction>('DEFER'),
+      iterationFailAction: fc.constant<IterationAction>('DEFER'),
       iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const),
       iterationFailRetry: fc.constant(0),
       parentPassAction: parentActionArb,
@@ -257,7 +260,7 @@ describe('FOR loop properties', () => {
 
     fc.assert(
       fc.property(breakConfig, (config) => {
-        // First iteration: all substeps pass (no break)
+        // First iteration: all substeps pass → DEFER accumulates
         // Second iteration: first substep fails → BREAK
         const events: EventType[] = [];
         // Iteration 1: pass all substeps
@@ -269,9 +272,10 @@ describe('FOR loop properties', () => {
 
         const result = runForLoop(config, events);
         // After BREAK: iteration 1 result should be in iterationResults
-        // The machine records loop-backed iterations in iterationResults.
-        // Iteration 1 is loop-backed, so it should appear.
+        // The machine records DEFER'd iterations in iterationResults.
+        // Iteration 1 is DEFER'd, so it should appear.
         expect(result.terminalState).toMatch(/^(COMPLETE|STOPPED)$/);
+        expect(result.iterationResults.length).toBeGreaterThanOrEqual(1);
       }),
       { numRuns: 200 },
     );
@@ -367,6 +371,104 @@ describe('FOR loop properties', () => {
         );
         const result = runForLoop(cfg, events);
         // All pass → parent passes → COMPLETE (not CONTINUE → step 2 → COMPLETE)
+        expect(result.terminalState).toBe('COMPLETE');
+        // Verify COMPLETE came directly from the FOR loop, not from advancing
+        // to step 2. The FOR loop consumes exactly iterations * numSubsteps
+        // events; if it continued to step 2, eventsConsumed would be higher.
+        const forLoopEvents = cfg.iterations * cfg.numSubsteps;
+        expect(result.eventsConsumed).toBe(forLoopEvents);
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  // Property 11: PASS ALL + all fail → STOPPED
+  // Converse of Property 3. Without this, a bug where ALL aggregation always
+  // returns pass goes undetected.
+  it('PASS ALL with all fails yields STOPPED when parentFailAction STOP', () => {
+    const allFailConfig = fc.record({
+      iterations: fc.integer({ min: 1, max: 5 }),
+      numSubsteps: fc.integer({ min: 1, max: 3 }),
+      substepPassAction: fc.constant<SubstepAction>('DEFER'),
+      substepFailAction: fc.constant<SubstepAction>('DEFER'),
+      substepFailRetry: fc.constant(0),
+      iterationPassAction: fc.constant<IterationAction>('DEFER'),
+      iterationFailAction: fc.constant<IterationAction>('DEFER'),
+      iterationAggMode: fc.constant('ALL' as const),
+      iterationFailRetry: fc.constant(0),
+      parentPassAction: fc.constant<ParentAction>('CONTINUE'),
+      parentFailAction: fc.constant<ParentAction>('STOP'),
+      parentAggMode: fc.constant('ALL' as const),
+      parentFailRetry: fc.constant(0),
+    });
+
+    fc.assert(
+      fc.property(allFailConfig, (config) => {
+        const total = config.iterations * config.numSubsteps;
+        const events = Array.from({ length: total + 10 }, () => 'FAIL' as EventType);
+        const result = runForLoop(config, events);
+        expect(result.terminalState).toBe('STOPPED');
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  // Property 12: PASS ANY + all fail → STOPPED
+  // Converse of Property 4. Ensures ANY aggregation correctly fails when
+  // no iteration passes.
+  it('PASS ANY with all fails yields STOPPED when parentFailAction STOP', () => {
+    const anyFailConfig = fc.record({
+      iterations: fc.integer({ min: 1, max: 5 }),
+      numSubsteps: fc.integer({ min: 1, max: 3 }),
+      substepPassAction: fc.constant<SubstepAction>('DEFER'),
+      substepFailAction: fc.constant<SubstepAction>('DEFER'),
+      substepFailRetry: fc.constant(0),
+      iterationPassAction: fc.constant<IterationAction>('DEFER'),
+      iterationFailAction: fc.constant<IterationAction>('DEFER'),
+      iterationAggMode: fc.constant('ALL' as const),
+      iterationFailRetry: fc.constant(0),
+      parentPassAction: fc.constant<ParentAction>('CONTINUE'),
+      parentFailAction: fc.constant<ParentAction>('STOP'),
+      parentAggMode: fc.constant('ANY' as const),
+      parentFailRetry: fc.constant(0),
+    });
+
+    fc.assert(
+      fc.property(anyFailConfig, (config) => {
+        const total = config.iterations * config.numSubsteps;
+        const events = Array.from({ length: total + 10 }, () => 'FAIL' as EventType);
+        const result = runForLoop(config, events);
+        expect(result.terminalState).toBe('STOPPED');
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  // Property 13: parentFailAction COMPLETE produces COMPLETE on fail path
+  // Mirrors Property 10 (which tests parentPassAction COMPLETE on pass path).
+  it('parentFailAction COMPLETE produces COMPLETE on fail path', () => {
+    const failCompleteConfig = fc.record({
+      iterations: fc.integer({ min: 1, max: 5 }),
+      numSubsteps: fc.integer({ min: 1, max: 3 }),
+      substepPassAction: fc.constant<SubstepAction>('DEFER'),
+      substepFailAction: fc.constant<SubstepAction>('DEFER'),
+      substepFailRetry: fc.constant(0),
+      iterationPassAction: fc.constant<IterationAction>('DEFER'),
+      iterationFailAction: fc.constant<IterationAction>('DEFER'),
+      iterationAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
+      iterationFailRetry: fc.constant(0),
+      parentPassAction: fc.constant<ParentAction>('CONTINUE'),
+      parentFailAction: fc.constant<ParentAction>('COMPLETE'),
+      parentAggMode: fc.constantFrom('ALL' as const, 'ANY' as const, 'none' as const),
+      parentFailRetry: fc.constant(0),
+    });
+
+    fc.assert(
+      fc.property(failCompleteConfig, (cfg) => {
+        const total = cfg.iterations * cfg.numSubsteps;
+        const events = Array.from({ length: total + 10 }, () => 'FAIL' as EventType);
+        const result = runForLoop(cfg, events);
+        // All fail → parent fails → COMPLETE (not STOP)
         expect(result.terminalState).toBe('COMPLETE');
         // Verify COMPLETE came directly from the FOR loop, not from advancing
         // to step 2. The FOR loop consumes exactly iterations * numSubsteps
