@@ -234,7 +234,7 @@ async function updateSessionState(input: HookInput): Promise<void> {
     // Structured error logging for debugging
     const errorData = {
       error_type: Error.isError(error) ? error.constructor.name : 'UnknownError',
-      error_message: error instanceof Error ? error.message : String(error),
+      error_message: getErrorMessage(error),
       hook_event: event,
       cwd: input.cwd,
       timestamp: new Date().toISOString(),

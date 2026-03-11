@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { isNodeError } from '../errors.js';
 
 const LOCK_DIR = '.claude/rundown/locks';
 const LOCK_DEADLINE_MS = 5_000;
@@ -80,7 +81,7 @@ export class DelegationLock {
         }
         return;
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+        if (!isNodeError(err) || err.code !== 'EEXIST') {
           throw err;
         }
 
@@ -112,7 +113,7 @@ export class DelegationLock {
     try {
       await fs.unlink(this.lockPath(parentRunId));
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      if (!isNodeError(err) || err.code !== 'ENOENT') {
         throw err;
       }
     }
@@ -144,9 +145,7 @@ export class DelegationLock {
       }
     } catch (err: unknown) {
       // Lock file disappeared between check and read — reclaimable
-      // Use direct .code check instead of isNodeError() to avoid instanceof
-      // failures across Jest VM module boundaries.
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (isNodeError(err) && err.code === 'ENOENT') {
         return true;
       }
       // Corrupted lock file (invalid JSON) — unlink and reclaim
@@ -154,7 +153,7 @@ export class DelegationLock {
         try {
           await fs.unlink(lockFile);
         } catch (unlinkErr: unknown) {
-          if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+          if (!isNodeError(unlinkErr) || unlinkErr.code !== 'ENOENT') {
             throw unlinkErr;
           }
         }
