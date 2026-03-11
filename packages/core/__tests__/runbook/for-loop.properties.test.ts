@@ -8,7 +8,7 @@
  * 4. PASS ANY + at least one pass → parent passes
  * 5. STOP at substep → STOPPED regardless
  * 6. COMPLETE at substep → COMPLETE regardless
- * 7. BREAK tallies result before exit
+ * 7. BREAK is non-accumulating — does not tally current iteration
  * 8. Iteration monotonicity (no RETRY)
  * 9. Termination with random event sequences (mixed patterns)
  * 10. parentPassAction COMPLETE produces COMPLETE in FOR loop
@@ -240,8 +240,8 @@ describe('FOR loop properties', () => {
     );
   });
 
-  // Property 7: BREAK tallies result before exit (iteration results not empty)
-  it('BREAK on first substep records at least one iteration result', () => {
+  // Property 7: BREAK is non-accumulating — does not tally current iteration
+  it('BREAK does not accumulate current iteration but prior DEFER iterations remain', () => {
     const breakConfig = fc.record({
       iterations: fc.integer({ min: 2, max: 5 }),
       numSubsteps: fc.integer({ min: 1, max: 3 }),
@@ -271,11 +271,11 @@ describe('FOR loop properties', () => {
         for (let i = 0; i < 20; i++) events.push('PASS');
 
         const result = runForLoop(config, events);
-        // After BREAK: iteration 1 result should be in iterationResults
-        // The machine records DEFER'd iterations in iterationResults.
-        // Iteration 1 is DEFER'd, so it should appear.
+        // After BREAK: iteration 1 (DEFER'd) is in iterationResults.
+        // Iteration 2 (BREAK'd) is NOT accumulated — non-accumulating like NEXT.
+        // So iterationResults has exactly 1 entry (from iteration 1's DEFER).
         expect(result.terminalState).toMatch(/^(COMPLETE|STOPPED)$/);
-        expect(result.iterationResults.length).toBeGreaterThanOrEqual(1);
+        expect(result.iterationResults.length).toBe(1);
       }),
       { numRuns: 200 },
     );

@@ -1,6 +1,6 @@
 ---
 name: for-substep-break-respects-retry
-description: Substep BREAK respects iteration-level retry before exiting
+description: Substep BREAK respects iteration-level retry before exiting (non-accumulating)
 scenarios:
   break-respects-retry:
     commands:
@@ -14,7 +14,9 @@ scenarios:
       # Attempt 3 (retry 2): retries exhausted → BREAK exits loop
       - rd fail
       - rd fail
-    result: STOP
+      # BREAK is non-accumulating → iterationResults=[] → vacuous pass → CONTINUE → step 2
+      - rd pass
+    result: COMPLETE
 ---
 # Substep BREAK Respects Iteration Retry
 

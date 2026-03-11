@@ -161,13 +161,15 @@ cases:
     result: COMPLETE
 
   for-substep-break-respects-retry:
-    description: Substep BREAK respects iteration-level retry
+    description: Substep BREAK respects iteration-level retry (non-accumulating)
     file: for-loops/for-substep-break-respects-retry.runbook.md
     commands:
       - rd run --prompted for-substep-break-respects-retry.runbook.md
       - rd fail
       - rd fail
-    result: STOP
+      # BREAK is non-accumulating → iterationResults=[] → vacuous pass → step 2
+      - rd pass
+    result: COMPLETE
 
   for-iteration-retry-after-retry:
     description: Each iteration fails once then passes on retry via iteration-level RETRY

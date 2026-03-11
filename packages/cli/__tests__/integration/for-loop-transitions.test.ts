@@ -332,8 +332,12 @@ Final step.
       // Attempt 3 (retry 2): retries exhausted → BREAK exits loop
       expect(runCli('fail', workspace).exitCode).toBe(0);
       const result = runCli('fail', workspace);
-      // BREAK exits loop → aggregation: deferredResults=[fail] → fail → PASS ALL fails → STOP
-      expect(result.exitCode).toBe(1);
+      // BREAK exits loop (non-accumulating) → iterationResults = []
+      // PASS ALL: vacuous pass → CONTINUE → step 2
+      expect(result.exitCode).toBe(0);
+      // Step 2: PASS → COMPLETE
+      const result2 = runCli('pass', workspace);
+      expect(result2.exitCode).toBe(0);
     });
   });
 });

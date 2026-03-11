@@ -198,8 +198,8 @@ In WebContainer environments (e.g., StackBlitz), nested process spawning may not
 Example of a step that auto-executes:
 ````markdown
 ## 3. Run tests
-- PASS: CONTINUE
-- FAIL: RETRY 2
+- PASS CONTINUE
+- FAIL RETRY 2
 
 ```bash
 npm test
@@ -209,8 +209,8 @@ npm test
 Example of a prompted step:
 ````markdown
 ## 4. Code review
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Review the implementation for issues.
 `rundown pass` if acceptable, `rundown fail` if blocked.
@@ -229,8 +229,8 @@ Steps can iterate their substeps over a numeric range using a FOR annotation. FO
 - FAIL ANY: STOP
 
 ### 1. Process item
-- PASS: CONTINUE
-- FAIL: BREAK
+- PASS CONTINUE
+- FAIL BREAK
 ````
 
 Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `.2`, ...), so FOR execution is equivalent across these forms:
@@ -293,7 +293,7 @@ FOR-level nested transitions (nested bullets directly under `- FOR ...`) run at 
 | Action | Effect |
 |--------|--------|
 | `CONTINUE` | Keep iterating |
-| `BREAK` | Exit loop; include current iteration result in parent aggregation |
+| `BREAK` | Exit loop immediately (non-accumulating — same as NEXT) |
 | `GOTO` | Jump immediately; bypass parent FOR aggregation |
 | `STOP` | Stop immediately; bypass parent FOR aggregation |
 | `COMPLETE` | Complete immediately; bypass parent FOR aggregation |
@@ -351,8 +351,8 @@ log_file: file:data/results.jsonl
 - PASS ALL: CONTINUE
 - FAIL ANY: STOP
 ### 1 Handle item
-- PASS: CONTINUE
-- FAIL: BREAK
+- PASS CONTINUE
+- FAIL BREAK
 Handle {{item}} (iteration {{Index}}).
 ````
 
@@ -1007,8 +1007,8 @@ Agent decides next action based on context.
 
 ```markdown
 ## 5. Check remaining
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Check TodoWrite for remaining items.
 

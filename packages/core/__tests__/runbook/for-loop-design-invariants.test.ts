@@ -8,7 +8,7 @@
  * Properties:
  * 1. RETRY is universal — fires for every substep action type
  * 2. NEXT never accumulates iteration results
- * 3. BREAK includes current iteration's deferred results in aggregation
+ * 3. BREAK is non-accumulating — deferred results discarded
  * 4. Iteration-level BREAK is non-accumulating
  * 5. Only DEFER accumulates at iteration level
  */
@@ -310,13 +310,14 @@ describe('FOR loop design invariants', () => {
     });
   });
 
-  // Property 3: BREAK includes current iteration's deferred results in aggregation
+  // Property 3: BREAK is non-accumulating — deferred results discarded
   //
-  // When BREAK exits the loop, substeps that already DEFER'd within the current
-  // iteration still count in parent aggregation. If they didn't, aggregation would
-  // see empty results → vacuous pass → COMPLETE. STOPPED proves they were included.
-  describe('BREAK includes deferred results in aggregation', () => {
-    it('BREAK after DEFER produces STOPPED via parent PASS ALL', () => {
+  // When BREAK exits the loop, the current iteration's result is NOT added to
+  // iterationResults (same as NEXT). Parent aggregation sees only prior DEFER'd
+  // iterations. With no prior iterations, iterationResults is empty → vacuous pass
+  // → COMPLETE.
+  describe('BREAK is non-accumulating — deferred results discarded', () => {
+    it('BREAK after DEFER produces COMPLETE via vacuous pass (non-accumulating)', () => {
       fc.assert(
         fc.property(
           fc.integer({ min: 1, max: 3 }),
@@ -346,10 +347,9 @@ describe('FOR loop design invariants', () => {
 
             const result = runFromSteps(buildCustomSteps(opts), events);
 
-            // BREAK exits loop. deferredResults has 'fail' entries from DEFER substeps.
-            // Aggregation: PASS ALL with failures → parent fails → STOP → STOPPED.
-            // If BREAK dropped deferred results: empty → vacuous pass → COMPLETE (wrong).
-            expect(result.terminalState).toBe('STOPPED');
+            // BREAK exits loop (non-accumulating). Current iteration's result is NOT added.
+            // iterationResults is empty → PASS ALL: vacuous pass → CONTINUE → COMPLETE.
+            expect(result.terminalState).toBe('COMPLETE');
           },
         ),
         { numRuns: 200 },

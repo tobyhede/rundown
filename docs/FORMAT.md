@@ -87,8 +87,8 @@ Step-level `runbooks` syntax is shorthand for implicit sequential substeps (`###
 If prompt text appears before a step-level `runbooks` shorthand body, it is attached to the first generated implicit substep only.
 
 where transition is:
-  - { PASS | FAIL | YES | NO } [ { ALL | ANY } ]: result
-  | - DEFER                         -- shorthand for PASS: DEFER + FAIL: DEFER
+  - { PASS | FAIL | YES | NO } [ { ALL | ANY } ] result
+  | - DEFER                         -- shorthand for PASS DEFER + FAIL DEFER
 
 Transitions must appear as list items with the `-` bullet prefix (a dash followed by a space). Paragraph-style transitions (without prefix) are not valid.
 
@@ -204,7 +204,7 @@ The FOR clause is a step-level annotation that makes a step iterate its substeps
 - Step-level runbook lists satisfy the FOR-substep requirement via implicit sequential substeps
 - Parent FOR step transitions aggregate across iterations using ALL/ANY modifiers
 - FOR-level nested transitions execute at iteration scope; RETRY evaluates before the exhausted action
-- Iteration-level `BREAK` includes the current iteration result in parent aggregation; iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation
+- Iteration-level `BREAK` exits the loop without recording the current iteration result (non-accumulating, same as NEXT); iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation
 - Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid
 
 ### Execution Path Notation
@@ -258,8 +258,8 @@ Canonical runtime targeting is `step + substep + iteration`.
 
 | Input | Expands To |
 |-------|------------|
-| `PASS: X` | `PASS ALL: X` |
-| `FAIL: X` | `FAIL ANY: X` |
+| `PASS X` | `PASS ALL X` |
+| `FAIL X` | `FAIL ANY X` |
 
 ### RETRY Defaults
 
@@ -282,9 +282,9 @@ The fallback action cannot be RETRY (nested RETRY is invalid).
 
 | Condition         | Expands To |
 |-------------------|------------|
-| None defined      | `PASS ALL: CONTINUE` + `FAIL ANY: STOP` |
-| Only PASS defined | Adds `FAIL ANY: STOP` |
-| Only FAIL defined | Adds `PASS ALL: CONTINUE` |
+| None defined      | `PASS ALL CONTINUE` + `FAIL ANY STOP` |
+| Only PASS defined | Adds `FAIL ANY STOP` |
+| Only FAIL defined | Adds `PASS ALL CONTINUE` |
 
 **Convention:** Always write both transitions explicitly. The parser supports implicit defaults, but runbooks should be readable without memorizing the default table.
 
