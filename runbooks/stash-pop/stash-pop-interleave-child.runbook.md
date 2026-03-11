@@ -17,7 +17,7 @@ Simple auto-completing runbook used as the interleaved task during stash-pop.
 
 ## 1. Quick task
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "B: done"

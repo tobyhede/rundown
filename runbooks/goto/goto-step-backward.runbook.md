@@ -22,8 +22,8 @@ Fail step 2 to jump backward to step 1, then succeed on the second pass.
 
 ## 1. Setup
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
 rd echo "setup"
@@ -31,8 +31,8 @@ rd echo "setup"
 
 ## 2. Check
 
-- PASS: COMPLETE
-- FAIL: GOTO 1
+- PASS COMPLETE
+- FAIL GOTO 1
 
 ```bash
 rd echo "check"

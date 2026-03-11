@@ -16,7 +16,7 @@ scenarios:
 ## 1. Process items
 
 - FOR item IN 1 TO {{Max}}
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 1.1 Handle {{item}}
 

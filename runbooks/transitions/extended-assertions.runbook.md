@@ -38,8 +38,8 @@ scenarios:
 
 ## 1. First step
 
-- PASS: CONTINUE
-- FAIL: RETRY 1 STOP
+- PASS CONTINUE
+- FAIL RETRY 1 STOP
 
 ```bash
 rd echo "step one"
@@ -47,7 +47,7 @@ rd echo "step one"
 
 ## 2. Second step
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "step two"

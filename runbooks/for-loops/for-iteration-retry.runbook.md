@@ -16,8 +16,8 @@ scenarios:
 ## 1. Process items
 
 - FOR item IN 1 TO 2
-  - FAIL: RETRY 1 CONTINUE
-- PASS ALL: COMPLETE
+  - FAIL RETRY 1 CONTINUE
+- PASS ALL COMPLETE
 
 ### 1.1 Attempt {{item}}
 

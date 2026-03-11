@@ -262,14 +262,14 @@ describe('status with runbookSrc', () => {
     const runbookContent = `# Test Runbook
 
 ## 1. First Step
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo {{message}}
 \`\`\`
 
 ## 2. Second Step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 \`\`\`bash
 rd echo done

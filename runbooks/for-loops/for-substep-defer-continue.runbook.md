@@ -29,13 +29,13 @@ The DEFER substep feeds aggregation; the trailing CONTINUE is invisible.
 ## 1. Process items
 
 - FOR item IN 1 TO 2
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Record {{item}}
 
-- PASS: DEFER
-- FAIL: DEFER
+- PASS DEFER
+- FAIL DEFER
 
 ```bash
 rd echo "record={{item}}"
@@ -43,8 +43,8 @@ rd echo "record={{item}}"
 
 ### 1.2 Verify {{item}}
 
-- PASS: CONTINUE
-- FAIL: CONTINUE
+- PASS CONTINUE
+- FAIL CONTINUE
 
 ```bash
 rd echo "verify={{item}}"
@@ -52,7 +52,7 @@ rd echo "verify={{item}}"
 
 ## 2. Done
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "done"

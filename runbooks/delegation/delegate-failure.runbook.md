@@ -27,8 +27,8 @@ Child failure propagates STOP to the parent.
 
 ## 1. Delegate work
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP "Child task failed"
+- PASS ALL COMPLETE
+- FAIL ANY STOP "Child task failed"
 
 ### 1.1 Child task
 

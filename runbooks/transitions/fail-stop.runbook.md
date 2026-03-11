@@ -25,8 +25,8 @@ Explicit FAIL: STOP halts the runbook when a step fails.
 
 ## 1. Critical step
 
-- PASS: COMPLETE
-- FAIL: STOP "Critical failure"
+- PASS COMPLETE
+- FAIL STOP "Critical failure"
 
 ```bash
 rd echo "critical step"

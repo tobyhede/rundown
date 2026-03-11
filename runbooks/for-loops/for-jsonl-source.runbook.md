@@ -16,7 +16,7 @@ scenarios:
 ## 1. Process records
 
 - FOR item IN {{ records }}
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 1.1 Handle {{item.name}}
 

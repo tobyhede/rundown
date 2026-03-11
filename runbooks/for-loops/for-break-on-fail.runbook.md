@@ -19,12 +19,12 @@ scenarios:
 ## 1. Check items
 
 - FOR item IN 1 TO 3
-- FAIL ANY: CONTINUE
+- FAIL ANY CONTINUE
 
 ### 1.1 Validate {{item}}
 
-- PASS: CONTINUE
-- FAIL: BREAK
+- PASS CONTINUE
+- FAIL BREAK
 
 ```bash
 rd echo "item={{item}}"
@@ -32,7 +32,7 @@ rd echo "item={{item}}"
 
 ## 2. Cleanup
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "done"

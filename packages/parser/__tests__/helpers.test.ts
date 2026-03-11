@@ -211,7 +211,7 @@ describe('isPromptCodeBlock', () => {
 
 describe('parseConditional with YES/NO', () => {
   it('should preserve YES as type', () => {
-    const result = parseConditional('YES: CONTINUE');
+    const result = parseConditional('YES CONTINUE');
     expect(result).toEqual({
       type: 'yes',
       retry: 0,
@@ -222,7 +222,7 @@ describe('parseConditional with YES/NO', () => {
   });
 
   it('should preserve NO as type', () => {
-    const result = parseConditional('NO: STOP');
+    const result = parseConditional('NO STOP');
     expect(result).toEqual({
       type: 'no',
       retry: 0,
@@ -928,19 +928,28 @@ describe('parseConditional DEFER shorthand', () => {
 
 describe('parseConditional error cases', () => {
   it('throws for PASS with invalid action', () => {
-    expect(() => parseConditional('PASS: UNKNOWN')).toThrow('Invalid PASS transition');
+    expect(() => parseConditional('PASS UNKNOWN')).toThrow('Invalid PASS transition');
   });
 
   it('throws for FAIL with invalid action', () => {
-    expect(() => parseConditional('FAIL: INVALID')).toThrow('Invalid FAIL transition');
+    expect(() => parseConditional('FAIL INVALID')).toThrow('Invalid FAIL transition');
   });
 
   it('throws for YES with invalid action', () => {
-    expect(() => parseConditional('YES: BADACTION')).toThrow('Invalid YES transition');
+    expect(() => parseConditional('YES BADACTION')).toThrow('Invalid YES transition');
   });
 
   it('throws for NO with invalid action', () => {
-    expect(() => parseConditional('NO: NOTVALID')).toThrow('Invalid NO transition');
+    expect(() => parseConditional('NO NOTVALID')).toThrow('Invalid NO transition');
+  });
+});
+
+describe('parseConditional colon separator rejection', () => {
+  it('should reject colon separator with helpful error message', () => {
+    expect(() => parseConditional('PASS: CONTINUE')).toThrow('Separator character not allowed');
+    expect(() => parseConditional('FAIL: STOP')).toThrow('Separator character not allowed');
+    expect(() => parseConditional('YES: CONTINUE')).toThrow('Separator character not allowed');
+    expect(() => parseConditional('NO: STOP')).toThrow('Separator character not allowed');
   });
 });
 
@@ -1253,8 +1262,8 @@ describe('extractSubstepHeader edge cases', () => {
 });
 
 describe('parseConditional with modifier', () => {
-  it('parses PASS ALL: CONTINUE', () => {
-    const result = parseConditional('PASS ALL: CONTINUE');
+  it('parses PASS ALL CONTINUE', () => {
+    const result = parseConditional('PASS ALL CONTINUE');
     expect(result).toEqual({
       type: 'pass',
       retry: 0,
@@ -1264,8 +1273,8 @@ describe('parseConditional with modifier', () => {
     });
   });
 
-  it('parses FAIL ANY: STOP', () => {
-    const result = parseConditional('FAIL ANY: STOP');
+  it('parses FAIL ANY STOP', () => {
+    const result = parseConditional('FAIL ANY STOP');
     expect(result).toEqual({
       type: 'fail',
       retry: 0,
@@ -1278,7 +1287,7 @@ describe('parseConditional with modifier', () => {
 
 describe('ParsedConditional with retry property', () => {
   it('parseConditional extracts retry as property', () => {
-    const result = parseConditional('FAIL: RETRY 2 GOTO 3');
+    const result = parseConditional('FAIL RETRY 2 GOTO 3');
     expect(result).toEqual({
       type: 'fail',
       retry: 2,
@@ -1289,7 +1298,7 @@ describe('ParsedConditional with retry property', () => {
   });
 
   it('parseConditional handles NEXT shorthand', () => {
-    const result = parseConditional('PASS: NEXT');
+    const result = parseConditional('PASS NEXT');
     expect(result).toEqual({
       type: 'pass',
       retry: 0,
@@ -1300,7 +1309,7 @@ describe('ParsedConditional with retry property', () => {
   });
 
   it('parseConditional handles RETRY with NEXT', () => {
-    const result = parseConditional('FAIL: RETRY 2 NEXT');
+    const result = parseConditional('FAIL RETRY 2 NEXT');
     expect(result).toEqual({
       type: 'fail',
       retry: 2,
@@ -1480,7 +1489,7 @@ describe('parseForClause', () => {
 
   describe('invalid inputs', () => {
     it('returns null for non-FOR text', () => {
-      expect(parseForClause('PASS: CONTINUE')).toBeNull();
+      expect(parseForClause('PASS CONTINUE')).toBeNull();
     });
 
     it('returns null for bare FOR without arguments', () => {

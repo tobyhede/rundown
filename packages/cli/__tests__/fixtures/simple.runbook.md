@@ -1,7 +1,7 @@
 ## 1. First step
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Do something simple.
 
@@ -11,8 +11,8 @@ rd echo --result pass
 
 ## 2. Second step
 
-- PASS: COMPLETE
-- FAIL: RETRY 2
+- PASS COMPLETE
+- FAIL RETRY 2
 
 Do another thing.
 

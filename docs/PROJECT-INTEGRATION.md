@@ -75,8 +75,8 @@ rd run rundown:write-plan      # Explicit: from plugin only
 
 ```markdown
 ## 1 Fetch Data
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
 .claude/rundown/runbooks/review/scripts/fetch-data.sh {{repo}}
@@ -144,12 +144,12 @@ Arrays become data sources for `FOR item IN {{ items }}`. The `file:` prefix cre
 
 ### Always write explicit transitions
 
-Write both PASS and FAIL on every step, even when they match the defaults (`PASS: CONTINUE`, `FAIL: STOP`). Transitions are the most important part of understanding a runbook's control flow at a glance.
+Write both PASS and FAIL on every step, even when they match the defaults (`PASS CONTINUE`, `FAIL STOP`). Transitions are the most important part of understanding a runbook's control flow at a glance.
 
 ```markdown
 ## 1 Build
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 ```
 
 ### Messages: only when they add information
@@ -158,13 +158,13 @@ STOP and COMPLETE accept optional messages. Include a message only when it provi
 
 ```markdown
 ## 1 Authenticate
-- FAIL: STOP "Check that gh is authenticated: run gh auth status"
+- FAIL STOP "Check that gh is authenticated: run gh auth status"
 ```
 
 Not:
 ```markdown
 ## 1 Compile
-- FAIL: STOP "Compilation failed."
+- FAIL STOP "Compilation failed."
 ```
 
 See [FORMAT.md Message Convention](./FORMAT.md#message-convention) for the full rationale.

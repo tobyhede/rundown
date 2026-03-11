@@ -16,12 +16,12 @@ scenarios:
 ## 1. Process items
 
 - FOR item IN 1 TO 3
-- FAIL ANY: CONTINUE
+- FAIL ANY CONTINUE
 
 ### 1.1 Check {{item}}
 
-- PASS: CONTINUE
-- FAIL: NEXT
+- PASS CONTINUE
+- FAIL NEXT
 
 ```bash
 rd echo --result fail
@@ -29,7 +29,7 @@ rd echo --result fail
 
 ## 2. Done
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "completed"

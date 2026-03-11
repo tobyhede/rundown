@@ -29,13 +29,13 @@ Only DEFER substeps feed results into the parent aggregation.
 ## 1. Process items
 
 - FOR item IN 1 TO 2
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Validate {{item}}
 
-- PASS: CONTINUE
-- FAIL: CONTINUE
+- PASS CONTINUE
+- FAIL CONTINUE
 
 ```bash
 rd echo "validate={{item}}"
@@ -43,8 +43,8 @@ rd echo "validate={{item}}"
 
 ### 1.2 Record {{item}}
 
-- PASS: DEFER
-- FAIL: DEFER
+- PASS DEFER
+- FAIL DEFER
 
 ```bash
 rd echo "record={{item}}"
@@ -52,7 +52,7 @@ rd echo "record={{item}}"
 
 ## 2. Done
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "done"

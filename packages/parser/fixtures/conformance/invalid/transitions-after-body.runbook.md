@@ -8,5 +8,5 @@ This prompt comes first.
 echo "This is body content"
 ```
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP

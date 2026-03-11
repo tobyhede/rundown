@@ -17,7 +17,7 @@ scenarios:
 
 ## 1. Execute sh block
 
-- PASS: CONTINUE
+- PASS CONTINUE
 
 ```sh
 rd echo "sh block"
@@ -25,7 +25,7 @@ rd echo "sh block"
 
 ## 2. Display-only block
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```json
 {"status": "display-only"}

@@ -18,8 +18,8 @@ scenarios:
 
 ## 1. Step with list instructions
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 The following instructions should be preserved:
 
@@ -28,8 +28,8 @@ The following instructions should be preserved:
 
 ## 2. Step with mixed content
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 General prose.
 

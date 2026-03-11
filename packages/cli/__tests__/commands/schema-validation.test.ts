@@ -240,7 +240,7 @@ echo hello
       fs.writeFileSync(
         runbookPath,
         `## Step 1
-- PASS: GOTO 99
+- PASS GOTO 99
 echo hello
 `,
       );
@@ -925,7 +925,7 @@ echo hello
       fs.writeFileSync(
         runbookPath,
         `## Step 1
-- PASS: GOTO 99
+- PASS GOTO 99
 echo hello
 `,
       );

@@ -15,17 +15,17 @@ scenarios:
 
 Substeps under aggregation default to DEFER. These two forms are equivalent:
 - Bare substep (no transitions) — implicit DEFER
-- Explicit `- PASS: DEFER` / `- FAIL: DEFER`
+- Explicit `- PASS DEFER` / `- FAIL DEFER`
 
 ## 1. Validate
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 First check
 
-- PASS: DEFER
-- FAIL: DEFER
+- PASS DEFER
+- FAIL DEFER
 
 ```bash
 rd echo "first"

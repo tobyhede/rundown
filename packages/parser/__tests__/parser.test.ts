@@ -6,8 +6,8 @@ describe('Step-level runbooks', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 Execute runbook
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
  - task-details.runbook.md
 `;
@@ -22,8 +22,8 @@ describe('Step-level runbooks', () => {
  - task.runbook.md
 
 ### 1.1 Substep
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Do work.
 `;
@@ -34,8 +34,8 @@ Do work.
     const markdown = `## 1. Execute
 
 ### 1.1 Runbooks
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
  - runbook-a.runbook.md
  - runbook-b.runbook.md
@@ -56,8 +56,8 @@ describe('parseRunbook with substep runbooks', () => {
 ## 1. Dispatch agents
 
 ### 1.1 Review step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
  - review.runbook.md
  - security.runbook.md
@@ -79,7 +79,7 @@ Content here.`;
 
   it('preserves inline code in prompt text', () => {
     const md = `## 1. Execute
-- PASS: CONTINUE
+- PASS CONTINUE
 
 Run the command \`npm install\` first.`;
     const steps = parseRunbook(md);
@@ -156,7 +156,7 @@ some content
 
   it('treats prompt code blocks as rd prompt commands', () => {
     const md = `## 1. Step with prompted code
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Show this to agent.
 
@@ -190,7 +190,7 @@ echo 'hello world'
   // Keep but remove prompted check
   it('parses bash code blocks as executable commands', () => {
     const md = `## 1. Step with bash code
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Run this automatically.
 
@@ -228,8 +228,8 @@ echo "hello"
 describe('Implicit prompts with lists', () => {
   it('preserves bulleted instructions in prompts', () => {
     const markdown = `## 1. Execute
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 The following instructions are important:
 - instruction 1
@@ -246,14 +246,14 @@ describe('GOTO substep validation', () => {
   it('accepts GOTO 2.1 when step 2 has static substep 1', () => {
     const markdown = `
 ## 1. First
-- PASS: GOTO 2.1
-- FAIL: STOP
+- PASS GOTO 2.1
+- FAIL STOP
 
 ## 2. Second
 
 ### 2.1 Substep one
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Do something.
 `;
@@ -268,14 +268,14 @@ Do something.
   it('rejects GOTO 2.99 when substep does not exist', () => {
     const markdown = `
 ## 1. First
-- PASS: GOTO 2.99
-- FAIL: STOP
+- PASS GOTO 2.99
+- FAIL STOP
 
 ## 2. Second
 
 ### 2.1 Only substep
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 `;
     expect(() => parseRunbook(markdown)).toThrow(/substep does not exist/i);
   });
@@ -286,8 +286,8 @@ describe('substep with prompts', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 Implement task
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 This is the implicit prompt text.
 `;
@@ -301,14 +301,14 @@ describe('substep with transitions', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 First step
-- PASS: CONTINUE
-- FAIL: STOP "BLOCKED"
+- PASS CONTINUE
+- FAIL STOP "BLOCKED"
 
 Do work.
 
 ### 1.2 Second step
-- PASS: COMPLETE
-- FAIL: GOTO 1.1
+- PASS COMPLETE
+- FAIL GOTO 1.1
 
 More work.
 `;
@@ -339,8 +339,8 @@ More work.
     const markdown = `## 1. Execute
 
 ### 1.1 First step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Do work.
 `;
@@ -362,8 +362,8 @@ describe('step-level transition preservation with substeps', () => {
   it('preserves step-level transitions when multiple substeps exist', () => {
     const markdown = `## 1. Aggregated check
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP "A check failed"
+- PASS ALL COMPLETE
+- FAIL ANY STOP "A check failed"
 
 ### 1.1 First check
 
@@ -395,8 +395,8 @@ Do check two.
     const markdown = `## 1. Process items
 
 - FOR item IN 1 TO 3
-  - FAIL: CONTINUE
-- PASS ALL: COMPLETE
+  - FAIL CONTINUE
+- PASS ALL COMPLETE
 
 ### 1.1 Check {{item}}
 
@@ -425,12 +425,12 @@ describe('substep GOTO validation', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 First step
-- PASS: CONTINUE
-- FAIL: GOTO 1.2
+- PASS CONTINUE
+- FAIL GOTO 1.2
 
 ### 1.2 Second step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
@@ -444,12 +444,12 @@ describe('substep GOTO validation', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 First step
-- PASS: CONTINUE
-- FAIL: GOTO 1.99
+- PASS CONTINUE
+- FAIL GOTO 1.99
 
 ### 1.2 Second step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 `;
     expect(() => parseRunbook(markdown)).toThrow(/substep.*does not exist|invalid/i);
   });
@@ -460,8 +460,8 @@ describe('substep with command', () => {
     const markdown = `## 1. Execute
 
 ### 1.1 Run checks
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 \`\`\`bash
 npm run lint
@@ -476,8 +476,8 @@ npm run lint
     const markdown = `## 1. Execute
 
 ### 1.1 Run checks
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 \`\`\`bash
 npm run lint
@@ -494,8 +494,8 @@ npm test
 describe('prompt as single string', () => {
   it('returns prompt as single string instead of array', () => {
     const markdown = `## 1. Step with prompt
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 This is the prompt text.
 Multiple lines here.
@@ -509,8 +509,8 @@ Multiple lines here.
 describe('prompt ordering enforcement', () => {
   it('throws error when text appears after code block', () => {
     const markdown = `## 1. Bad ordering
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 \`\`\`bash
 npm test
@@ -523,8 +523,8 @@ This text appears after the code block.
 
   it('allows text before code block', () => {
     const markdown = `## 1. Good ordering
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 This prompt appears before the code block.
 
@@ -541,7 +541,7 @@ npm test
     const markdown = `## 1. Parent
 
 ### 1.1 Substep
-- PASS: CONTINUE
+- PASS CONTINUE
 
 Do work.
 
@@ -557,7 +557,7 @@ Text after code block - invalid.
   // E5-R1: Edge case tests added from cross-check validation
   it('throws error when text appears after runbook list', () => {
     const markdown = `## 1. Step with runbooks
-- PASS: CONTINUE
+- PASS CONTINUE
 
 - setup.runbook.md
 - cleanup.runbook.md
@@ -569,7 +569,7 @@ This text appears after runbooks - invalid.
 
   it('concatenates multiple paragraphs before code block', () => {
     const markdown = `## 1. Multi-paragraph prompt
-- PASS: CONTINUE
+- PASS CONTINUE
 
 First paragraph of instructions.
 
@@ -586,7 +586,7 @@ npm test
 
   it('ignores whitespace-only paragraphs after code block', () => {
     const markdown = `## 1. Step with trailing whitespace
-- PASS: CONTINUE
+- PASS CONTINUE
 
 Prompt text.
 
@@ -603,10 +603,10 @@ npm test
 describe('parseRunbook with named steps', () => {
   it('parses named step', () => {
     const md = `## 1 Main step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ## Cleanup
-- PASS: STOP
+- PASS STOP
 
 Handle cleanup`;
 
@@ -692,8 +692,8 @@ echo second
 
 This is prompt text that appears first.
 
-- PASS: CONTINUE
-- FAIL: STOP`;
+- PASS CONTINUE
+- FAIL STOP`;
       expect(() => parseRunbook(md)).toThrow(
         /Transitions must appear immediately after the step header/,
       );
@@ -706,8 +706,8 @@ This is prompt text that appears first.
 npm test
 \`\`\`
 
-- PASS: CONTINUE
-- FAIL: STOP`;
+- PASS CONTINUE
+- FAIL STOP`;
       expect(() => parseRunbook(md)).toThrow(
         /Transitions must appear immediately after the step header/,
       );
@@ -719,8 +719,8 @@ npm test
 
 This is prompt text.
 
-- PASS: CONTINUE
-- FAIL: STOP`;
+- PASS CONTINUE
+- FAIL STOP`;
       expect(() => parseRunbook(md)).toThrow(
         /Transitions must appear immediately after the substep header/,
       );
@@ -734,8 +734,8 @@ This is prompt text.
 npm test
 \`\`\`
 
-- PASS: CONTINUE
-- FAIL: STOP`;
+- PASS CONTINUE
+- FAIL STOP`;
       expect(() => parseRunbook(md)).toThrow(
         /Transitions must appear immediately after the substep header/,
       );
@@ -746,8 +746,8 @@ npm test
     it('rejects text after runbooks in substep', () => {
       const md = `## 1 Step
 ### 1.1 Substep
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 - setup.runbook.md
 
@@ -765,7 +765,7 @@ This text appears after runbooks - invalid.`;
 This is preamble text that describes the runbook.
 
 ## 1 First step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do the work.`;
       // This should parse without error - preamble is allowed
@@ -778,8 +778,8 @@ Do the work.`;
     it('parses list-based transitions correctly', () => {
       const md = `## 1 Step
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Do the work.`;
       const steps = parseRunbook(md);
@@ -794,8 +794,8 @@ Do the work.`;
 npm test
 \`\`\`
 
-- PASS: CONTINUE
-- FAIL: STOP`;
+- PASS CONTINUE
+- FAIL STOP`;
       expect(() => parseRunbook(md)).toThrow(
         /Transitions must appear immediately after the step header/,
       );
@@ -819,8 +819,8 @@ npm test
     it('rejects list items after transitions in substep', () => {
       const md = `## 1 Step
 ### 1.1 Substep
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 - some other list item (not a runbook)`;
       expect(() => parseRunbook(md)).toThrow(
@@ -832,8 +832,8 @@ npm test
       const md = `## 1 Step
 
 ### 1.1 Sub
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 - task.runbook.md
 `;
@@ -860,8 +860,8 @@ describe('parseRunbook with FOR clause', () => {
   it('parses FOR clause from full markdown', () => {
     const md = `## 1. Process batches
 - FOR batch IN 1 TO 3
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle batch
 \`\`\`bash
@@ -869,7 +869,7 @@ echo batch
 \`\`\`
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
@@ -880,8 +880,8 @@ echo batch
     it('parses FOR with nested transitions (PASS ALL / FAIL ANY)', () => {
       const markdown = `## 1. Review
 - FOR pass IN 1 TO 3
-  - PASS ALL: CONTINUE
-  - FAIL ANY: BREAK
+  - PASS ALL CONTINUE
+  - FAIL ANY BREAK
 
 ### 1.1 Check
 \`\`\`bash
@@ -952,8 +952,8 @@ echo check
     it('parses FOR with nested transitions (PASS ANY / FAIL ALL)', () => {
       const markdown = `## 1. Review
 - FOR pass IN 1 TO 3
-  - PASS ANY: CONTINUE
-  - FAIL ALL: BREAK
+  - PASS ANY CONTINUE
+  - FAIL ALL BREAK
 
 ### 1.1 Check
 \`\`\`bash
@@ -1053,16 +1053,16 @@ PASS: CONTINUE
       const md = `## 1 Step
 - FOR x IN 1 TO 3
 - FOR y IN 1 TO 5
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 `;
       expect(() => parseRunbook(md)).toThrow(/has multiple FOR clauses.*only one is allowed/);
     });
 
     it('rejects FOR after transitions', () => {
       const md = `## 1 Step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 - FOR x IN 1 TO 3
 `;
       expect(() => parseRunbook(md)).toThrow(/FOR clause must appear before transitions/);
@@ -1106,8 +1106,8 @@ describe('substep content filtering', () => {
     const md = `## 1 Step
 
 ### 1.1 Sub
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Review the following items.
 
@@ -1123,8 +1123,8 @@ Review the following items.
     const md = `## 1 Step
 
 ### 1.1 Sub
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 - alpha.runbook.md
 - beta.runbook.md
@@ -1139,8 +1139,8 @@ Review the following items.
     const md = `## 1 Step
 
 ### 1.1 Sub
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Review the tasks carefully.
 
@@ -1155,8 +1155,8 @@ Review the tasks carefully.
 
   it('canonicalizes step-level runbook refs into runbook-list-derived substeps', () => {
     const md = `## 1 Step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 - deploy.runbook.md
 - verify.runbook.md
@@ -1179,8 +1179,8 @@ Review the tasks carefully.
 
   it('moves step-level prompt onto the implicit substep', () => {
     const md = `## 1 Step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Review this checklist.
 
@@ -1199,7 +1199,7 @@ Review this checklist.
   it('canonicalizes FOR + step-level runbook list into runbook-list-derived substeps', () => {
     const md = `## 1. Review the plan
 - FOR pass IN 1 TO 2
-- FAIL ANY: GOTO Synthesize
+- FAIL ANY GOTO Synthesize
 
 - review-technical-accuracy.runbook.md
 - review-structural-integrity.runbook.md
@@ -1207,7 +1207,7 @@ Review this checklist.
 - review-risk-safety.runbook.md
 
 ## Synthesize
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const steps = parseRunbook(md);
     expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
@@ -1232,26 +1232,26 @@ Review this checklist.
 // for mutation coverage of lines 32-51 in parser.ts.
 describe('extractText and inline code', () => {
   it('uses double-backtick wrapping for code containing backtick character', () => {
-    const md = '## 1. Use `` ` `` carefully\n- PASS: COMPLETE\n';
+    const md = '## 1. Use `` ` `` carefully\n- PASS COMPLETE\n';
     const steps = parseRunbook(md);
     expect(steps[0].description).toBe('Use `` ` `` carefully');
   });
 
   it('uses single-backtick wrapping for code without backtick character', () => {
-    const md = '## 1. Run `test`\n- PASS: COMPLETE\n';
+    const md = '## 1. Run `test`\n- PASS COMPLETE\n';
     const steps = parseRunbook(md);
     expect(steps[0].description).toBe('Run `test`');
     expect(steps[0].description).not.toContain('``');
   });
 
   it('extracts text from emphasis nodes in headings', () => {
-    const md = '## 1. Run the *important* task\n- PASS: COMPLETE\n';
+    const md = '## 1. Run the *important* task\n- PASS COMPLETE\n';
     const steps = parseRunbook(md);
     expect(steps[0].description).toBe('Run the important task');
   });
 
   it('extracts text from strong nodes in headings', () => {
-    const md = '## 1. Run the **critical** task\n- PASS: COMPLETE\n';
+    const md = '## 1. Run the **critical** task\n- PASS COMPLETE\n';
     const steps = parseRunbook(md);
     expect(steps[0].description).toBe('Run the critical task');
   });
@@ -1260,8 +1260,8 @@ describe('extractText and inline code', () => {
 describe('regex boundaries and runbook patterns', () => {
   it('does not match runbook ref with trailing text', () => {
     const md = `## 1 Step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 - task.runbook.md extra text
 `;
@@ -1272,8 +1272,8 @@ describe('regex boundaries and runbook patterns', () => {
 
   it('does not match bare .runbook.md without a filename prefix', () => {
     const md = `## 1 Step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 - .runbook.md
 `;
@@ -1285,8 +1285,8 @@ describe('regex boundaries and runbook patterns', () => {
 
   it('matches simple runbook ref', () => {
     const md = `## 1 Step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 - simple.runbook.md
 `;
@@ -1296,8 +1296,8 @@ describe('regex boundaries and runbook patterns', () => {
 
   it('matches path-like runbook ref', () => {
     const md = `## 1 Step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 - path/to/complex-name.runbook.md
 `;
@@ -1307,8 +1307,8 @@ describe('regex boundaries and runbook patterns', () => {
 
   it('does not treat .runbook.md.txt as a runbook ref', () => {
     const md = `## 1 Step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 - task.runbook.md.txt
 `;
@@ -1324,7 +1324,7 @@ describe('parseRunbookDocument metadata', () => {
 # Second Title
 
 ## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const doc = parseRunbookDocument(md);
     expect(doc.title).toBe('First Title');
@@ -1336,7 +1336,7 @@ describe('parseRunbookDocument metadata', () => {
 This is the preamble description.
 
 ## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const doc = parseRunbookDocument(md);
     expect(doc.description).toBe('This is the preamble description.');
@@ -1344,7 +1344,7 @@ This is the preamble description.
 
   it('returns undefined description when no preamble text', () => {
     const md = `## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const doc = parseRunbookDocument(md);
     expect(doc.description).toBeUndefined();
@@ -1352,7 +1352,7 @@ This is the preamble description.
 
   it('derives name from filename when no frontmatter name', () => {
     const md = `## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const doc = parseRunbookDocument(md, 'my-runbook.md');
     expect(doc.name).toBe('my-runbook.md');
@@ -1360,7 +1360,7 @@ This is the preamble description.
 
   it('returns undefined name when no frontmatter and no filename', () => {
     const md = `## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const doc = parseRunbookDocument(md);
     expect(doc.name).toBeUndefined();
@@ -1397,7 +1397,7 @@ describe('H1 step detection regex', () => {
     const md = `# My Runbook Title
 
 ## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const doc = parseRunbookDocument(md);
     expect(doc.title).toBe('My Runbook Title');
@@ -1407,7 +1407,7 @@ describe('H1 step detection regex', () => {
 describe('finalizeStep coverage', () => {
   it('builds prompt from implicit text only', () => {
     const md = `## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 This is implicit prompt text.
 `;
@@ -1417,7 +1417,7 @@ This is implicit prompt text.
 
   it('returns undefined prompt when no text provided', () => {
     const md = `## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
@@ -1425,7 +1425,7 @@ This is implicit prompt text.
 
   it('returns undefined substeps when step has no substeps', () => {
     const md = `## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do the work.
 `;
@@ -1437,7 +1437,7 @@ Do the work.
     const md = `## 1 Step
 
 ### 1.1 Sub
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do work.
 `;
@@ -1448,7 +1448,7 @@ Do work.
 
   it('does not synthesize substeps when step has no runbook refs', () => {
     const md = `## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Just text.
 `;
@@ -1465,8 +1465,8 @@ describe('content filtering detail', () => {
     const md = `## 1 Step
 
 ### 1.1 Sub
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Check the items.
 
@@ -1484,7 +1484,7 @@ Check the items.
     const md = `## 1 Step
 
 ### 1.1 Sub
-- PASS: CONTINUE
+- PASS CONTINUE
 
 Single line of text.
 
@@ -1542,7 +1542,7 @@ echo outside
 \`\`\`
 
 ## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const doc = parseRunbookDocument(md);
     expect(doc.steps).toHaveLength(1);
@@ -1561,16 +1561,16 @@ Some text but no steps.
 
   it('runs validation by default and throws for invalid runbooks', () => {
     const md = `## 1 Step
-- PASS: GOTO 99
-- FAIL: STOP
+- PASS GOTO 99
+- FAIL STOP
 `;
     expect(() => parseRunbookDocument(md)).toThrow();
   });
 
   it('skips validation when skipValidation is true', () => {
     const md = `## 1 Step
-- PASS: GOTO 99
-- FAIL: STOP
+- PASS GOTO 99
+- FAIL STOP
 `;
     const doc = parseRunbookDocument(md, undefined, { skipValidation: true });
     expect(doc.steps).toHaveLength(1);
@@ -1580,7 +1580,7 @@ Some text but no steps.
     const md = `## 1 Step
 
 ### 1.1 Sub
-- PASS: CONTINUE
+- PASS CONTINUE
 
 Do sub work.
 
@@ -1597,14 +1597,14 @@ Text in the second step.
     const md = `## 1 Step
 
 ### 1.1 Sub
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo hello
 \`\`\`
 
 ### 1.2 Another Sub
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Do other work.
 `;
@@ -1616,7 +1616,7 @@ Do other work.
 
   it('preserves prompt text across multiple paragraphs in step', () => {
     const md = `## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Line one.
 
@@ -1635,14 +1635,14 @@ npm test
     const md = `## 1 Step
 
 ### 1.1 First
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 Do first.
 
 ### 1.2 Second
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Do second.
 `;
@@ -1654,11 +1654,11 @@ Do second.
 
   it('handles step with only transitions and no other content', () => {
     const md = `## 1 Step
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ## 2 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
@@ -1670,12 +1670,12 @@ Do second.
   it('validates NEXT usage in substep context with FOR clause', () => {
     const md = `## 1 Step
 - FOR i IN 1 TO 3
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Sub
-- PASS: NEXT
-- FAIL: STOP
+- PASS NEXT
+- FAIL STOP
 
 Do iteration.
 `;
@@ -1703,7 +1703,7 @@ Here is a list:
 - Item two
 
 ## 1 Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const doc = parseRunbookDocument(md);
     expect(doc.steps).toHaveLength(1);
@@ -1882,8 +1882,8 @@ describe('DEFER shorthand', () => {
   it('standalone DEFER on substep produces both pass and fail DEFER transitions', () => {
     const md = `## 1. Validate
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Check
 
@@ -1906,8 +1906,8 @@ echo "check"
 
 - FOR item IN 1 TO 3
   - DEFER
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Do {{item}}
 

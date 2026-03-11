@@ -1,7 +1,7 @@
 ## 1. Start
 
-- PASS: GOTO 3
-- FAIL: STOP
+- PASS GOTO 3
+- FAIL STOP
 
 Initial step.
 
@@ -11,8 +11,8 @@ rd echo --result pass
 
 ## 2. Skipped
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 This gets skipped by GOTO.
 
@@ -22,8 +22,8 @@ rd echo --result pass
 
 ## 3. Jump target
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Jumped here from step 1.
 

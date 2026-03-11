@@ -20,7 +20,7 @@ tags:
 # Test Runbook
 
 ## 1. Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const result = parseRunbookDocument(markdown);
     expect(result.tags).toEqual(['retry', 'transition']);
@@ -34,7 +34,7 @@ name: test-runbook
 # Test Runbook
 
 ## 1. Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const result = parseRunbookDocument(markdown);
     expect(result.tags).toBeUndefined();
@@ -49,7 +49,7 @@ tags: []
 # Test Runbook
 
 ## 1. Step
-- PASS: COMPLETE
+- PASS COMPLETE
 `;
     const result = parseRunbookDocument(markdown);
     expect(result.tags).toEqual([]);

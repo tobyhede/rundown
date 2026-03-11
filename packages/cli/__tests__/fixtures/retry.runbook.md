@@ -1,7 +1,7 @@
 ## 1. Retry step
 
-- PASS: CONTINUE
-- FAIL: RETRY 3
+- PASS CONTINUE
+- FAIL RETRY 3
 
 May need multiple attempts.
 
@@ -11,8 +11,8 @@ rd echo --result fail --result fail --result pass
 
 ## 2. Final step
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Complete runbook.
 

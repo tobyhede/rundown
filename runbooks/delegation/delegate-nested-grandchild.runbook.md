@@ -15,8 +15,8 @@ scenarios:
 
 ## 1. Execute grandchild task
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 ```bash
 rd echo "grandchild completed"

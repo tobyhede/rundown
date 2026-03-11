@@ -118,8 +118,8 @@ scenarios:
 <Optional one-line description expanding on the title>
 
 ## 1 <Step title describing expected behavior>
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ## 2 <Only if testing inter-step behavior>
 ```
@@ -240,7 +240,7 @@ The `NEXT` and `CONTINUE` actions are distinct in FOR loop context:
 | `NEXT` | Advance to next FOR iteration | Substep completes within a FOR loop, iteration advances |
 | `BREAK` | Exit FOR loop immediately | Substep triggers loop exit |
 
-In the Rundown syntax, `PASS: CONTINUE` on a substep inside a FOR loop means "continue to next iteration" -- but the *emitted action* is `NEXT`, not `CONTINUE`. The compiler translates the syntactic `CONTINUE` to the semantic `NEXT` within FOR loop scope. Test assertions must use the emitted action name.
+In the Rundown syntax, `PASS CONTINUE` on a substep inside a FOR loop means "continue to next iteration" -- but the *emitted action* is `NEXT`, not `CONTINUE`. The compiler translates the syntactic `CONTINUE` to the semantic `NEXT` within FOR loop scope. Test assertions must use the emitted action name.
 
 Example transition stream for a 3-iteration FOR loop where all pass:
 

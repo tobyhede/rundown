@@ -19,7 +19,7 @@ Shows STOP/COMPLETE with descriptive messages.
 
 ## 1. Check Status
 
-- PASS: COMPLETE "Setup completed successfully"
-- FAIL: STOP "Setup failed - check prerequisites"
+- PASS COMPLETE "Setup completed successfully"
+- FAIL STOP "Setup failed - check prerequisites"
 
 Verify system is ready.

@@ -15,8 +15,8 @@ scenarios:
 
 ## 1. Echo parent context
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 ```bash
 rd echo "parent-step={{context.parent.step}}"

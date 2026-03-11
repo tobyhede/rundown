@@ -137,7 +137,7 @@ describe('pop command', () => {
     const runbookSrc = `# Test Runbook
 
 ## 1. First step
-- PASS: COMPLETE
+- PASS COMPLETE
 
 \`\`\`bash
 rd echo "hello"

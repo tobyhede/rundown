@@ -32,8 +32,8 @@ PASS ALL requires all substeps to pass. Paired with FAIL ANY (pessimistic).
 
 ## 1. Aggregated check
 
-- PASS ALL: COMPLETE
-- FAIL ANY: STOP "A check failed"
+- PASS ALL COMPLETE
+- FAIL ANY STOP "A check failed"
 
 ### 1.1 First check
 

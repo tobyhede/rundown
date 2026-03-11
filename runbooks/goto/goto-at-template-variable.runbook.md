@@ -20,12 +20,12 @@ scenarios:
 ## 1. Process
 
 - FOR item IN 1 TO 3
-- PASS ALL: COMPLETE
+- PASS ALL COMPLETE
 
 ### 1.1 Handle {{item}}
 
-- PASS: DEFER
-- FAIL: GOTO 1 AT {{Index}}
+- PASS DEFER
+- FAIL GOTO 1 AT {{Index}}
 
 ```bash
 rd echo "item={{item}}"

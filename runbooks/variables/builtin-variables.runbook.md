@@ -15,7 +15,7 @@ scenarios:
 
 ## 1. Echo built-ins
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "date={{Date}} year={{Year}} step={{Step}} workpath={{WorkPath}}"

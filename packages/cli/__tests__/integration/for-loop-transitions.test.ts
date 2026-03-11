@@ -54,17 +54,17 @@ async function writeForRunbook(
 
   const content = `## 1. Process
 - FOR i IN 1 TO ${String(iterations)}
-${iterLines ? `${iterLines}\n` : ''}- PASS ${stepPassMod}: ${stepPass}
-- FAIL ${stepFailMod}: ${stepFail}
+${iterLines ? `${iterLines}\n` : ''}- PASS ${stepPassMod} ${stepPass}
+- FAIL ${stepFailMod} ${stepFail}
 
 ### 1.1 Check
-- PASS: DEFER
-- FAIL: DEFER
+- PASS DEFER
+- FAIL DEFER
 
 Do the check.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step.
 `;
@@ -90,7 +90,7 @@ describe('FOR loop transitions integration', () => {
     it('PASS ALL — all iterations pass → CONTINUE to next step', async () => {
       await writeForRunbook(workspace, 'agg-all-pass.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: BREAK`,
+        iterTransitions: `- PASS ALL DEFER\n- FAIL ANY BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -117,7 +117,7 @@ describe('FOR loop transitions integration', () => {
     it('PASS ALL — one iteration fails via BREAK → BREAK does not accumulate', async () => {
       await writeForRunbook(workspace, 'agg-one-fail.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: BREAK`,
+        iterTransitions: `- PASS ALL DEFER\n- FAIL ANY BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -142,7 +142,7 @@ describe('FOR loop transitions integration', () => {
     it('PASS ANY — one pass suffices', async () => {
       await writeForRunbook(workspace, 'agg-any-pass.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: DEFER`,
+        iterTransitions: `- PASS ALL DEFER\n- FAIL ANY DEFER`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
         stepPassMod: 'ANY',
@@ -169,7 +169,7 @@ describe('FOR loop transitions integration', () => {
     it('FAIL ANY: BREAK at iteration level — BREAK does not accumulate', async () => {
       await writeForRunbook(workspace, 'agg-break.runbook.md', {
         iterations: 3,
-        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: BREAK`,
+        iterTransitions: `- PASS ALL DEFER\n- FAIL ANY BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -199,7 +199,7 @@ describe('FOR loop transitions integration', () => {
     it('RETRY 2 BREAK — exhausts retries then breaks', async () => {
       await writeForRunbook(workspace, 'retry-break.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: RETRY 2 BREAK`,
+        iterTransitions: `- PASS ALL DEFER\n- FAIL ANY RETRY 2 BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -231,7 +231,7 @@ describe('FOR loop transitions integration', () => {
     it('RETRY 1 DEFER — retries then defers to next iteration', async () => {
       await writeForRunbook(workspace, 'retry-defer.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: RETRY 1 DEFER`,
+        iterTransitions: `- PASS ALL DEFER\n- FAIL ANY RETRY 1 DEFER`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -257,7 +257,7 @@ describe('FOR loop transitions integration', () => {
     it('RETRY succeeds on second attempt', async () => {
       await writeForRunbook(workspace, 'retry-success.runbook.md', {
         iterations: 2,
-        iterTransitions: `- PASS ALL: DEFER\n- FAIL ANY: RETRY 2 BREAK`,
+        iterTransitions: `- PASS ALL DEFER\n- FAIL ANY RETRY 2 BREAK`,
         stepPass: 'CONTINUE',
         stepFail: 'STOP',
       });
@@ -297,24 +297,24 @@ describe('FOR loop transitions integration', () => {
       const filename = 'substep-break-with-retry.runbook.md';
       const content = `## 1. Process
 - FOR i IN 1 TO 3
-  - FAIL ANY: RETRY 2 BREAK
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+  - FAIL ANY RETRY 2 BREAK
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 First check
-- PASS: DEFER
-- FAIL: DEFER
+- PASS DEFER
+- FAIL DEFER
 
 Do the first check.
 
 ### 1.2 Second check
-- PASS: DEFER
-- FAIL: BREAK
+- PASS DEFER
+- FAIL BREAK
 
 Do the second check.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 Final step.
 `;

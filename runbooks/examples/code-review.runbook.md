@@ -63,8 +63,8 @@ Ensure all automated gates have passed before spending time on manual review.
 
 ### 1.1 Verify CI status
 
-- PASS: CONTINUE
-- FAIL: STOP "CI builds must pass before review."
+- PASS CONTINUE
+- FAIL STOP "CI builds must pass before review."
 
 Check the status of the Continuous Integration pipeline.
 
@@ -74,8 +74,8 @@ rd echo gh pr checks
 
 ### 1.2 Check test coverage
 
-- PASS: CONTINUE
-- FAIL: STOP "Test coverage did not meet thresholds."
+- PASS CONTINUE
+- FAIL STOP "Test coverage did not meet thresholds."
 
 Verify that new code is adequately covered by tests.
 
@@ -85,8 +85,8 @@ rd echo npm run test:coverage:check
 
 ### 1.3 Scan for security issues
 
-- PASS: CONTINUE
-- FAIL: STOP "Security vulnerabilities detected."
+- PASS CONTINUE
+- FAIL STOP "Security vulnerabilities detected."
 
 Run static analysis security testing (SAST).
 
@@ -100,23 +100,23 @@ Understand the *why* and *what* of the changes.
 
 ### 2.1 Read PR description
 
-- PASS: CONTINUE
-- FAIL: STOP "PR description is incomplete."
+- PASS CONTINUE
+- FAIL STOP "PR description is incomplete."
 
 Does the PR description clearly explain the problem and the solution?
 Is it linked to a ticket or issue?
 
 ### 2.2 Verify acceptance criteria
 
-- PASS: CONTINUE
-- FAIL: STOP "Acceptance criteria not met or defined."
+- PASS CONTINUE
+- FAIL STOP "Acceptance criteria not met or defined."
 
 Review the linked issue. Do the changes cover all listed acceptance criteria?
 
 ## 3 Code Inspection
 
-- PASS: CONTINUE
-- FAIL: GOTO RequestChanges
+- PASS CONTINUE
+- FAIL GOTO RequestChanges
 
 **Manual Step:** Review the code diff.
 
@@ -132,8 +132,8 @@ Focus on:
 
 ### 4.1 Run local tests
 
-- PASS: CONTINUE
-- FAIL: GOTO RequestChanges
+- PASS CONTINUE
+- FAIL GOTO RequestChanges
 
 Pull the branch locally and run the specific tests related to this change.
 
@@ -143,14 +143,14 @@ rd echo npm test
 
 ## 5 Final Decision
 
-- YES: COMPLETE "Code Review Approved. Ready to merge."
-- NO: GOTO RequestChanges
+- YES COMPLETE "Code Review Approved. Ready to merge."
+- NO GOTO RequestChanges
 
 Are you ready to approve this Pull Request?
 
 ## RequestChanges
 
-- PASS: STOP "Review completed. Changes requested."
+- PASS STOP "Review completed. Changes requested."
 
 Submit your review with "Request Changes" and provide
 constructive feedback on the identified issues.

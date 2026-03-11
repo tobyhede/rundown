@@ -1,2 +1,2 @@
 ## 1. Step
-- PASS: GOTO 10
+- PASS GOTO 10

@@ -22,8 +22,8 @@ Jump from substep 1.1 to named substep 1.Cleanup.
 
 ### 1.1 Start
 
-- PASS: GOTO 1.Cleanup
-- FAIL: STOP
+- PASS GOTO 1.Cleanup
+- FAIL STOP
 
 ```bash
 rd echo "named start"
@@ -31,7 +31,7 @@ rd echo "named start"
 
 ### 1.Cleanup
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "cleanup"

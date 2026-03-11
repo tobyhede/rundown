@@ -35,10 +35,10 @@ scenarios:
 ## 1. Validate items
 
 - FOR item IN 1 TO 2
-  - PASS: DEFER
-  - FAIL: DEFER
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+  - PASS DEFER
+  - FAIL DEFER
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Check {{item}}
 
@@ -48,7 +48,7 @@ rd echo "item={{item}}"
 
 ## 2. Finalize
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "done"

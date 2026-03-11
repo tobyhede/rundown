@@ -40,24 +40,24 @@ No subagents are involved — the main agent works through steps sequentially.
 **Example:**
 ````markdown
 ## 1. Run tests
-- PASS: CONTINUE
-- FAIL: STOP "Tests failed"
+- PASS CONTINUE
+- FAIL STOP "Tests failed"
 
 ```bash
 npm test
 ```
 
 ## 2. Check coverage
-- PASS: CONTINUE
-- FAIL: GOTO 1
+- PASS CONTINUE
+- FAIL GOTO 1
 
 ```bash
 npm run coverage -- --threshold 80
 ```
 
 ## 3. Deploy
-- PASS: COMPLETE "Deployed"
-- FAIL: STOP "Deploy failed"
+- PASS COMPLETE "Deployed"
+- FAIL STOP "Deploy failed"
 
 ```bash
 npm run deploy
@@ -97,20 +97,20 @@ Combines a runbook (for flow control) with a skill (for domain knowledge). The r
 
 ```markdown
 ## 1. Check prerequisites
-- PASS: CONTINUE
-- FAIL: GOTO InvokeSkill
+- PASS CONTINUE
+- FAIL GOTO InvokeSkill
 
 Verify the Writing Plans skill has been invoked.
 
 ## InvokeSkill Load skill
-- PASS: GOTO 2
-- FAIL: STOP
+- PASS GOTO 2
+- FAIL STOP
 
 Tool: Skill(skill: "rundown:writing-plans")
 
 ## 2. Write the plan
-- PASS: COMPLETE
-- FAIL: RETRY 2
+- PASS COMPLETE
+- FAIL RETRY 2
 
 Write and save the implementation plan.
 ```
@@ -128,8 +128,8 @@ A runbook defines substeps, each delegated to a subagent. The parent agent orche
 **Example:**
 ```markdown
 ## 2. Review changes
-- PASS ALL: CONTINUE
-- FAIL ANY: GOTO 4
+- PASS ALL CONTINUE
+- FAIL ANY GOTO 4
 
 ### 2.1 Code review
 Review the implementation for correctness and style.
@@ -310,8 +310,8 @@ When substeps involve agents, transition rules use aggregate conditions:
 
 ```markdown
 ## 2. Review
-- PASS ALL: CONTINUE
-- FAIL ANY: GOTO 4
+- PASS ALL CONTINUE
+- FAIL ANY GOTO 4
 
 ### 2.1 First reviewer
 ### 2.2 Second reviewer

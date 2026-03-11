@@ -21,17 +21,17 @@ Substep NEXT respects iteration-level retry. After retries exhausted, NEXT skips
 
 ## 1. Process items
 - FOR i IN 1 TO 3
-  - FAIL ANY: RETRY 1 DEFER
-- PASS ALL: CONTINUE
-- FAIL ANY: STOP
+  - FAIL ANY RETRY 1 DEFER
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Check
-- PASS: DEFER
-- FAIL: NEXT
+- PASS DEFER
+- FAIL NEXT
 
 Check item.
 
 ## 2. Done
-- PASS: COMPLETE
+- PASS COMPLETE
 
 All items processed.

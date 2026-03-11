@@ -18,8 +18,8 @@ Fetch and triage review feedback from a pull request.
 
 ## 1 Fetch PR Review Comments
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
 .claude/rundown/runbooks/review/scripts/fetch-pr-comments.sh {{repo}} {{pr_number}}
@@ -27,8 +27,8 @@ Fetch and triage review feedback from a pull request.
 
 ## 2 Review Summary
 
-- PASS: CONTINUE
-- FAIL: STOP
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
 .claude/rundown/runbooks/review/scripts/summarize-findings.sh
@@ -36,8 +36,8 @@ Fetch and triage review feedback from a pull request.
 
 ## 3 Address Findings
 
-- PASS: CONTINUE
-- FAIL: CONTINUE
+- PASS CONTINUE
+- FAIL CONTINUE
 
 Work through each actionable finding from `.work/pr-feedback/findings.jsonl`.
 For each finding, review the code at the specified path and line, then either
@@ -45,7 +45,7 @@ address the feedback or note why it was skipped.
 
 ## 4 Finalize
 
-- PASS: COMPLETE
-- FAIL: STOP
+- PASS COMPLETE
+- FAIL STOP
 
 Summarize what was addressed and what was skipped.

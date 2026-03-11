@@ -15,7 +15,7 @@ scenarios:
 
 ## 1. Period separator
 
-- PASS: CONTINUE
+- PASS CONTINUE
 
 ```bash
 rd echo "period"
@@ -23,7 +23,7 @@ rd echo "period"
 
 ## 2: Colon separator
 
-- PASS: CONTINUE
+- PASS CONTINUE
 
 ```bash
 rd echo "colon"
@@ -31,7 +31,7 @@ rd echo "colon"
 
 ## 3) Paren separator
 
-- PASS: COMPLETE
+- PASS COMPLETE
 
 ```bash
 rd echo "paren"

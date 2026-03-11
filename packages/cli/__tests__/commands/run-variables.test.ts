@@ -18,7 +18,7 @@ describe('rd run --var and --var-file', () => {
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
-- PASS: COMPLETE
+- PASS COMPLETE
 
 \`\`\`bash
 rd echo {{message}}
@@ -41,7 +41,7 @@ rd echo {{message}}
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
-- PASS: COMPLETE
+- PASS COMPLETE
 
 \`\`\`bash
 rd echo {{message}}
@@ -62,7 +62,7 @@ rd echo {{message}}
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
-- PASS: COMPLETE
+- PASS COMPLETE
 
 \`\`\`bash
 rd echo {{a}} {{b}}

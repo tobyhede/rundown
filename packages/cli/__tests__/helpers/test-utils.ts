@@ -605,8 +605,8 @@ export function createRunbook(options: CreateRunbookOptions): string {
       // Render substeps as H3 headers with qualified numbering
       step.substeps.forEach((sub, subIndex) => {
         lines.push(`### ${String(stepNum)}.${String(subIndex + 1)} ${sub.title}`);
-        if (sub.pass) lines.push(`- PASS: ${sub.pass}`);
-        if (sub.fail) lines.push(`- FAIL: ${sub.fail}`);
+        if (sub.pass) lines.push(`- PASS ${sub.pass}`);
+        if (sub.fail) lines.push(`- FAIL ${sub.fail}`);
         lines.push('');
         if (sub.content) {
           lines.push(sub.content);

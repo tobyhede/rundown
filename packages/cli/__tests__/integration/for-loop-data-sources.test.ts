@@ -41,10 +41,10 @@ name: Deploy Servers
 
 ## 1. Process servers
 - FOR server IN {{ servers }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle server
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo server={{ server }}
@@ -103,10 +103,10 @@ name: Windowed Iteration
 
 ## 1. Process items
 - FOR item IN 2 TO 4 OF {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo item={{ item }} index={{ Index }}
@@ -155,10 +155,10 @@ name: Empty Array
 
 ## 1. Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo item={{ item }}
@@ -211,10 +211,10 @@ name: Window Clamp
 
 ## 1. Process items
 - FOR item IN 1 TO 100 OF {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo item={{ item }}
@@ -247,10 +247,10 @@ name: Missing Source
 
 ## 1. Process items
 - FOR item IN {{ missing }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo item={{ item }}
@@ -282,10 +282,10 @@ name: File Loop
 
 ## 1. Process servers
 - FOR server IN {{ servers }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle server
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo server={{ server }}
@@ -332,10 +332,10 @@ name: Multiline Iteration
 
 ## 1. Process lines
 - FOR line IN {{ log }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle line
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo line={{ line }}
@@ -382,10 +382,10 @@ name: Special Chars
 
 ## 1. Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo item={{ item }}
@@ -430,10 +430,10 @@ name: Combined Variables
 
 ## 1. Process servers
 - FOR server IN {{ servers }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle server
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo env={{ env }} server={{ server }}
@@ -478,10 +478,10 @@ name: Large Array
 
 ## 1. Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo item={{ item }}
@@ -524,10 +524,10 @@ name: JSONL Field Access
 
 ## 1. Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo name={{ item.name }} count={{ item.count }} full={{ item }}
@@ -591,10 +591,10 @@ name: JSONL Bad Data
 
 ## 1. Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo item={{ item.name }}
@@ -636,10 +636,10 @@ name: Descending Array
 
 ## 1. Process items
 - FOR item IN 4 TO 2 OF {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo item={{ item }}
@@ -673,10 +673,10 @@ name: Descending File
 
 ## 1. Process servers
 - FOR server IN 3 TO 1 OF {{ servers }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle server
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 rd echo server={{ server }}
