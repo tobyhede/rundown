@@ -33,7 +33,7 @@ import {
   ErrorCodes,
   getErrorMessage,
 } from '@rundown-org/core';
-import { isSourced, stepHasSubsteps, type Step } from '@rundown-org/parser';
+import { isSourced, isResolvedForClause, stepHasSubsteps, type Step } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
@@ -147,7 +147,7 @@ export function validateSources(
   sources: Readonly<Record<string, unknown>>,
 ): void {
   for (const step of steps) {
-    if (step.kind === 'for' && isSourced(step.forClause)) {
+    if (step.kind === 'for' && isResolvedForClause(step.forClause) && isSourced(step.forClause)) {
       const name = step.forClause.source;
       if (!(name in sources)) {
         throw new Error(

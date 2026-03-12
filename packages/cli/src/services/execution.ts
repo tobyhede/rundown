@@ -31,7 +31,12 @@ import {
   type ForContext,
   type DataSource,
 } from '@rundown-org/core';
-import { isSourced, stepHasSubsteps, type ForClause } from '@rundown-org/parser';
+import {
+  isSourced,
+  isResolvedForClause,
+  stepHasSubsteps,
+  type ParsedForClause,
+} from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import {
   getPolicyEvaluator,
@@ -85,7 +90,7 @@ export function buildStepVariables(
   stepId: string,
   substepId: string | undefined,
   forStack?: readonly ForContext[],
-  forClause?: ForClause,
+  forClause?: ParsedForClause,
   sources?: Readonly<Record<string, DataSource>>,
   templateVars?: Readonly<Record<string, string>>,
 ): StepVariables {
@@ -131,7 +136,7 @@ export function buildStepVariables(
         }
       }
     }
-  } else if (forClause) {
+  } else if (forClause && isResolvedForClause(forClause)) {
     // Bootstrap: first iteration before actor has run
     if (isSourced(forClause)) {
       const ds = sources?.[forClause.source];

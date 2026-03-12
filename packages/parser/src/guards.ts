@@ -9,6 +9,10 @@ import type {
   StepWithCommand,
   StepWithSubsteps,
   StepWithFor,
+  BoundRef,
+  Bound,
+  ParsedForClause,
+  UnresolvedForClause,
 } from './ast.js';
 
 /**
@@ -135,4 +139,34 @@ export function isStepWithFor(step: Step): step is StepWithFor {
  */
 export function stepHasSubsteps(step: Step): step is StepHavingSubsteps {
   return step.kind === 'substeps' || step.kind === 'for';
+}
+
+/**
+ * Type guard: checks if a bound is an unresolved template reference.
+ *
+ * @param bound - The bound value to check
+ * @returns True if `bound` is a `BoundRef` (`bound is BoundRef`), guaranteeing `bound.ref` is a string
+ */
+export function isBoundRef(bound: Bound): bound is BoundRef {
+  return typeof bound === 'object' && 'ref' in bound;
+}
+
+/**
+ * Type guard: checks if a parsed FOR clause contains unresolved template references.
+ *
+ * @param fc - The parsed FOR clause to check
+ * @returns True if `fc` is an `UnresolvedForClause` (`fc is UnresolvedForClause`), meaning it has unresolved bounds
+ */
+export function isUnresolvedForClause(fc: ParsedForClause): fc is UnresolvedForClause {
+  return 'unresolved' in fc;
+}
+
+/**
+ * Type guard: checks if a parsed FOR clause is fully resolved.
+ *
+ * @param fc - The parsed FOR clause to check
+ * @returns True if `fc` is a `ForClause` (`fc is ForClause`), meaning all bounds are concrete numbers
+ */
+export function isResolvedForClause(fc: ParsedForClause): fc is ForClause {
+  return !('unresolved' in fc);
 }

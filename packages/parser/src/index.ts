@@ -65,4 +65,7 @@ export {
   isStepWithSubsteps,
   isStepWithFor,
   stepHasSubsteps,
+  isBoundRef,
+  isUnresolvedForClause,
+  isResolvedForClause,
 } from './guards.js';

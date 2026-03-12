@@ -71,6 +71,65 @@ export interface SourceWindow {
 export type ForClause = NumericWindow | SourceWindow;
 
 /**
+ * A reference to an unresolved template variable used as a FOR bound.
+ *
+ * Produced by `parseForClause` when a bound position contains `{{VarName}}`
+ * instead of a literal integer. Resolution to a concrete number happens
+ * in a later pipeline phase.
+ */
+export interface BoundRef {
+  readonly ref: string;
+}
+
+/**
+ * A FOR clause bound: either a resolved integer or an unresolved template reference.
+ */
+export type Bound = number | BoundRef;
+
+/**
+ * Numeric-range FOR window with at least one unresolved bound.
+ *
+ * Structurally mirrors {@link NumericWindow} but allows `BoundRef` values
+ * in `start` and/or `end`. Tagged with `unresolved: true` so consumers
+ * can narrow with `'unresolved' in fc`.
+ */
+export interface UnresolvedNumericWindow {
+  readonly unresolved: true;
+  readonly variable?: string;
+  readonly start: Bound;
+  readonly end: Bound;
+  readonly source?: never;
+  readonly transitions?: Transitions;
+}
+
+/**
+ * Data-source FOR window with at least one unresolved bound.
+ *
+ * Structurally mirrors {@link SourceWindow} but allows `BoundRef` values
+ * in `start` and/or `end`. Tagged with `unresolved: true` so consumers
+ * can narrow with `'unresolved' in fc`.
+ */
+export interface UnresolvedSourceWindow {
+  readonly unresolved: true;
+  readonly variable: string;
+  readonly start: Bound;
+  readonly end?: Bound;
+  readonly source: string;
+  readonly transitions?: Transitions;
+}
+
+/** Union of unresolved FOR clause variants. */
+export type UnresolvedForClause = UnresolvedNumericWindow | UnresolvedSourceWindow;
+
+/**
+ * A parsed FOR clause — either fully resolved or containing unresolved template references.
+ *
+ * Consumers that require resolved bounds should narrow with
+ * `isResolvedForClause(fc)` or `!('unresolved' in fc)`.
+ */
+export type ParsedForClause = ForClause | UnresolvedForClause;
+
+/**
  * A substep within a step (H3 header)
  */
 export interface Substep {
@@ -132,7 +191,7 @@ export interface StepWithSubsteps extends StepFields {
 /** FOR loop step — always has substeps + forClause. */
 export interface StepWithFor extends StepFields {
   readonly kind: 'for';
-  readonly forClause: ForClause;
+  readonly forClause: ParsedForClause;
   readonly substeps: readonly Substep[];
   /** Parser canonicalization marker for step-level runbook-list shorthand. */
   readonly substepsDerivedFromRunbookList?: true;

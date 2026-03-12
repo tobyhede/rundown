@@ -69,6 +69,54 @@ export const SourceWindowSchema = z.object({
 export const ForClauseSchema = z.union([NumericWindowSchema, SourceWindowSchema]);
 
 /**
+ * Zod schema for BoundRef — an unresolved template variable reference used as a FOR bound.
+ */
+export const BoundRefSchema = z.object({
+  ref: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+});
+
+/**
+ * Zod schema for Bound — either a resolved positive integer or a BoundRef.
+ */
+export const BoundSchema = z.union([
+  z.number().int().positive().max(MAX_FOR_BOUND),
+  BoundRefSchema,
+]);
+
+/**
+ * Zod schema for UnresolvedNumericWindow.
+ */
+export const UnresolvedNumericWindowSchema = z.object({
+  unresolved: z.literal(true),
+  variable: z.string().regex(NAMED_IDENTIFIER_PATTERN).optional(),
+  start: BoundSchema,
+  end: BoundSchema,
+  source: z.never().optional(),
+  transitions: z.lazy(() => TransitionsSchema.optional()),
+});
+
+/**
+ * Zod schema for UnresolvedSourceWindow.
+ */
+export const UnresolvedSourceWindowSchema = z.object({
+  unresolved: z.literal(true),
+  variable: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+  start: BoundSchema,
+  end: BoundSchema.optional(),
+  source: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+  transitions: z.lazy(() => TransitionsSchema.optional()),
+});
+
+/**
+ * Zod schema for ParsedForClause — accepts both resolved and unresolved variants.
+ */
+export const ParsedForClauseSchema = z.union([
+  ForClauseSchema,
+  UnresolvedNumericWindowSchema,
+  UnresolvedSourceWindowSchema,
+]);
+
+/**
  * Schema for step names in Step.name field.
  * Accepts: "1", "2", "ErrorHandler" for named steps.
  * Rejects: reserved words (CONTINUE, STOP, etc.)
@@ -272,7 +320,7 @@ export const StepWithSubstepsSchema = z.object({
 export const StepWithForSchema = z.object({
   ...StepFieldsSchema,
   kind: z.literal('for'),
-  forClause: ForClauseSchema,
+  forClause: ParsedForClauseSchema,
   substeps: z.array(SubstepSchema).readonly(),
   substepsDerivedFromRunbookList: z.literal(true).optional(),
 });

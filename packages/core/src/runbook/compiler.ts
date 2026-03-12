@@ -1,7 +1,7 @@
 import { setup, assign } from 'xstate';
 import type { Step, Action, Transitions, LastAction, ForContext, DataSource } from './types.js';
 import type { StepId } from './step-id.js';
-import type { ForClause, StepHavingSubsteps } from '@rundown-org/parser';
+import type { ParsedForClause, StepHavingSubsteps } from '@rundown-org/parser';
 import {
   isSourced,
   stepHasSubsteps,
@@ -275,7 +275,7 @@ function buildGotoLastActionFromEvent(
 function getStepForFirstSubstep(
   stateId: string,
   steps: Step[],
-): { step: Step; forClause: ForClause; implicit: boolean } | null {
+): { step: Step; forClause: ParsedForClause; implicit: boolean } | null {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
 
@@ -421,11 +421,15 @@ function resolveAtValueRuntime(
  */
 function createForContext(
   stepName: string,
-  forClause: ForClause,
+  forClause: ParsedForClause,
   atValue?: number | string,
   implicit = false,
   sources?: Readonly<Record<string, DataSource>>,
 ): ForContext {
+  if ('unresolved' in forClause) {
+    throw new Error(`Unresolved FOR bounds in step "${stepName}" — run resolution pass first`);
+  }
+
   let source: ForContext['source'];
   let start: number;
   let end: number | undefined;
@@ -491,15 +495,21 @@ function createForContext(
  * @param implicit - Whether the FOR loop is implicit (no explicit FOR clause)
  * @param sources - Optional data sources for sourced FOR loops
  * @returns The forStack to assign
+ * @throws {Error} When the FOR clause contains unresolved template references
  */
 function initForStack(
   currentForStack: readonly ForContext[],
   targetStepName: string,
-  forClause: ForClause,
+  forClause: ParsedForClause,
   atValue: number | string | undefined,
   implicit: boolean,
   sources?: Readonly<Record<string, DataSource>>,
 ): readonly ForContext[] {
+  if ('unresolved' in forClause) {
+    throw new Error(
+      `Unresolved FOR bounds in step "${targetStepName}" — run resolution pass first`,
+    );
+  }
   const top = peekForStack(currentForStack);
   if (top?.stepId === targetStepName) {
     return currentForStack;
@@ -544,7 +554,7 @@ function initIterationResults(
 function getStepForSubstep(
   stateId: string,
   steps: Step[],
-): { step: Step; forClause: ForClause; implicit: boolean } | null {
+): { step: Step; forClause: ParsedForClause; implicit: boolean } | null {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
   const [, stepName] = match;
@@ -725,6 +735,7 @@ function findNextStateId(stepName: string, substepId: string | undefined, steps:
  * @param steps - The full steps array (for GOTO target lookup)
  * @param sources - Optional data sources for GOTO to FOR step initialization
  * @returns XState assign action
+ * @throws {Error} When a GOTO target's FOR clause contains unresolved template references
  */
 function buildParentExitAssign(
   parentAction: Action,
@@ -744,6 +755,11 @@ function buildParentExitAssign(
       const targetStep = steps.find((s) => s.name === parentAction.target.step);
       if (targetStep?.kind === 'for') {
         const forClause = targetStep.forClause;
+        if ('unresolved' in forClause) {
+          throw new Error(
+            `Unresolved FOR bounds in step "${targetStep.name}" — run resolution pass first`,
+          );
+        }
         return runbookSetup.assign({
           ...baseAssign,
           // Parent exit always creates fresh ForContext — never preserve an

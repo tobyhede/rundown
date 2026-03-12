@@ -6,6 +6,11 @@ import {
   ForClauseSchema,
   ActionSchema,
   RunbookSchema,
+  BoundRefSchema,
+  BoundSchema,
+  UnresolvedNumericWindowSchema,
+  UnresolvedSourceWindowSchema,
+  ParsedForClauseSchema,
 } from '../src/schemas.js';
 
 describe('TransitionsSchema with kind', () => {
@@ -494,5 +499,176 @@ describe('E5: RunbookSchema with metadata fields', () => {
       tags: [],
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('BoundRefSchema', () => {
+  it('accepts valid identifier ref', () => {
+    expect(BoundRefSchema.safeParse({ ref: 'Max' }).success).toBe(true);
+  });
+
+  it('accepts ref with underscore', () => {
+    expect(BoundRefSchema.safeParse({ ref: 'max_items' }).success).toBe(true);
+  });
+
+  it('rejects ref starting with digit', () => {
+    expect(BoundRefSchema.safeParse({ ref: '1abc' }).success).toBe(false);
+  });
+
+  it('rejects ref with hyphen', () => {
+    expect(BoundRefSchema.safeParse({ ref: 'max-items' }).success).toBe(false);
+  });
+
+  it('rejects empty ref', () => {
+    expect(BoundRefSchema.safeParse({ ref: '' }).success).toBe(false);
+  });
+});
+
+describe('BoundSchema', () => {
+  it('accepts positive integer', () => {
+    expect(BoundSchema.safeParse(5).success).toBe(true);
+  });
+
+  it('accepts BoundRef', () => {
+    expect(BoundSchema.safeParse({ ref: 'Max' }).success).toBe(true);
+  });
+
+  it('rejects zero', () => {
+    expect(BoundSchema.safeParse(0).success).toBe(false);
+  });
+
+  it('rejects negative number', () => {
+    expect(BoundSchema.safeParse(-1).success).toBe(false);
+  });
+
+  it('rejects string that is not BoundRef', () => {
+    expect(BoundSchema.safeParse('Max').success).toBe(false);
+  });
+});
+
+describe('UnresolvedNumericWindowSchema', () => {
+  it('validates with both bounds as refs', () => {
+    const result = UnresolvedNumericWindowSchema.safeParse({
+      unresolved: true,
+      variable: 'item',
+      start: { ref: 'Start' },
+      end: { ref: 'End' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('validates with mixed bounds (number start, ref end)', () => {
+    const result = UnresolvedNumericWindowSchema.safeParse({
+      unresolved: true,
+      start: 1,
+      end: { ref: 'Max' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('validates without variable', () => {
+    const result = UnresolvedNumericWindowSchema.safeParse({
+      unresolved: true,
+      start: 1,
+      end: { ref: 'Max' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects without unresolved flag', () => {
+    const result = UnresolvedNumericWindowSchema.safeParse({
+      start: 1,
+      end: { ref: 'Max' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects with source field set', () => {
+    const result = UnresolvedNumericWindowSchema.safeParse({
+      unresolved: true,
+      start: 1,
+      end: { ref: 'Max' },
+      source: 'items',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('UnresolvedSourceWindowSchema', () => {
+  it('validates with ref end and source', () => {
+    const result = UnresolvedSourceWindowSchema.safeParse({
+      unresolved: true,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Max' },
+      source: 'items',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('validates with both bounds as refs and source', () => {
+    const result = UnresolvedSourceWindowSchema.safeParse({
+      unresolved: true,
+      variable: 'item',
+      start: { ref: 'Start' },
+      end: { ref: 'End' },
+      source: 'items',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('requires variable', () => {
+    const result = UnresolvedSourceWindowSchema.safeParse({
+      unresolved: true,
+      start: 1,
+      end: { ref: 'Max' },
+      source: 'items',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('requires source', () => {
+    const result = UnresolvedSourceWindowSchema.safeParse({
+      unresolved: true,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Max' },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ParsedForClauseSchema', () => {
+  it('accepts resolved numeric clause', () => {
+    expect(ParsedForClauseSchema.safeParse({ start: 1, end: 10 }).success).toBe(true);
+  });
+
+  it('accepts resolved source clause', () => {
+    expect(
+      ParsedForClauseSchema.safeParse({ variable: 'item', start: 1, source: 'items' }).success,
+    ).toBe(true);
+  });
+
+  it('accepts unresolved numeric clause', () => {
+    expect(
+      ParsedForClauseSchema.safeParse({ unresolved: true, start: 1, end: { ref: 'Max' } }).success,
+    ).toBe(true);
+  });
+
+  it('accepts unresolved source clause', () => {
+    expect(
+      ParsedForClauseSchema.safeParse({
+        unresolved: true,
+        variable: 'item',
+        start: 1,
+        end: { ref: 'Max' },
+        source: 'items',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects invalid unresolved (missing unresolved flag with ref bound)', () => {
+    // Without unresolved: true, BoundRef in end doesn't match ForClauseSchema
+    expect(ParsedForClauseSchema.safeParse({ start: 1, end: { ref: 'Max' } }).success).toBe(false);
   });
 });

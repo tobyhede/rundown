@@ -2,7 +2,7 @@ import { fromMarkdown } from 'mdast-util-from-markdown';
 import { visit, SKIP } from 'unist-util-visit';
 import type { Node } from 'unist';
 import type { Code, Heading, List, ListItem, Paragraph, PhrasingContent } from 'mdast';
-import type { Step, Substep, Runbook, Command, ForClause } from './ast.js';
+import type { Step, Substep, Runbook, Command, ParsedForClause } from './ast.js';
 import { type ParsedConditional, RunbookSyntaxError } from './types.js';
 import {
   extractStepHeader,
@@ -82,7 +82,7 @@ interface StepBuilder {
   pendingSubstep?: SubstepBuilder;
   content: string;
   line?: number;
-  forClause?: ForClause;
+  forClause?: ParsedForClause;
   hasSeenForClause: boolean;
   forConditionals?: ParsedConditional[];
   stepConditionals?: ParsedConditional[];
