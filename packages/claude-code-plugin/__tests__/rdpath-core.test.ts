@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import * as path from 'node:path';
 import { assemblePath } from '../src/rdpath-core.js';
 
@@ -27,9 +27,10 @@ describe('assemblePath', () => {
   });
 
   it('uses current date for date prefix', () => {
-    const today = new Date().toISOString().slice(0, 10);
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-15T12:00:00Z'));
     const result = assemblePath({ dir: '.work', file: 'test.md' });
-    expect(result).toBe(path.join('.work', `${today}-test.md`));
+    expect(result).toBe(path.join('.work', '2026-06-15-test.md'));
+    jest.useRealTimers();
   });
 
   describe('input validation', () => {
