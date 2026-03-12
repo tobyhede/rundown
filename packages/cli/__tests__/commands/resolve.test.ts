@@ -157,10 +157,10 @@ Deploy to {{ environment }}.
       runbookPath,
       `## 1. Process items
 - FOR item IN {{ items }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo {{ item }}
@@ -174,10 +174,7 @@ echo {{ item }}
     );
     const output = JSON.parse(result.stdout);
 
-    // Diagnostic: surface actual errors if resolve unexpectedly fails
-    expect(result.stderr).toBe('');
-    expect(output.errors).toEqual([]);
-    expect(output).toMatchObject({ valid: true });
+    expect(output.valid).toBe(true);
     expect(output.sources).toBeDefined();
     expect(output.sources).toHaveProperty('items');
     expect(output.sources.items.kind).toBe('array');
@@ -190,10 +187,10 @@ echo {{ item }}
       runbookPath,
       `## 1. Process items
 - FOR item IN {{ missing_source }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Handle item
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo hello
@@ -205,10 +202,6 @@ echo hello
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(false);
-    // Diagnostic: surface actual errors when expected source error not found
-    expect(output.errors.map((e: { message: string }) => e.message)).toEqual(
-      expect.arrayContaining([expect.stringContaining('missing_source')]),
-    );
     const sourceError = output.errors.find((e: { message: string }) =>
       e.message.includes('missing_source'),
     );
@@ -242,10 +235,10 @@ echo hello
       runbookPath,
       `## 1. Deploy servers
 - FOR server IN {{ servers }}
-- PASS ALL: CONTINUE
+- PASS ALL CONTINUE
 
 ### 1.1 Deploy server
-- PASS: CONTINUE
+- PASS CONTINUE
 
 \`\`\`bash
 echo {{ server }}
@@ -256,9 +249,6 @@ echo {{ server }}
     const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
     const output = JSON.parse(result.stdout);
 
-    // Diagnostic: surface actual errors if config discovery fails
-    expect(result.stderr).toBe('');
-    expect(output.errors).toEqual([]);
     // Config discovery should find .rundown/config.yaml within the workspace
     // (workspace has .git marker from createTestWorkspace preventing upward walk)
     expect(output.valid).toBe(true);
