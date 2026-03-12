@@ -488,6 +488,13 @@ export class TextRenderer implements OutputRenderer {
       return;
     }
 
+    // Handle stash action failure (all stash messages without position are failures;
+    // successful stash returns from the position case above)
+    if (event.action === 'stash' && event.message && !event.data?.position) {
+      this.writer.writeLine(failure(event.message));
+      return;
+    }
+
     // Handle pop action with step data - render step block
     if (event.action === 'pop' && event.data?.step && event.data.position) {
       const pos = event.data.position as StepPosition;

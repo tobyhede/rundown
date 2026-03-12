@@ -6,15 +6,16 @@
 
 | Type | Format | Detection |
 |------|--------|-----------|
-| **Error** | `{ "result": false, "error": "msg", "code": "CODE" }` | `error` field exists |
-| **Workflow** | `{ "result": bool, "action": "...", ... }` | `result` field exists |
+| **Error** | `{ "error": "msg", "code": "CODE" }` | `error` field exists |
+| **Workflow** | `{ "action": "...", ... }` | `action` field exists |
 | **List** | `[...]` | `Array.isArray()` |
 
 ### Key Conventions
 
 - **Lists**: Raw arrays `[...]` (no wrapper object)
-- **Workflow commands**: Include `result` boolean (pass, fail, stop, complete, stash, pop)
-- **Errors**: `{ "result": false, "error": "message", "code": "CODE" }` - include `result: false`
+- **Workflow commands**: Include `action` field (pass, fail, stop, complete, stash, pop)
+- **Errors**: `{ "error": "message", "code": "CODE" }`
+- **Success/failure**: Indicated by exit code, not a `result` field
 - **Position**: `{ "current": string, "total": number|string }`
 - **Action field**: Shows transition (e.g., "CONTINUE", "GOTO 3", "RETRY"), not command name
 
@@ -156,7 +157,6 @@ Runbook:  COMPLETE
 **JSON:**
 ```json
 {
-  "result": true,
   "action": "complete",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
@@ -171,7 +171,6 @@ Runbook:  COMPLETE
 ### `rd pass`
 
 The `action` field shows the transition (e.g., "CONTINUE" to next step, "GOTO 3" for jump).
-`result: true` indicates the pass action succeeded.
 
 **Text:**
 ```text
@@ -192,7 +191,6 @@ Next step description.
 **JSON:**
 ```json
 {
-  "result": true,
   "action": "CONTINUE",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
@@ -206,7 +204,6 @@ Next step description.
 ## fail
 
 The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP" for stopping).
-`result: false` indicates the fail action was processed.
 
 ### `rd fail` (retry)
 
@@ -226,7 +223,6 @@ Step description.
 **JSON:**
 ```json
 {
-  "result": false,
   "action": "RETRY (1/3)",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
@@ -247,7 +243,6 @@ Runbook:  STOP
 **JSON:**
 ```json
 {
-  "result": false,
   "action": "STOP",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
@@ -282,7 +277,6 @@ Step description.
 **JSON:**
 ```json
 {
-  "result": true,
   "action": "GOTO 3",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
@@ -297,7 +291,7 @@ Step description.
 
 ### `rd stop [message]`
 
-Uses `action: "stop"` (command name) and `result: false` (stopping is a failure outcome).
+Uses `action: "stop"` (command name). Stopping sets a non-zero exit code.
 
 **Text:**
 ```text
@@ -310,7 +304,6 @@ Runbook:  STOP
 **JSON:**
 ```json
 {
-  "result": false,
   "action": "stop",
   "message": "User requested stop",
   "file": "runbooks/deploy.runbook.md",
@@ -335,7 +328,6 @@ Runbook:  COMPLETE
 **JSON:**
 ```json
 {
-  "result": true,
   "action": "complete",
   "message": "Deployment finished",
   "file": "runbooks/deploy.runbook.md",
@@ -365,7 +357,6 @@ Runbook:  STASHED
 **JSON:**
 ```json
 {
-  "result": true,
   "action": "stash",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
@@ -399,7 +390,6 @@ Step description.
 **JSON:**
 ```json
 {
-  "result": true,
   "action": "pop",
   "file": "runbooks/deploy.runbook.md",
   "state": ".claude/rundown/runs/wf-2026-01-26-abc123.json",
@@ -419,7 +409,6 @@ No stashed runbook to restore.
 **JSON:**
 ```json
 {
-  "result": false,
   "error": "No stashed runbook to restore",
   "code": "NO_STASHED_RUNBOOK"
 }
@@ -590,7 +579,6 @@ Available: success, failure
 **JSON:**
 ```json
 {
-  "result": false,
   "error": "Scenario \"unknown\" not found",
   "code": "SCENARIO_NOT_FOUND",
   "details": {
@@ -688,7 +676,7 @@ Hello world
 
 ## Error Output (all commands)
 
-Error responses include `result: false` along with `error` and `code` fields.
+Error responses include `error` and `code` fields. A non-zero exit code indicates failure.
 
 ### No active runbook
 
@@ -700,7 +688,6 @@ No active runbook.
 **JSON:**
 ```json
 {
-  "result": false,
   "error": "No active runbook",
   "code": "NO_ACTIVE_RUNBOOK"
 }
@@ -716,7 +703,6 @@ Error: Runbook file not found: missing.runbook.md
 **JSON:**
 ```json
 {
-  "result": false,
   "error": "Runbook file not found: missing.runbook.md",
   "code": "RUNBOOK_NOT_FOUND"
 }
