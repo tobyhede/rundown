@@ -82,6 +82,8 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `Month` | `02` | Current month (01-12) |
 | `Day` | `04` | Current day (01-31) |
 | `WorkPath` | `.work` | Default artifact directory |
+| `RunId` | `k7x2m9fp` | Unique-per-execution identifier |
+| `ContextId` | `a3b8c1d2` | Shared identity across delegation tree |
 | `Step` | `3.1` | Current qualified step identifier |
 | `Index` | `3` | Current loop iteration number (inside FOR) |
 | `context.current.step` | `3` | Current step number |
@@ -89,7 +91,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `context.current.index` | `3` | Current loop iteration (inside FOR) |
 | `context.current.at` | `3.1[3]` | Full execution position |
 
-Built-in variables use PascalCase. Lowercase aliases `step` and `index` are also available. The date/time variables (`Date`, `DateTime`, `Year`, `Month`, `Day`) and `WorkPath` are static run-time variables set once per execution and can be overridden via `--var`. The `Step` variable (and `Index` during FOR loops), `context.current.*` variables, and their lowercase aliases are dynamic per-step variables that reflect the current execution position and cannot be overridden via `--var`. The variable name `context` is reserved and cannot be used as a user variable name.
+Built-in variables use PascalCase. Lowercase aliases `step` and `index` are also available. The date/time variables (`Date`, `DateTime`, `Year`, `Month`, `Day`), `WorkPath`, and `RunId` are static run-time variables set once per execution and can be overridden via `--var`. `RunId` is a fresh 8-character alphanumeric identifier generated per execution; each child in a delegation tree gets its own RunId. `ContextId` is injected at top-level run start and inherited through delegation, providing a shared identity across a delegation tree; it can be overridden via `--var` to use a meaningful name (e.g., `--var ContextId=sprint-42`). The `Step` variable (and `Index` during FOR loops), `context.current.*` variables, and their lowercase aliases are dynamic per-step variables that reflect the current execution position and cannot be overridden via `--var`. The variable name `context` is reserved and cannot be used as a user variable name.
 
 **CLI Example:**
 ```bash
