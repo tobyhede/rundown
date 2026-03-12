@@ -141,11 +141,10 @@ Deploy to {{ environment }}.
   });
 
   it('shows FOR loop with valid array data source', async () => {
-    // Create config with array source
-    const configDir = path.join(workspace.cwd, '.rundown');
-    fs.mkdirSync(configDir, { recursive: true });
+    // Use --var-file to supply array source (bypasses config discovery)
+    const varFile = path.join(workspace.cwd, 'vars.yaml');
     fs.writeFileSync(
-      path.join(configDir, 'config.yaml'),
+      varFile,
       `items:
   - alpha
   - beta
@@ -169,7 +168,10 @@ echo {{ item }}
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(
+      `resolve ${runbookPath} --var-file ${varFile} --json`,
+      workspace,
+    );
     const output = JSON.parse(result.stdout);
 
     expect(output).toMatchObject({ valid: true });
@@ -201,7 +203,7 @@ echo hello
 
     expect(output.valid).toBe(false);
     const sourceError = output.errors.find((e: { message: string }) =>
-      e.message.includes('undefined data source'),
+      e.message.includes('missing_source'),
     );
     expect(sourceError).toBeDefined();
   });
@@ -213,6 +215,47 @@ echo hello
     const output = JSON.parse(result.stdout);
     expect(output.valid).toBe(false);
     expect(output.errors[0].message).toContain('File not found');
+  });
+
+  it('discovers .rundown/config.yaml in workspace with .git boundary', async () => {
+    // Regression: config discovery failed in CI when workspace had no .git marker,
+    // causing findConfigFile to walk above the temp dir
+    const configDir = path.join(workspace.cwd, '.rundown');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, 'config.yaml'),
+      `servers:
+  - alpha
+  - beta
+`,
+    );
+
+    const runbookPath = path.join(workspace.cwd, 'config-discovery.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `## 1. Deploy servers
+- FOR server IN {{ servers }}
+- PASS ALL: CONTINUE
+
+### 1.1 Deploy server
+- PASS: CONTINUE
+
+\`\`\`bash
+echo {{ server }}
+\`\`\`
+`,
+    );
+
+    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const output = JSON.parse(result.stdout);
+
+    // Config discovery should find .rundown/config.yaml within the workspace
+    // (workspace has .git marker from createTestWorkspace preventing upward walk)
+    expect(output.valid).toBe(true);
+    expect(output.sources).toBeDefined();
+    expect(output.sources).toHaveProperty('servers');
+    expect(output.sources.servers.kind).toBe('array');
+    expect(output.sources.servers.items).toBe(2);
   });
 
   it('outputs valid JSON matching schema with --json', async () => {

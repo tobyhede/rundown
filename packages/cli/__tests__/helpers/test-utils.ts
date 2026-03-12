@@ -45,6 +45,9 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
   const rootRunbooksDir = join(tempDir, 'runbooks');
   const binDir = join(tempDir, 'node_modules', '.bin');
 
+  // Create .git marker to prevent config discovery from walking above workspace
+  await writeFile(join(tempDir, '.git'), 'gitdir: /dev/null\n');
+
   // Create .claude/rundown structure
   await mkdir(join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
   await mkdir(projectRunbooksDir, { recursive: true });
