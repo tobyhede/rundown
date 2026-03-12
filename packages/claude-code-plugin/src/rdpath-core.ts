@@ -35,11 +35,11 @@ export interface RdPathOptions {
  */
 export function assemblePath(options: RdPathOptions): string {
   if (options.ctx != null && !VALID_CTX.test(options.ctx)) {
-    throw new Error(`Invalid ctx: must match ${VALID_CTX}`);
+    throw new Error(`Invalid ctx: must match ${VALID_CTX.source}`);
   }
   if (options.file != null) {
     if (options.file === '..' || !VALID_FILE.test(options.file)) {
-      throw new Error(`Invalid file: must match ${VALID_FILE}`);
+      throw new Error(`Invalid file: must match ${VALID_FILE.source}`);
     }
   }
 
