@@ -315,7 +315,6 @@ describe('Template Variables Integration', () => {
         .split('\n')
         .filter((line) => line.trim());
       const output = JSON.parse(lines[lines.length - 1]);
-      expect(output.result).toBe(true);
       expect(output.action).toBe('CONTINUE');
       expect(output.from).toBe('1');
       expect(output.at).toBe('2');
@@ -349,7 +348,6 @@ describe('Template Variables Integration', () => {
         .split('\n')
         .filter((line) => line.trim());
       const output = JSON.parse(lines[lines.length - 1]);
-      expect(output.result).toBe(true);
       expect(output.action).toContain('RETRY');
       expect(output.from).toBe('1');
       expect(output.at).toBe('1');
@@ -378,7 +376,6 @@ describe('Template Variables Integration', () => {
         .split('\n')
         .filter((line) => line.trim());
       const output = JSON.parse(lines[lines.length - 1]);
-      expect(output.result).toBe(true);
       expect(output.action).toContain('GOTO');
       expect(output.from).toBe('1');
       expect(output.at).toBe('2');
@@ -403,7 +400,6 @@ describe('Template Variables Integration', () => {
 
       // Complete outputs a single pretty-printed JSON object
       const output = JSON.parse(result.stdout);
-      expect(output.result).toBe(true);
       expect(output.action).toBe('complete');
     });
 
@@ -453,7 +449,6 @@ describe('Template Variables Integration', () => {
 
       // Parse JSON output and verify runbook was restored
       const output = JSON.parse(result.stdout);
-      expect(output.result).toBe(true);
       expect(output.action).toBe('pop');
       expect(output.position.current).toBe('1');
       expect(output.position.total).toBe(2);

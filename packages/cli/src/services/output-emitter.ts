@@ -68,7 +68,7 @@ export interface ListOptions<T, U = T> {
  *
  * // Emit events without caring about format
  * output.metadata(buildMetadata(state));
- * output.status(true, 'stopped', 'Runbook stopped');
+ * output.status('stopped', 'Runbook stopped');
  * output.flush();
  * ```
  */
@@ -156,15 +156,13 @@ export class OutputEmitter {
   /**
    * Emit an operation status.
    *
-   * @param result - Whether the operation succeeded (true = PASS, false = FAIL)
    * @param action - The action that was performed
    * @param message - Optional message about the result
    * @param data - Additional structured data
    */
-  status(result: boolean, action: string, message?: string, data?: Record<string, unknown>): void {
+  status(action: string, message?: string, data?: Record<string, unknown>): void {
     const event: StatusOutput = {
       type: 'status',
-      result,
       action,
       message,
       data,

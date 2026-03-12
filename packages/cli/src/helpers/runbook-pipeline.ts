@@ -704,19 +704,14 @@ export async function claimAndLaunch(
     const childRunId = capturedChildRunId ?? 'unknown';
 
     // Emit claimed output
-    output.status(
-      true,
-      'claimed',
-      `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
-      {
-        action: 'claimed',
-        token: truncatedToken,
-        run_id: childRunId,
-        runbook: freshDelegation.childRunbookPath,
-        parent_run_id: freshParent.id,
-        parent_step: substepId ? `${stepId}.${substepId}` : stepId,
-      },
-    );
+    output.status('claimed', `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`, {
+      action: 'claimed',
+      token: truncatedToken,
+      run_id: childRunId,
+      runbook: freshDelegation.childRunbookPath,
+      parent_run_id: freshParent.id,
+      parent_step: substepId ? `${stepId}.${substepId}` : stepId,
+    });
 
     return {
       ok: true,

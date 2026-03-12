@@ -456,7 +456,7 @@ export function findActionOutput(stdout: string): Record<string, unknown> | null
   // First try to parse the entire stdout as a single JSON object
   try {
     const output = JSON.parse(stdout.trim()) as Record<string, unknown>;
-    if ('action' in output && 'result' in output) {
+    if ('action' in output) {
       return output;
     }
   } catch {
@@ -469,8 +469,8 @@ export function findActionOutput(stdout: string): Record<string, unknown> | null
     if (line.trim().startsWith('{')) {
       try {
         const output = JSON.parse(line) as Record<string, unknown>;
-        // Action outputs have action + result fields
-        if ('action' in output && 'result' in output) {
+        // Action outputs have an action field
+        if ('action' in output) {
           return output;
         }
       } catch {

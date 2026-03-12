@@ -149,18 +149,14 @@ export const ErrorDetailsSchema = z
 // ============================================================================
 
 /**
- * Base schema for all successful CLI responses.
+ * Base schema for all CLI responses.
  */
-export const BaseResponseSchema = z.object({
-  /** Whether the operation succeeded (true = success, false = failure) */
-  result: z.boolean().describe('Whether the operation succeeded'),
-});
+export const BaseResponseSchema = z.object({});
 
 /**
  * Successful response base with optional context.
  */
 export const SuccessResponseSchema = BaseResponseSchema.extend({
-  result: z.literal(true).describe('Always true for success responses'),
   /** The action performed (e.g., "CONTINUE", "GOTO 3", "stopped") */
   action: z.string().optional().describe('The action performed'),
   /** Runbook context when applicable */
@@ -172,7 +168,6 @@ export const SuccessResponseSchema = BaseResponseSchema.extend({
  */
 export const ErrorResponseSchema = z
   .object({
-    result: z.literal(false).describe('Always false for error responses'),
     /** Human-readable error message */
     error: z.string().describe('Error message describing what went wrong'),
     /** Machine-readable error code for programmatic handling */
@@ -192,13 +187,11 @@ export const ErrorResponseSchema = z
  *
  * Used by: pass, fail, goto, stop, complete
  *
- * Note: `result` boolean indicates action success (PASS = true, FAIL = false).
  * The `action` field shows the transition (e.g., "CONTINUE", "GOTO 3", "RETRY").
+ * The `stepResult` field shows the step outcome (PASS or FAIL).
  */
 export const ActionResponseSchema = z
   .object({
-    /** Whether the operation succeeded */
-    result: z.boolean().describe('Whether the operation succeeded'),
     /** Step outcome (PASS or FAIL) */
     stepResult: z.enum(['PASS', 'FAIL']).optional().describe('Step outcome (PASS or FAIL)'),
     /** The action that was performed (e.g., "CONTINUE", "GOTO 3", "RETRY") */
@@ -593,7 +586,6 @@ export const PruneResponseSchema = ActiveRunbookListSchema.describe(
  */
 export const StashResponseSchema = z
   .object({
-    result: z.literal(true).describe('Always true for successful stash'),
     action: z.literal('stash').describe('Action type'),
     /** ID of the stashed runbook - REQUIRED */
     stashedId: z.string().describe('ID of the stashed runbook'),
@@ -614,7 +606,6 @@ export const StashResponseSchema = z
  */
 export const PopResponseSchema = z
   .object({
-    result: z.literal(true).describe('Always true for successful pop'),
     action: z.literal('pop').describe('Action type'),
     /** ID of the restored runbook - REQUIRED */
     restoredId: z.string().describe('ID of the restored runbook'),

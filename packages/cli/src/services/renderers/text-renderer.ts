@@ -489,7 +489,7 @@ export class TextRenderer implements OutputRenderer {
     }
 
     // Handle pop action with step data - render step block
-    if (event.action === 'pop' && event.result && event.data?.step && event.data.position) {
+    if (event.action === 'pop' && event.data?.step && event.data.position) {
       const pos = event.data.position as StepPosition;
       const stepData = event.data.step as {
         name: string;
@@ -502,17 +502,16 @@ export class TextRenderer implements OutputRenderer {
       return;
     }
 
-    // Handle pop action failure - use result to determine styling
+    // Handle pop action failure (all pop messages reaching here are failures;
+    // successful pop returns from the step-data case above)
     if (event.action === 'pop' && event.message) {
-      const colorFn = event.result ? success : failure;
-      this.writer.writeLine(colorFn(event.message));
+      this.writer.writeLine(failure(event.message));
       return;
     }
 
-    // Default: render message with appropriate color
+    // Default: render message with success styling
     if (event.message) {
-      const colorFn = event.result ? success : failure;
-      this.writer.writeLine(colorFn(event.message));
+      this.writer.writeLine(success(event.message));
     }
   }
 

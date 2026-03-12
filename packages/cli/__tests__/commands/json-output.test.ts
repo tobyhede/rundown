@@ -87,7 +87,6 @@ echo hello
       expect(output).toEqual({
         active: false,
         stashed: false,
-        result: true, // Added by JSONRenderer.flush()
       });
     });
 
@@ -255,7 +254,6 @@ echo hello
 
       // Uses standard error format from output.error()
       expect(output).toEqual({
-        result: false,
         error: 'Scenario "non-existent" not found',
         code: 'SCENARIO_NOT_FOUND',
         details: { available: ['test-scenario'] },

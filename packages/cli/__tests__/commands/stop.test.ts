@@ -117,7 +117,6 @@ Do work.
 
       const output = JSON.parse(result.stdout);
       expect(output.action).toBe('stop');
-      expect(output.result).toBe(false);
     });
 
     it('includes metadata in JSON output', async () => {
