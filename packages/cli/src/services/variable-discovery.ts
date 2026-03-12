@@ -156,6 +156,7 @@ export function getBuiltinVariables(): Record<string, string> {
     Day: String(now.getUTCDate()).padStart(2, '0'), // DD (01-31, UTC)
     WorkPath: '.work', // Default artifact directory
     RunId: Math.random().toString(36).slice(2, 10).padEnd(8, '0'), // 8-char alphanumeric
+    ContextId: Math.random().toString(36).slice(2, 10).padEnd(8, '0'), // 8-char alphanumeric
   };
 }
 
@@ -549,7 +550,7 @@ async function enforceFileSourcePolicy(
  * Resolve variables into dual maps: string vars for templates + data sources for FOR loops.
  *
  * Processes variable layers in precedence order (lowest to highest):
- * 1. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath)
+ * 1. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath, RunId, ContextId)
  * 2. Frontmatter vars
  * 3. Auto-discovered .rundown/config.yaml
  * 4. --var-file contents

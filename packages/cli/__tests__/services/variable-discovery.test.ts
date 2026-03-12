@@ -65,6 +65,8 @@ describe('getBuiltinVariables', () => {
     expect(builtins).toHaveProperty('Month');
     expect(builtins).toHaveProperty('Day');
     expect(builtins).toHaveProperty('WorkPath');
+    expect(builtins).toHaveProperty('RunId');
+    expect(builtins).toHaveProperty('ContextId');
   });
 
   it('should return Date in YYYY-MM-DD format', () => {
@@ -114,6 +116,19 @@ describe('getBuiltinVariables', () => {
 
   it('should return unique RunId across calls', () => {
     const ids = new Set(Array.from({ length: 100 }, () => getBuiltinVariables().RunId));
+    expect(ids.size).toBeGreaterThan(1);
+  });
+
+  it('should return ContextId as 8-char alphanumeric string', () => {
+    const builtins = getBuiltinVariables();
+
+    expect(builtins).toHaveProperty('ContextId');
+    expect(builtins.ContextId).toMatch(/^[a-z0-9]+$/);
+    expect(builtins.ContextId).toHaveLength(8);
+  });
+
+  it('should return unique ContextId across calls', () => {
+    const ids = new Set(Array.from({ length: 100 }, () => getBuiltinVariables().ContextId));
     expect(ids.size).toBeGreaterThan(1);
   });
 

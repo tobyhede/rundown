@@ -98,7 +98,6 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
   },
   extractVarsFromMarkdown: jest.fn().mockReturnValue({}),
   resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {} }),
-  generateContextId: jest.fn().mockReturnValue('testctx1'),
 }));
 
 // Mock template-renderer
@@ -120,8 +119,9 @@ const parser = await import('@rundown-org/parser');
 const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook');
 const { runExecutionLoop, buildStepVariables } = await import('../../src/services/execution');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
-const { FileSourcePolicyError, extractVarsFromMarkdown, resolveVariables, generateContextId } =
-  await import('../../src/services/variable-discovery');
+const { FileSourcePolicyError, extractVarsFromMarkdown, resolveVariables } = await import(
+  '../../src/services/variable-discovery'
+);
 const { substituteRunbookVariables, expandForClauseVariables, expandLoopVariables } = await import(
   '../../src/services/template-renderer'
 );
@@ -208,7 +208,6 @@ beforeEach(() => {
   (expandForClauseVariables as jest.Mock).mockImplementation((content: string) => content);
   (expandLoopVariables as jest.Mock).mockImplementation((text: string) => text);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
-  (generateContextId as jest.Mock).mockReturnValue('testctx1');
   (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
   (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
   (core.deriveActiveFrame as jest.Mock).mockReturnValue({
@@ -496,98 +495,6 @@ describe('startRunbook', () => {
     expect(result.ok).toBe(true);
     expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps, '1|');
     expect(mockUpdate).toHaveBeenCalledWith('sub-id', { substep: 'a' });
-  });
-
-  it('injects ContextId when not present in mergedVariables', async () => {
-    const mockCreate = jest.fn<any>().mockResolvedValue({
-      id: 'ctx-id',
-      title: 'Test',
-    });
-    const mockUpdate = jest.fn<any>().mockResolvedValue(undefined);
-    const mockInitState = jest.fn<any>().mockResolvedValue(undefined);
-    const mockPushRunbook = jest.fn<any>().mockResolvedValue(undefined);
-
-    runExecutionLoop.mockResolvedValue('done');
-
-    const ctx = {
-      output: { flush: jest.fn() } as any,
-      manager: {
-        create: mockCreate,
-        update: mockUpdate,
-        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
-      } as any,
-      actorService: { initializeState: mockInitState } as any,
-      sessionService: { pushRunbook: mockPushRunbook } as any,
-      lifecycleService: makeLifecycle(),
-      cwd: '/test',
-    };
-
-    const prepared = {
-      filePath: '/test/runbook.md',
-      rawContent: '# Test',
-      runbook: { steps: [makeStep()] } as any,
-      mergedVariables: {},
-      sources: {},
-    };
-
-    await startRunbook(ctx as any, prepared, { file: 'runbook.md' });
-
-    expect(mockCreate).toHaveBeenCalledWith(
-      'runbook.md',
-      expect.anything(),
-      expect.objectContaining({
-        templateVars: expect.objectContaining({
-          ContextId: 'testctx1',
-          'context.vars.ContextId': 'testctx1',
-        }),
-      }),
-    );
-  });
-
-  it('preserves explicit ContextId from --var', async () => {
-    const mockCreate = jest.fn<any>().mockResolvedValue({
-      id: 'ctx-id',
-      title: 'Test',
-    });
-    const mockUpdate = jest.fn<any>().mockResolvedValue(undefined);
-    const mockInitState = jest.fn<any>().mockResolvedValue(undefined);
-    const mockPushRunbook = jest.fn<any>().mockResolvedValue(undefined);
-
-    runExecutionLoop.mockResolvedValue('done');
-
-    const ctx = {
-      output: { flush: jest.fn() } as any,
-      manager: {
-        create: mockCreate,
-        update: mockUpdate,
-        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
-      } as any,
-      actorService: { initializeState: mockInitState } as any,
-      sessionService: { pushRunbook: mockPushRunbook } as any,
-      lifecycleService: makeLifecycle(),
-      cwd: '/test',
-    };
-
-    const prepared = {
-      filePath: '/test/runbook.md',
-      rawContent: '# Test',
-      runbook: { steps: [makeStep()] } as any,
-      mergedVariables: { ContextId: 'sprint-42' },
-      sources: {},
-    };
-
-    await startRunbook(ctx as any, prepared, { file: 'runbook.md' });
-
-    expect(mockCreate).toHaveBeenCalledWith(
-      'runbook.md',
-      expect.anything(),
-      expect.objectContaining({
-        templateVars: expect.objectContaining({
-          ContextId: 'sprint-42',
-        }),
-      }),
-    );
-    expect(generateContextId).not.toHaveBeenCalled();
   });
 });
 

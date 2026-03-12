@@ -42,7 +42,6 @@ import {
   FileSourcePolicyError,
   extractVarsFromMarkdown,
   resolveVariables,
-  generateContextId,
 } from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
@@ -434,21 +433,6 @@ export async function startRunbook(
   prepared: PreparedRunbook,
   options: { file: string; prompted?: boolean },
 ): Promise<RunbookStartResult> {
-  if (!prepared.mergedVariables.ContextId) {
-    const contextId = generateContextId();
-    const preparedWithCtx: PreparedRunbook = {
-      ...prepared,
-      mergedVariables: {
-        ...prepared.mergedVariables,
-        ContextId: contextId,
-        'context.vars.ContextId': contextId,
-      },
-    };
-    return launchRunbook(ctx, preparedWithCtx, {
-      runbookName: options.file,
-      prompted: !!options.prompted,
-    });
-  }
   return launchRunbook(ctx, prepared, {
     runbookName: options.file,
     prompted: !!options.prompted,
