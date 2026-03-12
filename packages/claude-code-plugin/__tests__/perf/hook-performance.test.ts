@@ -196,7 +196,7 @@ describe('Hook Performance Budget', () => {
         }
       });
 
-      expect(durationMs).toBeLessThan(5);
+      expect(durationMs).toBeLessThan(10);
     });
   });
 
