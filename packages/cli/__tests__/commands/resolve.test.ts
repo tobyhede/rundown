@@ -174,6 +174,9 @@ echo {{ item }}
     );
     const output = JSON.parse(result.stdout);
 
+    // Diagnostic: surface actual errors if resolve unexpectedly fails
+    expect(result.stderr).toBe('');
+    expect(output.errors).toEqual([]);
     expect(output).toMatchObject({ valid: true });
     expect(output.sources).toBeDefined();
     expect(output.sources).toHaveProperty('items');
@@ -202,6 +205,10 @@ echo hello
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(false);
+    // Diagnostic: surface actual errors when expected source error not found
+    expect(output.errors.map((e: { message: string }) => e.message)).toEqual(
+      expect.arrayContaining([expect.stringContaining('missing_source')]),
+    );
     const sourceError = output.errors.find((e: { message: string }) =>
       e.message.includes('missing_source'),
     );
@@ -249,6 +256,9 @@ echo {{ server }}
     const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
     const output = JSON.parse(result.stdout);
 
+    // Diagnostic: surface actual errors if config discovery fails
+    expect(result.stderr).toBe('');
+    expect(output.errors).toEqual([]);
     // Config discovery should find .rundown/config.yaml within the workspace
     // (workspace has .git marker from createTestWorkspace preventing upward walk)
     expect(output.valid).toBe(true);
