@@ -166,7 +166,7 @@ echo {{ item }}
     const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
     const output = JSON.parse(result.stdout);
 
-    expect(output.valid).toBe(true);
+    expect(output).toMatchObject({ valid: true });
     expect(output.sources).toBeDefined();
     expect(output.sources).toHaveProperty('items');
     expect(output.sources.items.kind).toBe('array');
@@ -194,9 +194,10 @@ echo hello
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(false);
-    expect(
-      output.errors.some((e: { message: string }) => e.message.includes('undefined data source')),
-    ).toBe(true);
+    const sourceError = output.errors.find((e: { message: string }) =>
+      e.message.includes('undefined data source'),
+    );
+    expect(sourceError).toBeDefined();
   });
 
   it('exits 1 for file not found', async () => {

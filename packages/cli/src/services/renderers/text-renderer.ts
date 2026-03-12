@@ -403,6 +403,12 @@ export class TextRenderer implements OutputRenderer {
    * Used by both `renderCheckDetail` and `renderResolveDetail` for the common
    * structural result rendering (validity line, error details, warning lines).
    * @param data - Structural result data with validity flag, stats, errors, and warnings
+   * @param data.valid - Whether the structural validation passed
+   * @param data.stats - Step and substep counts
+   * @param data.stats.steps - Number of steps found
+   * @param data.stats.substeps - Number of substeps found
+   * @param data.errors - Array of validation errors with optional line numbers
+   * @param data.warnings - Array of validation warnings with optional line numbers
    */
   private renderStructuralResult(data: {
     valid?: boolean;

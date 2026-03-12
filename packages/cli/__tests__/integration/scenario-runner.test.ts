@@ -183,13 +183,14 @@ function copyPatternWithDependencies(
   copyPatternToWorkspace(filename, workspace);
 
   const referenced = extractReferencedRunbooks(scenario);
+  const patternSubdir = dirname(filename);
   for (const ref of referenced) {
+    const resolvedRef = patternSubdir && patternSubdir !== '.' ? join(patternSubdir, ref) : ref;
     if (ref !== basename(filename)) {
-      copyPatternToWorkspace(ref, workspace);
+      copyPatternToWorkspace(resolvedRef, workspace);
     }
   }
 
-  const patternSubdir = dirname(filename);
   const varFileDirs = extractVarFileDirs(scenario);
   for (const dir of varFileDirs) {
     // Reject absolute paths and path traversal
