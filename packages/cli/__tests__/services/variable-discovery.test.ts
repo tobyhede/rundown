@@ -785,6 +785,35 @@ describe('resolveVariables', () => {
     });
   });
 
+  describe('inherited vars', () => {
+    it('inherited vars override builtins', async () => {
+      const result = await resolveVariables({ inheritedVars: { ContextId: 'parent123' } }, tmpDir);
+      expect(result.vars.ContextId).toBe('parent123');
+    });
+
+    it('frontmatter overrides inherited vars', async () => {
+      const result = await resolveVariables(
+        {
+          inheritedVars: { myVar: 'inherited' },
+          frontmatterVars: { myVar: 'frontmatter' },
+        },
+        tmpDir,
+      );
+      expect(result.vars.myVar).toBe('frontmatter');
+    });
+
+    it('inherited ContextId survives when child has no override', async () => {
+      const result = await resolveVariables(
+        {
+          inheritedVars: { ContextId: 'parent123' },
+          frontmatterVars: { otherVar: 'value' },
+        },
+        tmpDir,
+      );
+      expect(result.vars.ContextId).toBe('parent123');
+    });
+  });
+
   describe('precedence', () => {
     it('flag sources override var-file sources', async () => {
       const fileA = path.join(tmpDir, 'a.txt');

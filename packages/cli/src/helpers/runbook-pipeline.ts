@@ -269,7 +269,12 @@ export async function prepareRunbook(
   let sources: Record<string, DataSource>;
   try {
     const resolvedVariables = await resolveVariables(
-      { varFile: varOpts.varFile, var: varOpts.var, frontmatterVars },
+      {
+        varFile: varOpts.varFile,
+        var: varOpts.var,
+        frontmatterVars,
+        inheritedVars: options?.inheritedUserVars,
+      },
       cwd,
       {
         evaluator: getPolicyEvaluator(),
