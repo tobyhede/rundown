@@ -413,6 +413,8 @@ export const CheckValidationWarningSchema = z
  */
 export const CheckResponseSchema = z
   .object({
+    /** Response type discriminator */
+    type: z.literal('check').describe('Response type discriminator'),
     /** Whether the runbook is valid */
     valid: z.boolean().describe('Whether the runbook is valid'),
     /** List of validation errors (empty if valid) */
@@ -463,6 +465,8 @@ export const ResolveSourceInfoSchema = z.discriminatedUnion('kind', [
  */
 export const ResolveResponseSchema = z
   .object({
+    /** Response type discriminator */
+    type: z.literal('resolve').describe('Response type discriminator'),
     /** Whether the runbook resolved without errors */
     valid: z.boolean().describe('Whether the runbook resolved without errors'),
     /** Structural and resolution errors */

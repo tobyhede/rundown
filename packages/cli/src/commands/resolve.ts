@@ -85,6 +85,7 @@ export function registerResolveCommand(program: Command): void {
       if (!loadResult.ok) {
         output.detail(
           {
+            type: 'resolve' as const,
             valid: false,
             errors: [{ message: loadResult.error }],
           },
@@ -125,18 +126,8 @@ export function registerResolveCommand(program: Command): void {
         } else {
           errors.push({ line: undefined, message: getErrorMessage(error) });
         }
-        // Emit what we have so far
-        output.detail(
-          {
-            valid: false,
-            errors,
-            warnings: warnings.length > 0 ? warnings : undefined,
-            stats,
-          },
-          'resolve',
-        );
-        output.flush();
-        process.exit(1);
+        mergedVariables = {};
+        sources = {};
       }
 
       const templateVars = buildTemplateVars(mergedVariables);
@@ -181,6 +172,7 @@ export function registerResolveCommand(program: Command): void {
 
       output.detail(
         {
+          type: 'resolve' as const,
           valid: !hasErrors,
           errors,
           warnings: warnings.length > 0 ? warnings : undefined,

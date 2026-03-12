@@ -1,6 +1,10 @@
 import { describe, it, expect } from '@jest/globals';
-import { isActionResponse } from '../../src/output/schema.js';
-import { ResolveSourceInfoSchema } from '../../src/output/zod-schemas.js';
+import { isActionResponse, isCheckResponse, isResolveResponse } from '../../src/output/schema.js';
+import {
+  ResolveSourceInfoSchema,
+  CheckResponseSchema,
+  ResolveResponseSchema,
+} from '../../src/output/zod-schemas.js';
 import type {
   ActionResponse,
   StashResponse,
@@ -80,6 +84,75 @@ describe('isActionResponse type guard', () => {
       // The type guard should distinguish these
       expect(isActionResponse(response as CLIResponse)).toBe(false);
     });
+  });
+});
+
+describe('Check/Resolve type discriminator', () => {
+  it('CheckResponseSchema requires type: "check"', () => {
+    const valid = CheckResponseSchema.safeParse({
+      type: 'check',
+      valid: true,
+      errors: [],
+      stats: { steps: 1, substeps: 0 },
+    });
+    expect(valid.success).toBe(true);
+
+    const missingType = CheckResponseSchema.safeParse({
+      valid: true,
+      errors: [],
+    });
+    expect(missingType.success).toBe(false);
+
+    const wrongType = CheckResponseSchema.safeParse({
+      type: 'resolve',
+      valid: true,
+      errors: [],
+    });
+    expect(wrongType.success).toBe(false);
+  });
+
+  it('ResolveResponseSchema requires type: "resolve"', () => {
+    const valid = ResolveResponseSchema.safeParse({
+      type: 'resolve',
+      valid: true,
+      errors: [],
+      stats: { steps: 1, substeps: 0 },
+      variables: { Date: '2026-01-01' },
+    });
+    expect(valid.success).toBe(true);
+
+    const missingType = ResolveResponseSchema.safeParse({
+      valid: true,
+      errors: [],
+    });
+    expect(missingType.success).toBe(false);
+
+    const wrongType = ResolveResponseSchema.safeParse({
+      type: 'check',
+      valid: true,
+      errors: [],
+    });
+    expect(wrongType.success).toBe(false);
+  });
+
+  it('isCheckResponse discriminates on type field', () => {
+    const checkResp = { type: 'check', valid: true, errors: [] };
+    const resolveResp = { type: 'resolve', valid: true, errors: [] };
+    const noType = { valid: true, errors: [] };
+
+    expect(isCheckResponse(checkResp)).toBe(true);
+    expect(isCheckResponse(resolveResp)).toBe(false);
+    expect(isCheckResponse(noType)).toBe(false);
+  });
+
+  it('isResolveResponse discriminates on type field', () => {
+    const resolveResp = { type: 'resolve', valid: true, errors: [] };
+    const checkResp = { type: 'check', valid: true, errors: [] };
+    const noType = { valid: true, errors: [] };
+
+    expect(isResolveResponse(resolveResp)).toBe(true);
+    expect(isResolveResponse(checkResp)).toBe(false);
+    expect(isResolveResponse(noType)).toBe(false);
   });
 });
 

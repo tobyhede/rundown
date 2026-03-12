@@ -199,5 +199,6 @@ export {
   isActionResponse,
   isStatusResponse as isSchemaStatusResponse,
   isCheckResponse,
+  isResolveResponse,
   isListResponse,
 } from './schema.js';

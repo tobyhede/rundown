@@ -294,6 +294,65 @@ Hello {{ name }}.
     expect(typeof COMMAND_SCHEMAS.resolve.safeParse).toBe('function');
   });
 
+  it('never executes command blocks (sentinel test)', async () => {
+    const sentinel = path.join(workspace.cwd, 'sentinel.txt');
+    const runbookPath = path.join(workspace.cwd, 'sentinel.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `## 1. Create sentinel
+\`\`\`bash
+touch ${sentinel}
+\`\`\`
+`,
+    );
+
+    await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+
+    expect(fs.existsSync(sentinel)).toBe(false);
+  });
+
+  it('includes variables, stats, and unresolved when variable resolution throws', async () => {
+    const badVarFile = path.join(workspace.cwd, 'bad-vars.yaml');
+    // Write invalid YAML that will cause resolveVariables to throw
+    fs.writeFileSync(badVarFile, ':\n  bad: yaml: content\n');
+
+    const runbookPath = path.join(workspace.cwd, 'var-error.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `## Step 1
+echo hello
+`,
+    );
+
+    const result = await runCliInProcess(
+      `resolve ${runbookPath} --var-file ${badVarFile} --json`,
+      workspace,
+    );
+    const output = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(1);
+    expect(output.valid).toBe(false);
+    expect(output.errors.length).toBeGreaterThan(0);
+    // These fields must be present even when resolveVariables throws
+    expect(output).toHaveProperty('variables');
+    expect(output).toHaveProperty('stats');
+  });
+
+  it('includes type discriminator in JSON output', async () => {
+    const runbookPath = path.join(workspace.cwd, 'type-field.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `## Step 1
+echo hello
+`,
+    );
+
+    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const output = JSON.parse(result.stdout);
+
+    expect(output.type).toBe('resolve');
+  });
+
   it('renders text output for valid runbook', async () => {
     const runbookPath = path.join(workspace.cwd, 'text.runbook.md');
     fs.writeFileSync(
