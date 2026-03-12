@@ -155,7 +155,20 @@ export function getBuiltinVariables(): Record<string, string> {
     Month: String(now.getUTCMonth() + 1).padStart(2, '0'), // MM (01-12, UTC)
     Day: String(now.getUTCDate()).padStart(2, '0'), // DD (01-31, UTC)
     WorkPath: '.work', // Default artifact directory
+    RunId: Math.random().toString(36).slice(2, 10), // 8-char alphanumeric
   };
+}
+
+/**
+ * Generate a unique context identifier for delegation tree scoping.
+ *
+ * Used to create a shared identity across a delegation tree. Top-level runs
+ * generate a fresh ContextId; children inherit it from the parent.
+ *
+ * @returns An 8-character alphanumeric identifier
+ */
+export function generateContextId(): string {
+  return Math.random().toString(36).slice(2, 10);
 }
 
 /**

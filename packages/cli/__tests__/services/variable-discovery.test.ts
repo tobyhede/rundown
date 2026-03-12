@@ -8,6 +8,7 @@ import {
   loadVariablesFromFile,
   extractVarsFromMarkdown,
   getBuiltinVariables,
+  generateContextId,
   resolveVariables,
 } from '../../src/services/variable-discovery.js';
 import * as fs from 'node:fs/promises';
@@ -101,6 +102,18 @@ describe('getBuiltinVariables', () => {
     const builtins = getBuiltinVariables();
 
     expect(builtins.WorkPath).toBe('.work');
+  });
+
+  it('should return RunId as alphanumeric string', () => {
+    const builtins = getBuiltinVariables();
+
+    expect(builtins).toHaveProperty('RunId');
+    expect(builtins.RunId).toMatch(/^[a-z0-9]+$/);
+  });
+
+  it('should return unique RunId across calls', () => {
+    const ids = new Set(Array.from({ length: 100 }, () => getBuiltinVariables().RunId));
+    expect(ids.size).toBeGreaterThan(1);
   });
 
   it('should return consistent date components', () => {
@@ -951,5 +964,17 @@ describe('resolveVariables', () => {
         }),
       ).rejects.toThrow('Prompt before read');
     });
+  });
+});
+
+describe('generateContextId', () => {
+  it('returns alphanumeric string', () => {
+    const id = generateContextId();
+    expect(id).toMatch(/^[a-z0-9]+$/);
+  });
+
+  it('returns unique values across 100 calls', () => {
+    const ids = new Set(Array.from({ length: 100 }, () => generateContextId()));
+    expect(ids.size).toBeGreaterThan(1);
   });
 });
