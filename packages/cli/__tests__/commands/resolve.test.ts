@@ -108,6 +108,12 @@ Deploy to {{ missingVar }}.
     // Unresolved vars are warnings, not errors — still valid structurally
     expect(output.valid).toBe(true);
     expect(output.unresolved).toContain('missingVar');
+    // Unresolved warnings should include kind discriminant
+    const unresolvedWarning = output.warnings?.find((w: { message: string }) =>
+      w.message.includes('missingVar'),
+    );
+    expect(unresolvedWarning).toBeDefined();
+    expect(unresolvedWarning.kind).toBe('unresolved');
   });
 
   it('reports structural errors AND variables both present', async () => {

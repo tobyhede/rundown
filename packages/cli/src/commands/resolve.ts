@@ -14,6 +14,7 @@ import {
   parseRunbookDocument,
   type DataSource,
   type ResolveSourceInfo,
+  type CheckValidationWarning,
   getErrorMessage,
 } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -102,7 +103,10 @@ export function registerResolveCommand(program: Command): void {
       let mergedVariables: Record<string, string>;
       let sources: Record<string, DataSource>;
       const errors = structuralErrors.map((e) => ({ line: e.line, message: e.message }));
-      const warnings = structuralWarnings.map((w) => ({ line: w.line, message: w.message }));
+      const warnings: CheckValidationWarning[] = structuralWarnings.map((w) => ({
+        line: w.line,
+        message: w.message,
+      }));
 
       try {
         const resolvedVariables = await resolveVariables(
@@ -165,7 +169,11 @@ export function registerResolveCommand(program: Command): void {
       // Unresolved variables are warnings, not errors
       if (unresolvedNames.length > 0) {
         for (const name of unresolvedNames) {
-          warnings.push({ line: undefined, message: `Unresolved variable: {{${name}}}` });
+          warnings.push({
+            line: undefined,
+            message: `Unresolved variable: {{${name}}}`,
+            kind: 'unresolved',
+          });
         }
       }
 

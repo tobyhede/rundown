@@ -403,6 +403,8 @@ export const CheckValidationWarningSchema = z
     message: z.string().describe('Warning message'),
     /** Line number where warning occurred (if applicable) */
     line: z.number().optional().describe('Line number where warning occurred'),
+    /** Warning category for type-safe filtering */
+    kind: z.string().optional().describe('Warning kind for type-safe filtering'),
   })
   .describe('Validation warning entry');
 
@@ -432,18 +434,26 @@ export const CheckResponseSchema = z
 /**
  * Data source information from resolve command.
  */
-export const ResolveSourceInfoSchema = z
-  .object({
-    /** Source type: array (in-memory) or file (file-backed) */
-    kind: z.enum(['array', 'file']).describe('Data source type'),
-    /** Number of items (for array sources) or file line count */
-    items: z.number().int().nonnegative().optional().describe('Number of items in the source'),
-    /** File path (for file sources) */
-    path: z.string().optional().describe('File path for file-backed sources'),
-    /** File format (for file sources) */
-    format: z.enum(['text', 'jsonl']).optional().describe('File format for file-backed sources'),
-  })
-  .describe('Data source information');
+export const ResolveSourceInfoSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      /** Source type: in-memory array */
+      kind: z.literal('array').describe('In-memory array source'),
+      /** Number of items in the source */
+      items: z.number().int().nonnegative().describe('Number of items in the source'),
+    })
+    .describe('Array data source'),
+  z
+    .object({
+      /** Source type: file-backed */
+      kind: z.literal('file').describe('File-backed source'),
+      /** File path for file-backed sources */
+      path: z.string().describe('File path for file-backed sources'),
+      /** File format for file-backed sources */
+      format: z.enum(['text', 'jsonl']).describe('File format for file-backed sources'),
+    })
+    .describe('File data source'),
+]);
 
 /**
  * Resolve response schema.

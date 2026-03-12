@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { isActionResponse } from '../../src/output/schema.js';
+import { ResolveSourceInfoSchema } from '../../src/output/zod-schemas.js';
 import type {
   ActionResponse,
   StashResponse,
@@ -79,5 +80,31 @@ describe('isActionResponse type guard', () => {
       // The type guard should distinguish these
       expect(isActionResponse(response as CLIResponse)).toBe(false);
     });
+  });
+});
+
+describe('ResolveSourceInfoSchema discriminated union', () => {
+  it('accepts valid array source', () => {
+    const result = ResolveSourceInfoSchema.safeParse({ kind: 'array', items: 3 });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts valid file source', () => {
+    const result = ResolveSourceInfoSchema.safeParse({
+      kind: 'file',
+      path: 'data.txt',
+      format: 'text',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects array source with file-only fields', () => {
+    const result = ResolveSourceInfoSchema.safeParse({ kind: 'array', path: '/foo' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects file source missing required fields', () => {
+    const result = ResolveSourceInfoSchema.safeParse({ kind: 'file' });
+    expect(result.success).toBe(false);
   });
 });

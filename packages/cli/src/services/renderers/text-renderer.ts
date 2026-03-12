@@ -476,7 +476,7 @@ export class TextRenderer implements OutputRenderer {
       valid?: boolean;
       stats?: { steps?: number; substeps?: number };
       errors?: { line?: number; message: string }[];
-      warnings?: { line?: number; message: string }[];
+      warnings?: { line?: number; message: string; kind?: string }[];
       variables?: Record<string, string>;
       sources?: Record<string, ResolveSourceInfo>;
       unresolved?: string[];
@@ -503,9 +503,9 @@ export class TextRenderer implements OutputRenderer {
       for (const [key, info] of Object.entries(sources)) {
         let desc: string;
         if (info.kind === 'array') {
-          desc = `array (${String(info.items ?? 0)} item${(info.items ?? 0) !== 1 ? 's' : ''})`;
+          desc = `array (${String(info.items)} item${info.items !== 1 ? 's' : ''})`;
         } else {
-          desc = `file (${info.path ?? 'unknown'}, ${info.format ?? 'text'})`;
+          desc = `file (${info.path}, ${info.format})`;
         }
         this.writer.writeLine(`  ${key.padEnd(maxKeyLen + 2)}${desc}`);
       }
@@ -523,7 +523,7 @@ export class TextRenderer implements OutputRenderer {
     // Warnings (excluding unresolved, which are shown above)
     if (warnings && warnings.length > 0) {
       // Filter out unresolved variable warnings since they're shown in their own section
-      const otherWarnings = warnings.filter((w) => !w.message.startsWith('Unresolved variable:'));
+      const otherWarnings = warnings.filter((w) => w.kind !== 'unresolved');
       if (otherWarnings.length > 0) {
         for (const w of otherWarnings) {
           const linePrefix = w.line ? `Line ${String(w.line)}: ` : '';

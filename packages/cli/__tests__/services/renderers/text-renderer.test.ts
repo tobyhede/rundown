@@ -353,6 +353,61 @@ describe('TextRenderer', () => {
         expect(output).not.toContain('Sources:');
         expect(output).not.toContain('Unresolved:');
       });
+
+      it('excludes warnings with kind "unresolved" from general warnings section', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 1, substeps: 0 },
+            variables: {},
+            unresolved: ['missingVar'],
+            warnings: [
+              { message: 'Unresolved variable: {{missingVar}}', kind: 'unresolved' },
+              { message: 'Some other warning', line: 5 },
+            ],
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        // Unresolved shown in dedicated section
+        expect(output).toContain('Unresolved:');
+        expect(output).toContain('{{missingVar}}');
+        // Other warning still rendered
+        expect(output).toContain('Some other warning');
+        // The unresolved warning message should NOT appear in the general warnings area
+        // (it's filtered by kind, shown only in the Unresolved section)
+        const warningLines = writer.lines.filter(
+          (l) => l.includes('Warning:') && l.includes('Unresolved variable:'),
+        );
+        expect(warningLines).toHaveLength(0);
+      });
+
+      it('renders warnings without kind normally', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 1, substeps: 0 },
+            variables: {},
+            warnings: [{ message: 'Deprecated syntax', line: 3 }],
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('Warning:');
+        expect(output).toContain('Deprecated syntax');
+      });
     });
 
     describe('scenario format', () => {
