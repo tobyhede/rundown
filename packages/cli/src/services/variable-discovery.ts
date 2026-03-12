@@ -67,6 +67,14 @@ export interface ResolvedVariables {
    * template rendering pipeline.
    */
   readonly sources: Readonly<Record<string, DataSource>>;
+  /**
+   * Structured warnings produced during variable resolution.
+   *
+   * Contains messages about invalid keys, complex values, reserved names,
+   * path traversal attempts, and other non-fatal issues encountered during
+   * the resolution pipeline.
+   */
+  readonly warnings: readonly string[];
 }
 
 /**
@@ -123,15 +131,16 @@ export class FileSourcePolicyError extends Error {
 function normalizeVariables(
   vars: Record<string, unknown>,
   source = 'variable',
+  warnings?: string[],
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(vars)) {
     if (!VALID_IDENTIFIER.test(key)) {
-      console.warn(`Warning: Ignoring ${source} with invalid key: ${key}`);
+      warnings?.push(`Ignoring ${source} with invalid key: ${key}`);
       continue;
     }
     if (typeof value === 'object' && value !== null) {
-      console.warn(`Warning: Ignoring ${source} "${key}" with complex value`);
+      warnings?.push(`Ignoring ${source} "${key}" with complex value`);
       continue;
     }
     result[key] = String(value);
@@ -383,6 +392,7 @@ async function routeVariable(
   cwd: string,
   projectRoot: string,
   security?: VariableSecurityContext,
+  warnings?: string[],
 ): Promise<void> {
   // String with file: prefix → file source only (not in vars)
   if (typeof value === 'string' && value.startsWith('file:')) {
@@ -400,7 +410,7 @@ async function routeVariable(
 
     const rel = path.relative(projectRoot, canonical);
     if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-      console.warn(`Warning: Ignoring file source "${key}" — path escapes project directory`);
+      warnings?.push(`Ignoring file source "${key}" — path escapes project directory`);
       return;
     }
 
@@ -431,7 +441,7 @@ async function routeVariable(
 
   // Scalar → vars only (clear any stale source from lower-precedence layer)
   if (typeof value === 'object' && value !== null) {
-    console.warn(`Warning: Ignoring variable "${key}" with complex value`);
+    warnings?.push(`Ignoring variable "${key}" with complex value`);
     return;
   }
   vars[key] = String(value);
@@ -490,6 +500,7 @@ async function collectRawLayers(
     inheritedVars?: Record<string, unknown>;
   },
   cwd: string,
+  warnings?: string[],
 ): Promise<Record<string, unknown>[]> {
   // 1. Built-ins (lowest)
   const builtins: Record<string, unknown> = getBuiltinVariables();
@@ -520,7 +531,7 @@ async function collectRawLayers(
       if (parsed) {
         fromFlags[parsed.key] = parsed.value;
       } else {
-        console.warn(`Warning: Ignoring invalid --var flag: ${flag}`);
+        warnings?.push(`Ignoring invalid --var flag: ${flag}`);
       }
     }
   }
@@ -596,6 +607,7 @@ export async function resolveVariables(
 ): Promise<ResolvedVariables> {
   const vars: Record<string, string> = {};
   const sources: Record<string, DataSource> = {};
+  const warnings: string[] = [];
 
   // Canonicalize project root once for validation
   let projectRoot = path.resolve(cwd);
@@ -606,24 +618,24 @@ export async function resolveVariables(
   }
 
   // Collect raw inputs at each precedence level
-  const layers = await collectRawLayers(options, cwd);
+  const layers = await collectRawLayers(options, cwd, warnings);
 
   // Process each layer in precedence order (lowest to highest)
   for (const [layerIndex, layer] of layers.entries()) {
     for (const [key, value] of Object.entries(layer)) {
       if (!VALID_IDENTIFIER.test(key)) {
-        console.warn(`Warning: Ignoring variable with invalid key: ${key}`);
+        warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
       // Keep runtime-owned identifiers deterministic by rejecting overrides
       // from all non-built-in layers (inherited/frontmatter/config/var-file/--var).
       if (layerIndex > 0 && isRuntimeReservedVariable(key)) {
-        console.warn(`Warning: Ignoring reserved runtime variable: ${key}`);
+        warnings.push(`Ignoring reserved runtime variable: ${key}`);
         continue;
       }
-      await routeVariable(key, value, vars, sources, cwd, projectRoot, security);
+      await routeVariable(key, value, vars, sources, cwd, projectRoot, security, warnings);
     }
   }
 
-  return { vars, sources };
+  return { vars, sources, warnings };
 }

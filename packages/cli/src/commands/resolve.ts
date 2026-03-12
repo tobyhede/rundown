@@ -17,6 +17,7 @@ import {
   type CheckValidationWarning,
   getErrorMessage,
 } from '@rundown-org/core';
+import { validateRunbook } from '@rundown-org/parser';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadAndValidateRunbook } from '../helpers/runbook-validator.js';
 import { collect } from './echo.js';
@@ -109,6 +110,7 @@ export function registerResolveCommand(program: Command): void {
         message: w.message,
       }));
 
+      let resolutionFailed = false;
       try {
         const resolvedVariables = await resolveVariables(
           { varFile: options.varFile, var: options.var, frontmatterVars },
@@ -120,7 +122,13 @@ export function registerResolveCommand(program: Command): void {
         );
         mergedVariables = { ...resolvedVariables.vars };
         sources = { ...resolvedVariables.sources };
+
+        // Surface variable discovery warnings as structured output
+        for (const msg of resolvedVariables.warnings) {
+          warnings.push({ message: msg, kind: 'variable-discovery' });
+        }
       } catch (error) {
+        resolutionFailed = true;
         if (error instanceof FileSourcePolicyError) {
           errors.push({ line: undefined, message: error.message });
         } else {
@@ -133,25 +141,40 @@ export function registerResolveCommand(program: Command): void {
       const templateVars = buildTemplateVars(mergedVariables);
 
       // Phase 3: FOR clause expansion + re-parse + substitution
+      // Skip when variable resolution failed — running with empty variables would
+      // produce misleading "unresolved variable" warnings that mask the root cause.
       let unresolvedNames: string[] = [];
-      try {
-        const sourceKeys = new Set(Object.keys(sources));
-        const forExpandedContent = expandForClauseVariables(rawContent, templateVars, sourceKeys);
-        const runbook = parseRunbookDocument(
-          forExpandedContent,
-          path.basename(loadResult.loaded.resolvedPath),
-          { skipValidation: true },
-        );
-        const substituted = substituteRunbookVariables(runbook, templateVars);
-        unresolvedNames = [...collectUnresolvedRunbookVariables(substituted)];
+      if (!resolutionFailed) {
+        try {
+          const sourceKeys = new Set(Object.keys(sources));
+          const forExpandedContent = expandForClauseVariables(rawContent, templateVars, sourceKeys);
+          const runbook = parseRunbookDocument(
+            forExpandedContent,
+            path.basename(loadResult.loaded.resolvedPath),
+            { skipValidation: true },
+          );
 
-        // Validate sourced FOR clauses reference defined data sources
-        validateSources(substituted.steps, sources);
-      } catch (error) {
-        errors.push({
-          line: undefined,
-          message: `During FOR expansion: ${getErrorMessage(error)}`,
-        });
+          // Validate expanded AST (mirrors run path which validates by default)
+          const postExpansionDiagnostics = validateRunbook(runbook.steps);
+          for (const d of postExpansionDiagnostics) {
+            if (d.severity === 'error') {
+              errors.push({ line: d.line, message: d.message });
+            } else {
+              warnings.push({ line: d.line, message: d.message });
+            }
+          }
+
+          const substituted = substituteRunbookVariables(runbook, templateVars);
+          unresolvedNames = [...collectUnresolvedRunbookVariables(substituted)];
+
+          // Validate sourced FOR clauses reference defined data sources
+          validateSources(substituted.steps, sources);
+        } catch (error) {
+          errors.push({
+            line: undefined,
+            message: `During FOR expansion: ${getErrorMessage(error)}`,
+          });
+        }
       }
 
       // Phase 4: Build output

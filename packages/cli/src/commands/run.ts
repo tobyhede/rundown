@@ -69,6 +69,12 @@ export function registerRunCommand(program: Command): void {
               process.exit(1);
             }
 
+            if (prepResult.warnings?.length) {
+              for (const msg of prepResult.warnings) {
+                output.warning(msg);
+              }
+            }
+
             const result = await startRunbook(ctx, prepResult.prepared, {
               file,
               prompted: options.prompted,

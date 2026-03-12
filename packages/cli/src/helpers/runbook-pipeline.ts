@@ -249,7 +249,7 @@ export async function prepareRunbook(
     inheritedUserVars?: Readonly<Record<string, string>>;
   },
 ): Promise<
-  | { ok: true; prepared: PreparedRunbook }
+  | { ok: true; prepared: PreparedRunbook; warnings?: readonly string[] }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> }
 > {
   const filePath = await resolveRunbookFile(cwd, file);
@@ -267,6 +267,7 @@ export async function prepareRunbook(
   const frontmatterVars = extractVarsFromMarkdown(rawContent);
   let mergedVariables: Record<string, string>;
   let sources: Record<string, DataSource>;
+  let discoveryWarnings: readonly string[] = [];
   try {
     const resolvedVariables = await resolveVariables(
       {
@@ -283,6 +284,7 @@ export async function prepareRunbook(
     );
     mergedVariables = { ...resolvedVariables.vars };
     sources = { ...resolvedVariables.sources };
+    discoveryWarnings = resolvedVariables.warnings;
   } catch (error) {
     if (error instanceof FileSourcePolicyError) {
       return {
@@ -339,6 +341,7 @@ export async function prepareRunbook(
   return {
     ok: true,
     prepared: { filePath, rawContent, runbook, mergedVariables: templateVars, sources },
+    warnings: discoveryWarnings.length > 0 ? discoveryWarnings : undefined,
   };
 }
 
@@ -657,6 +660,12 @@ export async function claimAndLaunch(
         code: prepResult.code,
         details: { runbook: freshDelegation.childRunbookPath, ...prepResult.details },
       };
+    }
+
+    if (prepResult.warnings?.length) {
+      for (const msg of prepResult.warnings) {
+        output.warning(msg);
+      }
     }
 
     // Build delegation linkage for the child run

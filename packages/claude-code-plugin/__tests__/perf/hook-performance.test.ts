@@ -196,6 +196,7 @@ describe('Hook Performance Budget', () => {
         }
       });
 
+      // Relaxed from 5ms: no-keywords gate includes pattern compilation overhead in CI
       expect(durationMs).toBeLessThan(10);
     });
   });

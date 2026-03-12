@@ -408,6 +408,36 @@ describe('TextRenderer', () => {
         expect(output).toContain('Warning:');
         expect(output).toContain('Deprecated syntax');
       });
+
+      it('renders structural warnings via renderStructuralResult (no kind)', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 2, substeps: 0 },
+            variables: { env: 'prod' },
+            warnings: [
+              { message: 'Deprecated step syntax', line: 5 },
+              { message: 'Unresolved variable: {{foo}}', kind: 'unresolved' },
+            ],
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        // Structural warning (no kind) should appear
+        expect(output).toContain('Deprecated step syntax');
+        // Unresolved warning should NOT appear in the structural section
+        // (it's rendered in the Unresolved section instead)
+        const warningLines = writer.lines.filter((l) => l.includes('Warning:'));
+        // Only the structural warning should be rendered as a Warning: line
+        expect(warningLines).toHaveLength(1);
+        expect(warningLines[0]).toContain('Deprecated step syntax');
+      });
     });
 
     describe('scenario format', () => {

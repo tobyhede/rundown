@@ -185,6 +185,11 @@ function copyPatternWithDependencies(
   const referenced = extractReferencedRunbooks(scenario);
   const patternSubdir = dirname(filename);
   for (const ref of referenced) {
+    // Resolves SOURCE file location within fixtures tree (not runtime resolution).
+    // copyPatternToWorkspace flattens to .claude/rundown/runbooks/ via basename,
+    // so this only affects which fixture to copy. Works for name-based references
+    // but would diverge for relative-path references since production
+    // resolveRunbookFile() resolves from cwd, not the referencing runbook's dir.
     const resolvedRef = patternSubdir && patternSubdir !== '.' ? join(patternSubdir, ref) : ref;
     if (ref !== basename(filename)) {
       copyPatternToWorkspace(resolvedRef, workspace);

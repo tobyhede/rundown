@@ -575,8 +575,6 @@ vars:
   });
 
   it('should reject invalid identifier keys', () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(jest.fn());
-
     const markdown = `---
 name: test-runbook
 vars:
@@ -589,24 +587,15 @@ vars:
 
     const result = extractVarsFromMarkdown(markdown);
 
+    // Invalid keys are silently filtered — frontmatter validation
+    // (validateFrontmatterVars) handles diagnostics for these cases
     expect(result).toEqual({
       valid_key: 'value1',
       _valid: 'value4',
     });
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      'Warning: Ignoring frontmatter var with invalid key: invalid-key',
-    );
-    expect(warnSpy).toHaveBeenCalledWith(
-      'Warning: Ignoring frontmatter var with invalid key: 123invalid',
-    );
-
-    warnSpy.mockRestore();
   });
 
   it('should warn and skip complex values', () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(jest.fn());
-
     const markdown = `---
 name: test-runbook
 vars:
@@ -619,15 +608,10 @@ vars:
     const result = extractVarsFromMarkdown(markdown);
 
     // Complex values are skipped, not coerced to "[object Object]"
+    // Frontmatter validation (validateFrontmatterVars) handles diagnostics
     expect(result).toEqual({
       simple: 'value',
     });
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      'Warning: Ignoring frontmatter var "complex" with complex value',
-    );
-
-    warnSpy.mockRestore();
   });
 
   it('should handle empty vars object', () => {

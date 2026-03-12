@@ -482,8 +482,9 @@ export class TextRenderer implements OutputRenderer {
       unresolved?: string[];
     };
 
-    // Structural result (same as check)
-    this.renderStructuralResult({ valid, stats, errors });
+    // Structural result (same as check) — pass only structural warnings (no kind)
+    const structuralWarnings = warnings?.filter((w) => !w.kind);
+    this.renderStructuralResult({ valid, stats, errors, warnings: structuralWarnings });
 
     // Variables section
     if (variables && Object.keys(variables).length > 0) {
@@ -522,8 +523,8 @@ export class TextRenderer implements OutputRenderer {
 
     // Warnings (excluding unresolved, which are shown above)
     if (warnings && warnings.length > 0) {
-      // Filter out unresolved variable warnings since they're shown in their own section
-      const otherWarnings = warnings.filter((w) => w.kind !== 'unresolved');
+      // Filter out unresolved (shown in Unresolved section) and structural (shown via renderStructuralResult)
+      const otherWarnings = warnings.filter((w) => w.kind != null && w.kind !== 'unresolved');
       if (otherWarnings.length > 0) {
         for (const w of otherWarnings) {
           const linePrefix = w.line ? `Line ${String(w.line)}: ` : '';
