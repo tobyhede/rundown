@@ -18,7 +18,13 @@ program
   .option('--ctx <id>', 'Context scope (creates .rd-<id>/ subdirectory)')
   .option('--file <name>', 'Filename to date-prefix (YYYY-MM-DD)')
   .action((options: RdPathOptions) => {
-    process.stdout.write(`${assemblePath(options)}\n`);
+    try {
+      process.stdout.write(`${assemblePath(options)}\n`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`error: ${message}\n`);
+      process.exitCode = 1;
+    }
   });
 
 program.parse();

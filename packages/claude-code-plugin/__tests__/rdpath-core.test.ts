@@ -52,6 +52,10 @@ describe('assemblePath', () => {
       expect(() => assemblePath({ dir: '.work', file: '..' })).toThrow('Invalid file');
     });
 
+    it('rejects file that is exactly .', () => {
+      expect(() => assemblePath({ dir: '.work', file: '.' })).toThrow('Invalid file');
+    });
+
     it('accepts valid ctx with alphanumeric, hyphens, and underscores', () => {
       expect(() => assemblePath({ dir: '.work', ctx: 'abc-123_XYZ' })).not.toThrow();
     });

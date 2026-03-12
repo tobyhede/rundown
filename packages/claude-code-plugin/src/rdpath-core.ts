@@ -38,7 +38,7 @@ export function assemblePath(options: RdPathOptions): string {
     throw new Error(`Invalid ctx: must match ${VALID_CTX.source}`);
   }
   if (options.file != null) {
-    if (options.file === '..' || !VALID_FILE.test(options.file)) {
+    if (options.file === '..' || options.file === '.' || !VALID_FILE.test(options.file)) {
       throw new Error(`Invalid file: must match ${VALID_FILE.source}`);
     }
   }
