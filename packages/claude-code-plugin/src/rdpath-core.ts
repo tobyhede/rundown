@@ -8,6 +8,12 @@
 
 import * as path from 'node:path';
 
+/** Valid context identifier: alphanumeric, hyphens, underscores. */
+const VALID_CTX = /^[a-zA-Z0-9_-]+$/;
+
+/** Valid filename: alphanumeric, dots, hyphens, underscores. */
+const VALID_FILE = /^[a-zA-Z0-9._-]+$/;
+
 /**
  * Options for assembling an artifact path.
  */
@@ -25,8 +31,18 @@ export interface RdPathOptions {
  *
  * @param options - Path assembly options
  * @returns The assembled path string
+ * @throws {Error} When ctx or file contains invalid characters or path traversal
  */
 export function assemblePath(options: RdPathOptions): string {
+  if (options.ctx != null && !VALID_CTX.test(options.ctx)) {
+    throw new Error(`Invalid ctx: must match ${VALID_CTX}`);
+  }
+  if (options.file != null) {
+    if (options.file === '..' || !VALID_FILE.test(options.file)) {
+      throw new Error(`Invalid file: must match ${VALID_FILE}`);
+    }
+  }
+
   const parts: string[] = [options.dir];
   if (options.ctx) {
     parts.push(`.rd-${options.ctx}`);

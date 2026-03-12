@@ -31,4 +31,33 @@ describe('assemblePath', () => {
     const result = assemblePath({ dir: '.work', file: 'test.md' });
     expect(result).toBe(path.join('.work', `${today}-test.md`));
   });
+
+  describe('input validation', () => {
+    it('rejects ctx with path separators', () => {
+      expect(() => assemblePath({ dir: '.work', ctx: 'foo/bar' })).toThrow('Invalid ctx');
+      expect(() => assemblePath({ dir: '.work', ctx: 'foo\\bar' })).toThrow('Invalid ctx');
+    });
+
+    it('rejects ctx with traversal', () => {
+      expect(() => assemblePath({ dir: '.work', ctx: '..' })).toThrow('Invalid ctx');
+      expect(() => assemblePath({ dir: '.work', ctx: '../escape' })).toThrow('Invalid ctx');
+    });
+
+    it('rejects file with path separators', () => {
+      expect(() => assemblePath({ dir: '.work', file: 'sub/file.md' })).toThrow('Invalid file');
+      expect(() => assemblePath({ dir: '.work', file: 'sub\\file.md' })).toThrow('Invalid file');
+    });
+
+    it('rejects file that is exactly ..', () => {
+      expect(() => assemblePath({ dir: '.work', file: '..' })).toThrow('Invalid file');
+    });
+
+    it('accepts valid ctx with alphanumeric, hyphens, and underscores', () => {
+      expect(() => assemblePath({ dir: '.work', ctx: 'abc-123_XYZ' })).not.toThrow();
+    });
+
+    it('accepts valid file with dots', () => {
+      expect(() => assemblePath({ dir: '.work', file: 'plan.v2.md' })).not.toThrow();
+    });
+  });
 });

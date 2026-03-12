@@ -8,7 +8,7 @@
  */
 
 import { Command } from 'commander';
-import { assemblePath } from './rdpath-core.js';
+import { assemblePath, type RdPathOptions } from './rdpath-core.js';
 
 const program = new Command();
 program
@@ -17,7 +17,7 @@ program
   .requiredOption('--dir <path>', 'Base directory')
   .option('--ctx <id>', 'Context scope (creates .rd-<id>/ subdirectory)')
   .option('--file <name>', 'Filename to date-prefix (YYYY-MM-DD)')
-  .action((options: { dir: string; ctx?: string; file?: string }) => {
+  .action((options: RdPathOptions) => {
     process.stdout.write(assemblePath(options) + '\n');
   });
 
