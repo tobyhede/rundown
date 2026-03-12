@@ -109,6 +109,7 @@ describe('getBuiltinVariables', () => {
 
     expect(builtins).toHaveProperty('RunId');
     expect(builtins.RunId).toMatch(/^[a-z0-9]+$/);
+    expect(builtins.RunId).toHaveLength(8);
   });
 
   it('should return unique RunId across calls', () => {
