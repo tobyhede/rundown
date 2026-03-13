@@ -827,7 +827,7 @@ describe('claimAndLaunch', () => {
       childRunbookPath: 'child.md',
       contextSnapshot: {
         vars: {
-          RunId: 'parentrun',
+          RunId: 'parent-run',
           ContextId: 'ctx-parent',
           Region: 'us-west',
           'context.vars.Region': 'us-west',
@@ -862,7 +862,7 @@ describe('claimAndLaunch', () => {
       core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
     ).mockReturnValue({ steps: [makeStep()] } as any);
     (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: { RunId: 'childrun', ContextId: 'ctx-parent', Region: 'us-west' },
+      vars: { RunId: 'child-run', ContextId: 'ctx-parent', Region: 'us-west' },
       sources: {},
     });
 
