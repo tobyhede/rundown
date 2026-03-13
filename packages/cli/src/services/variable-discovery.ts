@@ -126,6 +126,7 @@ export class FileSourcePolicyError extends Error {
  *
  * @param vars - Raw variables object with unknown value types
  * @param source - Label for warning messages (e.g., "frontmatter var", "variable")
+ * @param warnings - Optional array to collect normalization warnings
  * @returns Normalized variables with string values only
  */
 function normalizeVariables(
@@ -359,6 +360,7 @@ function inferFileFormat(filePath: string): FileFormat {
  * @param cwd - Current working directory for resolving relative paths
  * @param projectRoot - Canonical project root path (pre-resolved)
  * @param security - Optional security context for file source policy enforcement
+ * @param warnings - Optional array to collect routing warnings
  */
 async function routeVariable(
   key: string,
@@ -466,6 +468,7 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
  * @param options.markdown - Raw markdown content for frontmatter extraction
  * @param options.inheritedVars - Variables inherited from parent delegation
  * @param cwd - Current working directory for resolving relative paths
+ * @param warnings - Optional array to collect discovery warnings
  * @returns Array of variable layers in precedence order
  */
 async function collectRawLayers(

@@ -189,7 +189,7 @@ export function isCheckResponse(response: unknown): response is CheckResponse {
     typeof response === 'object' &&
     response !== null &&
     'type' in response &&
-    (response as CheckResponse).type === 'check' &&
+    (response as { type: unknown }).type === 'check' &&
     'valid' in response &&
     typeof (response as CheckResponse).valid === 'boolean' &&
     'errors' in response &&
@@ -210,7 +210,7 @@ export function isResolveResponse(response: unknown): response is ResolveRespons
     typeof response === 'object' &&
     response !== null &&
     'type' in response &&
-    (response as ResolveResponse).type === 'resolve' &&
+    (response as { type: unknown }).type === 'resolve' &&
     'valid' in response &&
     typeof (response as ResolveResponse).valid === 'boolean' &&
     'errors' in response &&

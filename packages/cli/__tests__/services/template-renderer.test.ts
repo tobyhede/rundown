@@ -448,18 +448,14 @@ describe('warnUnresolvedRunbookVariables', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\nDeploy to {{environment}}.';
     const runbook = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
-    expect(warnings).toContain(
-      'Undefined variable "{{environment}}" preserved as literal text',
-    );
+    expect(warnings).toContain('Undefined variable "{{environment}}" preserved as literal text');
   });
 
   it('should warn for unresolved variables in command code', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
     const runbook = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
-    expect(warnings).toContain(
-      'Undefined variable "{{BRANCH}}" preserved as literal text',
-    );
+    expect(warnings).toContain('Undefined variable "{{BRANCH}}" preserved as literal text');
   });
 
   it('should deduplicate warnings for same variable', () => {
@@ -482,18 +478,14 @@ describe('warnUnresolvedRunbookVariables', () => {
     const rawMarkdown = '# {{project}} Runbook\n\n## 1. Start\n\nGo.';
     const runbook = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
-    expect(warnings).toContain(
-      'Undefined variable "{{project}}" preserved as literal text',
-    );
+    expect(warnings).toContain('Undefined variable "{{project}}" preserved as literal text');
   });
 
   it('should warn for unresolved variables in prompt', () => {
     const rawMarkdown = '# Test\n\n## 1. Check\n\n> Is {{service}} running?\n';
     const runbook = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
-    expect(warnings).toContain(
-      'Undefined variable "{{service}}" preserved as literal text',
-    );
+    expect(warnings).toContain('Undefined variable "{{service}}" preserved as literal text');
   });
 
   it('should warn for unresolved variables in substep runbook paths', () => {
@@ -508,9 +500,7 @@ describe('warnUnresolvedRunbookVariables', () => {
     ].join('\n');
     const runbook = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
-    expect(warnings).toContain(
-      'Undefined variable "{{region}}" preserved as literal text',
-    );
+    expect(warnings).toContain('Undefined variable "{{region}}" preserved as literal text');
   });
 
   it('should suppress FOR variable inside own substeps', () => {
@@ -547,9 +537,7 @@ describe('warnUnresolvedRunbookVariables', () => {
     const runbook = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
-    expect(warnings).toContain(
-      'Undefined variable "{{item}}" preserved as literal text',
-    );
+    expect(warnings).toContain('Undefined variable "{{item}}" preserved as literal text');
   });
 
   it('should scope Index/index suppression to FOR substeps only', () => {
@@ -570,9 +558,7 @@ describe('warnUnresolvedRunbookVariables', () => {
     const runbook = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
-    expect(warnings).toContain(
-      'Undefined variable "{{Index}}" preserved as literal text',
-    );
+    expect(warnings).toContain('Undefined variable "{{Index}}" preserved as literal text');
   });
 
   it('should warn for FOR variable in FOR step own description', () => {
@@ -589,9 +575,7 @@ describe('warnUnresolvedRunbookVariables', () => {
     const runbook = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
-    expect(warnings).toContain(
-      'Undefined variable "{{item}}" preserved as literal text',
-    );
+    expect(warnings).toContain('Undefined variable "{{item}}" preserved as literal text');
   });
 
   it('should scope multiple FOR steps independently', () => {
@@ -615,9 +599,7 @@ describe('warnUnresolvedRunbookVariables', () => {
     const runbook = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
-    expect(warnings).toContain(
-      'Undefined variable "{{server}}" preserved as literal text',
-    );
+    expect(warnings).toContain('Undefined variable "{{server}}" preserved as literal text');
   });
 
   it('should suppress dotted FOR variable paths inside FOR scope', () => {

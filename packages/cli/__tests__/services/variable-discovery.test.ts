@@ -512,10 +512,7 @@ vars:
   env: development
 ---
 # Content`;
-      const result = await resolveVariables(
-        { markdown, var: ['env=production'] },
-        tmpDir,
-      );
+      const result = await resolveVariables({ markdown, var: ['env=production'] }, tmpDir);
       expect(result.vars.env).toBe('production');
     });
   });
