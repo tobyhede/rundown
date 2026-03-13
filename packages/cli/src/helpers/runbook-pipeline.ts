@@ -710,7 +710,7 @@ export async function claimAndLaunch(
       run_id: childRunId,
       runbook: freshDelegation.childRunbookPath,
       parent_run_id: freshParent.id,
-      parent_step: substepId ? `${stepId}.${substepId}` : stepId,
+      parent_step: freshDelegation.contextSnapshot.at,
     });
 
     return {
