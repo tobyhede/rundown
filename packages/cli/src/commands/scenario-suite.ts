@@ -67,6 +67,7 @@ async function executeSuiteCase(
   quiet: boolean,
   output: OutputEmitter,
 ): Promise<{
+  kind: 'scenario_run';
   passed: boolean;
   scenario: string;
   expected: string;
@@ -92,6 +93,7 @@ async function executeSuiteCase(
     } catch (err: unknown) {
       if (isNodeError(err) && err.code === 'ENOENT') {
         return {
+          kind: 'scenario_run',
           passed: false,
           scenario: caseName,
           expected: effectiveResult,
@@ -175,6 +177,7 @@ async function executeSuiteCase(
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
 
     return {
+      kind: 'scenario_run',
       passed: resultPassed && assertionsPassed,
       scenario: caseName,
       expected: effectiveResult,
@@ -336,6 +339,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
                     ? String((err as { message: unknown }).message)
                     : String(err);
                 caseResults.push({
+                  kind: 'scenario_run',
                   passed: false,
                   scenario: name,
                   expected: getEffectiveResult(c),
@@ -349,6 +353,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
 
             output.detail(
               {
+                kind: 'scenario_suite_run',
                 result: allPassed,
                 suite: result.suite.name,
                 total: caseResults.length,
@@ -397,6 +402,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
                   ? String((err as { message: unknown }).message)
                   : String(err);
               caseResult = {
+                kind: 'scenario_run',
                 passed: false,
                 scenario: caseName,
                 expected: getEffectiveResult(c),
@@ -405,6 +411,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
             }
 
             const detailData: Record<string, unknown> = {
+              kind: 'scenario_run',
               result: caseResult.passed,
               scenario: caseResult.scenario,
               expected: caseResult.expected,

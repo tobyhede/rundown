@@ -16,6 +16,7 @@ describe('StatusResponseSchema', () => {
       // ActionBlockData.result in packages/core/src/cli/types.ts is 'PASS' | 'FAIL'.
       // The schema must accept enum string values for lastAction.result.
       const statusResponse = {
+        kind: 'status',
         active: true,
         stashed: false,
         file: 'test.runbook.md',
@@ -40,6 +41,7 @@ describe('StatusResponseSchema', () => {
 
     it('accepts FAIL result for failed actions', () => {
       const statusResponse = {
+        kind: 'status',
         active: true,
         stashed: false,
         lastAction: {
@@ -55,6 +57,7 @@ describe('StatusResponseSchema', () => {
 
     it('accepts lastAction without result (optional field)', () => {
       const statusResponse = {
+        kind: 'status',
         active: true,
         stashed: false,
         lastAction: {
@@ -72,6 +75,7 @@ describe('StatusResponseSchema', () => {
   describe('minimal valid response', () => {
     it('accepts response with only required fields', () => {
       const statusResponse = {
+        kind: 'status',
         active: false,
         stashed: false,
       };

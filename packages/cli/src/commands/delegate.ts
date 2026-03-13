@@ -142,6 +142,7 @@ export function registerDelegateCommand(program: Command): void {
             // Output
             if (options.json) {
               output.json({
+                kind: 'delegate',
                 action: 'delegated',
                 step: resolvedStepId,
                 runbook: resolvedRunbook,

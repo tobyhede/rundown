@@ -292,6 +292,7 @@ describe('DelegationStatusEntrySchema', () => {
 describe('StatusResponseSchema with delegations', () => {
   it('accepts delegations field', () => {
     const status = {
+      kind: 'status',
       active: true,
       stashed: false,
       delegations: [
@@ -303,12 +304,12 @@ describe('StatusResponseSchema with delegations', () => {
   });
 
   it('validates without delegations (backward compat)', () => {
-    const status = { active: true, stashed: false };
+    const status = { kind: 'status', active: true, stashed: false };
     expect(() => StatusResponseSchema.parse(status)).not.toThrow();
   });
 
   it('validates with empty delegations array', () => {
-    const status = { active: true, stashed: false, delegations: [] };
+    const status = { kind: 'status', active: true, stashed: false, delegations: [] };
     expect(() => StatusResponseSchema.parse(status)).not.toThrow();
   });
 });

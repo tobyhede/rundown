@@ -85,6 +85,7 @@ echo hello
       const output = JSON.parse(result.stdout);
 
       expect(output).toEqual({
+        kind: 'status',
         active: false,
         stashed: false,
       });
@@ -254,6 +255,7 @@ echo hello
 
       // Uses standard error format from output.error()
       expect(output).toEqual({
+        kind: 'error',
         error: 'Scenario "non-existent" not found',
         code: 'SCENARIO_NOT_FOUND',
         details: { available: ['test-scenario'] },

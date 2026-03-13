@@ -78,6 +78,7 @@ describe('stash command', () => {
 
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.stdout)).toEqual({
+      kind: 'error',
       error: 'A runbook is already stashed. Pop it first.',
       code: 'ALREADY_STASHED',
     });
