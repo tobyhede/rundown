@@ -640,7 +640,7 @@ vars:
       const result = await resolveVariables(
         {
           inheritedVars: { myVar: 'inherited' },
-          frontmatterVars: { myVar: 'frontmatter' },
+          markdown: '---\nvars:\n  myVar: frontmatter\n---\n# Test\n',
         },
         tmpDir,
       );
@@ -651,7 +651,7 @@ vars:
       const result = await resolveVariables(
         {
           inheritedVars: { ContextId: 'parent123' },
-          frontmatterVars: { otherVar: 'value' },
+          markdown: '---\nvars:\n  otherVar: value\n---\n# Test\n',
         },
         tmpDir,
       );
@@ -707,7 +707,7 @@ vars:
       await fs.writeFile(varFile, 'servers:\n  - a\n  - b\n');
 
       const result = await resolveVariables(
-        { frontmatterVars: { servers: 'single' }, varFile },
+        { markdown: '---\nvars:\n  servers: single\n---\n# Test\n', varFile },
         tmpDir,
       );
       expect(result.sources.servers).toEqual({
@@ -721,7 +721,7 @@ vars:
       await fs.writeFile(varFile, 'items: override\n');
 
       const result = await resolveVariables(
-        { frontmatterVars: { items: ['x', 'y'] }, varFile },
+        { markdown: '---\nvars:\n  items:\n    - x\n    - "y"\n---\n# Test\n', varFile },
         tmpDir,
       );
       expect(result.vars.items).toBe('override');
