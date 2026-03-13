@@ -36,6 +36,7 @@ rundown ls               # List active runbooks
 rundown ls --all         # List available runbook files
 rundown ls --all --tags <tags>  # Filter by comma-separated tags
 rundown check <file>     # Check runbook for errors
+rundown resolve <file>   # Resolve and validate variables and data sources
 rundown echo             # Test helper: echo with configurable result
 rundown prune            # Remove runbook state (default: completed)
 rundown prune --dry-run  # Show what would be removed without deleting
@@ -46,7 +47,7 @@ rundown prune --all      # Prune all runbook state
 rundown scenario ls <file>           # List scenarios in a runbook
 rundown scenario show <file> <name>  # Show scenario details
 rundown scenario run <file> <name>   # Run a scenario
-rundown scenario run <file> <name> -q  # Run scenario (suppress output)
+rundown scenario run <file> <name> -q, --quiet  # Run scenario (suppress output)
 rundown scenario-suite ls <suite-file>           # List cases in a scenario suite
 rundown scenario-suite show <suite-file> <case>  # Show case details
 rundown scenario-suite run <suite-file> [case]   # Run a case (or all with --all)
@@ -71,7 +72,8 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 2. `--var-file path` contents (YAML format)
 3. `.rundown/config.yaml` (auto-discovered from cwd upward, stops at git root)
 4. Frontmatter `vars:` field
-5. Built-in defaults (lowest priority)
+5. Inherited delegation variables (parent context in delegation tree)
+6. Built-in defaults (lowest priority)
 
 **Built-in Variables:**
 | Variable | Example Value | Description |
@@ -82,7 +84,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `Month` | `02` | Current month (01-12) |
 | `Day` | `04` | Current day (01-31) |
 | `WorkPath` | `.work` | Default artifact directory |
-| `RunId` | `k7x2m9fp` | Unique-per-execution identifier |
+| `RunId` | `4a7f0c3e` | Unique-per-execution identifier |
 | `ContextId` | `a3b8c1d2` | Shared identity across delegation tree |
 | `Step` | `3.1` | Current qualified step identifier |
 | `Index` | `3` | Current loop iteration number (inside FOR) |
@@ -91,7 +93,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `context.current.index` | `3` | Current loop iteration (inside FOR) |
 | `context.current.at` | `3.1[3]` | Full execution position |
 
-Built-in variables use PascalCase. Lowercase aliases `step` and `index` are also available. The date/time variables (`Date`, `DateTime`, `Year`, `Month`, `Day`), `WorkPath`, `RunId`, and `ContextId` are static run-time variables set once per execution and can be overridden via `--var`. `RunId` is a fresh 8-character alphanumeric identifier generated per execution; each child in a delegation tree gets its own RunId. `ContextId` is a fresh 8-character alphanumeric identifier generated per execution; children in a delegation tree inherit the parent's ContextId via `--var`, providing a shared identity across the tree. It can be overridden via `--var` to use a meaningful name (e.g., `--var ContextId=sprint-42`). The `Step` variable (and `Index` during FOR loops), `context.current.*` variables, and their lowercase aliases are dynamic per-step variables that reflect the current execution position and cannot be overridden via `--var`. The variable name `context` is reserved and cannot be used as a user variable name.
+Built-in variables use PascalCase. Lowercase aliases `step` and `index` are also available. The date/time variables (`Date`, `DateTime`, `Year`, `Month`, `Day`), `WorkPath`, `RunId`, and `ContextId` are static run-time variables set once per execution and can be overridden via `--var`. `RunId` is a fresh 8-character hexadecimal identifier generated per execution; each child in a delegation tree gets its own RunId. `ContextId` is a fresh 8-character hexadecimal identifier generated per execution; children in a delegation tree inherit the parent's ContextId via `--var`, providing a shared identity across the tree. It can be overridden via `--var` to use a meaningful name (e.g., `--var ContextId=sprint-42`). The `Step` variable (and `Index` during FOR loops), `context.current.*` variables, and their lowercase aliases are dynamic per-step variables that reflect the current execution position and cannot be overridden via `--var`. The variable name `context` is reserved and cannot be used as a user variable name.
 
 **CLI Example:**
 ```bash
@@ -140,7 +142,7 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 
 ## Schema Output
 
-The `--schema` flag outputs the JSON Schema for a command's `--json` output (supported by most commands):
+The `--schema` flag outputs the JSON Schema for a command's `--json` output (supported by all commands with `--json` output):
 
 ```bash
 rd status --schema           # Status response schema
@@ -206,13 +208,14 @@ rundown run [file] --allow-write /path    # Allow writing to specific paths
 rundown run [file] --allow-env VAR        # Allow specific environment variables
 rundown run [file] --allow-all            # Bypass policy (trust mode)
 rundown run [file] --deny-all             # Block all commands
-rundown run [file] -y                     # Skip confirmation prompts
+rundown run [file] -y, --yes              # Skip confirmation prompts
 rundown run [file] --non-interactive      # CI mode (auto-deny)
 rundown run [file] --no-color             # Disable colored output
 rundown run [file] --policy ./policy.yaml # Custom policy file
 rundown run [file] --sandbox              # Enable OS-level sandbox (default)
 rundown run [file] --no-sandbox           # Disable sandbox (trust mode)
 rundown run [file] --sandbox-strict       # Fail if sandbox unavailable
+rundown run [file] --trust-js-policy      # Trust executable JS policy configs
 ```
 
 ## Policy Configuration
