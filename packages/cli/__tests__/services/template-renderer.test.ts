@@ -540,7 +540,7 @@ describe('warnUnresolvedRunbookVariables', () => {
     expect(warnings).toContain('Undefined variable "{{item}}" preserved as literal text');
   });
 
-  it('should scope Index/index suppression to FOR substeps only', () => {
+  it('should suppress Index/index everywhere (runtime variable)', () => {
     const rawMarkdown = [
       '# Test',
       '',
@@ -557,8 +557,7 @@ describe('warnUnresolvedRunbookVariables', () => {
     ].join('\n');
     const runbook = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
-    expect(warnings).toHaveLength(1);
-    expect(warnings).toContain('Undefined variable "{{Index}}" preserved as literal text');
+    expect(warnings).toHaveLength(0);
   });
 
   it('should warn for FOR variable in FOR step own description', () => {

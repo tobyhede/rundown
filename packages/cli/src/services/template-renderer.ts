@@ -317,13 +317,25 @@ function isForVariablePath(name: string, forVars: ReadonlySet<string>): boolean 
   return forVars.has(name.slice(0, dotIndex));
 }
 
+/** Variables resolved at runtime per-step — not "undefined" after static substitution. */
+const RUNTIME_VARIABLES = new Set([
+  'Step',
+  'step',
+  'Index',
+  'index',
+  'context.current.step',
+  'context.current.substep',
+  'context.current.index',
+  'context.current.at',
+]);
+
 /**
  * Collect unresolved template variable names from a substituted runbook.
  *
  * Walks the runbook AST collecting all remaining `{{...}}` placeholders
- * and returns them as a deduplicated set. FOR loop variables (including
- * `Index`/`index`) are only suppressed within their own FOR step's substeps —
- * they still produce warnings when referenced outside FOR scope.
+ * and returns them as a deduplicated set. Runtime variables (Step, Index,
+ * context.current.*) are always suppressed. FOR loop variables are only
+ * suppressed within their own FOR step's substeps.
  *
  * @param runbook - Runbook AST after variable substitution
  * @returns Set of unresolved variable names found in the runbook
@@ -334,7 +346,9 @@ export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string>
   const collect = (text: string | undefined): void => {
     if (!text) return;
     for (const name of collectUnresolvedVariables(text)) {
-      unresolved.add(name);
+      if (!RUNTIME_VARIABLES.has(name)) {
+        unresolved.add(name);
+      }
     }
   };
 
@@ -366,10 +380,8 @@ export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string>
         }
         break;
       case 'for': {
-        const forSuppressed = new Set<string>();
+        const forSuppressed = new Set(RUNTIME_VARIABLES);
         if (step.forClause.variable) forSuppressed.add(step.forClause.variable);
-        forSuppressed.add('Index');
-        forSuppressed.add('index');
         for (const ss of step.substeps) {
           collectScoped(ss.description, forSuppressed);
           collectScoped(ss.prompt, forSuppressed);
