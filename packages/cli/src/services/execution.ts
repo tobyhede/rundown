@@ -19,6 +19,7 @@ import {
   ForIterationService,
   logger,
   type Step,
+  type ResolvedStep,
   type Substep,
   type RunbookMetadata,
   type RunbookState,
@@ -34,7 +35,7 @@ import {
 import {
   isSourced,
   isResolvedForClause,
-  stepHasSubsteps,
+  resolvedStepHasSubsteps,
   type ParsedForClause,
 } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -190,7 +191,7 @@ export function buildStepVariables(
  * @returns The matching step
  * @throws {Error} if step is not found (indicates state corruption)
  */
-export function findStepOrThrow(steps: Step[], stepName: string): Step {
+export function findStepOrThrow(steps: ResolvedStep[], stepName: string): ResolvedStep {
   const step = steps.find((s) => s.name === stepName);
   if (!step) throw new Error(`Step '${stepName}' not found — possible state corruption`);
   return step;
@@ -203,9 +204,9 @@ interface ApplyResultTransitionArgs {
   lifecycleService: ExecutionLifecycleService;
   emitter: ExecutionEventEmitter;
   runbookId: string;
-  steps: Step[];
+  steps: ResolvedStep[];
   currentState: RunbookState;
-  currentStep: Step;
+  currentStep: ResolvedStep;
   result: 'pass' | 'fail';
   transitionPolicy: TransitionOrchestrationPolicy;
   computeActionResult?: (actionType: ActionType) => boolean;
@@ -291,7 +292,7 @@ export interface DrainResolvedCompletionsArgs {
   /** ID of the runbook being drained. */
   runbookId: string;
   /** Parsed step definitions for the runbook. */
-  steps: Step[];
+  steps: ResolvedStep[];
   /** Current persisted runbook state. */
   currentState: RunbookState;
   /** Policy governing transition orchestration. */
@@ -362,7 +363,7 @@ export async function drainResolvedCompletions({
   while (true) {
     const currentStep = findStepOrThrow(steps, state.step);
     const hasActiveSubsteps =
-      stepHasSubsteps(currentStep) && currentStep.substeps.length > 0 && !!state.substep;
+      resolvedStepHasSubsteps(currentStep) && currentStep.substeps.length > 0 && !!state.substep;
     if (!hasActiveSubsteps) {
       return { status: 'continue', state, unresolved: 0, applied };
     }
@@ -452,7 +453,7 @@ export async function drainResolvedCompletions({
 export async function runExecutionLoop(
   manager: RunbookStateManager,
   runbookId: string,
-  steps: Step[],
+  steps: ResolvedStep[],
   cwd: string,
   prompted: boolean,
   emitter: ExecutionEventEmitter,
@@ -475,8 +476,8 @@ export async function runExecutionLoop(
     const totalSteps = countNumberedSteps(steps);
 
     // Determine what to render: substep if we're at one, otherwise the step
-    let itemToRender: Step | Substep = currentStep;
-    if (currentState.substep && stepHasSubsteps(currentStep)) {
+    let itemToRender: ResolvedStep | Substep = currentStep;
+    if (currentState.substep && resolvedStepHasSubsteps(currentStep)) {
       const substep = currentStep.substeps.find((s) => s.id === currentState.substep);
       if (substep) {
         itemToRender = substep;
@@ -600,7 +601,7 @@ export async function runExecutionLoop(
 
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,
-      stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as Step).name,
+      stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as ResolvedStep).name,
       description: expandedDescription,
       prompt: expandedPrompt,
       hasCommand: !!command,

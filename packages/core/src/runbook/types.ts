@@ -78,6 +78,18 @@ export type { TransitionObject } from '@rundown-org/parser';
  */
 export type { Runbook } from '@rundown-org/parser';
 
+/** FOR loop step with fully resolved bounds — all BoundRef values resolved to numbers. */
+export type { ResolvedStepWithFor } from '@rundown-org/parser';
+
+/** A step where all FOR bounds are resolved. */
+export type { ResolvedStep } from '@rundown-org/parser';
+
+/** Utility type for resolved steps with substeps. */
+export type { ResolvedStepHavingSubsteps } from '@rundown-org/parser';
+
+/** A runbook where all FOR clause bounds are resolved to concrete numbers. */
+export type { ResolvedRunbook } from '@rundown-org/parser';
+
 /**
  * Identifies a step within a runbook by name and optional instance.
  *

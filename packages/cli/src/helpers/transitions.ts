@@ -24,7 +24,7 @@ import {
   deriveActiveFrame,
   type FrameKey,
   type AnyActorRef,
-  type Step,
+  type ResolvedStep,
   type RunbookState,
   type RunbookCompletedPayload,
   type RunbookStoppedPayload,
@@ -136,7 +136,7 @@ export interface TransitionContext {
   /** Current runbook state */
   state: RunbookState;
   /** Parsed runbook steps */
-  steps: Step[];
+  steps: ResolvedStep[];
   /** XState actor for the runbook */
   actor: AnyActorRef;
   /** Current working directory */

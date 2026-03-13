@@ -69,4 +69,7 @@ export {
   isBoundRef,
   isUnresolvedForClause,
   isResolvedForClause,
+  isResolvedStep,
+  resolvedStepHasSubsteps,
+  areAllStepsResolved,
 } from './guards.js';

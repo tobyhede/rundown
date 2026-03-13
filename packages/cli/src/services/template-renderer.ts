@@ -8,7 +8,16 @@
  * @module
  */
 
-import type { Runbook, Step, Substep, Command, Bound, ForClause } from '@rundown-org/parser';
+import type {
+  Runbook,
+  Substep,
+  Command,
+  Bound,
+  ForClause,
+  ResolvedRunbook,
+  ResolvedStep,
+  ResolvedStepWithFor,
+} from '@rundown-org/parser';
 import { isUnresolvedForClause, MAX_FOR_BOUND } from '@rundown-org/parser';
 
 /**
@@ -178,10 +187,13 @@ function resolveBound(
 export function resolveForBounds(
   runbook: Runbook,
   variables: Readonly<Record<string, unknown>>,
-): Runbook {
-  const resolvedSteps = runbook.steps.map((step): Step => {
+): ResolvedRunbook {
+  const resolvedSteps = runbook.steps.map((step): ResolvedStep => {
     if (step.kind !== 'for') return step;
-    if (!isUnresolvedForClause(step.forClause)) return step;
+    if (!isUnresolvedForClause(step.forClause)) {
+      // Already resolved — safe cast: forClause is ForClause (not ParsedForClause)
+      return step as ResolvedStepWithFor;
+    }
 
     const fc = step.forClause;
     const start = resolveBound(fc.start, variables, step.name, 'start');
@@ -213,10 +225,18 @@ export function resolveForBounds(
       };
     }
 
-    return {
-      ...step,
+    const resolvedForStep: ResolvedStepWithFor = {
+      kind: 'for',
+      name: step.name,
+      description: step.description,
       forClause: resolved,
+      substeps: step.substeps,
+      ...(step.prompt !== undefined && { prompt: step.prompt }),
+      ...(step.transitions !== undefined && { transitions: step.transitions }),
+      ...(step.line !== undefined && { line: step.line }),
+      ...(step.substepsDerivedFromRunbookList && { substepsDerivedFromRunbookList: true }),
     };
+    return resolvedForStep;
   });
 
   return { ...runbook, steps: resolvedSteps };
@@ -301,7 +321,7 @@ function substituteSubstep(substep: Substep, variables: Record<string, unknown>)
  * @param variables - Variable map for substitution
  * @returns Step with all string fields expanded
  */
-function substituteStep(step: Step, variables: Record<string, unknown>): Step {
+function substituteStep(step: ResolvedStep, variables: Record<string, unknown>): ResolvedStep {
   const base = {
     name: step.name,
     description: substituteText(step.description, variables),
@@ -348,9 +368,9 @@ function substituteStep(step: Step, variables: Record<string, unknown>): Step {
  * @returns New runbook AST with substitutions applied
  */
 export function substituteRunbookVariables(
-  runbook: Runbook,
+  runbook: ResolvedRunbook,
   variables: Record<string, unknown>,
-): Runbook {
+): ResolvedRunbook {
   return {
     ...runbook,
     title: runbook.title ? substituteText(runbook.title, variables) : runbook.title,
@@ -418,7 +438,7 @@ const FOR_LOOP_RUNTIME_VARIABLES = new Set(['Index', 'index', 'context.current.i
  * @param runbook - Runbook AST after variable substitution
  * @returns Set of unresolved variable names found in the runbook
  */
-export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string> {
+export function collectUnresolvedRunbookVariables(runbook: ResolvedRunbook): Set<string> {
   const unresolved = new Set<string>();
 
   const collect = (text: string | undefined): void => {
@@ -493,7 +513,7 @@ export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string>
  * @param runbook - Runbook AST after variable substitution
  * @returns Array of warning strings for each unresolved variable
  */
-export function warnUnresolvedRunbookVariables(runbook: Runbook): string[] {
+export function warnUnresolvedRunbookVariables(runbook: ResolvedRunbook): string[] {
   const unresolved = collectUnresolvedRunbookVariables(runbook);
   const warnings: string[] = [];
   for (const name of unresolved) {

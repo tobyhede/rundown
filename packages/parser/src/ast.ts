@@ -198,6 +198,15 @@ export interface StepWithFor extends StepFields {
   readonly substepsDerivedFromRunbookList?: true;
 }
 
+/** FOR loop step with fully resolved bounds — all BoundRef values resolved to numbers. */
+export interface ResolvedStepWithFor extends StepFields {
+  readonly kind: 'for';
+  readonly forClause: ForClause;
+  readonly substeps: readonly Substep[];
+  /** Parser canonicalization marker for step-level runbook-list shorthand. */
+  readonly substepsDerivedFromRunbookList?: true;
+}
+
 /**
  * A single step in a runbook.
  *
@@ -206,8 +215,14 @@ export interface StepWithFor extends StepFields {
  */
 export type Step = BaseStep | StepWithCommand | StepWithSubsteps | StepWithFor;
 
+/** A step where all FOR bounds are resolved. */
+export type ResolvedStep = BaseStep | StepWithCommand | StepWithSubsteps | ResolvedStepWithFor;
+
 /** Utility type for functions that accept any step with substeps. */
 export type StepHavingSubsteps = StepWithSubsteps | StepWithFor;
+
+/** Utility type for resolved steps with substeps. */
+export type ResolvedStepHavingSubsteps = StepWithSubsteps | ResolvedStepWithFor;
 
 /**
  * Parsed runbook definition
@@ -227,6 +242,17 @@ export interface Runbook {
   readonly tags?: readonly string[];
   /** Ordered list of runbook steps */
   readonly steps: readonly Step[];
+}
+
+/** A runbook where all FOR clause bounds are resolved to concrete numbers. */
+export interface ResolvedRunbook {
+  readonly title?: string;
+  readonly description?: string;
+  readonly name?: string;
+  readonly version?: string;
+  readonly author?: string;
+  readonly tags?: readonly string[];
+  readonly steps: readonly ResolvedStep[];
 }
 
 /**

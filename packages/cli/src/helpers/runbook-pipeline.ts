@@ -19,7 +19,7 @@ import {
   type FrameKey,
   type RunbookState,
   type ExecutionEventEmitter,
-  type Runbook,
+  type ResolvedRunbook,
   type DataSource,
   type DelegationLinkage,
   STATE_DIR,
@@ -102,8 +102,8 @@ export interface PreparedRunbook {
   filePath: string;
   /** Raw markdown content of the runbook file */
   rawContent: string;
-  /** Parsed and variable-substituted runbook AST */
-  runbook: Runbook;
+  /** Parsed and variable-substituted runbook AST (all FOR bounds resolved) */
+  runbook: ResolvedRunbook;
   /** Merged template variables from all sources */
   mergedVariables: Record<string, string>;
   /** Resolved data sources for FOR loop iteration */
@@ -407,7 +407,7 @@ export async function prepareRunbook(
   }
 
   // Resolve FOR clause bounds ({{Max}} → 10)
-  let resolvedRunbook: Runbook;
+  let resolvedRunbook: ResolvedRunbook;
   try {
     resolvedRunbook = resolveForBounds(rawRunbook, templateVars);
   } catch (err) {
