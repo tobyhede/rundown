@@ -923,8 +923,8 @@ describe('claimAndLaunch', () => {
 
     resolveRunbookFile.mockResolvedValue('/test/child.md');
     (
-      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
-    ).mockReturnValue({ steps: [makeStep()] } as any);
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue({ runbook: { steps: [makeStep()] }, diagnostics: [] } as any);
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: { RunId: 'child-run', ContextId: 'ctx-parent', Region: 'us-west' },
       sources: {},
