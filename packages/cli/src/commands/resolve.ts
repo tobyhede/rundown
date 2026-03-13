@@ -87,7 +87,7 @@ export function registerResolveCommand(program: Command): void {
       if (!loadResult.ok) {
         output.detail(
           {
-            type: 'resolve' as const,
+            kind: 'resolve' as const,
             valid: false,
             errors: [{ message: loadResult.error }],
           },
@@ -195,7 +195,7 @@ export function registerResolveCommand(program: Command): void {
 
       output.detail(
         {
-          type: 'resolve' as const,
+          kind: 'resolve' as const,
           valid: !hasErrors,
           errors,
           warnings: warnings.length > 0 ? warnings : undefined,

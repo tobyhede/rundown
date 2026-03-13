@@ -243,6 +243,7 @@ export class JSONRenderer implements OutputRenderer {
   private static readonly FORMAT_TO_KIND: Record<string, string> = {
     status: 'status',
     check: 'check',
+    resolve: 'resolve',
     echo: 'echo',
     prompt: 'prompt',
     scenario_result: 'scenario_run',
@@ -257,7 +258,7 @@ export class JSONRenderer implements OutputRenderer {
    * @param event - The detail output event
    */
   private deriveKindFromDetail(event: OutputEvent & { type: 'detail' }): void {
-    const kind = JSONRenderer.FORMAT_TO_KIND[event.format ?? ''];
+    const kind = JSONRenderer.FORMAT_TO_KIND[event.format];
     if (kind) {
       this.output.kind = kind;
     }

@@ -864,6 +864,7 @@ describe('claimAndLaunch', () => {
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: { RunId: 'child-run', ContextId: 'ctx-parent', Region: 'us-west' },
       sources: {},
+      warnings: [],
     });
 
     const mockManager = {
