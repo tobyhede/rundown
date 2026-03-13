@@ -74,6 +74,9 @@ export function registerRunCommand(program: Command): void {
                 output.warning(msg);
               }
             }
+            for (const name of prepResult.unresolved) {
+              output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
+            }
 
             const result = await startRunbook(ctx, prepResult.prepared, {
               file,

@@ -129,13 +129,10 @@ export function registerResolveCommand(program: Command): void {
         }
       }
 
-      // Surface pipeline warnings (variable discovery only — unresolved handled below)
+      // Surface pipeline warnings (variable discovery only)
       if (pipelineWarnings) {
         for (const msg of pipelineWarnings) {
-          // Skip unresolved variable warnings; they are emitted separately with kind: 'unresolved'
-          if (!msg.startsWith('Undefined variable "{{')) {
-            warnings.push({ message: msg, kind: 'variable-discovery' });
-          }
+          warnings.push({ message: msg, kind: 'variable-discovery' });
         }
       }
 

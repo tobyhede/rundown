@@ -266,7 +266,7 @@ export type PrepareResult = PrepareSuccess | PrepareFailure;
  * @param steps - Parsed runbook steps
  * @returns Total number of substeps
  */
-function countSubsteps(steps: readonly Step[]): number {
+export function countSubsteps(steps: readonly Step[]): number {
   return steps.reduce((count, step) => {
     return count + (stepHasSubsteps(step) ? step.substeps.length : 0);
   }, 0);
@@ -386,11 +386,6 @@ export async function prepareRunbook(
   // Substitute variables into parsed AST
   const runbook = substituteRunbookVariables(resolvedRunbook, templateVars);
   const unresolvedNames = [...collectUnresolvedRunbookVariables(runbook)];
-
-  // Surface unresolved as warnings (for backward compat with existing callers)
-  for (const name of unresolvedNames) {
-    allWarnings.push(`Undefined variable "{{${name}}}" preserved as literal text`);
-  }
 
   // Validate sourced FOR clauses reference defined data sources
   try {
@@ -769,6 +764,9 @@ export async function claimAndLaunch(
       for (const msg of prepResult.warnings) {
         output.warning(msg);
       }
+    }
+    for (const name of prepResult.unresolved) {
+      output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
     }
 
     // Build delegation linkage for the child run

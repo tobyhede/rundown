@@ -1,23 +1,20 @@
 /**
  * Shared runbook file-resolution and structural-validation logic.
  *
- * Used by both `check` and `resolve` commands to avoid duplication
- * of the load-parse-validate pipeline.
+ * Used by the `check` command for syntax/structure-only validation.
+ * The `resolve` command uses `prepareRunbook` from `runbook-pipeline.ts`
+ * for full variable/source resolution.
  *
  * @module helpers/runbook-validator
  */
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import {
-  parseRunbookDocument,
-  stepHasSubsteps,
-  type Step,
-  type ValidationDiagnostic,
-} from '@rundown-org/parser';
+import { parseRunbookDocument, type ValidationDiagnostic } from '@rundown-org/parser';
 import type { Runbook } from '@rundown-org/core';
 import { getErrorMessage } from '@rundown-org/core';
 import { resolveRunbookFile } from './resolve-runbook.js';
+import { countSubsteps } from './runbook-pipeline.js';
 import { extractRawFrontmatter } from './extract-raw-frontmatter.js';
 import { validateFrontmatterVars } from './validate-frontmatter-vars.js';
 
@@ -35,18 +32,6 @@ export interface LoadedRunbook {
   diagnostics: ValidationDiagnostic[];
   /** Step/substep counts */
   stats: { steps: number; substeps: number };
-}
-
-/**
- * Count substeps across all steps in a runbook.
- *
- * @param steps - Parsed runbook steps
- * @returns Total number of substeps
- */
-function countSubsteps(steps: readonly Step[]): number {
-  return steps.reduce((count, step) => {
-    return count + (stepHasSubsteps(step) ? step.substeps.length : 0);
-  }, 0);
 }
 
 /**
