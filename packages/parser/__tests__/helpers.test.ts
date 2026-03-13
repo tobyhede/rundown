@@ -942,6 +942,13 @@ describe('parseConditional error cases', () => {
   it('throws for NO with invalid action', () => {
     expect(() => parseConditional('NO NOTVALID')).toThrow('Invalid NO transition');
   });
+
+  it('throws for colon-separated syntax', () => {
+    expect(() => parseConditional('PASS: CONTINUE')).toThrow('Invalid transition syntax');
+    expect(() => parseConditional('FAIL: STOP')).toThrow('Invalid transition syntax');
+    expect(() => parseConditional('YES: CONTINUE')).toThrow('Invalid transition syntax');
+    expect(() => parseConditional('NO: STOP')).toThrow('Invalid transition syntax');
+  });
 });
 
 describe('parseConditional prefix matching', () => {

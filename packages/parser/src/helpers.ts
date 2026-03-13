@@ -676,6 +676,13 @@ export function parseConditional(text: string): ParseConditionalResult {
     return result;
   }
 
+  // Reject transition keywords followed by invalid separators (e.g., "PASS:", "FAIL:")
+  if (/^(?:PASS|FAIL|YES|NO)[^a-zA-Z0-9\s]/.test(trimmed)) {
+    throw new RunbookSyntaxError(
+      `Invalid transition syntax: "${trimmed}". Use space-separated format (e.g., "PASS CONTINUE")`,
+    );
+  }
+
   return null;
 }
 
