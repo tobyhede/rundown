@@ -80,11 +80,11 @@ function parseJsonOrJsonl(stdout: string): unknown {
   if (parsedObjects.length === 0) return stdout;
   if (parsedObjects.length === 1) return parsedObjects[0];
 
-  // Prefer command-style payload when present (pass/fail/goto/complete/etc.).
-  const actionOutput = parsedObjects.find((value) => {
+  // Prefer the last (terminal) command-style payload (pass/fail/goto/complete/etc.).
+  const actionOutput = [...parsedObjects].reverse().find((value) => {
     if (!value || typeof value !== 'object') return false;
     const record = value as Record<string, unknown>;
-    return 'action' in record && 'result' in record;
+    return 'action' in record;
   });
 
   return actionOutput ?? parsedObjects;

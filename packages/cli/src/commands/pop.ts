@@ -34,7 +34,7 @@ export function registerPopCommand(program: Command): void {
           const state = await sessionService.unstash();
 
           if (!state) {
-            output.status(false, 'pop', 'No stashed runbook to restore');
+            output.error('No stashed runbook to restore', 'NO_STASHED_RUNBOOK');
             output.flush();
             return;
           }
@@ -66,7 +66,7 @@ export function registerPopCommand(program: Command): void {
           }
 
           if (!currentStep) {
-            output.status(false, 'pop', `Step "${state.step}" not found in runbook`, {
+            output.error(`Step "${state.step}" not found in runbook`, 'STEP_NOT_FOUND', {
               restoredId: state.id,
             });
             output.flush();
@@ -75,7 +75,7 @@ export function registerPopCommand(program: Command): void {
 
           // Emit status with step data for both modes
           // TextRenderer handles rendering the step block for text output
-          output.status(true, 'pop', 'Runbook restored', {
+          output.status('pop', 'Runbook restored', {
             position: {
               current: state.step,
               total: totalSteps,

@@ -43,10 +43,9 @@ describe('output type guards', () => {
 
   describe('isStatusOutput', () => {
     it('returns true and narrows to StatusOutput', () => {
-      const event = { type: 'status', result: true, action: 'pass' } as OutputEvent;
+      const event = { type: 'status', action: 'pass' } as OutputEvent;
       expect(isStatusOutput(event)).toBe(true);
       if (isStatusOutput(event)) {
-        expect(event.result).toBe(true);
         expect(event.action).toBe('pass');
       }
     });

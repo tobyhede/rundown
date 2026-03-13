@@ -271,16 +271,11 @@ export async function executeTransition(
       });
       await lifecycleService.upsertResolvedCompletion(activeState.id, completionKey, completion);
     } else {
-      output.status(
-        existing.result === 'pass',
-        'completion_duplicate',
-        `Completion already recorded for ${cursor.at}`,
-        {
-          at: cursor.at,
-          frameKey: cursor.frameKey,
-          entry: cursor.entry,
-        },
-      );
+      output.status('completion_duplicate', `Completion already recorded for ${cursor.at}`, {
+        at: cursor.at,
+        frameKey: cursor.frameKey,
+        entry: cursor.entry,
+      });
     }
 
     const emitter = createBridgedEmitter(activeState, output);

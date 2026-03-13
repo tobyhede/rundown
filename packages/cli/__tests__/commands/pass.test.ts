@@ -245,7 +245,7 @@ This step stops on pass.
   });
 
   describe('JSON action result semantics', () => {
-    it('reports result: true for CONTINUE transitions', async () => {
+    it('reports action CONTINUE for CONTINUE transitions', async () => {
       // Start runbook in prompted mode
       await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
 
@@ -255,7 +255,6 @@ This step stops on pass.
 
       expect(output).not.toBeNull();
       expect(output?.action).toBe('CONTINUE');
-      expect(output?.result).toBe(true);
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);
@@ -307,7 +306,7 @@ rd echo --result fail
       expect(foundRetry).toBe(true);
     });
 
-    it('reports result: true for COMPLETE transitions', async () => {
+    it('reports action complete for COMPLETE transitions', async () => {
       // Start runbook in prompted mode
       await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
       await runCliInProcess('pass', workspace); // Advance to step 2
@@ -319,10 +318,9 @@ rd echo --result fail
 
       expect(output).not.toBeNull();
       expect(output?.action).toBe('complete');
-      expect(output?.result).toBe(true);
     });
 
-    it('reports result: true for GOTO transitions', async () => {
+    it('reports action GOTO for GOTO transitions', async () => {
       // Start goto runbook in prompted mode
       await runCliInProcess('run --prompted runbooks/goto.runbook.md', workspace);
 
@@ -332,21 +330,19 @@ rd echo --result fail
 
       expect(output).not.toBeNull();
       expect(output?.action as string).toMatch(/^GOTO/);
-      expect(output?.result).toBe(true);
     });
 
-    it('reports result: true and stepResult FAIL for RETRY transitions', async () => {
+    it('reports stepResult FAIL for RETRY transitions', async () => {
       // Start pass-retry runbook in prompted mode
       await runCliInProcess('run --prompted runbooks/pass-retry.runbook.md', workspace);
 
       // Pass should trigger RETRY (since PASS: RETRY 3)
-      // result is true (operation non-terminal), stepResult is FAIL (RETRY = not yet passing)
+      // stepResult is FAIL (RETRY = not yet passing)
       const result = await runCliInProcess('pass --json', workspace);
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
       expect(output?.action as string).toMatch(/^RETRY/);
-      expect(output?.result).toBe(true);
       expect(output?.stepResult).toBe('FAIL');
 
       // Validate against schema
@@ -354,7 +350,7 @@ rd echo --result fail
       expect(parseResult.success).toBe(true);
     });
 
-    it('reports result: false for STOP transitions', async () => {
+    it('reports action stop for STOP transitions', async () => {
       // Create stop-on-pass runbook
       const stopOnPassRunbook = `## 1. Stop on pass
 - PASS STOP
@@ -374,7 +370,6 @@ This step stops on pass.
 
       expect(output).not.toBeNull();
       expect(output?.action).toBe('stop'); // lowercase per CLI conventions
-      expect(output?.result).toBe(false);
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);

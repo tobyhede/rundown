@@ -135,7 +135,6 @@ Do work.
       // Currently this test FAILS because output.error() does not set action
       expect(output).toHaveProperty('action');
       expect(output.action).toBe('fail');
-      expect(output.result).toBe(false);
       expect(output.code).toBe('NO_ACTIVE_RUNBOOK');
 
       // Validate against schema
@@ -145,7 +144,7 @@ Do work.
   });
 
   describe('JSON action result semantics', () => {
-    it('reports result: true and stepResult FAIL for RETRY transitions', async () => {
+    it('reports stepResult FAIL for RETRY transitions', async () => {
       // Start retry runbook in prompted mode
       await runCliInProcess('run --prompted runbooks/retry.runbook.md', workspace);
 
@@ -155,7 +154,6 @@ Do work.
 
       expect(output).not.toBeNull();
       expect(output!.action as string).toMatch(/^RETRY/);
-      expect(output!.result).toBe(true);
       expect(output!.stepResult).toBe('FAIL');
 
       // Validate against schema
@@ -163,7 +161,7 @@ Do work.
       expect(parseResult.success).toBe(true);
     });
 
-    it('reports result: false for STOP transitions', async () => {
+    it('reports action stop for STOP transitions', async () => {
       // Start simple runbook in prompted mode (FAIL: STOP on step 1)
       await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
 
@@ -173,14 +171,13 @@ Do work.
 
       expect(output).not.toBeNull();
       expect(output?.action).toBe('stop'); // lowercase per CLI conventions
-      expect(output?.result).toBe(false);
 
       // Validate against schema
       const parseResult = ActionResponseSchema.safeParse(output);
       expect(parseResult.success).toBe(true);
     });
 
-    it('reports result: true and stepResult FAIL for GOTO transitions', async () => {
+    it('reports stepResult FAIL for GOTO transitions', async () => {
       // Start fail-goto runbook in prompted mode (FAIL: GOTO 3)
       await runCliInProcess('run --prompted runbooks/fail-goto.runbook.md', workspace);
 
@@ -190,7 +187,6 @@ Do work.
 
       expect(output).not.toBeNull();
       expect(output?.action as string).toMatch(/^GOTO/);
-      expect(output?.result).toBe(true);
       expect(output?.stepResult).toBe('FAIL');
 
       // Validate against schema

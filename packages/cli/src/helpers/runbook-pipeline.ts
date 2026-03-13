@@ -269,7 +269,12 @@ export async function prepareRunbook(
   let sources: Record<string, DataSource>;
   try {
     const resolvedVariables = await resolveVariables(
-      { varFile: varOpts.varFile, var: varOpts.var, frontmatterVars },
+      {
+        varFile: varOpts.varFile,
+        var: varOpts.var,
+        frontmatterVars,
+        inheritedVars: options?.inheritedUserVars,
+      },
       cwd,
       {
         evaluator: getPolicyEvaluator(),
@@ -699,19 +704,14 @@ export async function claimAndLaunch(
     const childRunId = capturedChildRunId ?? 'unknown';
 
     // Emit claimed output
-    output.status(
-      true,
-      'claimed',
-      `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
-      {
-        action: 'claimed',
-        token: truncatedToken,
-        run_id: childRunId,
-        runbook: freshDelegation.childRunbookPath,
-        parent_run_id: freshParent.id,
-        parent_step: substepId ? `${stepId}.${substepId}` : stepId,
-      },
-    );
+    output.status('claimed', `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`, {
+      action: 'claimed',
+      token: truncatedToken,
+      run_id: childRunId,
+      runbook: freshDelegation.childRunbookPath,
+      parent_run_id: freshParent.id,
+      parent_step: freshDelegation.contextSnapshot.at,
+    });
 
     return {
       ok: true,

@@ -96,8 +96,6 @@ export interface MetadataOutput extends BaseOutputEvent {
  */
 export interface StatusOutput extends BaseOutputEvent {
   type: 'status';
-  /** Whether the operation succeeded (JSON outputs as `result: boolean`) */
-  result: boolean;
   /** The action that was performed */
   action: string;
   /** Human-readable message about the result */

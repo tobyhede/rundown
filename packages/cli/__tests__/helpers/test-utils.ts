@@ -456,21 +456,21 @@ export function findActionOutput(stdout: string): Record<string, unknown> | null
   // First try to parse the entire stdout as a single JSON object
   try {
     const output = JSON.parse(stdout.trim()) as Record<string, unknown>;
-    if ('action' in output && 'result' in output) {
+    if ('action' in output) {
       return output;
     }
   } catch {
     // Not a single JSON object, try line-by-line
   }
 
-  // Try each line as a separate JSON object
+  // Try each line in reverse order (last action is terminal/authoritative)
   const lines = stdout.trim().split('\n');
-  for (const line of lines) {
+  for (const line of lines.reverse()) {
     if (line.trim().startsWith('{')) {
       try {
         const output = JSON.parse(line) as Record<string, unknown>;
-        // Action outputs have action + result fields
-        if ('action' in output && 'result' in output) {
+        // Action outputs have an action field
+        if ('action' in output) {
           return output;
         }
       } catch {

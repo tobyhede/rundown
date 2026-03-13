@@ -301,13 +301,6 @@ echo done
 
       // Verify structure
       expect(output).toHaveProperty('action');
-      // Explicit type check: result must be boolean, not string
-      if ('result' in (output as Record<string, unknown>)) {
-        expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
-        // Regression guard: ensure string literals are never used
-        expect((output as Record<string, unknown>).result).not.toBe('PASS');
-        expect((output as Record<string, unknown>).result).not.toBe('FAIL');
-      }
     });
 
     it('validates pass error when no active runbook', async () => {
@@ -316,10 +309,8 @@ echo done
 
       // Should still be valid JSON
       expect(typeof output).toBe('object');
-      // Should indicate no active runbook
-      expect(output).toHaveProperty('result', false);
-      // Explicit type check: result must be boolean, not string
-      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
+      // Should indicate no active runbook via error field
+      expect(output).toHaveProperty('error');
     });
   });
 
@@ -346,11 +337,6 @@ echo done
       const validation = validateActionOutput(output);
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
-
-      // Explicit type check: result must be boolean, not string
-      if ('result' in (output as Record<string, unknown>)) {
-        expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
-      }
     });
   });
 
@@ -431,21 +417,15 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Uses action='stash' (present tense verb), result=true
-      expect(output).toHaveProperty('result', true);
       expect(output).toHaveProperty('action', 'stash');
-      // Explicit type check: result must be boolean, not string
-      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
 
     it('validates stash error when no active runbook', async () => {
       const result = await runCliInProcess('stash --json', workspace);
       const output = parseJsonOutput(result.stdout);
 
-      // Should indicate error
-      expect(output).toHaveProperty('result', false);
-      // Explicit type check: result must be boolean, not string
-      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
+      // Should indicate error via error field
+      expect(output).toHaveProperty('error');
     });
   });
 
@@ -471,20 +451,16 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      expect(output).toHaveProperty('result', true);
       expect(output).toHaveProperty('action', 'pop');
-      // Explicit type check: result must be boolean, not string
-      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
 
     it('validates pop error when no stashed runbook', async () => {
       const result = await runCliInProcess('pop --json', workspace);
       const output = parseJsonOutput(result.stdout);
 
-      // Should indicate error
-      expect(output).toHaveProperty('result', false);
-      // Explicit type check: result must be boolean, not string
-      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
+      // Should indicate error via error field
+      expect(output).toHaveProperty('error');
+      expect(output).toHaveProperty('code', 'NO_STASHED_RUNBOOK');
     });
   });
 
@@ -608,7 +584,6 @@ echo hello
       expect(validation.errors).toEqual([]);
 
       // Verify error structure per CLI-OUTPUT-SPEC
-      expect(output).toHaveProperty('result', false);
       expect(output).toHaveProperty('error', 'Scenario "non-existent" not found');
       expect(output).toHaveProperty('code', 'SCENARIO_NOT_FOUND');
     });
@@ -844,11 +819,8 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Per CLI-OUTPUT-SPEC: action='stop' (command name), result=false (stop = failure to continue)
+      // Per CLI-OUTPUT-SPEC: action='stop' (command name)
       expect(output).toHaveProperty('action', 'stop');
-      expect(output).toHaveProperty('result', false);
-      // Explicit type check: result must be boolean, not string
-      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
   });
 
@@ -873,11 +845,8 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Current format: action='complete', result=true (complete = success)
+      // Current format: action='complete'
       expect(output).toHaveProperty('action', 'complete');
-      expect(output).toHaveProperty('result', true);
-      // Explicit type check: result must be boolean, not string
-      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
     });
   });
 
@@ -890,10 +859,8 @@ prompt: Wait
       const result = await runCliInProcess('pass --json', workspace);
       const output = parseJsonOutput(result.stdout);
 
-      // Verify error structure
-      expect(output).toHaveProperty('result', false);
-      // Explicit type check: result must be boolean, not string
-      expect(typeof (output as Record<string, unknown>).result).toBe('boolean');
+      // Verify error structure - should have error field
+      expect(output).toHaveProperty('error');
       // The error message varies by command
       expect(
         typeof (output as { error?: string }).error === 'string' ||

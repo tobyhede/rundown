@@ -98,6 +98,7 @@ promptable
 pstep
 psub
 pwd
+rdpath
 rdtest
 rdtk
 realpath

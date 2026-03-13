@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Claude Code plugin for runbook orchestration and workflow execution",
   "type": "module",
+  "bin": {
+    "rdpath": "dist/rdpath.js"
+  },
   "main": "dist/cli.js",
   "types": "dist/index.d.ts",
   "exports": {

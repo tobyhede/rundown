@@ -36,7 +36,6 @@ type JsonPosition = {
  * Collected JSON output from events.
  */
 interface JsonOutput {
-  result?: boolean;
   stepResult?: 'PASS' | 'FAIL';
   action?: string;
   message?: string;
@@ -106,7 +105,6 @@ export class JSONRenderer implements OutputRenderer {
         }
         break;
       case 'status':
-        this.output.result = event.result;
         this.output.action = event.action;
         if (event.message) {
           this.output.message = event.message;
@@ -131,7 +129,6 @@ export class JSONRenderer implements OutputRenderer {
         }
         break;
       case 'error':
-        this.output.result = false;
         this.output.error = event.message;
         if (event.code) {
           this.output.code = event.code;
@@ -141,7 +138,6 @@ export class JSONRenderer implements OutputRenderer {
         }
         break;
       case 'complete':
-        this.output.result = true;
         this.output.action = 'complete';
         this.output.complete = true;
         if (event.message) {
@@ -152,7 +148,6 @@ export class JSONRenderer implements OutputRenderer {
         }
         break;
       case 'stopped':
-        this.output.result = false;
         this.output.action = 'stop';
         this.output.stopped = true;
         if (event.message) {
@@ -163,7 +158,6 @@ export class JSONRenderer implements OutputRenderer {
         }
         break;
       case 'no_active_runbook':
-        this.output.result = false;
         this.output.error = 'No active runbook';
         if (event.action) {
           this.output.action = event.action;
@@ -194,8 +188,6 @@ export class JSONRenderer implements OutputRenderer {
       if (this.isListOnly && this.listItems !== null) {
         this.writer.writeJson(this.listItems, pretty);
       } else {
-        // Ensure result field exists (default based on error presence)
-        this.output.result ??= !this.output.error;
         this.writer.writeJson(this.output, pretty);
       }
       this.output = {};

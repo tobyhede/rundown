@@ -10,6 +10,7 @@
  * @module
  */
 
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as yaml from 'js-yaml';
@@ -155,6 +156,8 @@ export function getBuiltinVariables(): Record<string, string> {
     Month: String(now.getUTCMonth() + 1).padStart(2, '0'), // MM (01-12, UTC)
     Day: String(now.getUTCDate()).padStart(2, '0'), // DD (01-31, UTC)
     WorkPath: '.work', // Default artifact directory
+    RunId: randomBytes(4).toString('hex'), // 8-char hex
+    ContextId: randomBytes(4).toString('hex'), // 8-char hex
   };
 }
 
@@ -456,21 +459,43 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
 /**
  * Collect raw (pre-normalization) variable layers in precedence order.
  *
- * Returns array from lowest to highest precedence.
+ * Returns array from lowest to highest precedence. Later layers override
+ * earlier ones for the same key during processing in `resolveVariables`.
  *
- * @param options - Variable sources from CLI flags, var-file, and frontmatter
+ * ```
+ * Layer 0: builtins        ← Date, WorkPath, RunId, ContextId (fresh)
+ * Layer 1: inheritedVars   ← parent delegation vars (overrides builtins)
+ * Layer 2: frontmatter     ← runbook YAML frontmatter vars:
+ * Layer 3: discovered      ← .rundown/config.yaml (auto-discovered)
+ * Layer 4: varFile         ← --var-file contents
+ * Layer 5: flags           ← --var CLI flags (highest precedence)
+ * ```
+ *
+ * The inherited layer ensures that parent ContextId survives into child
+ * runbooks during delegation, rather than being replaced by a fresh builtin.
+ *
+ * @param options - Variable sources from CLI flags, var-file, frontmatter, and inherited vars
  * @param options.varFile - Path to YAML file containing variable definitions
  * @param options.var - Array of key=value flag strings from CLI
  * @param options.frontmatterVars - Variables extracted from runbook frontmatter
+ * @param options.inheritedVars - Variables inherited from parent delegation
  * @param cwd - Current working directory for resolving relative paths
  * @returns Array of variable layers in precedence order
  */
 async function collectRawLayers(
-  options: { varFile?: string; var?: string[]; frontmatterVars?: Record<string, unknown> },
+  options: {
+    varFile?: string;
+    var?: string[];
+    frontmatterVars?: Record<string, unknown>;
+    inheritedVars?: Record<string, unknown>;
+  },
   cwd: string,
 ): Promise<Record<string, unknown>[]> {
   // 1. Built-ins (lowest)
   const builtins: Record<string, unknown> = getBuiltinVariables();
+
+  // 1b. Inherited vars from parent delegation (overrides builtins)
+  const inherited: Record<string, unknown> = options.inheritedVars ?? {};
 
   // 2. Frontmatter
   const frontmatter: Record<string, unknown> = options.frontmatterVars ?? {};
@@ -500,7 +525,7 @@ async function collectRawLayers(
     }
   }
 
-  return [builtins, frontmatter, discovered, fromFile, fromFlags];
+  return [builtins, inherited, frontmatter, discovered, fromFile, fromFlags];
 }
 
 async function enforceFileSourcePolicy(
@@ -536,7 +561,8 @@ async function enforceFileSourcePolicy(
  * Resolve variables into dual maps: string vars for templates + data sources for FOR loops.
  *
  * Processes variable layers in precedence order (lowest to highest):
- * 1. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath)
+ * 1. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath, RunId, ContextId)
+ * 1b. Inherited vars from parent delegation (overrides builtins)
  * 2. Frontmatter vars
  * 3. Auto-discovered .rundown/config.yaml
  * 4. --var-file contents
@@ -548,10 +574,11 @@ async function enforceFileSourcePolicy(
  * - Multiline string → both vars and sources (array of lines)
  * - Scalar → vars only
  *
- * @param options - Variable sources from CLI flags, var-file, and frontmatter
+ * @param options - Variable sources from CLI flags, var-file, frontmatter, and inherited vars
  * @param options.varFile - Path to YAML file containing variable definitions
  * @param options.var - Array of key=value flag strings from CLI
  * @param options.frontmatterVars - Variables extracted from runbook frontmatter
+ * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param cwd - Current working directory for resolving relative paths
  * @param security - Optional security context for file source policy enforcement
  * @returns ResolvedVariables with vars and sources maps
@@ -562,6 +589,7 @@ export async function resolveVariables(
     varFile?: string;
     var?: string[];
     frontmatterVars?: Record<string, unknown>;
+    inheritedVars?: Record<string, string>;
   },
   cwd: string,
   security?: VariableSecurityContext,
@@ -588,7 +616,7 @@ export async function resolveVariables(
         continue;
       }
       // Keep runtime-owned identifiers deterministic by rejecting overrides
-      // from all non-built-in layers (frontmatter/config/var-file/--var).
+      // from all non-built-in layers (inherited/frontmatter/config/var-file/--var).
       if (layerIndex > 0 && isRuntimeReservedVariable(key)) {
         console.warn(`Warning: Ignoring reserved runtime variable: ${key}`);
         continue;

@@ -36,14 +36,14 @@ export function registerStashCommand(program: Command): void {
           // Stash the runbook
           const stashedId = await sessionService.stash();
           if (!stashedId) {
-            output.status(false, 'stash', 'A runbook is already stashed. Pop it first.');
+            output.error('A runbook is already stashed. Pop it first.', 'ALREADY_STASHED');
             output.flush();
             return;
           }
 
           // Emit structured output - TextRenderer handles stash action specially
           output.metadata(buildMetadata(state));
-          output.status(true, 'stash', 'Runbook stashed', {
+          output.status('stash', 'Runbook stashed', {
             position: {
               current: state.step,
               total: totalSteps,

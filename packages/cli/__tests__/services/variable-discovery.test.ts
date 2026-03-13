@@ -64,6 +64,8 @@ describe('getBuiltinVariables', () => {
     expect(builtins).toHaveProperty('Month');
     expect(builtins).toHaveProperty('Day');
     expect(builtins).toHaveProperty('WorkPath');
+    expect(builtins).toHaveProperty('RunId');
+    expect(builtins).toHaveProperty('ContextId');
   });
 
   it('should return Date in YYYY-MM-DD format', () => {
@@ -101,6 +103,32 @@ describe('getBuiltinVariables', () => {
     const builtins = getBuiltinVariables();
 
     expect(builtins.WorkPath).toBe('.work');
+  });
+
+  it('should return RunId as alphanumeric string', () => {
+    const builtins = getBuiltinVariables();
+
+    expect(builtins).toHaveProperty('RunId');
+    expect(builtins.RunId).toMatch(/^[a-f0-9]+$/);
+    expect(builtins.RunId).toHaveLength(8);
+  });
+
+  it('should return unique RunId across calls', () => {
+    const ids = new Set(Array.from({ length: 100 }, () => getBuiltinVariables().RunId));
+    expect(ids.size).toBeGreaterThan(90);
+  });
+
+  it('should return ContextId as 8-char alphanumeric string', () => {
+    const builtins = getBuiltinVariables();
+
+    expect(builtins).toHaveProperty('ContextId');
+    expect(builtins.ContextId).toMatch(/^[a-f0-9]+$/);
+    expect(builtins.ContextId).toHaveLength(8);
+  });
+
+  it('should return unique ContextId across calls', () => {
+    const ids = new Set(Array.from({ length: 100 }, () => getBuiltinVariables().ContextId));
+    expect(ids.size).toBeGreaterThan(90);
   });
 
   it('should return consistent date components', () => {
@@ -753,6 +781,35 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ frontmatterVars: { servers: ['a', 'b'] } }, tmpDir);
       // This tests that resolveVariables handles raw (pre-normalization) frontmatter
       expect(result.sources.servers).toEqual({ kind: 'array', items: ['a', 'b'] });
+    });
+  });
+
+  describe('inherited vars', () => {
+    it('inherited vars override builtins', async () => {
+      const result = await resolveVariables({ inheritedVars: { ContextId: 'parent123' } }, tmpDir);
+      expect(result.vars.ContextId).toBe('parent123');
+    });
+
+    it('frontmatter overrides inherited vars', async () => {
+      const result = await resolveVariables(
+        {
+          inheritedVars: { myVar: 'inherited' },
+          frontmatterVars: { myVar: 'frontmatter' },
+        },
+        tmpDir,
+      );
+      expect(result.vars.myVar).toBe('frontmatter');
+    });
+
+    it('inherited ContextId survives when child has no override', async () => {
+      const result = await resolveVariables(
+        {
+          inheritedVars: { ContextId: 'parent123' },
+          frontmatterVars: { otherVar: 'value' },
+        },
+        tmpDir,
+      );
+      expect(result.vars.ContextId).toBe('parent123');
     });
   });
 
