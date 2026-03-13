@@ -1915,6 +1915,112 @@ describe('runbook compiler', () => {
       expect(ctx.forStack[0].end).toBe(3);
       expect(ctx.iterationResults).toEqual([]);
     });
+
+    it('errors when first FOR step has unresolved bounds', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: {
+            unresolved: true as const,
+            variable: 'batch',
+            start: 1,
+            end: { ref: 'Max' },
+          },
+          description: 'Unresolved FOR',
+          substeps: [{ id: '1', description: 'Process', transitions: DEFAULT_TRANSITIONS }],
+        },
+      ]);
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      let capturedError: unknown;
+      actor.subscribe({
+        error: (err) => {
+          capturedError = err;
+        },
+      });
+      actor.start();
+      expect(capturedError).toBeDefined();
+      expect(String(capturedError)).toMatch(/Unresolved FOR bounds/);
+      expect(actor.getSnapshot().status).toBe('error');
+    });
+
+    it('errors when transitioning into FOR step with unresolved bounds', () => {
+      const steps = inferSteps([
+        {
+          name: '2',
+          description: 'Setup',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+        {
+          name: '3',
+          forClause: {
+            unresolved: true as const,
+            variable: 'batch',
+            start: 1,
+            end: { ref: 'Max' },
+          },
+          description: 'Unresolved FOR',
+          substeps: [{ id: '1', description: 'Process', transitions: DEFAULT_TRANSITIONS }],
+        },
+      ]);
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      let capturedError: unknown;
+      actor.subscribe({
+        error: (err) => {
+          capturedError = err;
+        },
+      });
+      actor.start();
+      expect(actor.getSnapshot().value).toBe('step::2');
+      actor.send({ type: 'PASS' });
+      expect(capturedError).toBeDefined();
+      expect(String(capturedError)).toMatch(/Unresolved FOR bounds/);
+      expect(actor.getSnapshot().status).toBe('error');
+    });
+
+    it('errors when GOTO transitions into FOR step with unresolved bounds', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Jump',
+          transitions: {
+            aggregation: 'ALL' as const,
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '2' } },
+            },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+        {
+          name: '2',
+          forClause: {
+            unresolved: true as const,
+            variable: 'batch',
+            start: 1,
+            end: { ref: 'Max' },
+          },
+          description: 'Unresolved FOR',
+          substeps: [{ id: '1', description: 'Process', transitions: DEFAULT_TRANSITIONS }],
+        },
+      ]);
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      let capturedError: unknown;
+      actor.subscribe({
+        error: (err) => {
+          capturedError = err;
+        },
+      });
+      actor.start();
+      expect(actor.getSnapshot().value).toBe('step::1');
+      actor.send({ type: 'PASS' });
+      expect(capturedError).toBeDefined();
+      expect(String(capturedError)).toMatch(/Unresolved FOR bounds/);
+      expect(actor.getSnapshot().status).toBe('error');
+    });
   });
 
   describe('implicit 1..1 loop model', () => {

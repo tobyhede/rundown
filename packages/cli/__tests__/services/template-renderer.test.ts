@@ -763,4 +763,38 @@ describe('resolveForBounds', () => {
       transitions,
     });
   });
+
+  it('resolves unnamed numeric range (no variable)', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      start: 1,
+      end: { ref: 'Count' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { Count: '5' });
+    expect(result.steps[0].forClause).toEqual({ start: 1, end: 5 });
+  });
+
+  it('throws for negative integer value', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Neg' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, { Neg: '-5' })).toThrow('must be a positive integer');
+  });
+
+  it('resolves source window with start BoundRef and no end', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: { ref: 'Begin' },
+      source: 'items',
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { Begin: '3' });
+    expect(result.steps[0].forClause).toEqual({ variable: 'item', start: 3, source: 'items' });
+  });
 });

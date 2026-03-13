@@ -263,6 +263,17 @@ describe('renderForClause coverage', () => {
     const result = renderStep(step);
     expect(result).toContain('- FOR 5');
   });
+
+  it('throws when rendering FOR step with unresolved bounds', () => {
+    const step: Step = {
+      kind: 'for',
+      name: '1',
+      description: 'Iterate',
+      forClause: { unresolved: true as const, variable: 'item', start: 1, end: { ref: 'Max' } },
+      substeps: [{ id: '1', description: 'Process' }],
+    } as Step;
+    expect(() => renderStep(step)).toThrow('Cannot render unresolved FOR clause bounds');
+  });
 });
 
 describe('renderSubstep with parent prefix', () => {

@@ -876,6 +876,31 @@ echo batch
     expect(steps[0].substeps).toHaveLength(1);
   });
 
+  it('parses unresolved FOR clause with template variable from full markdown', () => {
+    const md = `## 1. Process batches
+- FOR batch IN 1 TO {{Max}}
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Handle batch
+\`\`\`bash
+echo batch
+\`\`\`
+
+## 2. Done
+- PASS COMPLETE
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].forClause).toEqual({
+      unresolved: true,
+      variable: 'batch',
+      start: 1,
+      end: { ref: 'Max' },
+    });
+    expect(steps[0].kind).toBe('for');
+    expect(steps[0].substeps).toHaveLength(1);
+  });
+
   describe('FOR clause nested transitions', () => {
     it('parses FOR with nested transitions (PASS ALL / FAIL ANY)', () => {
       const markdown = `## 1. Review

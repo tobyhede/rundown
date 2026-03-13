@@ -1529,6 +1529,16 @@ describe('parseForClause', () => {
       });
     });
 
+    it('accepts windowed source with template start and numeric end', () => {
+      expect(parseForClause('FOR item IN {{Start}} TO 10 OF {{ items }}')).toEqual({
+        unresolved: true,
+        variable: 'item',
+        start: { ref: 'Start' },
+        end: 10,
+        source: 'items',
+      });
+    });
+
     it('accepts template ref with spaces in braces', () => {
       expect(parseForClause('FOR 1 TO {{ Max }}')).toEqual({
         unresolved: true,
