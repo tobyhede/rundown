@@ -28,9 +28,12 @@ describe('assemblePath', () => {
 
   it('uses current date for date prefix', () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-06-15T12:00:00Z'));
-    const result = assemblePath({ dir: '.work', file: 'test.md' });
-    expect(result).toBe(path.join('.work', '2026-06-15-test.md'));
-    jest.useRealTimers();
+    try {
+      const result = assemblePath({ dir: '.work', file: 'test.md' });
+      expect(result).toBe(path.join('.work', '2026-06-15-test.md'));
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   describe('input validation', () => {

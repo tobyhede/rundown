@@ -463,9 +463,9 @@ export function findActionOutput(stdout: string): Record<string, unknown> | null
     // Not a single JSON object, try line-by-line
   }
 
-  // Try each line as a separate JSON object
+  // Try each line in reverse order (last action is terminal/authoritative)
   const lines = stdout.trim().split('\n');
-  for (const line of lines) {
+  for (const line of lines.reverse()) {
     if (line.trim().startsWith('{')) {
       try {
         const output = JSON.parse(line) as Record<string, unknown>;

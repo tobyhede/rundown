@@ -15,7 +15,7 @@
 - **Lists**: Raw arrays `[...]` (no wrapper object)
 - **Workflow commands**: Include `action` field (pass, fail, stop, complete, stash, pop)
 - **Errors**: `{ "error": "message", "code": "CODE" }`
-- **Success/failure**: Indicated by exit code, not a `result` field
+- **Success/failure**: Workflow commands use exit code, not a `result` field
 - **Position**: `{ "current": string, "total": number|string }`
 - **Action field**: Shows transition (e.g., "CONTINUE", "GOTO 3", "RETRY"), not command name
 
