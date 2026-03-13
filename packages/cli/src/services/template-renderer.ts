@@ -407,25 +407,27 @@ function isForVariablePath(name: string, forVars: ReadonlySet<string>): boolean 
   return forVars.has(name.slice(0, dotIndex));
 }
 
-/** Variables resolved at runtime per-step — not "undefined" after static substitution. */
-const RUNTIME_VARIABLES = new Set([
+/** Variables resolved at runtime per-step globally, outside FOR loops. */
+const GLOBAL_RUNTIME_VARIABLES = new Set([
   'Step',
   'step',
-  'Index',
-  'index',
   'context.current.step',
   'context.current.substep',
-  'context.current.index',
   'context.current.at',
 ]);
+
+/** Variables resolved at runtime only inside FOR loop substeps. */
+const FOR_LOOP_RUNTIME_VARIABLES = new Set(['Index', 'index', 'context.current.index']);
 
 /**
  * Collect unresolved template variable names from a substituted runbook.
  *
  * Walks the runbook AST collecting all remaining `{{...}}` placeholders
- * and returns them as a deduplicated set. Runtime variables (Step, Index,
- * context.current.*) are always suppressed. FOR loop variables are only
- * suppressed within their own FOR step's substeps.
+ * and returns them as a deduplicated set. Global runtime variables (Step,
+ * context.current.*) are always suppressed. FOR loop-specific variables
+ * (Index, context.current.index) are only suppressed within their own
+ * FOR step's substeps. FOR loop variables are only suppressed within
+ * their own FOR step's substeps.
  *
  * @param runbook - Runbook AST after variable substitution
  * @returns Set of unresolved variable names found in the runbook
@@ -436,7 +438,7 @@ export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string>
   const collect = (text: string | undefined): void => {
     if (!text) return;
     for (const name of collectUnresolvedVariables(text)) {
-      if (!RUNTIME_VARIABLES.has(name)) {
+      if (!GLOBAL_RUNTIME_VARIABLES.has(name)) {
         unresolved.add(name);
       }
     }
@@ -470,7 +472,7 @@ export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string>
         }
         break;
       case 'for': {
-        const forSuppressed = new Set(RUNTIME_VARIABLES);
+        const forSuppressed = new Set([...GLOBAL_RUNTIME_VARIABLES, ...FOR_LOOP_RUNTIME_VARIABLES]);
         if (step.forClause.variable) forSuppressed.add(step.forClause.variable);
         for (const ss of step.substeps) {
           collectScoped(ss.description, forSuppressed);
