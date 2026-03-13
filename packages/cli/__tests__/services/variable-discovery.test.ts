@@ -6,7 +6,6 @@ import {
   parseVarFlag,
   mergeVariables,
   loadVariablesFromFile,
-  extractVarsFromMarkdown,
   getBuiltinVariables,
   resolveVariables,
 } from '../../src/services/variable-discovery.js';
@@ -463,186 +462,6 @@ describe('discoverVariables', () => {
   });
 });
 
-describe('extractVarsFromMarkdown', () => {
-  it('should extract vars from valid frontmatter', () => {
-    const markdown = `---
-name: test-runbook
-vars:
-  greeting: Hello
-  count: 42
-  enabled: true
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    expect(result).toEqual({
-      greeting: 'Hello',
-      count: '42',
-      enabled: 'true',
-    });
-  });
-
-  it('should return empty object when no frontmatter present', () => {
-    const markdown = `# No Frontmatter
-Just content here.`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    expect(result).toEqual({});
-  });
-
-  it('should return empty object when frontmatter has no vars field', () => {
-    const markdown = `---
-name: test-runbook
-description: A test runbook
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    expect(result).toEqual({});
-  });
-
-  it('should return empty object when vars is null', () => {
-    const markdown = `---
-name: test-runbook
-vars: null
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    expect(result).toEqual({});
-  });
-
-  it('should convert null values to string "null"', () => {
-    const markdown = `---
-name: test-runbook
-vars:
-  nullable: null
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-    expect(result).toEqual({ nullable: 'null' });
-  });
-
-  it('should return empty object when vars is not an object', () => {
-    const markdown = `---
-name: test-runbook
-vars: "not an object"
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    expect(result).toEqual({});
-  });
-
-  it('should convert numbers to strings', () => {
-    const markdown = `---
-name: test-runbook
-vars:
-  port: 3000
-  pi: 3.14159
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    expect(result).toEqual({
-      port: '3000',
-      pi: '3.14159',
-    });
-  });
-
-  it('should convert booleans to strings', () => {
-    const markdown = `---
-name: test-runbook
-vars:
-  debug: true
-  production: false
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    expect(result).toEqual({
-      debug: 'true',
-      production: 'false',
-    });
-  });
-
-  it('should reject invalid identifier keys', () => {
-    const markdown = `---
-name: test-runbook
-vars:
-  valid_key: value1
-  invalid-key: value2
-  123invalid: value3
-  _valid: value4
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    // Invalid keys are silently filtered — frontmatter validation
-    // (validateFrontmatterVars) handles diagnostics for these cases
-    expect(result).toEqual({
-      valid_key: 'value1',
-      _valid: 'value4',
-    });
-  });
-
-  it('should warn and skip complex values', () => {
-    const markdown = `---
-name: test-runbook
-vars:
-  simple: value
-  complex:
-    nested: object
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    // Complex values are skipped, not coerced to "[object Object]"
-    // Frontmatter validation (validateFrontmatterVars) handles diagnostics
-    expect(result).toEqual({
-      simple: 'value',
-    });
-  });
-
-  it('should handle empty vars object', () => {
-    const markdown = `---
-name: test-runbook
-vars: {}
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    expect(result).toEqual({});
-  });
-
-  it('should handle frontmatter with only vars field', () => {
-    // Note: This would fail schema validation in the parser,
-    // but extractVarsFromMarkdown uses raw extraction without validation
-    const markdown = `---
-vars:
-  key: value
----
-# Content`;
-
-    const result = extractVarsFromMarkdown(markdown);
-
-    expect(result).toEqual({
-      key: 'value',
-    });
-  });
-});
-
 describe('resolveVariables', () => {
   let tmpDir: string;
 
@@ -659,6 +478,45 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ var: ['env=staging'] }, tmpDir);
       expect(result.vars.env).toBe('staging');
       expect(result.sources.env).toBeUndefined();
+    });
+  });
+
+  describe('markdown frontmatter extraction', () => {
+    it('extracts vars from markdown frontmatter', async () => {
+      const markdown = `---
+name: test-runbook
+vars:
+  greeting: Hello
+  count: 42
+---
+# Content`;
+      const result = await resolveVariables({ markdown }, tmpDir);
+      expect(result.vars.greeting).toBe('Hello');
+      expect(result.vars.count).toBe('42');
+    });
+
+    it('returns no frontmatter vars when markdown has no vars field', async () => {
+      const markdown = `---
+name: test-runbook
+---
+# Content`;
+      const result = await resolveVariables({ markdown }, tmpDir);
+      // Only built-in vars should be present
+      expect(result.vars.greeting).toBeUndefined();
+    });
+
+    it('CLI --var overrides frontmatter vars', async () => {
+      const markdown = `---
+name: test-runbook
+vars:
+  env: development
+---
+# Content`;
+      const result = await resolveVariables(
+        { markdown, var: ['env=production'] },
+        tmpDir,
+      );
+      expect(result.vars.env).toBe('production');
     });
   });
 
@@ -762,8 +620,15 @@ describe('resolveVariables', () => {
 
   describe('frontmatter routing', () => {
     it('routes frontmatter array to both maps', async () => {
-      const result = await resolveVariables({ frontmatterVars: { servers: ['a', 'b'] } }, tmpDir);
-      // This tests that resolveVariables handles raw (pre-normalization) frontmatter
+      const markdown = `---
+name: test
+vars:
+  servers:
+    - a
+    - b
+---
+# Content`;
+      const result = await resolveVariables({ markdown }, tmpDir);
       expect(result.sources.servers).toEqual({ kind: 'array', items: ['a', 'b'] });
     });
   });

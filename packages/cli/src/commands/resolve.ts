@@ -21,11 +21,7 @@ import { validateRunbook } from '@rundown-org/parser';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadAndValidateRunbook } from '../helpers/runbook-validator.js';
 import { collect } from './echo.js';
-import {
-  extractVarsFromMarkdown,
-  resolveVariables,
-  FileSourcePolicyError,
-} from '../services/variable-discovery.js';
+import { resolveVariables, FileSourcePolicyError } from '../services/variable-discovery.js';
 import { buildTemplateVars, validateSources } from '../helpers/runbook-pipeline.js';
 import {
   substituteRunbookVariables,
@@ -54,7 +50,12 @@ function buildSourceInfo(
   return result;
 }
 
-/** Options for the resolve command. */
+/**
+ * Options for the resolve command parsed from CLI flags.
+ *
+ * The --schema flag is handled at the program level in cli.ts before
+ * Commander dispatch and is not part of these options.
+ */
 interface ResolveOptions {
   /** Path to YAML variable file */
   varFile?: string;
@@ -101,7 +102,6 @@ export function registerResolveCommand(program: Command): void {
       const structuralWarnings = diagnostics.filter((d) => d.severity === 'warning');
 
       // Phase 2: Variable resolution pipeline
-      const frontmatterVars = extractVarsFromMarkdown(rawContent);
       let mergedVariables: Record<string, string>;
       let sources: Record<string, DataSource>;
       const errors = structuralErrors.map((e) => ({ line: e.line, message: e.message }));
@@ -113,7 +113,7 @@ export function registerResolveCommand(program: Command): void {
       let resolutionFailed = false;
       try {
         const resolvedVariables = await resolveVariables(
-          { varFile: options.varFile, var: options.var, frontmatterVars },
+          { varFile: options.varFile, var: options.var, markdown: rawContent },
           cwd,
           {
             evaluator: getPolicyEvaluator(),

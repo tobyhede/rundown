@@ -385,18 +385,22 @@ export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string>
 }
 
 /**
- * Emit warnings for any unresolved template variables in a substituted runbook.
+ * Collect warnings for any unresolved template variables in a substituted runbook.
  *
- * Collects unresolved variables from the runbook and emits a deduplicated warning
- * per variable to stderr.
+ * Returns a deduplicated list of warning strings for unresolved variables.
+ * Callers are responsible for surfacing these through the appropriate output
+ * channel (e.g., `output.warning()` in the pipeline, `console.warn` in legacy paths).
  *
  * @param runbook - Runbook AST after variable substitution
+ * @returns Array of warning strings for each unresolved variable
  */
-export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
+export function warnUnresolvedRunbookVariables(runbook: Runbook): string[] {
   const unresolved = collectUnresolvedRunbookVariables(runbook);
+  const warnings: string[] = [];
   for (const name of unresolved) {
-    console.warn(`Warning: Undefined variable "{{${name}}}" preserved as literal text`);
+    warnings.push(`Undefined variable "{{${name}}}" preserved as literal text`);
   }
+  return warnings;
 }
 
 /**

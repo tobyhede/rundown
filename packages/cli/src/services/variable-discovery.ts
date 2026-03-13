@@ -268,30 +268,6 @@ export async function loadVariablesFromFile(
 }
 
 /**
- * Extract template variables from markdown frontmatter.
- *
- * Extracts the `vars` field from YAML frontmatter without requiring full
- * schema validation. This allows frontmatter defaults to be applied before
- * template rendering (which must happen before full parsing).
- *
- * Variable names must be valid identifiers (start with letter/underscore,
- * contain only letters, digits, underscores). Invalid keys are ignored with a warning.
- * All values are converted to strings for consistency with other variable sources.
- *
- * @param markdown - Raw markdown content with optional frontmatter
- * @returns Variables from frontmatter vars field, or empty object if none
- */
-export function extractVarsFromMarkdown(markdown: string): Record<string, string> {
-  const { frontmatter } = extractRawFrontmatter(markdown);
-
-  if (!frontmatter || typeof frontmatter.vars !== 'object' || frontmatter.vars === null) {
-    return {};
-  }
-
-  return normalizeVariables(frontmatter.vars as Record<string, unknown>, 'frontmatter var');
-}
-
-/**
  * Find the .rundown/config.yaml file by walking upward from cwd.
  *
  * Searches upward from the given directory for a .rundown directory
@@ -484,10 +460,10 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
  * The inherited layer ensures that parent ContextId survives into child
  * runbooks during delegation, rather than being replaced by a fresh builtin.
  *
- * @param options - Variable sources from CLI flags, var-file, frontmatter, and inherited vars
+ * @param options - Variable sources from CLI flags, var-file, markdown, and inherited vars
  * @param options.varFile - Path to YAML file containing variable definitions
  * @param options.var - Array of key=value flag strings from CLI
- * @param options.frontmatterVars - Variables extracted from runbook frontmatter
+ * @param options.markdown - Raw markdown content for frontmatter extraction
  * @param options.inheritedVars - Variables inherited from parent delegation
  * @param cwd - Current working directory for resolving relative paths
  * @returns Array of variable layers in precedence order
@@ -496,7 +472,7 @@ async function collectRawLayers(
   options: {
     varFile?: string;
     var?: string[];
-    frontmatterVars?: Record<string, unknown>;
+    markdown?: string;
     inheritedVars?: Record<string, unknown>;
   },
   cwd: string,
@@ -508,8 +484,14 @@ async function collectRawLayers(
   // 1b. Inherited vars from parent delegation (overrides builtins)
   const inherited: Record<string, unknown> = options.inheritedVars ?? {};
 
-  // 2. Frontmatter
-  const frontmatter: Record<string, unknown> = options.frontmatterVars ?? {};
+  // 2. Frontmatter — extract vars from raw markdown
+  let frontmatter: Record<string, unknown> = {};
+  if (options.markdown) {
+    const { frontmatter: fm } = extractRawFrontmatter(options.markdown);
+    if (fm && typeof fm.vars === 'object' && fm.vars !== null) {
+      frontmatter = fm.vars as Record<string, unknown>;
+    }
+  }
 
   // 3. Auto-discovered config
   const discovered: Record<string, unknown> = await discoverRawVariables(cwd);
@@ -585,10 +567,10 @@ async function enforceFileSourcePolicy(
  * - Multiline string → both vars and sources (array of lines)
  * - Scalar → vars only
  *
- * @param options - Variable sources from CLI flags, var-file, frontmatter, and inherited vars
+ * @param options - Variable sources from CLI flags, var-file, markdown, and inherited vars
  * @param options.varFile - Path to YAML file containing variable definitions
  * @param options.var - Array of key=value flag strings from CLI
- * @param options.frontmatterVars - Variables extracted from runbook frontmatter
+ * @param options.markdown - Raw markdown content for frontmatter extraction
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param cwd - Current working directory for resolving relative paths
  * @param security - Optional security context for file source policy enforcement
@@ -599,7 +581,7 @@ export async function resolveVariables(
   options: {
     varFile?: string;
     var?: string[];
-    frontmatterVars?: Record<string, unknown>;
+    markdown?: string;
     inheritedVars?: Record<string, string>;
   },
   cwd: string,

@@ -96,8 +96,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
       this.reason = reason;
     }
   },
-  extractVarsFromMarkdown: jest.fn().mockReturnValue({}),
-  resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {} }),
+  resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {}, warnings: [] }),
 }));
 
 // Mock template-renderer
@@ -105,7 +104,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
   expandForClauseVariables: jest.fn((content: string) => content),
   expandLoopVariables: jest.fn((text: string) => text),
-  warnUnresolvedRunbookVariables: jest.fn(),
+  warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
@@ -119,12 +118,15 @@ const parser = await import('@rundown-org/parser');
 const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook');
 const { runExecutionLoop, buildStepVariables } = await import('../../src/services/execution');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
-const { FileSourcePolicyError, extractVarsFromMarkdown, resolveVariables } = await import(
+const { FileSourcePolicyError, resolveVariables } = await import(
   '../../src/services/variable-discovery'
 );
-const { substituteRunbookVariables, expandForClauseVariables, expandLoopVariables } = await import(
-  '../../src/services/template-renderer'
-);
+const {
+  substituteRunbookVariables,
+  expandForClauseVariables,
+  expandLoopVariables,
+  warnUnresolvedRunbookVariables,
+} = await import('../../src/services/template-renderer');
 const fsPromises = await import('node:fs/promises');
 const { validateSources, prepareRunbook, startRunbook } = await import(
   '../../src/helpers/runbook-pipeline'
@@ -201,12 +203,12 @@ beforeEach(() => {
   );
   (core.getActiveForContext as jest.Mock).mockReturnValue(null);
   (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
-  (extractVarsFromMarkdown as jest.Mock).mockReturnValue({});
-  (resolveVariables as jest.Mock).mockResolvedValue({ vars: {}, sources: {} });
+  (resolveVariables as jest.Mock).mockResolvedValue({ vars: {}, sources: {}, warnings: [] });
   (buildStepVariables as jest.Mock).mockReturnValue({ Step: '1.1' });
   (substituteRunbookVariables as jest.Mock).mockImplementation((runbook: unknown) => runbook);
   (expandForClauseVariables as jest.Mock).mockImplementation((content: string) => content);
   (expandLoopVariables as jest.Mock).mockImplementation((text: string) => text);
+  (warnUnresolvedRunbookVariables as jest.Mock).mockReturnValue([]);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
   (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
@@ -297,6 +299,7 @@ describe('prepareRunbook', () => {
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: { region: 'us-west' },
       sources: {},
+      warnings: [],
     });
 
     const result = await prepareRunbook('good.md', {}, '/test');
@@ -319,6 +322,7 @@ describe('prepareRunbook', () => {
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: {},
       sources: {},
+      warnings: [],
     });
 
     const result = await prepareRunbook('child.md', {}, '/test', {
@@ -343,6 +347,7 @@ describe('prepareRunbook', () => {
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: { Region: 'eu-central' },
       sources: {},
+      warnings: [],
     });
 
     const result = await prepareRunbook('child.md', {}, '/test', {

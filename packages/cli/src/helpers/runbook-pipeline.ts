@@ -38,11 +38,7 @@ import { resolveRunbookFile } from './resolve-runbook.js';
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
-import {
-  FileSourcePolicyError,
-  extractVarsFromMarkdown,
-  resolveVariables,
-} from '../services/variable-discovery.js';
+import { FileSourcePolicyError, resolveVariables } from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
   expandForClauseVariables,
@@ -264,7 +260,6 @@ export async function prepareRunbook(
   }
 
   const rawContent = await fs.readFile(filePath, 'utf8');
-  const frontmatterVars = extractVarsFromMarkdown(rawContent);
   let mergedVariables: Record<string, string>;
   let sources: Record<string, DataSource>;
   let discoveryWarnings: readonly string[] = [];
@@ -273,7 +268,7 @@ export async function prepareRunbook(
       {
         varFile: varOpts.varFile,
         var: varOpts.var,
-        frontmatterVars,
+        markdown: rawContent,
         inheritedVars: options?.inheritedUserVars,
       },
       cwd,
@@ -315,7 +310,10 @@ export async function prepareRunbook(
 
   // Substitute variables into parsed AST
   const runbook = substituteRunbookVariables(rawRunbook, templateVars);
-  warnUnresolvedRunbookVariables(runbook);
+  const unresolvedWarnings = warnUnresolvedRunbookVariables(runbook);
+  if (unresolvedWarnings.length > 0) {
+    discoveryWarnings = [...discoveryWarnings, ...unresolvedWarnings];
+  }
 
   // Validate sourced FOR clauses reference defined data sources
   try {
