@@ -60,6 +60,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   isSourced: jest.fn(),
+  isResolvedForClause: jest.fn().mockReturnValue(true),
   stepHasSubsteps: (step: { kind: string }) => step.kind === 'substeps' || step.kind === 'for',
 }));
 
@@ -102,7 +103,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
 // Mock template-renderer
 jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
-  expandForClauseVariables: jest.fn((content: string) => content),
+  resolveForBounds: jest.fn((runbook: unknown) => runbook),
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
 }));
@@ -123,7 +124,7 @@ const { FileSourcePolicyError, resolveVariables } = await import(
 );
 const {
   substituteRunbookVariables,
-  expandForClauseVariables,
+  resolveForBounds,
   expandLoopVariables,
   warnUnresolvedRunbookVariables,
 } = await import('../../src/services/template-renderer');
@@ -206,9 +207,10 @@ beforeEach(() => {
   (resolveVariables as jest.Mock).mockResolvedValue({ vars: {}, sources: {}, warnings: [] });
   (buildStepVariables as jest.Mock).mockReturnValue({ Step: '1.1' });
   (substituteRunbookVariables as jest.Mock).mockImplementation((runbook: unknown) => runbook);
-  (expandForClauseVariables as jest.Mock).mockImplementation((content: string) => content);
+  (resolveForBounds as jest.Mock).mockImplementation((runbook: unknown) => runbook);
   (expandLoopVariables as jest.Mock).mockImplementation((text: string) => text);
   (warnUnresolvedRunbookVariables as jest.Mock).mockReturnValue([]);
+  (parser.isResolvedForClause as jest.Mock).mockReturnValue(true);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
   (core.reconstituteContextVars as jest.Mock).mockReturnValue({});

@@ -16,7 +16,7 @@ import { parseRunbookDocument, type Step } from '@rundown-org/core';
 import type { RunbookState } from '@rundown-org/core';
 import {
   substituteRunbookVariables,
-  expandForClauseVariables,
+  resolveForBounds,
   warnUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 
@@ -51,12 +51,11 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
         `This indicates corrupted state. Delete and re-run the runbook.`,
     );
   }
-  // New flow: raw runbookSrc + templateVars → pre-expand FOR clauses, parse, substitute
+  // New flow: raw runbookSrc + templateVars → parse, resolve FOR bounds, substitute
   if (state.templateVars) {
-    const sourceKeys = new Set(Object.keys(state.sources ?? {}));
-    const forExpanded = expandForClauseVariables(state.runbookSrc, state.templateVars, sourceKeys);
-    const runbook = parseRunbookDocument(forExpanded, state.runbook);
-    const substituted = substituteRunbookVariables(runbook, state.templateVars);
+    const runbook = parseRunbookDocument(state.runbookSrc, state.runbook);
+    const resolved = resolveForBounds(runbook, state.templateVars);
+    const substituted = substituteRunbookVariables(resolved, state.templateVars);
     for (const msg of warnUnresolvedRunbookVariables(substituted)) {
       console.warn(`Warning: ${msg}`);
     }

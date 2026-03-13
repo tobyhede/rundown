@@ -1,12 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
 import { parseRunbookDocument } from '@rundown-org/core';
+import type { Runbook, Step, ParsedForClause, Transitions } from '@rundown-org/parser';
 import {
   expandLoopVariables,
   shellEscapeValue,
   substituteText,
   substituteRunbookVariables,
   expandLoopVariablesForCommand,
-  expandForClauseVariables,
+  resolveForBounds,
   collectUnresolvedVariables,
   warnUnresolvedRunbookVariables,
 } from '../../src/services/template-renderer.js';
@@ -619,83 +620,147 @@ describe('warnUnresolvedRunbookVariables', () => {
   });
 });
 
-describe('expandForClauseVariables', () => {
-  it('pre-expands FOR clause then substitutes command variables', () => {
-    const rawMarkdown = [
-      '---',
-      'name: test',
-      '---',
-      '# Test Runbook',
-      '',
-      '## 1. Deploy',
-      '- FOR env IN 1 TO {{Max}}',
-      '',
-      '### 1.1 Run deploy',
-      '',
-      '```bash',
-      'deploy {{ENV}}',
-      '```',
-      '',
-      '## 2. Done',
-      '- PASS COMPLETE',
-    ].join('\n');
+describe('resolveForBounds', () => {
+  /** Build a minimal Runbook with given steps. */
+  function makeRunbook(steps: Step[]): Runbook {
+    return { steps } as Runbook;
+  }
 
-    const expanded = expandForClauseVariables(rawMarkdown, { Max: '3' });
-    const runbook = parseRunbookDocument(expanded);
-    const result = substituteRunbookVariables(runbook, { ENV: 'staging' });
+  /** Build a base (non-FOR) step. */
+  function makeBaseStep(name = '1'): Step {
+    return {
+      kind: 'base' as const,
+      name,
+      description: 'A step',
+      transitions: { pass: { action: 'continue', retry: 0 }, fail: { action: 'stop', retry: 0 } },
+    } as Step;
+  }
 
-    expect(result.steps[0].forClause).toEqual({ variable: 'env', start: 1, end: 3 });
-    expect(result.steps[0].substeps).toHaveLength(1);
-    expect(result.steps[0].substeps?.[0].command?.code).toBe('deploy staging');
+  /** Build a FOR step with a given forClause. */
+  function makeForStep(forClause: ParsedForClause, name = '1'): Step {
+    return {
+      kind: 'for' as const,
+      name,
+      description: 'Loop step',
+      forClause,
+      substeps: [{ id: '1', description: 'Sub' }],
+      transitions: { pass: { action: 'continue', retry: 0 }, fail: { action: 'stop', retry: 0 } },
+    } as unknown as Step;
+  }
+
+  it('passes through runbook with no FOR steps', () => {
+    const runbook = makeRunbook([makeBaseStep()]);
+    const result = resolveForBounds(runbook, {});
+    expect(result.steps).toEqual(runbook.steps);
   });
 
-  it('preserves source reference when sourceKeys is provided', () => {
-    const markdown = '- FOR server IN {{ servers }}';
-    const result = expandForClauseVariables(
-      markdown,
-      { servers: 'prod,staging' },
-      new Set(['servers']),
-    );
-    expect(result).toBe('- FOR server IN {{ servers }}');
+  it('passes through already-resolved FOR clause', () => {
+    const resolved: ParsedForClause = { variable: 'item', start: 1, end: 10 };
+    const runbook = makeRunbook([makeForStep(resolved)]);
+    const result = resolveForBounds(runbook, {});
+    expect(result.steps[0].forClause).toEqual(resolved);
   });
 
-  it('expands non-source vars while preserving source references', () => {
-    const markdown = '- FOR item IN 1 TO {{ Max }} OF {{ items }}';
-    const result = expandForClauseVariables(
-      markdown,
-      { Max: '10', items: 'data' },
-      new Set(['items']),
-    );
-    expect(result).toBe('- FOR item IN 1 TO 10 OF {{ items }}');
+  it('resolves single BoundRef (end)', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'batch',
+      start: 1,
+      end: { ref: 'Max' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { Max: '5' });
+    expect(result.steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 5 });
   });
 
-  it('expands all FOR vars when sourceKeys is undefined', () => {
-    const markdown = '- FOR item IN {{ items }}';
-    const result = expandForClauseVariables(markdown, { items: 'a,b,c' });
-    expect(result).toBe('- FOR item IN a,b,c');
+  it('resolves both bounds as BoundRef', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: { ref: 'Min' },
+      end: { ref: 'Max' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { Min: '2', Max: '8' });
+    expect(result.steps[0].forClause).toEqual({ variable: 'item', start: 2, end: 8 });
   });
 
-  it('only expands variables on FOR clause lines', () => {
-    const lines = [
-      '- FOR server IN {{ servers }}',
-      '',
-      'Some text with {{ Max }} in it',
-      '',
-      '```bash',
-      'echo {{ Max }}',
-      '```',
-    ];
-    const markdown = lines.join('\n');
-    const result = expandForClauseVariables(markdown, { servers: 'a', Max: '5' });
-    const expected = [
-      '- FOR server IN a',
-      '',
-      'Some text with {{ Max }} in it',
-      '',
-      '```bash',
-      'echo {{ Max }}',
-      '```',
-    ].join('\n');
-    expect(result).toBe(expected);
+  it('resolves windowed source with BoundRef', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'x',
+      start: 1,
+      end: { ref: 'N' },
+      source: 'items',
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { N: '5' });
+    expect(result.steps[0].forClause).toEqual({ variable: 'x', start: 1, end: 5, source: 'items' });
+  });
+
+  it('throws for undefined variable', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Missing' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, {})).toThrow('not defined');
+  });
+
+  it('throws for non-integer value', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Bad' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, { Bad: 'hello' })).toThrow('must be a positive integer');
+  });
+
+  it('throws for zero value', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Zero' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, { Zero: '0' })).toThrow('must be a positive integer');
+  });
+
+  it('throws for value exceeding MAX_FOR_BOUND', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Huge' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, { Huge: '10001' })).toThrow('10000');
+  });
+
+  it('preserves transitions on resolved clause', () => {
+    const transitions: Transitions = {
+      pass: { action: 'continue' as const, retry: 0 },
+      fail: { action: 'stop' as const, retry: 0 },
+    };
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'N' },
+      transitions,
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { N: '3' });
+    expect(result.steps[0].forClause).toEqual({
+      variable: 'item',
+      start: 1,
+      end: 3,
+      transitions,
+    });
   });
 });

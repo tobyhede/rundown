@@ -25,7 +25,7 @@ import { resolveVariables, FileSourcePolicyError } from '../services/variable-di
 import { buildTemplateVars, validateSources } from '../helpers/runbook-pipeline.js';
 import {
   substituteRunbookVariables,
-  expandForClauseVariables,
+  resolveForBounds,
   collectUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
@@ -146,15 +146,13 @@ export function registerResolveCommand(program: Command): void {
       let unresolvedNames: string[] = [];
       if (!resolutionFailed) {
         try {
-          const sourceKeys = new Set(Object.keys(sources));
-          const forExpandedContent = expandForClauseVariables(rawContent, templateVars, sourceKeys);
           const runbook = parseRunbookDocument(
-            forExpandedContent,
+            rawContent,
             path.basename(loadResult.loaded.resolvedPath),
             { skipValidation: true },
           );
 
-          // Validate expanded AST (mirrors run path which validates by default)
+          // Validate parsed AST (mirrors run path which validates by default)
           const postExpansionDiagnostics = validateRunbook(runbook.steps);
           for (const d of postExpansionDiagnostics) {
             if (d.severity === 'error') {
@@ -164,7 +162,9 @@ export function registerResolveCommand(program: Command): void {
             }
           }
 
-          const substituted = substituteRunbookVariables(runbook, templateVars);
+          // Resolve FOR clause bounds ({{Max}} → 10)
+          const resolved = resolveForBounds(runbook, templateVars);
+          const substituted = substituteRunbookVariables(resolved, templateVars);
           unresolvedNames = [...collectUnresolvedRunbookVariables(substituted)];
 
           // Validate sourced FOR clauses reference defined data sources
@@ -172,7 +172,7 @@ export function registerResolveCommand(program: Command): void {
         } catch (error) {
           errors.push({
             line: undefined,
-            message: `During FOR expansion: ${getErrorMessage(error)}`,
+            message: `During variable resolution: ${getErrorMessage(error)}`,
           });
         }
       }

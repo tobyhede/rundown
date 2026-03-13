@@ -61,6 +61,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   isSourced: jest.fn(),
+  isResolvedForClause: jest.fn().mockReturnValue(true),
   stepHasSubsteps: (step: { kind: string }) => step.kind === 'substeps' || step.kind === 'for',
 }));
 
@@ -101,7 +102,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
 // Mock template-renderer
 jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
-  expandForClauseVariables: jest.fn((content: string) => content),
+  resolveForBounds: jest.fn((runbook: unknown) => runbook),
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
 }));

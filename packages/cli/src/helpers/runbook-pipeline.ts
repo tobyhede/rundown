@@ -41,7 +41,7 @@ import { createBridgedEmitter } from './execution-emitter.js';
 import { FileSourcePolicyError, resolveVariables } from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
-  expandForClauseVariables,
+  resolveForBounds,
   warnUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
@@ -298,18 +298,14 @@ export async function prepareRunbook(
   }
   const templateVars = buildTemplateVars(mergedVariables, options);
 
-  // Pre-expand FOR clause bounds (parser needs numeric values)
-  const forExpandedContent = expandForClauseVariables(
-    rawContent,
-    templateVars,
-    new Set(Object.keys(sources)),
-  );
+  // Parse raw markdown (parser accepts {{vars}} in FOR bounds as BoundRef)
+  const rawRunbook = parseRunbookDocument(rawContent, path.basename(filePath));
 
-  // Parse markdown
-  const rawRunbook = parseRunbookDocument(forExpandedContent, path.basename(filePath));
+  // Resolve FOR clause bounds ({{Max}} → 10)
+  const resolvedRunbook = resolveForBounds(rawRunbook, templateVars);
 
   // Substitute variables into parsed AST
-  const runbook = substituteRunbookVariables(rawRunbook, templateVars);
+  const runbook = substituteRunbookVariables(resolvedRunbook, templateVars);
   const unresolvedWarnings = warnUnresolvedRunbookVariables(runbook);
   if (unresolvedWarnings.length > 0) {
     discoveryWarnings = [...discoveryWarnings, ...unresolvedWarnings];

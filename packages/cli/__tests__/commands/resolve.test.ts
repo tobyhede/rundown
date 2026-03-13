@@ -456,6 +456,34 @@ echo hello
     }
   });
 
+  it('resolves FOR clause with template variable bounds', async () => {
+    const runbookPath = path.join(workspace.cwd, 'for-var-bounds.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `---
+vars:
+  Max: 5
+---
+## 1. Process batches
+- FOR batch IN 1 TO {{Max}}
+- PASS ALL CONTINUE
+
+### 1.1 Handle batch
+- PASS CONTINUE
+
+\`\`\`bash
+echo batch
+\`\`\`
+`,
+    );
+
+    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const output = JSON.parse(result.stdout);
+
+    expect(output.valid).toBe(true);
+    expect(output.errors).toEqual([]);
+  });
+
   it('renders text output for valid runbook', async () => {
     const runbookPath = path.join(workspace.cwd, 'text.runbook.md');
     fs.writeFileSync(

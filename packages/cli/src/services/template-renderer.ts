@@ -8,7 +8,16 @@
  * @module
  */
 
-import type { Runbook, Step, Substep, Command } from '@rundown-org/parser';
+import type {
+  Runbook,
+  Step,
+  Substep,
+  Command,
+  Bound,
+  ForClause,
+  ParsedForClause,
+} from '@rundown-org/parser';
+import { isBoundRef, isUnresolvedForClause, MAX_FOR_BOUND } from '@rundown-org/parser';
 
 /**
  * Shared placeholder matcher used across startup and runtime substitution.
@@ -115,35 +124,98 @@ export function expandLoopVariables(text: string, variables: Record<string, unkn
   });
 }
 
-// ─── FOR clause pre-expansion ────────────────────────────────────────────────
-
-/** Matches bullet list items that start with `- FOR ` (FOR clause lines) */
-const FOR_CLAUSE_LINE = /^\s*-\s+FOR\s.+$/gm;
+// ─── FOR clause bound resolution ─────────────────────────────────────────────
 
 /**
- * Expand template variables in FOR clause bullet lines only.
+ * Resolve a single FOR clause bound to a concrete number.
  *
- * FOR clause bounds (e.g., `FOR item IN 1 TO {{Max}}`) must be numeric at parse
- * time. This function expands placeholders in lines matching `- FOR ...` so
- * the parser receives numeric bounds.
+ * If the bound is already a number, returns it unchanged. If it is a
+ * `BoundRef`, resolves the referenced variable and validates the result.
  *
- * @param markdown - Raw markdown source before parsing
- * @param variables - Variables used for placeholder expansion
- * @param sourceKeys - Optional source identifiers that must remain unexpanded
- * @returns Markdown with FOR bounds expanded where resolvable
+ * @param bound - Numeric bound or unresolved template reference
+ * @param variables - Template variable map for resolution
+ * @param stepName - Step identifier for error messages
+ * @param position - Whether this is the 'start' or 'end' bound (for error messages)
+ * @returns Resolved numeric bound
+ * @throws {Error} When the referenced variable is undefined or resolves to an invalid value
  */
-export function expandForClauseVariables(
-  markdown: string,
+function resolveBound(
+  bound: Bound,
   variables: Readonly<Record<string, unknown>>,
-  sourceKeys?: ReadonlySet<string>,
-): string {
-  return markdown.replace(FOR_CLAUSE_LINE, (line) => {
-    return line.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
-      // Don't expand source references — they're consumed by the parser as data source identifiers.
-      if (sourceKeys?.has(path)) return match;
-      return resolveTemplatePath(path, variables) ?? match;
-    });
+  stepName: string,
+  position: 'start' | 'end',
+): number {
+  if (typeof bound === 'number') return bound;
+
+  const value = resolveTemplatePath(bound.ref, variables);
+  if (value === undefined) {
+    throw new Error(
+      `Unresolved FOR bound "{{${bound.ref}}}" in step "${stepName}" — variable "${bound.ref}" is not defined`,
+    );
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > MAX_FOR_BOUND) {
+    throw new Error(
+      `FOR ${position} bound "{{${bound.ref}}}" in step "${stepName}" resolved to "${value}" — must be a positive integer ≤ ${MAX_FOR_BOUND}`,
+    );
+  }
+
+  return parsed;
+}
+
+/**
+ * Resolve unresolved FOR clause bounds in a parsed runbook.
+ *
+ * Walks all steps, resolving any `BoundRef` values in FOR clauses to concrete
+ * numbers using the provided template variables. Steps without FOR clauses or
+ * with already-resolved bounds are passed through unchanged.
+ *
+ * @param runbook - Parsed runbook AST (may contain unresolved FOR bounds)
+ * @param variables - Template variable map for bound resolution
+ * @returns New runbook AST with all FOR bounds resolved to numbers
+ * @throws {Error} When a bound variable is undefined or resolves to a non-integer
+ */
+export function resolveForBounds(
+  runbook: Runbook,
+  variables: Readonly<Record<string, unknown>>,
+): Runbook {
+  const resolvedSteps = runbook.steps.map((step): Step => {
+    if (step.kind !== 'for') return step;
+    if (!isUnresolvedForClause(step.forClause)) return step;
+
+    const fc = step.forClause;
+    const start = resolveBound(fc.start, variables, step.name, 'start');
+    const end =
+      fc.end !== undefined ? resolveBound(fc.end, variables, step.name, 'end') : undefined;
+
+    let resolved: ForClause;
+    if (fc.source !== undefined) {
+      // SourceWindow — end is optional
+      resolved = {
+        variable: fc.variable,
+        start,
+        ...(end !== undefined ? { end } : {}),
+        source: fc.source,
+        ...(fc.transitions ? { transitions: fc.transitions } : {}),
+      } as ForClause;
+    } else {
+      // NumericWindow — end is required
+      resolved = {
+        ...(fc.variable !== undefined ? { variable: fc.variable } : {}),
+        start,
+        end: end!,
+        ...(fc.transitions ? { transitions: fc.transitions } : {}),
+      } as ForClause;
+    }
+
+    return {
+      ...step,
+      forClause: resolved,
+    };
   });
+
+  return { ...runbook, steps: resolvedSteps };
 }
 
 // ─── Secure AST-level substitution ───────────────────────────────────────────
