@@ -36,7 +36,7 @@ export function registerStashCommand(program: Command): void {
           // Stash the runbook
           const stashedId = await sessionService.stash();
           if (!stashedId) {
-            output.status('stash', 'A runbook is already stashed. Pop it first.');
+            output.error('A runbook is already stashed. Pop it first.', 'ALREADY_STASHED');
             output.flush();
             return;
           }

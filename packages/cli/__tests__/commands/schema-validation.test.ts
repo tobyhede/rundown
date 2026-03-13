@@ -458,8 +458,9 @@ prompt: Wait
       const result = await runCliInProcess('pop --json', workspace);
       const output = parseJsonOutput(result.stdout);
 
-      // Should indicate error via action field
-      expect(output).toHaveProperty('action', 'pop');
+      // Should indicate error via error field
+      expect(output).toHaveProperty('error');
+      expect(output).toHaveProperty('code', 'NO_STASHED_RUNBOOK');
     });
   });
 

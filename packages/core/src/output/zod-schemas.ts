@@ -36,6 +36,8 @@ export const CLIErrorCodes = {
   INVALID_SYNTAX: 'INVALID_SYNTAX',
   /** Input validation failed */
   VALIDATION_ERROR: 'VALIDATION_ERROR',
+  /** A runbook is already stashed */
+  ALREADY_STASHED: 'ALREADY_STASHED',
   /** No stashed runbook to restore */
   NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
   /** Scenario not found */
@@ -56,6 +58,7 @@ export const ErrorCodeSchema = z
     'STEP_NOT_FOUND',
     'INVALID_SYNTAX',
     'VALIDATION_ERROR',
+    'ALREADY_STASHED',
     'NO_STASHED_RUNBOOK',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',

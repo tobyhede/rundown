@@ -411,7 +411,6 @@ describe('TextRenderer', () => {
 
       renderer.render({
         type: 'status',
-        result: true,
         action: 'stash',
         data: { position: pos('2', 5) },
       });
@@ -427,7 +426,6 @@ describe('TextRenderer', () => {
 
       renderer.render({
         type: 'status',
-        result: true,
         action: 'pop',
         data: {
           position: pos('1', 3),
@@ -439,15 +437,14 @@ describe('TextRenderer', () => {
       expect(output).toContain('Build project');
     });
 
-    it('renders pop failure', () => {
+    it('renders pop failure as error', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
 
       renderer.render({
-        type: 'status',
-        result: false,
-        action: 'pop',
+        type: 'error',
         message: 'No stashed runbook found',
+        code: 'NO_STASHED_RUNBOOK',
       });
 
       const output = writer.lines.join('\n');

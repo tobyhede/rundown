@@ -116,7 +116,7 @@ describe('pop command', () => {
   it('fails if nothing stashed', async () => {
     const result = await runCliInProcess('pop', workspace);
 
-    expect(result.stdout).toContain('No stashed runbook');
+    expect(result.stderr).toContain('No stashed runbook');
   });
 
   it('shows resuming step info', async () => {
@@ -164,8 +164,7 @@ rd echo "hello"
 
     const result = await runCliInProcess('pop', workspace);
 
-    // Text mode should NOT be silent - should show error message
-    expect(result.stdout.trim()).not.toBe('');
-    expect(result.stdout).toContain('not found');
+    // Text mode should NOT be silent - should show error message on stderr
+    expect(result.stderr).toContain('not found');
   });
 });
