@@ -276,7 +276,7 @@ function buildGotoLastActionFromEvent(
 function getStepForFirstSubstep(
   stateId: string,
   steps: Step[],
-): { step: Step; forClause: ParsedForClause; implicit: boolean } | null {
+): { step: StepHavingSubsteps; forClause: ParsedForClause; implicit: boolean } | null {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
 
@@ -555,7 +555,7 @@ function initIterationResults(
 function getStepForSubstep(
   stateId: string,
   steps: Step[],
-): { step: Step; forClause: ParsedForClause; implicit: boolean } | null {
+): { step: StepHavingSubsteps; forClause: ParsedForClause; implicit: boolean } | null {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
   const [, stepName] = match;

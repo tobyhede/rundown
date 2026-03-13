@@ -127,14 +127,14 @@ export function parseRunbook(markdown: string): Step[] {
  * markdown, H4+ headings, duplicate substep IDs) remain exceptions.
  *
  * @param markdown - The raw markdown content to parse
- * @param filename - Optional filename used to derive runbook name if not in frontmatter
+ * @param basename - Optional basename (e.g. "deploy.runbook.md") used to derive runbook name if not in frontmatter
  * @returns ParseResult containing the Runbook AST and validation diagnostics
  * @throws {RunbookSyntaxError} When the markdown contains invalid syntax,
  *   such as H4+ headings, duplicate substep IDs, multiple code blocks per step,
  *   or other specification violations
  * @see parseRunbook for simplified parsing returning only steps
  */
-export function parseRunbookDocument(markdown: string, filename?: string): ParseResult {
+export function parseRunbookDocument(markdown: string, basename?: string): ParseResult {
   const { frontmatter, content } = extractFrontmatter(markdown);
   const tree = fromMarkdown(content);
 
@@ -559,7 +559,7 @@ export function parseRunbookDocument(markdown: string, filename?: string): Parse
     runbook: {
       title,
       description: preamble.trim() || undefined,
-      name: frontmatter?.name ?? (filename ? nameFromFilename(filename) : undefined),
+      name: frontmatter?.name ?? (basename ? nameFromFilename(basename) : undefined),
       version: frontmatter?.version,
       author: frontmatter?.author,
       tags: frontmatter?.tags,

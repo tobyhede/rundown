@@ -219,7 +219,7 @@ echo hello
 
     const output = JSON.parse(result.stdout);
     expect(output.valid).toBe(false);
-    expect(output.errors[0].message).toContain('not found');
+    expect(output.errors[0].message).toContain('Runbook not found:');
   });
 
   it('discovers .rundown/config.yaml in workspace with .git boundary', async () => {

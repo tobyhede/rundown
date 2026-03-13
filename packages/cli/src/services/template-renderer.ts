@@ -8,16 +8,7 @@
  * @module
  */
 
-import type {
-  Runbook,
-  Step,
-  Substep,
-  Command,
-  Bound,
-  ForClause,
-  NumericWindow,
-  SourceWindow,
-} from '@rundown-org/parser';
+import type { Runbook, Step, Substep, Command, Bound, ForClause } from '@rundown-org/parser';
 import { isUnresolvedForClause, MAX_FOR_BOUND } from '@rundown-org/parser';
 
 /**

@@ -15,7 +15,6 @@ import {
   type ActionBlockData,
   type Step,
   type Substep,
-  type ResolveSourceInfo,
   type CheckResponse,
   type ResolveResponse,
   getWriter,
