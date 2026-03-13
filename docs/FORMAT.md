@@ -71,7 +71,7 @@ where name is:
   (case-sensitive; must not be a reserved word: NEXT, CONTINUE, DEFER, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY, BREAK, FOR, IN, TO, AT)
 
 where code_block is:
-  "```" [ info_string ]
+  "```" info_string
     content
   "```"
 
@@ -91,6 +91,8 @@ where transition is:
   | - DEFER                         -- shorthand for PASS DEFER + FAIL DEFER
 
 Transitions must appear as list items with the `-` bullet prefix (a dash followed by a space). Paragraph-style transitions (without prefix) are not valid.
+
+Note: Transition keywords (`PASS`, `YES`, `FAIL`, `NO`) are matched as whole words — the keyword must be followed by a space. A bullet beginning with `NOTE` or `PASSING` is not treated as a transition.
 
 Aggregation always waits for all DEFER'd results before evaluating. `ALL`/`ANY` evaluates over the count of DEFER'd results.
 
@@ -127,12 +129,10 @@ where source_ref is:
 where range is:
   positive_integer                              -- implicit start (1), end is positive_integer
   | positive_integer "TO" positive_integer      -- explicit start and end
-  | positive_integer "TO" "{{" [ ws ] variable_name [ ws ] "}}"  -- variable end bound
-  | "{{" [ ws ] variable_name [ ws ] "}}" "TO" positive_integer  -- variable start bound
-  | "{{" [ ws ] variable_name [ ws ] "}}" "TO" "{{" [ ws ] variable_name [ ws ] "}}"  -- variable both bounds
-  | "{{" [ ws ] variable_name [ ws ] "}}"            -- count-only with template variable
 
 Whitespace inside `{{ }}` delimiters is optional.
+
+Authoring note: Template variables (e.g., `{{count}}`, `1 TO {{max}}`) may be used in range positions. They are expanded to literal positive integers before parsing (see two-phase model below).
 
 Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal positive integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result). Source references in `FOR var IN {{ source }}` and `... OF {{ source }}` are NOT expanded — they are parsed as data source identifiers resolved at runtime.
 
@@ -170,7 +170,7 @@ where vars_map is:
   variable_name ":" value { variable_name ":" value }
   (YAML mapping of variable names to string, number, or boolean values)
 
-Note: Frontmatter `vars` are not included in the parsed Runbook AST. They are consumed by the CLI template rendering pipeline.
+Note: Frontmatter `vars` are not included in the parsed Runbook AST. They are consumed by the CLI template rendering pipeline. Reserved variable names (`step`, `index`, `context`, case-insensitive) are rejected with an error diagnostic.
 
 ---
 
@@ -256,18 +256,23 @@ Canonical runtime targeting is `step + substep + iteration`.
 
 ### Modifier Defaults
 
-| Input | Expands To |
-|-------|------------|
-| `PASS X` | `PASS ALL X` |
-| `FAIL X` | `FAIL ANY X` |
+When no aggregation modifier is written, the runtime applies these defaults:
+
+| Input | Runtime Behavior |
+|-------|------------------|
+| `PASS X` (no modifier) | Treated as `PASS ALL X` |
+| `FAIL X` (no modifier) | Treated as `FAIL ANY X` |
+
+Note: Unlike Transition Aliases and RETRY Defaults (which are literal parser expansions), modifier defaults are semantic — the parser stores no aggregation value, and the runtime applies ALL/ANY behavior implicitly.
 
 ### RETRY Defaults
 
 | Input | Expands To |
 |-------|------------|
-| `RETRY`          | `RETRY 1 STOP` |
-| `RETRY n`        | `RETRY n STOP` |
-| `RETRY n action` | `RETRY n action` |
+| `RETRY`              | `RETRY 1 STOP` |
+| `RETRY n`            | `RETRY n STOP` |
+| `RETRY n "message"`  | `RETRY n STOP "message"` |
+| `RETRY n action`     | `RETRY n action` |
 
 The fallback action cannot be RETRY (nested RETRY is invalid).
 
