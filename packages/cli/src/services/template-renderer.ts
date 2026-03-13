@@ -15,6 +15,8 @@ import type {
   Command,
   Bound,
   ForClause,
+  NumericWindow,
+  SourceWindow,
   ParsedForClause,
 } from '@rundown-org/parser';
 import { isBoundRef, isUnresolvedForClause, MAX_FOR_BOUND } from '@rundown-org/parser';
@@ -192,21 +194,38 @@ export function resolveForBounds(
     let resolved: ForClause;
     if (fc.source !== undefined) {
       // SourceWindow — end is optional
-      resolved = {
+      const base: SourceWindow = {
         variable: fc.variable,
         start,
-        ...(end !== undefined ? { end } : {}),
         source: fc.source,
-        ...(fc.transitions ? { transitions: fc.transitions } : {}),
-      } as ForClause;
+      };
+      resolved =
+        end !== undefined || fc.transitions
+          ? {
+              ...base,
+              ...(end !== undefined ? { end } : {}),
+              ...(fc.transitions ? { transitions: fc.transitions } : {}),
+            }
+          : base;
     } else {
-      // NumericWindow — end is required
-      resolved = {
-        ...(fc.variable !== undefined ? { variable: fc.variable } : {}),
+      // NumericWindow — end is required (UnresolvedNumericWindow.end: Bound is non-optional)
+      if (end === undefined) {
+        throw new Error(
+          `FOR end bound in step "${step.name}" is required for numeric range — this indicates a parser bug`,
+        );
+      }
+      const base: NumericWindow = {
         start,
-        end: end!,
-        ...(fc.transitions ? { transitions: fc.transitions } : {}),
-      } as ForClause;
+        end,
+      };
+      resolved =
+        fc.variable !== undefined || fc.transitions
+          ? {
+              ...base,
+              ...(fc.variable !== undefined ? { variable: fc.variable } : {}),
+              ...(fc.transitions ? { transitions: fc.transitions } : {}),
+            }
+          : base;
     }
 
     return {
