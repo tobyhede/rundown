@@ -944,6 +944,48 @@ describe('parseConditional error cases', () => {
   });
 });
 
+describe('parseConditional prefix matching', () => {
+  it('returns null for words starting with NO', () => {
+    expect(parseConditional('NOTE: this is content')).toBeNull();
+    expect(parseConditional('NOTHING')).toBeNull();
+    expect(parseConditional('NORMAL CONTINUE')).toBeNull();
+  });
+
+  it('returns null for words starting with PASS', () => {
+    expect(parseConditional('PASSING')).toBeNull();
+    expect(parseConditional('PASSWORD reset')).toBeNull();
+  });
+
+  it('returns null for words starting with FAIL', () => {
+    expect(parseConditional('FAILED')).toBeNull();
+    expect(parseConditional('FAILURE mode')).toBeNull();
+  });
+
+  it('returns null for words starting with YES', () => {
+    expect(parseConditional('YESTERDAY')).toBeNull();
+  });
+
+  it('still parses valid transitions', () => {
+    expect(parseConditional('NO STOP')).toMatchObject({ type: 'no', action: { type: 'STOP' } });
+    expect(parseConditional('PASS CONTINUE')).toMatchObject({
+      type: 'pass',
+      action: { type: 'CONTINUE' },
+    });
+    expect(parseConditional('FAIL STOP')).toMatchObject({ type: 'fail', action: { type: 'STOP' } });
+    expect(parseConditional('YES CONTINUE')).toMatchObject({
+      type: 'yes',
+      action: { type: 'CONTINUE' },
+    });
+  });
+
+  it('still throws for bare keywords without actions', () => {
+    expect(() => parseConditional('NO')).toThrow('Invalid NO transition');
+    expect(() => parseConditional('PASS')).toThrow('Invalid PASS transition');
+    expect(() => parseConditional('FAIL')).toThrow('Invalid FAIL transition');
+    expect(() => parseConditional('YES')).toThrow('Invalid YES transition');
+  });
+});
+
 describe('convertToTransitions aggregation conflicts', () => {
   it('throws for conflicting ALL/ALL modifiers', () => {
     const conditionals: ParsedConditional[] = [
