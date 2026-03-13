@@ -147,7 +147,7 @@ export function isErrorResponse(response: CLIResponse | ErrorResponse): response
  * @returns True if the response is an ActionResponse
  */
 export function isActionResponse(response: CLIResponse): response is ActionResponse {
-  return response.kind === 'action';
+  return 'kind' in response && response.kind === 'action';
 }
 
 /**
@@ -157,7 +157,7 @@ export function isActionResponse(response: CLIResponse): response is ActionRespo
  * @returns True if the response is a StatusResponse
  */
 export function isStatusResponse(response: CLIResponse): response is StatusResponse {
-  return response.kind === 'status';
+  return 'kind' in response && response.kind === 'status';
 }
 
 /**
@@ -170,7 +170,7 @@ export function isStatusResponse(response: CLIResponse): response is StatusRespo
  * @returns True if the response is a CheckResponse
  */
 export function isCheckResponse(response: CLIResponse): response is CheckResponse {
-  return response.kind === 'check';
+  return 'kind' in response && response.kind === 'check';
 }
 
 /**
@@ -182,7 +182,7 @@ export function isCheckResponse(response: CLIResponse): response is CheckRespons
  * @returns True if the response is a ResolveResponse
  */
 export function isResolveResponse(response: CLIResponse): response is ResolveResponse {
-  return response.kind === 'resolve';
+  return 'kind' in response && response.kind === 'resolve';
 }
 
 /**

@@ -252,7 +252,7 @@ cases:
       const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
       expect(parsed.passed).toBe(2);
       expect(parsed.failed).toBe(1);
-      const failedCase = parsed.cases.find((c: { passed: boolean }) => !c.passed);
+      const failedCase = parsed.cases.find((c: { result: boolean }) => !c.result);
       expect(failedCase.scenario).toBe('wrong-expectation');
       expect(failedCase.expected).toBe('COMPLETE');
       expect(failedCase.actual).toBe('STOP');
@@ -340,7 +340,7 @@ cases:
       const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
       expect(parsed.failed).toBe(1);
       const failedCase = parsed.cases[0];
-      expect(failedCase.passed).toBe(false);
+      expect(failedCase.result).toBe(false);
       expect(failedCase.actual).toContain('ERROR:');
       expect(failedCase.actual).toContain('CHILD_RUNBOOK_NOT_FOUND');
     }, 30000);

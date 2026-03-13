@@ -355,7 +355,16 @@ export function registerScenarioSuiteCommand(program: Command): void {
                 total: caseResults.length,
                 passed: passedCount,
                 failed: failedCount,
-                cases: caseResults,
+                cases: caseResults.map((cr) => ({
+                  kind: cr.kind,
+                  result: cr.passed,
+                  scenario: cr.scenario,
+                  expected: cr.expected,
+                  actual: cr.actual,
+                  ...('stepAssertions' in cr && cr.stepAssertions
+                    ? { stepAssertions: cr.stepAssertions }
+                    : {}),
+                })),
               },
               'custom',
             );
