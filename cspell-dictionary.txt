@@ -46,6 +46,7 @@ Eventless
 exfiltration
 fdisk
 frontmatter
+gitdir
 handlebars
 Hede
 idempotently

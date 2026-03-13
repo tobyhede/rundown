@@ -95,8 +95,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
       this.reason = reason;
     }
   },
-  extractVarsFromMarkdown: jest.fn().mockReturnValue({}),
-  resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {} }),
+  resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {}, warnings: [] }),
 }));
 
 // Mock template-renderer
@@ -104,7 +103,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
   expandForClauseVariables: jest.fn((content: string) => content),
   expandLoopVariables: jest.fn((text: string) => text),
-  warnUnresolvedRunbookVariables: jest.fn(),
+  warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises

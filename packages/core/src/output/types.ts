@@ -75,6 +75,7 @@ export interface DetailOutput extends BaseOutputEvent {
     | 'echo'
     | 'prompt'
     | 'check'
+    | 'resolve'
     | 'custom';
   /** Structured data for the detail view */
   data: Record<string, unknown>;

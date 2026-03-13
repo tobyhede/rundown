@@ -1,23 +1,6 @@
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import type { Command } from 'commander';
-import {
-  parseRunbookDocument,
-  stepHasSubsteps,
-  validateRunbook,
-  type Step,
-} from '@rundown-org/parser';
-import { getErrorMessage } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
-import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
-import { validateFrontmatterVars } from '../helpers/validate-frontmatter-vars.js';
-
-function countSubsteps(steps: readonly Step[]): number {
-  return steps.reduce((count, step) => {
-    return count + (stepHasSubsteps(step) ? step.substeps.length : 0);
-  }, 0);
-}
+import { loadAndValidateRunbook } from '../helpers/runbook-validator.js';
 
 /**
  * Registers the 'check' command for validating runbook files.
@@ -32,15 +15,14 @@ export function registerCheckCommand(program: Command): void {
       const output = new OutputEmitter({ json: options.json });
       const cwd = process.cwd();
 
-      // Resolve file path using discovery system (supports namespace:name syntax)
-      const resolvedPath = await resolveRunbookFile(cwd, file);
+      const result = await loadAndValidateRunbook(file, cwd);
 
-      if (!resolvedPath) {
-        // File not found
+      if (!result.ok) {
         output.detail(
           {
+            type: 'check' as const,
             valid: false,
-            errors: [{ message: `File not found: ${file}` }],
+            errors: [{ message: result.error }],
           },
           'check',
         );
@@ -48,59 +30,34 @@ export function registerCheckCommand(program: Command): void {
         process.exit(1);
       }
 
-      try {
-        const content = await fs.readFile(resolvedPath, 'utf-8');
-        const runbook = parseRunbookDocument(content, path.basename(resolvedPath), {
-          skipValidation: true,
-        });
-        const structuralDiagnostics = validateRunbook(runbook.steps);
-        const { frontmatter } = extractRawFrontmatter(content);
-        const varDiagnostics = validateFrontmatterVars(
-          frontmatter?.vars as Record<string, unknown> | undefined,
-        );
-        const diagnostics = [...structuralDiagnostics, ...varDiagnostics];
-        const errors = diagnostics.filter((d) => d.severity === 'error');
-        const warnings = diagnostics.filter((d) => d.severity === 'warning');
+      const { diagnostics, stats } = result.loaded;
+      const errors = diagnostics.filter((d) => d.severity === 'error');
+      const warnings = diagnostics.filter((d) => d.severity === 'warning');
 
-        if (errors.length > 0) {
-          // Emit structured data - renderer handles formatting
-          output.detail(
-            {
-              valid: false,
-              errors: errors.map((e) => ({ line: e.line, message: e.message })),
-              warnings: warnings.map((w) => ({ line: w.line, message: w.message })),
-            },
-            'check',
-          );
-          output.flush();
-          process.exit(1);
-        }
-
-        const stepCount = runbook.steps.length;
-        const substepCount = countSubsteps(runbook.steps);
-
-        // Emit structured data - renderer handles formatting
+      if (errors.length > 0) {
         output.detail(
           {
-            valid: true,
-            errors: [],
+            type: 'check' as const,
+            valid: false,
+            errors: errors.map((e) => ({ line: e.line, message: e.message })),
             warnings: warnings.map((w) => ({ line: w.line, message: w.message })),
-            stats: { steps: stepCount, substeps: substepCount },
-          },
-          'check',
-        );
-        output.flush();
-      } catch (error: unknown) {
-        const message = getErrorMessage(error);
-        output.detail(
-          {
-            valid: false,
-            errors: [{ message }],
           },
           'check',
         );
         output.flush();
         process.exit(1);
       }
+
+      output.detail(
+        {
+          type: 'check' as const,
+          valid: true,
+          errors: [],
+          warnings: warnings.map((w) => ({ line: w.line, message: w.message })),
+          stats,
+        },
+        'check',
+      );
+      output.flush();
     });
 }

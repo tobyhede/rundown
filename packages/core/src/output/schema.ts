@@ -44,6 +44,9 @@ export {
   CheckValidationWarningSchema,
   RunbookStatsSchema,
   CheckResponseSchema,
+  // Resolve schemas
+  ResolveSourceInfoSchema,
+  ResolveResponseSchema,
   // Scenario schemas
   StepAssertionInputSchema,
   CapturedTransitionSchema,
@@ -90,6 +93,8 @@ export {
   type CheckValidationWarning,
   type RunbookStats,
   type CheckResponse,
+  type ResolveSourceInfo,
+  type ResolveResponse,
   type StepAssertionInput,
   type CapturedTransition,
   type ScenarioStepAssertionResult,
@@ -122,6 +127,7 @@ import type {
   ActionResponse,
   StatusResponse,
   CheckResponse,
+  ResolveResponse,
 } from './zod-schemas.js';
 
 /**
@@ -172,6 +178,9 @@ export function isStatusResponse(response: unknown): response is StatusResponse 
 /**
  * Type guard to check if a response is a check response.
  *
+ * Discriminates on the `type` field to distinguish from ResolveResponse,
+ * which shares the same `valid`/`errors` shape.
+ *
  * @param response - The response to check
  * @returns True if the response is a CheckResponse
  */
@@ -179,10 +188,33 @@ export function isCheckResponse(response: unknown): response is CheckResponse {
   return (
     typeof response === 'object' &&
     response !== null &&
+    'type' in response &&
+    (response as { type: unknown }).type === 'check' &&
     'valid' in response &&
     typeof (response as CheckResponse).valid === 'boolean' &&
     'errors' in response &&
     Array.isArray((response as CheckResponse).errors)
+  );
+}
+
+/**
+ * Type guard to check if a response is a resolve response.
+ *
+ * Discriminates on the `type` field to distinguish from CheckResponse.
+ *
+ * @param response - The response to check
+ * @returns True if the response is a ResolveResponse
+ */
+export function isResolveResponse(response: unknown): response is ResolveResponse {
+  return (
+    typeof response === 'object' &&
+    response !== null &&
+    'type' in response &&
+    (response as { type: unknown }).type === 'resolve' &&
+    'valid' in response &&
+    typeof (response as ResolveResponse).valid === 'boolean' &&
+    'errors' in response &&
+    Array.isArray((response as ResolveResponse).errors)
   );
 }
 

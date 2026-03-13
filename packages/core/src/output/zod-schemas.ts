@@ -403,6 +403,8 @@ export const CheckValidationWarningSchema = z
     message: z.string().describe('Warning message'),
     /** Line number where warning occurred (if applicable) */
     line: z.number().optional().describe('Line number where warning occurred'),
+    /** Warning category for type-safe filtering */
+    kind: z.string().optional().describe('Warning kind for type-safe filtering'),
   })
   .describe('Validation warning entry');
 
@@ -411,6 +413,8 @@ export const CheckValidationWarningSchema = z
  */
 export const CheckResponseSchema = z
   .object({
+    /** Response type discriminator */
+    type: z.literal('check').describe('Response type discriminator'),
     /** Whether the runbook is valid */
     valid: z.boolean().describe('Whether the runbook is valid'),
     /** List of validation errors (empty if valid) */
@@ -424,6 +428,66 @@ export const CheckResponseSchema = z
     stats: RunbookStatsSchema.optional().describe('Runbook statistics'),
   })
   .describe('Response from the check command');
+
+// ============================================================================
+// Resolve Command Schemas
+// ============================================================================
+
+/**
+ * Data source information from resolve command.
+ */
+export const ResolveSourceInfoSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      /** Source type: in-memory array */
+      kind: z.literal('array').describe('In-memory array source'),
+      /** Number of items in the source */
+      items: z.number().int().nonnegative().describe('Number of items in the source'),
+    })
+    .describe('Array data source'),
+  z
+    .object({
+      /** Source type: file-backed */
+      kind: z.literal('file').describe('File-backed source'),
+      /** File path for file-backed sources */
+      path: z.string().describe('File path for file-backed sources'),
+      /** File format for file-backed sources */
+      format: z.enum(['text', 'jsonl']).describe('File format for file-backed sources'),
+    })
+    .describe('File data source'),
+]);
+
+/**
+ * Resolve response schema.
+ *
+ * Result of running the full variable/source resolution pipeline
+ * without executing the runbook.
+ */
+export const ResolveResponseSchema = z
+  .object({
+    /** Response type discriminator */
+    type: z.literal('resolve').describe('Response type discriminator'),
+    /** Whether the runbook resolved without errors */
+    valid: z.boolean().describe('Whether the runbook resolved without errors'),
+    /** Structural and resolution errors */
+    errors: z
+      .array(CheckValidationErrorSchema)
+      .describe('List of validation and resolution errors'),
+    /** Warnings (including unresolved variables) */
+    warnings: z.array(CheckValidationWarningSchema).optional().describe('List of warnings'),
+    /** Runbook statistics (only present when structurally valid) */
+    stats: RunbookStatsSchema.optional().describe('Runbook statistics'),
+    /** Resolved template variables */
+    variables: z.record(z.string(), z.string()).optional().describe('Resolved template variables'),
+    /** Data sources for FOR loop iteration */
+    sources: z
+      .record(z.string(), ResolveSourceInfoSchema)
+      .optional()
+      .describe('Resolved data sources'),
+    /** Unresolved template variable names */
+    unresolved: z.array(z.string()).optional().describe('Unresolved template variable names'),
+  })
+  .describe('Response from the resolve command');
 
 // ============================================================================
 // Scenario Command Schemas
@@ -884,6 +948,12 @@ export type RunbookStats = z.infer<typeof RunbookStatsSchema>;
 /** Check response */
 export type CheckResponse = z.infer<typeof CheckResponseSchema>;
 
+/** Resolve source info */
+export type ResolveSourceInfo = z.infer<typeof ResolveSourceInfoSchema>;
+
+/** Resolve response */
+export type ResolveResponse = z.infer<typeof ResolveResponseSchema>;
+
 /** Scenario entry */
 export type ScenarioEntry = z.infer<typeof ScenarioEntrySchema>;
 
@@ -944,6 +1014,7 @@ export type CLIResponse =
   | ErrorResponse
   | StatusResponse
   | CheckResponse
+  | ResolveResponse
   | ScenarioRunResponse
   | ScenarioSuiteRunResponse
   | StashResponse

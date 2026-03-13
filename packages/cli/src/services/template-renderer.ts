@@ -317,23 +317,38 @@ function isForVariablePath(name: string, forVars: ReadonlySet<string>): boolean 
   return forVars.has(name.slice(0, dotIndex));
 }
 
+/** Variables resolved at runtime per-step — not "undefined" after static substitution. */
+const RUNTIME_VARIABLES = new Set([
+  'Step',
+  'step',
+  'Index',
+  'index',
+  'context.current.step',
+  'context.current.substep',
+  'context.current.index',
+  'context.current.at',
+]);
+
 /**
- * Emit warnings for any unresolved template variables in a substituted runbook.
+ * Collect unresolved template variable names from a substituted runbook.
  *
- * Walks the runbook AST collecting all remaining `{{...}}` placeholders,
- * then emits a deduplicated warning per variable to stderr. FOR loop variables
- * (including `Index`/`index`) are only suppressed within their own FOR step's
- * substeps — they still produce warnings when referenced outside FOR scope.
+ * Walks the runbook AST collecting all remaining `{{...}}` placeholders
+ * and returns them as a deduplicated set. Runtime variables (Step, Index,
+ * context.current.*) are always suppressed. FOR loop variables are only
+ * suppressed within their own FOR step's substeps.
  *
  * @param runbook - Runbook AST after variable substitution
+ * @returns Set of unresolved variable names found in the runbook
  */
-export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
+export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string> {
   const unresolved = new Set<string>();
 
   const collect = (text: string | undefined): void => {
     if (!text) return;
     for (const name of collectUnresolvedVariables(text)) {
-      unresolved.add(name);
+      if (!RUNTIME_VARIABLES.has(name)) {
+        unresolved.add(name);
+      }
     }
   };
 
@@ -365,10 +380,8 @@ export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
         }
         break;
       case 'for': {
-        const forSuppressed = new Set<string>();
+        const forSuppressed = new Set(RUNTIME_VARIABLES);
         if (step.forClause.variable) forSuppressed.add(step.forClause.variable);
-        forSuppressed.add('Index');
-        forSuppressed.add('index');
         for (const ss of step.substeps) {
           collectScoped(ss.description, forSuppressed);
           collectScoped(ss.prompt, forSuppressed);
@@ -380,9 +393,26 @@ export function warnUnresolvedRunbookVariables(runbook: Runbook): void {
     }
   }
 
+  return unresolved;
+}
+
+/**
+ * Collect warnings for any unresolved template variables in a substituted runbook.
+ *
+ * Returns a deduplicated list of warning strings for unresolved variables.
+ * Callers are responsible for surfacing these through the appropriate output
+ * channel (e.g., `output.warning()` in the pipeline, `console.warn` in legacy paths).
+ *
+ * @param runbook - Runbook AST after variable substitution
+ * @returns Array of warning strings for each unresolved variable
+ */
+export function warnUnresolvedRunbookVariables(runbook: Runbook): string[] {
+  const unresolved = collectUnresolvedRunbookVariables(runbook);
+  const warnings: string[] = [];
   for (const name of unresolved) {
-    console.warn(`Warning: Undefined variable "{{${name}}}" preserved as literal text`);
+    warnings.push(`Undefined variable "{{${name}}}" preserved as literal text`);
   }
+  return warnings;
 }
 
 /**

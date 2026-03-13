@@ -38,11 +38,7 @@ import { resolveRunbookFile } from './resolve-runbook.js';
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
-import {
-  FileSourcePolicyError,
-  extractVarsFromMarkdown,
-  resolveVariables,
-} from '../services/variable-discovery.js';
+import { FileSourcePolicyError, resolveVariables } from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
   expandForClauseVariables,
@@ -188,7 +184,7 @@ function emitRunbookStarted(
  * @param vars - User/config template variables to namespace under `context.vars.*`
  * @returns Record mapping `context.vars.{key}` to corresponding values
  */
-function buildContextVars(vars: Readonly<Record<string, string>>): Record<string, string> {
+export function buildContextVars(vars: Readonly<Record<string, string>>): Record<string, string> {
   const contextVars: Record<string, string> = {};
   for (const [key, value] of Object.entries(vars)) {
     contextVars[`context.vars.${key}`] = value;
@@ -208,7 +204,7 @@ function buildContextVars(vars: Readonly<Record<string, string>>): Record<string
  * @param options.inheritedContextVars - Context variables inherited from a parent delegation
  * @returns Complete template variable map ready for substitution
  */
-function buildTemplateVars(
+export function buildTemplateVars(
   localVars: Readonly<Record<string, string>>,
   options?: {
     inheritedUserVars?: Readonly<Record<string, string>>;
@@ -249,7 +245,7 @@ export async function prepareRunbook(
     inheritedUserVars?: Readonly<Record<string, string>>;
   },
 ): Promise<
-  | { ok: true; prepared: PreparedRunbook }
+  | { ok: true; prepared: PreparedRunbook; warnings?: readonly string[] }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> }
 > {
   const filePath = await resolveRunbookFile(cwd, file);
@@ -264,15 +260,15 @@ export async function prepareRunbook(
   }
 
   const rawContent = await fs.readFile(filePath, 'utf8');
-  const frontmatterVars = extractVarsFromMarkdown(rawContent);
   let mergedVariables: Record<string, string>;
   let sources: Record<string, DataSource>;
+  let discoveryWarnings: readonly string[] = [];
   try {
     const resolvedVariables = await resolveVariables(
       {
         varFile: varOpts.varFile,
         var: varOpts.var,
-        frontmatterVars,
+        markdown: rawContent,
         inheritedVars: options?.inheritedUserVars,
       },
       cwd,
@@ -283,6 +279,7 @@ export async function prepareRunbook(
     );
     mergedVariables = { ...resolvedVariables.vars };
     sources = { ...resolvedVariables.sources };
+    discoveryWarnings = resolvedVariables.warnings;
   } catch (error) {
     if (error instanceof FileSourcePolicyError) {
       return {
@@ -313,7 +310,10 @@ export async function prepareRunbook(
 
   // Substitute variables into parsed AST
   const runbook = substituteRunbookVariables(rawRunbook, templateVars);
-  warnUnresolvedRunbookVariables(runbook);
+  const unresolvedWarnings = warnUnresolvedRunbookVariables(runbook);
+  if (unresolvedWarnings.length > 0) {
+    discoveryWarnings = [...discoveryWarnings, ...unresolvedWarnings];
+  }
 
   // Validate sourced FOR clauses reference defined data sources
   try {
@@ -339,6 +339,7 @@ export async function prepareRunbook(
   return {
     ok: true,
     prepared: { filePath, rawContent, runbook, mergedVariables: templateVars, sources },
+    warnings: discoveryWarnings.length > 0 ? discoveryWarnings : undefined,
   };
 }
 
@@ -657,6 +658,12 @@ export async function claimAndLaunch(
         code: prepResult.code,
         details: { runbook: freshDelegation.childRunbookPath, ...prepResult.details },
       };
+    }
+
+    if (prepResult.warnings?.length) {
+      for (const msg of prepResult.warnings) {
+        output.warning(msg);
+      }
     }
 
     // Build delegation linkage for the child run

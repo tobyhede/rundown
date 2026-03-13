@@ -29,6 +29,7 @@ export const JSON_OUTPUT_COMMANDS = [
   'stash',
   'pop',
   'check',
+  'resolve',
   'echo',
   'prompt',
   'run',

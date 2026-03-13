@@ -130,6 +130,7 @@ export class OutputEmitter {
       | 'echo'
       | 'prompt'
       | 'check'
+      | 'resolve'
       | 'custom' = 'custom',
   ): void {
     const event: DetailOutput = {

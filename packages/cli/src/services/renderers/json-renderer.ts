@@ -121,9 +121,11 @@ export class JSONRenderer implements OutputRenderer {
         this.output.position = this.toJsonPosition(event.position);
         break;
       case 'message':
-        // Messages become info field or are captured in message
         if (event.level === 'error') {
           this.output.error = event.text;
+        } else if (event.level === 'warning') {
+          // Warnings go to stderr — keep JSON stdout clean
+          this.writer.writeLine(`Warning: ${event.text}`, 'stderr');
         } else {
           this.output.message = event.text;
         }

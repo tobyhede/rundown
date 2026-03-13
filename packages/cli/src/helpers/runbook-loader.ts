@@ -57,7 +57,9 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
     const forExpanded = expandForClauseVariables(state.runbookSrc, state.templateVars, sourceKeys);
     const runbook = parseRunbookDocument(forExpanded, state.runbook);
     const substituted = substituteRunbookVariables(runbook, state.templateVars);
-    warnUnresolvedRunbookVariables(substituted);
+    for (const msg of warnUnresolvedRunbookVariables(substituted)) {
+      console.warn(`Warning: ${msg}`);
+    }
     return substituted.steps;
   }
 

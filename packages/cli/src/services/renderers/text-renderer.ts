@@ -15,6 +15,7 @@ import {
   type ActionBlockData,
   type Step,
   type Substep,
+  type ResolveSourceInfo,
   getWriter,
   printMetadata,
   printActionBlock,
@@ -206,6 +207,9 @@ export class TextRenderer implements OutputRenderer {
       case 'check':
         this.renderCheckDetail(data);
         break;
+      case 'resolve':
+        this.renderResolveDetail(data);
+        break;
       default:
         this.renderGenericDetail(data);
     }
@@ -394,20 +398,25 @@ export class TextRenderer implements OutputRenderer {
   }
 
   /**
-   * Render runbook check/validation result.
+   * Render shared PASS/FAIL + errors + warnings for structural validation results.
    *
-   * Formats as "PASS: N steps, M substeps" or "FAIL: N errors".
-   * Warnings are not included in the summary line but are rendered as
-   * separate lines below the summary when present.
-   * @param data - Check result data with validity flag, stats, errors, and warnings
+   * Used by both `renderCheckDetail` and `renderResolveDetail` for the common
+   * structural result rendering (validity line, error details, warning lines).
+   * @param data - Structural result data with validity flag, stats, errors, and warnings
+   * @param data.valid - Whether the structural validation passed
+   * @param data.stats - Step and substep counts
+   * @param data.stats.steps - Number of steps found
+   * @param data.stats.substeps - Number of substeps found
+   * @param data.errors - Array of validation errors with optional line numbers
+   * @param data.warnings - Array of validation warnings with optional line numbers
    */
-  private renderCheckDetail(data: Record<string, unknown>): void {
-    const { valid, stats, errors, warnings } = data as {
-      valid?: boolean;
-      stats?: { steps?: number; substeps?: number };
-      errors?: { line?: number; message: string }[];
-      warnings?: { line?: number; message: string }[];
-    };
+  private renderStructuralResult(data: {
+    valid?: boolean;
+    stats?: { steps?: number; substeps?: number };
+    errors?: { line?: number; message: string }[];
+    warnings?: { line?: number; message: string }[];
+  }): void {
+    const { valid, stats, errors, warnings } = data;
 
     if (valid) {
       const stepCount = stats?.steps ?? 0;
@@ -432,6 +441,95 @@ export class TextRenderer implements OutputRenderer {
       for (const w of warnings) {
         const linePrefix = w.line ? `Line ${String(w.line)}: ` : '';
         this.writer.writeLine(warning(`  Warning: ${linePrefix}${w.message}`));
+      }
+    }
+  }
+
+  /**
+   * Render runbook check/validation result.
+   *
+   * Formats as "PASS: N steps, M substeps" or "FAIL: N errors".
+   * Warnings are not included in the summary line but are rendered as
+   * separate lines below the summary when present.
+   * @param data - Check result data with validity flag, stats, errors, and warnings
+   */
+  private renderCheckDetail(data: Record<string, unknown>): void {
+    const { valid, stats, errors, warnings } = data as {
+      valid?: boolean;
+      stats?: { steps?: number; substeps?: number };
+      errors?: { line?: number; message: string }[];
+      warnings?: { line?: number; message: string }[];
+    };
+
+    this.renderStructuralResult({ valid, stats, errors, warnings });
+  }
+
+  /**
+   * Render resolve command result.
+   *
+   * Shows structural validation result, resolved variables, data sources,
+   * and unresolved variable warnings.
+   * @param data - Resolve result data
+   */
+  private renderResolveDetail(data: Record<string, unknown>): void {
+    const { valid, stats, errors, warnings, variables, sources, unresolved } = data as {
+      valid?: boolean;
+      stats?: { steps?: number; substeps?: number };
+      errors?: { line?: number; message: string }[];
+      warnings?: { line?: number; message: string; kind?: string }[];
+      variables?: Record<string, string>;
+      sources?: Record<string, ResolveSourceInfo>;
+      unresolved?: string[];
+    };
+
+    // Structural result (same as check) — pass only structural warnings (no kind)
+    const structuralWarnings = warnings?.filter((w) => !w.kind);
+    this.renderStructuralResult({ valid, stats, errors, warnings: structuralWarnings });
+
+    // Variables section
+    if (variables && Object.keys(variables).length > 0) {
+      this.writer.writeLine('');
+      this.writer.writeLine('Variables:');
+      const maxKeyLen = Math.max(...Object.keys(variables).map((k) => k.length));
+      for (const [key, value] of Object.entries(variables)) {
+        this.writer.writeLine(`  ${key.padEnd(maxKeyLen + 2)}${value}`);
+      }
+    }
+
+    // Sources section
+    if (sources && Object.keys(sources).length > 0) {
+      this.writer.writeLine('');
+      this.writer.writeLine('Sources:');
+      const maxKeyLen = Math.max(...Object.keys(sources).map((k) => k.length));
+      for (const [key, info] of Object.entries(sources)) {
+        let desc: string;
+        if (info.kind === 'array') {
+          desc = `array (${String(info.items)} item${info.items !== 1 ? 's' : ''})`;
+        } else {
+          desc = `file (${info.path}, ${info.format})`;
+        }
+        this.writer.writeLine(`  ${key.padEnd(maxKeyLen + 2)}${desc}`);
+      }
+    }
+
+    // Unresolved variables
+    if (unresolved && unresolved.length > 0) {
+      this.writer.writeLine('');
+      this.writer.writeLine('Unresolved:');
+      for (const name of unresolved) {
+        this.writer.writeLine(warning(`  {{${name}}}`));
+      }
+    }
+
+    // Warnings (excluding unresolved, which are shown above)
+    if (warnings && warnings.length > 0) {
+      // Filter out unresolved (shown in Unresolved section) and structural (shown via renderStructuralResult)
+      const otherWarnings = warnings.filter((w) => w.kind !== undefined && w.kind !== 'unresolved');
+      if (otherWarnings.length > 0) {
+        for (const w of otherWarnings) {
+          const linePrefix = w.line ? `Line ${String(w.line)}: ` : '';
+          this.writer.writeLine(warning(`  Warning: ${linePrefix}${w.message}`));
+        }
       }
     }
   }

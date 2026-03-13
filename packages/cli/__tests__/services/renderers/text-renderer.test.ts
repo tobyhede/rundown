@@ -237,6 +237,209 @@ describe('TextRenderer', () => {
       });
     });
 
+    describe('resolve format', () => {
+      it('renders PASS with variables', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 3, substeps: 2 },
+            variables: { environment: 'staging', port: '3000' },
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('PASS');
+        expect(output).toContain('3 steps');
+        expect(output).toContain('Variables:');
+        expect(output).toContain('environment');
+        expect(output).toContain('staging');
+        expect(output).toContain('port');
+        expect(output).toContain('3000');
+      });
+
+      it('renders FAIL with errors and variables', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: false,
+            errors: [{ message: 'Step numbering error' }],
+            stats: { steps: 1, substeps: 0 },
+            variables: { name: 'test' },
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('FAIL');
+        expect(output).toContain('Step numbering error');
+        expect(output).toContain('Variables:');
+        expect(output).toContain('name');
+      });
+
+      it('renders sources section', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 1, substeps: 1 },
+            variables: {},
+            sources: {
+              items: { kind: 'array', items: 3 },
+              hosts: { kind: 'file', path: 'data/hosts.txt', format: 'text' },
+            },
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('Sources:');
+        expect(output).toContain('items');
+        expect(output).toContain('array (3 items)');
+        expect(output).toContain('hosts');
+        expect(output).toContain('file (data/hosts.txt, text)');
+      });
+
+      it('renders unresolved variables section', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 1, substeps: 0 },
+            variables: {},
+            unresolved: ['missingVar', 'otherVar'],
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('Unresolved:');
+        expect(output).toContain('{{missingVar}}');
+        expect(output).toContain('{{otherVar}}');
+      });
+
+      it('omits empty sections', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 1, substeps: 0 },
+            variables: {},
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).not.toContain('Sources:');
+        expect(output).not.toContain('Unresolved:');
+      });
+
+      it('excludes warnings with kind "unresolved" from general warnings section', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 1, substeps: 0 },
+            variables: {},
+            unresolved: ['missingVar'],
+            warnings: [
+              { message: 'Unresolved variable: {{missingVar}}', kind: 'unresolved' },
+              { message: 'Some other warning', line: 5 },
+            ],
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        // Unresolved shown in dedicated section
+        expect(output).toContain('Unresolved:');
+        expect(output).toContain('{{missingVar}}');
+        // Other warning still rendered
+        expect(output).toContain('Some other warning');
+        // The unresolved warning message should NOT appear in the general warnings area
+        // (it's filtered by kind, shown only in the Unresolved section)
+        const warningLines = writer.lines.filter(
+          (l) => l.includes('Warning:') && l.includes('Unresolved variable:'),
+        );
+        expect(warningLines).toHaveLength(0);
+      });
+
+      it('renders warnings without kind normally', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 1, substeps: 0 },
+            variables: {},
+            warnings: [{ message: 'Deprecated syntax', line: 3 }],
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        expect(output).toContain('Warning:');
+        expect(output).toContain('Deprecated syntax');
+      });
+
+      it('renders structural warnings via renderStructuralResult (no kind)', () => {
+        const writer = createMockWriter();
+        const renderer = new TextRenderer({ writer });
+
+        renderer.render({
+          type: 'detail',
+          format: 'resolve',
+          data: {
+            valid: true,
+            errors: [],
+            stats: { steps: 2, substeps: 0 },
+            variables: { env: 'prod' },
+            warnings: [
+              { message: 'Deprecated step syntax', line: 5 },
+              { message: 'Unresolved variable: {{foo}}', kind: 'unresolved' },
+            ],
+          },
+        });
+
+        const output = writer.lines.join('\n');
+        // Structural warning (no kind) should appear
+        expect(output).toContain('Deprecated step syntax');
+        // Unresolved warning should NOT appear in the structural section
+        // (it's rendered in the Unresolved section instead)
+        const warningLines = writer.lines.filter((l) => l.includes('Warning:'));
+        // Only the structural warning should be rendered as a Warning: line
+        expect(warningLines).toHaveLength(1);
+        expect(warningLines[0]).toContain('Deprecated step syntax');
+      });
+    });
+
     describe('scenario format', () => {
       it('renders name, description, expected, and tags', () => {
         const writer = createMockWriter();

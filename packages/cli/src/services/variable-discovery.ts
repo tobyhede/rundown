@@ -67,6 +67,14 @@ export interface ResolvedVariables {
    * template rendering pipeline.
    */
   readonly sources: Readonly<Record<string, DataSource>>;
+  /**
+   * Structured warnings produced during variable resolution.
+   *
+   * Contains messages about invalid keys, complex values, reserved names,
+   * path traversal attempts, and other non-fatal issues encountered during
+   * the resolution pipeline.
+   */
+  readonly warnings: readonly string[];
 }
 
 /**
@@ -118,20 +126,22 @@ export class FileSourcePolicyError extends Error {
  *
  * @param vars - Raw variables object with unknown value types
  * @param source - Label for warning messages (e.g., "frontmatter var", "variable")
+ * @param warnings - Optional array to collect normalization warnings
  * @returns Normalized variables with string values only
  */
 function normalizeVariables(
   vars: Record<string, unknown>,
   source = 'variable',
+  warnings?: string[],
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(vars)) {
     if (!VALID_IDENTIFIER.test(key)) {
-      console.warn(`Warning: Ignoring ${source} with invalid key: ${key}`);
+      warnings?.push(`Ignoring ${source} with invalid key: ${key}`);
       continue;
     }
     if (typeof value === 'object' && value !== null) {
-      console.warn(`Warning: Ignoring ${source} "${key}" with complex value`);
+      warnings?.push(`Ignoring ${source} "${key}" with complex value`);
       continue;
     }
     result[key] = String(value);
@@ -181,40 +191,6 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
 
   return { key, value };
 }
-
-/**
- * Merge variable sources with precedence.
- *
- * Precedence (highest to lowest):
- * 1. --var flags (fromFlags)
- * 2. --var-file contents (fromFile)
- * 3. Auto-discovered .rundown/config.yaml (discovered)
- * 4. Frontmatter vars (frontmatter)
- * 5. Built-in defaults (builtins) - lowest precedence
- *
- * @param builtins - Built-in default variables (lowest precedence)
- * @param frontmatter - Variables from runbook frontmatter
- * @param discovered - Variables from auto-discovery
- * @param fromFile - Variables from --var-file
- * @param fromFlags - Variables from --var flags (highest precedence)
- * @returns Merged variables object
- */
-export function mergeVariables(
-  builtins: Record<string, string>,
-  frontmatter: Record<string, string>,
-  discovered: Record<string, string>,
-  fromFile: Record<string, string>,
-  fromFlags: Record<string, string>,
-): Record<string, string> {
-  return {
-    ...builtins,
-    ...frontmatter,
-    ...discovered,
-    ...fromFile,
-    ...fromFlags,
-  };
-}
-
 /**
  * Load variables from a YAML file.
  *
@@ -256,30 +232,6 @@ export async function loadVariablesFromFile(
     }
     return {};
   }
-}
-
-/**
- * Extract template variables from markdown frontmatter.
- *
- * Extracts the `vars` field from YAML frontmatter without requiring full
- * schema validation. This allows frontmatter defaults to be applied before
- * template rendering (which must happen before full parsing).
- *
- * Variable names must be valid identifiers (start with letter/underscore,
- * contain only letters, digits, underscores). Invalid keys are ignored with a warning.
- * All values are converted to strings for consistency with other variable sources.
- *
- * @param markdown - Raw markdown content with optional frontmatter
- * @returns Variables from frontmatter vars field, or empty object if none
- */
-export function extractVarsFromMarkdown(markdown: string): Record<string, string> {
-  const { frontmatter } = extractRawFrontmatter(markdown);
-
-  if (!frontmatter || typeof frontmatter.vars !== 'object' || frontmatter.vars === null) {
-    return {};
-  }
-
-  return normalizeVariables(frontmatter.vars as Record<string, unknown>, 'frontmatter var');
 }
 
 /**
@@ -374,6 +326,7 @@ function inferFileFormat(filePath: string): FileFormat {
  * @param cwd - Current working directory for resolving relative paths
  * @param projectRoot - Canonical project root path (pre-resolved)
  * @param security - Optional security context for file source policy enforcement
+ * @param warnings - Optional array to collect routing warnings
  */
 async function routeVariable(
   key: string,
@@ -383,6 +336,7 @@ async function routeVariable(
   cwd: string,
   projectRoot: string,
   security?: VariableSecurityContext,
+  warnings?: string[],
 ): Promise<void> {
   // String with file: prefix → file source only (not in vars)
   if (typeof value === 'string' && value.startsWith('file:')) {
@@ -400,7 +354,7 @@ async function routeVariable(
 
     const rel = path.relative(projectRoot, canonical);
     if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-      console.warn(`Warning: Ignoring file source "${key}" — path escapes project directory`);
+      warnings?.push(`Ignoring file source "${key}" — path escapes project directory`);
       return;
     }
 
@@ -431,7 +385,7 @@ async function routeVariable(
 
   // Scalar → vars only (clear any stale source from lower-precedence layer)
   if (typeof value === 'object' && value !== null) {
-    console.warn(`Warning: Ignoring variable "${key}" with complex value`);
+    warnings?.push(`Ignoring variable "${key}" with complex value`);
     return;
   }
   vars[key] = String(value);
@@ -474,22 +428,24 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
  * The inherited layer ensures that parent ContextId survives into child
  * runbooks during delegation, rather than being replaced by a fresh builtin.
  *
- * @param options - Variable sources from CLI flags, var-file, frontmatter, and inherited vars
+ * @param options - Variable sources from CLI flags, var-file, markdown, and inherited vars
  * @param options.varFile - Path to YAML file containing variable definitions
  * @param options.var - Array of key=value flag strings from CLI
- * @param options.frontmatterVars - Variables extracted from runbook frontmatter
+ * @param options.markdown - Raw markdown content for frontmatter extraction
  * @param options.inheritedVars - Variables inherited from parent delegation
  * @param cwd - Current working directory for resolving relative paths
+ * @param warnings - Optional array to collect discovery warnings
  * @returns Array of variable layers in precedence order
  */
 async function collectRawLayers(
   options: {
     varFile?: string;
     var?: string[];
-    frontmatterVars?: Record<string, unknown>;
+    markdown?: string;
     inheritedVars?: Record<string, unknown>;
   },
   cwd: string,
+  warnings?: string[],
 ): Promise<Record<string, unknown>[]> {
   // 1. Built-ins (lowest)
   const builtins: Record<string, unknown> = getBuiltinVariables();
@@ -497,8 +453,14 @@ async function collectRawLayers(
   // 1b. Inherited vars from parent delegation (overrides builtins)
   const inherited: Record<string, unknown> = options.inheritedVars ?? {};
 
-  // 2. Frontmatter
-  const frontmatter: Record<string, unknown> = options.frontmatterVars ?? {};
+  // 2. Frontmatter — extract vars from raw markdown
+  let frontmatter: Record<string, unknown> = {};
+  if (options.markdown) {
+    const { frontmatter: fm } = extractRawFrontmatter(options.markdown);
+    if (fm && typeof fm.vars === 'object' && fm.vars !== null) {
+      frontmatter = fm.vars as Record<string, unknown>;
+    }
+  }
 
   // 3. Auto-discovered config
   const discovered: Record<string, unknown> = await discoverRawVariables(cwd);
@@ -520,7 +482,7 @@ async function collectRawLayers(
       if (parsed) {
         fromFlags[parsed.key] = parsed.value;
       } else {
-        console.warn(`Warning: Ignoring invalid --var flag: ${flag}`);
+        warnings?.push(`Ignoring invalid --var flag: ${flag}`);
       }
     }
   }
@@ -574,10 +536,10 @@ async function enforceFileSourcePolicy(
  * - Multiline string → both vars and sources (array of lines)
  * - Scalar → vars only
  *
- * @param options - Variable sources from CLI flags, var-file, frontmatter, and inherited vars
+ * @param options - Variable sources from CLI flags, var-file, markdown, and inherited vars
  * @param options.varFile - Path to YAML file containing variable definitions
  * @param options.var - Array of key=value flag strings from CLI
- * @param options.frontmatterVars - Variables extracted from runbook frontmatter
+ * @param options.markdown - Raw markdown content for frontmatter extraction
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param cwd - Current working directory for resolving relative paths
  * @param security - Optional security context for file source policy enforcement
@@ -588,7 +550,7 @@ export async function resolveVariables(
   options: {
     varFile?: string;
     var?: string[];
-    frontmatterVars?: Record<string, unknown>;
+    markdown?: string;
     inheritedVars?: Record<string, string>;
   },
   cwd: string,
@@ -596,6 +558,7 @@ export async function resolveVariables(
 ): Promise<ResolvedVariables> {
   const vars: Record<string, string> = {};
   const sources: Record<string, DataSource> = {};
+  const warnings: string[] = [];
 
   // Canonicalize project root once for validation
   let projectRoot = path.resolve(cwd);
@@ -606,24 +569,24 @@ export async function resolveVariables(
   }
 
   // Collect raw inputs at each precedence level
-  const layers = await collectRawLayers(options, cwd);
+  const layers = await collectRawLayers(options, cwd, warnings);
 
   // Process each layer in precedence order (lowest to highest)
   for (const [layerIndex, layer] of layers.entries()) {
     for (const [key, value] of Object.entries(layer)) {
       if (!VALID_IDENTIFIER.test(key)) {
-        console.warn(`Warning: Ignoring variable with invalid key: ${key}`);
+        warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
       // Keep runtime-owned identifiers deterministic by rejecting overrides
       // from all non-built-in layers (inherited/frontmatter/config/var-file/--var).
       if (layerIndex > 0 && isRuntimeReservedVariable(key)) {
-        console.warn(`Warning: Ignoring reserved runtime variable: ${key}`);
+        warnings.push(`Ignoring reserved runtime variable: ${key}`);
         continue;
       }
-      await routeVariable(key, value, vars, sources, cwd, projectRoot, security);
+      await routeVariable(key, value, vars, sources, cwd, projectRoot, security, warnings);
     }
   }
 
-  return { vars, sources };
+  return { vars, sources, warnings };
 }
