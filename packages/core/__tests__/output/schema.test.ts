@@ -1,5 +1,10 @@
 import { describe, it, expect } from '@jest/globals';
-import { isActionResponse, isCheckResponse, isResolveResponse } from '../../src/output/schema.js';
+import {
+  isActionResponse,
+  isCheckResponse,
+  isResolveResponse,
+  isErrorResponse,
+} from '../../src/output/schema.js';
 import {
   ResolveSourceInfoSchema,
   CheckResponseSchema,
@@ -7,6 +12,7 @@ import {
 } from '../../src/output/zod-schemas.js';
 import type {
   ActionResponse,
+  ErrorResponse,
   StashResponse,
   PopResponse,
   CLIResponse,
@@ -16,7 +22,6 @@ describe('isActionResponse type guard', () => {
   describe('correctly identifies ActionResponse', () => {
     it('returns true for ActionResponse with pass action', () => {
       const response: ActionResponse = {
-        result: true,
         action: 'CONTINUE',
         command: 'pass',
         from: '1',
@@ -28,7 +33,6 @@ describe('isActionResponse type guard', () => {
 
     it('returns true for ActionResponse with fail action', () => {
       const response: ActionResponse = {
-        result: false,
         action: 'RETRY',
         command: 'fail',
         from: '1',
@@ -39,7 +43,6 @@ describe('isActionResponse type guard', () => {
 
     it('returns true for ActionResponse with complete', () => {
       const response: ActionResponse = {
-        result: true,
         action: 'COMPLETE',
         complete: true,
       };
@@ -49,7 +52,6 @@ describe('isActionResponse type guard', () => {
 
     it('returns true for ActionResponse with stopped', () => {
       const response: ActionResponse = {
-        result: false,
         action: 'STOP',
         stopped: true,
       };
@@ -61,7 +63,6 @@ describe('isActionResponse type guard', () => {
   describe('correctly rejects StashResponse and PopResponse', () => {
     it('returns false for StashResponse', () => {
       const response: StashResponse = {
-        result: true,
         action: 'stash',
         stashedId: 'abc-123',
         runbook: { file: 'test.md', state: 'test-state.json' },
@@ -74,7 +75,6 @@ describe('isActionResponse type guard', () => {
 
     it('returns false for PopResponse', () => {
       const response: PopResponse = {
-        result: true,
         action: 'pop',
         restoredId: 'abc-123',
         runbook: { file: 'test.md', state: 'test-state.json' },
@@ -84,6 +84,26 @@ describe('isActionResponse type guard', () => {
       // The type guard should distinguish these
       expect(isActionResponse(response as CLIResponse)).toBe(false);
     });
+  });
+});
+
+describe('isErrorResponse type guard', () => {
+  it('returns true for ErrorResponse payloads without result', () => {
+    const response: ErrorResponse = {
+      error: 'No stashed runbook to restore',
+      code: 'NO_STASHED_RUNBOOK',
+    };
+
+    expect(isErrorResponse(response)).toBe(true);
+  });
+
+  it('returns false for action payloads', () => {
+    const response: ActionResponse = {
+      action: 'CONTINUE',
+      command: 'pass',
+    };
+
+    expect(isErrorResponse(response as CLIResponse)).toBe(false);
   });
 });
 

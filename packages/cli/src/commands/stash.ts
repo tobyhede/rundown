@@ -38,6 +38,7 @@ export function registerStashCommand(program: Command): void {
           if (!stashedId) {
             output.error('A runbook is already stashed. Pop it first.', 'ALREADY_STASHED');
             output.flush();
+            process.exitCode = 1;
             return;
           }
 

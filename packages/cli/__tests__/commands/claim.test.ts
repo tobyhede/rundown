@@ -249,6 +249,38 @@ Execute with {{Env}} environment.
       );
       expect(result.exitCode).toBe(0);
     });
+
+    it('preserves ContextId but generates a fresh RunId for claimed child runs', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess(
+        'run --prompted parent.runbook.md --var ContextId=ctx-parent',
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      expect(parentState).not.toBeNull();
+      const parentTemplateVars = (parentState?.templateVars ?? {}) as Record<string, unknown>;
+
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = extractToken(result.stdout);
+
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await getActiveState(workspace);
+      expect(childState).not.toBeNull();
+      const childTemplateVars = (childState?.templateVars ?? {}) as Record<string, unknown>;
+
+      expect(parentTemplateVars.ContextId).toBe('ctx-parent');
+      expect(childTemplateVars.ContextId).toBe('ctx-parent');
+      expect(typeof parentTemplateVars.RunId).toBe('string');
+      expect(typeof childTemplateVars.RunId).toBe('string');
+      expect(childTemplateVars.RunId).not.toBe(parentTemplateVars.RunId);
+    });
   });
 
   describe('auto-propagation on claim', () => {

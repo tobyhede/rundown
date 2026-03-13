@@ -137,13 +137,13 @@ import type {
  * @returns True if the response is an ErrorResponse
  */
 export function isErrorResponse(response: CLIResponse | ErrorResponse): response is ErrorResponse {
-  return 'result' in response && !response.result && 'error' in response;
+  return 'error' in response && typeof response.error === 'string';
 }
 
 /**
  * Type guard to check if a response is an action response.
  *
- * Action responses have both `result` (boolean) and `action` (string) fields.
+ * Action responses have an `action` string field.
  * This distinguishes them from ErrorResponse which has `error` instead of `action`.
  *
  * @param response - The response to check
@@ -151,8 +151,6 @@ export function isErrorResponse(response: CLIResponse | ErrorResponse): response
  */
 export function isActionResponse(response: CLIResponse): response is ActionResponse {
   return (
-    'result' in response &&
-    typeof response.result === 'boolean' &&
     'action' in response &&
     typeof response.action === 'string' &&
     !('stashedId' in response) &&
