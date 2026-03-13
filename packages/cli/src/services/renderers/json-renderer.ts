@@ -36,6 +36,7 @@ type JsonPosition = {
  * Collected JSON output from events.
  */
 interface JsonOutput {
+  kind?: string;
   stepResult?: 'PASS' | 'FAIL';
   action?: string;
   message?: string;

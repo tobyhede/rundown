@@ -991,6 +991,11 @@ describe('parseConditional prefix matching', () => {
     expect(() => parseConditional('FAIL')).toThrow('Invalid FAIL transition');
     expect(() => parseConditional('YES')).toThrow('Invalid YES transition');
   });
+
+  it('returns null for tab-separated keyword and action (only spaces supported)', () => {
+    expect(parseConditional('PASS\tCONTINUE')).toBeNull();
+    expect(parseConditional('FAIL\tSTOP')).toBeNull();
+  });
 });
 
 describe('convertToTransitions aggregation conflicts', () => {
