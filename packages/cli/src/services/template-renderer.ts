@@ -155,14 +155,15 @@ function resolveBound(
     );
   }
 
-  if (!/^\d+$/.test(value.trim())) {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
     throw new Error(
       `FOR ${position} bound "{{${bound.ref}}}" in step "${stepName}" resolved to "${value}" — must be a positive integer ≤ ${String(MAX_FOR_BOUND)}`,
     );
   }
 
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 1 || parsed > MAX_FOR_BOUND) {
+  const parsed = Number.parseInt(trimmed, 10);
+  if (parsed < 1 || parsed > MAX_FOR_BOUND) {
     throw new Error(
       `FOR ${position} bound "{{${bound.ref}}}" in step "${stepName}" resolved to "${value}" — must be a positive integer ≤ ${String(MAX_FOR_BOUND)}`,
     );
@@ -199,19 +200,13 @@ export function resolveForBounds(
     let resolved: ForClause;
     if (fc.source !== undefined) {
       // SourceWindow — end is optional
-      const base: SourceWindow = {
+      resolved = {
         variable: fc.variable,
         start,
         source: fc.source,
+        ...(end !== undefined && { end }),
+        ...(fc.transitions && { transitions: fc.transitions }),
       };
-      resolved =
-        end !== undefined || fc.transitions
-          ? {
-              ...base,
-              ...(end !== undefined ? { end } : {}),
-              ...(fc.transitions ? { transitions: fc.transitions } : {}),
-            }
-          : base;
     } else {
       // NumericWindow — end is required (UnresolvedNumericWindow.end: Bound is non-optional)
       if (end === undefined) {
@@ -219,18 +214,12 @@ export function resolveForBounds(
           `FOR end bound in step "${step.name}" is required for numeric range — this indicates a parser bug`,
         );
       }
-      const base: NumericWindow = {
+      resolved = {
         start,
         end,
+        ...(fc.variable !== undefined && { variable: fc.variable }),
+        ...(fc.transitions && { transitions: fc.transitions }),
       };
-      resolved =
-        fc.variable !== undefined || fc.transitions
-          ? {
-              ...base,
-              ...(fc.variable !== undefined ? { variable: fc.variable } : {}),
-              ...(fc.transitions ? { transitions: fc.transitions } : {}),
-            }
-          : base;
     }
 
     return {

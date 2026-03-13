@@ -14,11 +14,7 @@
 
 import { parseRunbookDocument, type Step } from '@rundown-org/parser';
 import type { RunbookState } from '@rundown-org/core';
-import {
-  substituteRunbookVariables,
-  resolveForBounds,
-  warnUnresolvedRunbookVariables,
-} from '../services/template-renderer.js';
+import { substituteRunbookVariables, resolveForBounds } from '../services/template-renderer.js';
 
 /**
  * Load and parse runbook steps from state.
@@ -56,9 +52,8 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
     const { runbook } = parseRunbookDocument(state.runbookSrc, state.runbook);
     const resolved = resolveForBounds(runbook, state.templateVars);
     const substituted = substituteRunbookVariables(resolved, state.templateVars);
-    for (const msg of warnUnresolvedRunbookVariables(substituted)) {
-      console.warn(`Warning: ${msg}`);
-    }
+    // Unresolved variable warnings were already shown at startup via the pipeline path.
+    // Suppress them here to avoid duplicating warnings and leaking into --json output.
     return substituted.steps;
   }
 

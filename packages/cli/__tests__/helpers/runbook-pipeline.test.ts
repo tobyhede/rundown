@@ -419,7 +419,7 @@ describe('prepareRunbook', () => {
     }
   });
 
-  it('propagates error when resolveForBounds encounters unresolved variable', async () => {
+  it('returns PrepareFailure when resolveForBounds encounters unresolved variable', async () => {
     resolveRunbookFile.mockResolvedValue('/test/for-bounds.md');
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -438,9 +438,12 @@ describe('prepareRunbook', () => {
       throw new Error('Unresolved FOR bound "{{Max}}" in step "1" — variable "Max" is not defined');
     });
 
-    await expect(prepareRunbook('for-bounds.md', {}, '/test')).rejects.toThrow(
-      'Unresolved FOR bound',
-    );
+    const result = await prepareRunbook('for-bounds.md', {}, '/test');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('Unresolved FOR bound');
+    }
   });
 
   it('returns POLICY_DENIED when file-backed variable resolution is blocked by policy', async () => {

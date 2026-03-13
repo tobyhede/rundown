@@ -20,7 +20,8 @@ import {
   isReservedWord,
   NAMED_IDENTIFIER_PATTERN,
 } from './step-id.js';
-import type { ParsedForClause, Bound, BoundRef } from './ast.js';
+import type { ParsedForClause, Bound } from './ast.js';
+import { isBoundRef } from './guards.js';
 
 /**
  * Check if an action accumulates results into parent aggregation (DEFER only).
@@ -411,15 +412,9 @@ export function parseForClause(text: string): ParsedForClause | null {
     return null;
   };
 
-  const hasBoundRef = (b: Bound): b is BoundRef => typeof b === 'object' && 'ref' in b;
-
   // Build numeric (no-source) result, marking unresolved if any bound is a BoundRef
-  const buildNumericResult = (
-    start: Bound,
-    end: Bound,
-    variable?: string,
-  ): ParsedForClause | null => {
-    if (hasBoundRef(start) || hasBoundRef(end)) {
+  const buildNumericResult = (start: Bound, end: Bound, variable?: string): ParsedForClause => {
+    if (isBoundRef(start) || isBoundRef(end)) {
       return variable
         ? { unresolved: true as const, variable, start, end }
         : { unresolved: true as const, start, end };
@@ -428,7 +423,7 @@ export function parseForClause(text: string): ParsedForClause | null {
   };
 
   // Regex fragment matching a bound token: either a non-whitespace word or {{ var }}
-  const BOUND_TOKEN = '(?:\\S+|\\{\\{[^}]*\\}\\})';
+  const BOUND_TOKEN = '(?:[1-9]\\d*|[a-zA-Z_]\\w*|\\{\\{[^}]*\\}\\})';
 
   // Pattern 1: FOR variable IN start TO end
   // Pattern 2: FOR variable IN count (start defaults to 1)
@@ -457,7 +452,7 @@ export function parseForClause(text: string): ParsedForClause | null {
       const end = parseBoundOrRef(windowedSourceMatch[2]);
       const source = windowedSourceMatch[3];
       if (start !== null && end !== null) {
-        if (hasBoundRef(start) || hasBoundRef(end)) {
+        if (isBoundRef(start) || isBoundRef(end)) {
           return { unresolved: true as const, variable, start, end, source };
         }
         return { variable, start, end, source };
@@ -480,7 +475,7 @@ export function parseForClause(text: string): ParsedForClause | null {
     // Try single count value (or ref)
     const end = parseBoundOrRef(rangeStr);
     if (end !== null) {
-      if (hasBoundRef(end)) {
+      if (isBoundRef(end)) {
         return { unresolved: true as const, variable, start: 1, end };
       }
       return { variable, start: 1, end };
@@ -503,7 +498,7 @@ export function parseForClause(text: string): ParsedForClause | null {
   // Pattern 4: FOR count (unnamed, count only — or ref)
   const end = parseBoundOrRef(rest);
   if (end !== null) {
-    if (hasBoundRef(end)) {
+    if (isBoundRef(end)) {
       return { unresolved: true as const, start: 1, end };
     }
     return { start: 1, end };

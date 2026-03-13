@@ -55,6 +55,18 @@ import { extractRawFrontmatter } from './extract-raw-frontmatter.js';
 import { validateFrontmatterVars } from './validate-frontmatter-vars.js';
 
 /**
+ * Extract vars from raw frontmatter with proper typing.
+ *
+ * @param frontmatter - Raw frontmatter object (or null)
+ * @returns Vars as Record, or undefined if absent
+ */
+export function getFrontmatterVars(
+  frontmatter: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | undefined {
+  return frontmatter?.vars as Record<string, unknown> | undefined;
+}
+
+/**
  * Variable options from CLI flags.
  */
 export interface VarOptions {
@@ -319,9 +331,7 @@ export async function prepareRunbook(
 
   // Frontmatter validation
   const { frontmatter } = extractRawFrontmatter(rawContent);
-  const varDiagnostics = validateFrontmatterVars(
-    frontmatter?.vars as Record<string, unknown> | undefined,
-  );
+  const varDiagnostics = validateFrontmatterVars(getFrontmatterVars(frontmatter));
   const diagnostics: readonly ValidationDiagnostic[] = [...parseDiagnostics, ...varDiagnostics];
 
   // Compute stats from parsed AST
@@ -397,7 +407,22 @@ export async function prepareRunbook(
   }
 
   // Resolve FOR clause bounds ({{Max}} → 10)
-  const resolvedRunbook = resolveForBounds(rawRunbook, templateVars);
+  let resolvedRunbook: Runbook;
+  try {
+    resolvedRunbook = resolveForBounds(rawRunbook, templateVars);
+  } catch (err) {
+    return {
+      ok: false,
+      error: getErrorMessage(err),
+      code: 'VALIDATION_ERROR',
+      details: { runbook: file },
+      variables: templateVars,
+      sources,
+      stats,
+      diagnostics,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
+    };
+  }
 
   // Substitute variables into parsed AST
   const runbook = substituteRunbookVariables(resolvedRunbook, templateVars);
@@ -424,22 +449,6 @@ export async function prepareRunbook(
     return {
       ok: false,
       error: 'Runbook has no steps',
-      code: 'VALIDATION_ERROR',
-      details: { runbook: file },
-      variables: templateVars,
-      sources,
-      stats,
-      diagnostics,
-      warnings: allWarnings.length > 0 ? allWarnings : undefined,
-    };
-  }
-
-  // Check for error-severity diagnostics
-  const structuralErrors = diagnostics.filter((d) => d.severity === 'error');
-  if (structuralErrors.length > 0) {
-    return {
-      ok: false,
-      error: structuralErrors[0].message,
       code: 'VALIDATION_ERROR',
       details: { runbook: file },
       variables: templateVars,

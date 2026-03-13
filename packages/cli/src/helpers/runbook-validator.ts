@@ -14,7 +14,7 @@ import { parseRunbookDocument, type ValidationDiagnostic } from '@rundown-org/pa
 import type { Runbook } from '@rundown-org/core';
 import { getErrorMessage } from '@rundown-org/core';
 import { resolveRunbookFile } from './resolve-runbook.js';
-import { countSubsteps } from './runbook-pipeline.js';
+import { countSubsteps, getFrontmatterVars } from './runbook-pipeline.js';
 import { extractRawFrontmatter } from './extract-raw-frontmatter.js';
 import { validateFrontmatterVars } from './validate-frontmatter-vars.js';
 
@@ -65,9 +65,7 @@ export async function loadAndValidateRunbook(
       path.basename(resolvedPath),
     );
     const { frontmatter } = extractRawFrontmatter(content);
-    const varDiagnostics = validateFrontmatterVars(
-      frontmatter?.vars as Record<string, unknown> | undefined,
-    );
+    const varDiagnostics = validateFrontmatterVars(getFrontmatterVars(frontmatter));
     const diagnostics = [...structuralDiagnostics, ...varDiagnostics];
     const stats = {
       steps: runbook.steps.length,
