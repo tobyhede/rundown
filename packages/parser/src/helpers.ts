@@ -389,6 +389,17 @@ function parseNamedForPrefix(rest: string): { variable: string; rangeStr: string
  * @param text - The bullet text (after `- ` prefix), e.g. "FOR batch IN 1 TO 10"
  * @returns Parsed ForClause or unresolved variant, or null if text is not a valid FOR clause
  */
+/** Regex fragment matching a bound token: positive integer or mustache variable reference. */
+const BOUND_TOKEN = '(?:[1-9]\\d*|\\{\\{\\s*[a-zA-Z_][a-zA-Z0-9_]*\\s*\\}\\})';
+
+/** Matches "start TO end" range patterns. */
+const TO_RE = new RegExp(`^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})$`);
+
+/** Matches "start TO end OF {{ source }}" windowed source patterns. */
+const WINDOWED_SOURCE_RE = new RegExp(
+  `^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})\\s+OF\\s+\\{\\{\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\}\\}$`,
+);
+
 export function parseForClause(text: string): ParsedForClause | null {
   const trimmed = text.trim();
   if (!trimmed.startsWith('FOR ')) return null;
@@ -422,9 +433,6 @@ export function parseForClause(text: string): ParsedForClause | null {
     return variable ? { variable, start, end } : { start, end };
   };
 
-  // Regex fragment matching a bound token: either a non-whitespace word or {{ var }}
-  const BOUND_TOKEN = '(?:[1-9]\\d*|[a-zA-Z_]\\w*|\\{\\{[^}]*\\}\\})';
-
   // Pattern 1: FOR variable IN start TO end
   // Pattern 2: FOR variable IN count (start defaults to 1)
   // Pattern 5: FOR variable IN {{ source }} (all items)
@@ -443,10 +451,7 @@ export function parseForClause(text: string): ParsedForClause | null {
     }
 
     // Windowed source pattern: start TO end OF {{ source }}
-    const windowedSourceRe = new RegExp(
-      `^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})\\s+OF\\s+\\{\\{\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\}\\}$`,
-    );
-    const windowedSourceMatch = windowedSourceRe.exec(rangeStr);
+    const windowedSourceMatch = WINDOWED_SOURCE_RE.exec(rangeStr);
     if (windowedSourceMatch) {
       const start = parseBoundOrRef(windowedSourceMatch[1]);
       const end = parseBoundOrRef(windowedSourceMatch[2]);
@@ -461,8 +466,7 @@ export function parseForClause(text: string): ParsedForClause | null {
     }
 
     // Try "start TO end"
-    const toRe = new RegExp(`^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})$`);
-    const toMatch = toRe.exec(rangeStr);
+    const toMatch = TO_RE.exec(rangeStr);
     if (toMatch) {
       const start = parseBoundOrRef(toMatch[1]);
       const end = parseBoundOrRef(toMatch[2]);
@@ -484,8 +488,7 @@ export function parseForClause(text: string): ParsedForClause | null {
   }
 
   // Pattern 3: FOR start TO end (unnamed)
-  const rangeRe = new RegExp(`^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})$`);
-  const rangeMatch = rangeRe.exec(rest);
+  const rangeMatch = TO_RE.exec(rest);
   if (rangeMatch) {
     const start = parseBoundOrRef(rangeMatch[1]);
     const end = parseBoundOrRef(rangeMatch[2]);

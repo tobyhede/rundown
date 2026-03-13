@@ -419,6 +419,26 @@ describe('prepareRunbook', () => {
     }
   });
 
+  it('returns VALIDATION_ERROR when parser diagnostics contain errors', async () => {
+    resolveRunbookFile.mockResolvedValue('/test/bad-for.md');
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue({
+      runbook: { steps: [makeStep()] },
+      diagnostics: [{ severity: 'error', message: 'bad FOR clause', line: 1, column: 1 }],
+    } as any);
+
+    const result = await prepareRunbook('bad-for.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('bad FOR clause');
+    }
+    expect(resolveForBounds).not.toHaveBeenCalled();
+    expect(substituteRunbookVariables).not.toHaveBeenCalled();
+  });
+
   it('returns PrepareFailure when resolveForBounds encounters unresolved variable', async () => {
     resolveRunbookFile.mockResolvedValue('/test/for-bounds.md');
     (

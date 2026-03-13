@@ -1,6 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
 import { parseRunbookDocument } from '@rundown-org/core';
-import type { Runbook, Step, ParsedForClause, Transitions } from '@rundown-org/parser';
+import type {
+  Runbook,
+  Step,
+  BaseStep,
+  StepWithFor,
+  ParsedForClause,
+  Transitions,
+} from '@rundown-org/parser';
 import {
   expandLoopVariables,
   shellEscapeValue,
@@ -623,29 +630,23 @@ describe('warnUnresolvedRunbookVariables', () => {
 describe('resolveForBounds', () => {
   /** Build a minimal Runbook with given steps. */
   function makeRunbook(steps: Step[]): Runbook {
-    return { steps } as Runbook;
+    return { steps };
   }
 
   /** Build a base (non-FOR) step. */
-  function makeBaseStep(name = '1'): Step {
-    return {
-      kind: 'base' as const,
-      name,
-      description: 'A step',
-      transitions: { pass: { action: 'continue', retry: 0 }, fail: { action: 'stop', retry: 0 } },
-    } as Step;
+  function makeBaseStep(name = '1'): BaseStep {
+    return { kind: 'base', name, description: 'A step' };
   }
 
   /** Build a FOR step with a given forClause. */
-  function makeForStep(forClause: ParsedForClause, name = '1'): Step {
+  function makeForStep(forClause: ParsedForClause, name = '1'): StepWithFor {
     return {
-      kind: 'for' as const,
+      kind: 'for',
       name,
       description: 'Loop step',
       forClause,
       substeps: [{ id: '1', description: 'Sub' }],
-      transitions: { pass: { action: 'continue', retry: 0 }, fail: { action: 'stop', retry: 0 } },
-    } as unknown as Step;
+    };
   }
 
   it('passes through runbook with no FOR steps', () => {
