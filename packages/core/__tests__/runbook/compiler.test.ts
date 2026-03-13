@@ -1926,12 +1926,6 @@ describe('runbook compiler', () => {
     // UnresolvedForClause cannot be passed. The three runtime error tests
     // (first FOR step, transition into FOR, GOTO into FOR) were replaced by this
     // compile-time guarantee. See ResolvedStep / ResolvedStepWithFor in parser/ast.ts.
-    it('rejects unresolved FOR bounds at compile time (type-level guarantee)', () => {
-      // This test documents that the type system prevents unresolved bounds.
-      // A StepWithFor (with ParsedForClause) is not assignable to ResolvedStep.
-      // The compiler signature: compileRunbookToMachine(steps: ResolvedStep[], ...)
-      expect(true).toBe(true);
-    });
   });
 
   describe('implicit 1..1 loop model', () => {

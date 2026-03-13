@@ -60,7 +60,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   parseRunbookDocument: jest.fn(),
   isSourced: jest.fn(),
-  isResolvedForClause: jest.fn().mockReturnValue(true),
   stepHasSubsteps: (step: { kind: string }) => step.kind === 'substeps' || step.kind === 'for',
 }));
 
@@ -229,7 +228,6 @@ beforeEach(() => {
   (collectUnresolvedRunbookVariables as jest.Mock).mockReturnValue(new Set());
   (extractRawFrontmatter as jest.Mock).mockReturnValue({ frontmatter: null });
   (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
-  (parser.isResolvedForClause as jest.Mock).mockReturnValue(true);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (
     parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -275,12 +273,8 @@ describe('validateSources', () => {
     expect(() => validateSources([step as any], {})).not.toThrow();
   });
 
-  it('skips validation for unresolved FOR clauses', () => {
-    (parser.isResolvedForClause as jest.Mock).mockReturnValue(false);
-
-    const step = { kind: 'for', forClause: { unresolved: true, source: 'missing' } };
-    expect(() => validateSources([step as any], {})).not.toThrow();
-  });
+  // Unresolved FOR clauses cannot reach validateSources — the type signature
+  // requires ResolvedStep[], enforced by resolveForBounds upstream.
 });
 
 describe('prepareRunbook', () => {

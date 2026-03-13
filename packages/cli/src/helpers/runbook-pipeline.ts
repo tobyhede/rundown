@@ -35,9 +35,9 @@ import {
 import {
   parseRunbookDocument,
   isSourced,
-  isResolvedForClause,
   stepHasSubsteps,
   type Step,
+  type ResolvedStep,
   type ValidationDiagnostic,
 } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
@@ -160,16 +160,16 @@ export type ClaimResult =
 /**
  * Validate that all sourced FOR clauses reference defined data sources.
  *
- * @param steps - Parsed runbook steps
+ * @param steps - Resolved runbook steps (all FOR bounds already resolved)
  * @param sources - Resolved data sources
  * @throws {Error} if any step references an undefined source
  */
 export function validateSources(
-  steps: readonly Step[],
+  steps: readonly ResolvedStep[],
   sources: Readonly<Record<string, unknown>>,
 ): void {
   for (const step of steps) {
-    if (step.kind === 'for' && isResolvedForClause(step.forClause) && isSourced(step.forClause)) {
+    if (step.kind === 'for' && isSourced(step.forClause)) {
       const name = step.forClause.source;
       if (!Object.hasOwn(sources, name)) {
         throw new Error(

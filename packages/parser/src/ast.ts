@@ -245,13 +245,7 @@ export interface Runbook {
 }
 
 /** A runbook where all FOR clause bounds are resolved to concrete numbers. */
-export interface ResolvedRunbook {
-  readonly title?: string;
-  readonly description?: string;
-  readonly name?: string;
-  readonly version?: string;
-  readonly author?: string;
-  readonly tags?: readonly string[];
+export interface ResolvedRunbook extends Omit<Runbook, 'steps'> {
   readonly steps: readonly ResolvedStep[];
 }
 

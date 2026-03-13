@@ -400,6 +400,12 @@ const WINDOWED_SOURCE_RE = new RegExp(
   `^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})\\s+OF\\s+\\{\\{\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\}\\}$`,
 );
 
+/**
+ * Parse a FOR clause header into a structured clause descriptor.
+ *
+ * @param text - Raw header text starting with "FOR ..."
+ * @returns Parsed FOR clause (resolved or unresolved), or null if not a valid FOR clause
+ */
 export function parseForClause(text: string): ParsedForClause | null {
   const trimmed = text.trim();
   if (!trimmed.startsWith('FOR ')) return null;
