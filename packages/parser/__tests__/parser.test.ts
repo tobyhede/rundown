@@ -1572,8 +1572,8 @@ Some text but no steps.
 
   it('parseRunbook throws on error diagnostics for backward compatibility', () => {
     const md = `## 1 Step
-- PASS: GOTO 99
-- FAIL: STOP
+- PASS GOTO 99
+- FAIL STOP
 `;
     expect(() => parseRunbook(md)).toThrow();
   });

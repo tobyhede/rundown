@@ -274,6 +274,13 @@ describe('validateSources', () => {
     const step = { kind: 'for', forClause: { variable: 'i', start: 1, end: 5 } };
     expect(() => validateSources([step as any], {})).not.toThrow();
   });
+
+  it('skips validation for unresolved FOR clauses', () => {
+    (parser.isResolvedForClause as jest.Mock).mockReturnValue(false);
+
+    const step = { kind: 'for', forClause: { unresolved: true, source: 'missing' } };
+    expect(() => validateSources([step as any], {})).not.toThrow();
+  });
 });
 
 describe('prepareRunbook', () => {
@@ -410,6 +417,30 @@ describe('prepareRunbook', () => {
       expect(result.code).toBe('VALIDATION_ERROR');
       expect(result.error).toContain('missing');
     }
+  });
+
+  it('propagates error when resolveForBounds encounters unresolved variable', async () => {
+    resolveRunbookFile.mockResolvedValue('/test/for-bounds.md');
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue({
+      runbook: {
+        steps: [
+          makeStep({
+            forClause: { variable: 'i', start: 1, end: { ref: 'Max' }, unresolved: true },
+            substeps: [{ id: '1.1', description: 'substep' }],
+          }),
+        ],
+      },
+      diagnostics: [],
+    } as any);
+    (resolveForBounds as jest.Mock).mockImplementation(() => {
+      throw new Error('Unresolved FOR bound "{{Max}}" in step "1" — variable "Max" is not defined');
+    });
+
+    await expect(prepareRunbook('for-bounds.md', {}, '/test')).rejects.toThrow(
+      'Unresolved FOR bound',
+    );
   });
 
   it('returns POLICY_DENIED when file-backed variable resolution is blocked by policy', async () => {

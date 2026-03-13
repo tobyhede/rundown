@@ -159,7 +159,7 @@ export function validateSources(
   for (const step of steps) {
     if (step.kind === 'for' && isResolvedForClause(step.forClause) && isSourced(step.forClause)) {
       const name = step.forClause.source;
-      if (!(name in sources)) {
+      if (!Object.hasOwn(sources, name)) {
         throw new Error(
           `FOR loop references undefined data source "{{${name}}}". ` +
             `Define "${name}" in .rundown/config.yaml or pass --var-file with an array value.`,
@@ -379,6 +379,22 @@ export async function prepareRunbook(
     };
   }
   const templateVars = buildTemplateVars(mergedVariables, options);
+
+  // Bail early if there are structural errors — don't pass a broken AST to transform passes
+  const earlyErrors = diagnostics.filter((d) => d.severity === 'error');
+  if (earlyErrors.length > 0) {
+    return {
+      ok: false,
+      error: earlyErrors[0].message,
+      code: 'VALIDATION_ERROR',
+      details: { runbook: file },
+      variables: templateVars,
+      sources,
+      stats,
+      diagnostics,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
+    };
+  }
 
   // Resolve FOR clause bounds ({{Max}} → 10)
   const resolvedRunbook = resolveForBounds(rawRunbook, templateVars);

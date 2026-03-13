@@ -482,6 +482,7 @@ echo batch
 
     expect(output.valid).toBe(true);
     expect(output.errors).toEqual([]);
+    expect(output.unresolved).toBeUndefined();
   });
 
   it('renders text output for valid runbook', async () => {

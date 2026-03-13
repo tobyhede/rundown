@@ -9,6 +9,7 @@ import {
   isBreakAction,
   isTerminalAction,
   isStepExitAction,
+  isUnresolvedForClause,
 } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
 
@@ -426,7 +427,7 @@ function createForContext(
   implicit = false,
   sources?: Readonly<Record<string, DataSource>>,
 ): ForContext {
-  if ('unresolved' in forClause) {
+  if (isUnresolvedForClause(forClause)) {
     throw new Error(`Unresolved FOR bounds in step "${stepName}" — run resolution pass first`);
   }
 
@@ -505,7 +506,7 @@ function initForStack(
   implicit: boolean,
   sources?: Readonly<Record<string, DataSource>>,
 ): readonly ForContext[] {
-  if ('unresolved' in forClause) {
+  if (isUnresolvedForClause(forClause)) {
     throw new Error(
       `Unresolved FOR bounds in step "${targetStepName}" — run resolution pass first`,
     );
@@ -755,7 +756,7 @@ function buildParentExitAssign(
       const targetStep = steps.find((s) => s.name === parentAction.target.step);
       if (targetStep?.kind === 'for') {
         const forClause = targetStep.forClause;
-        if ('unresolved' in forClause) {
+        if (isUnresolvedForClause(forClause)) {
           throw new Error(
             `Unresolved FOR bounds in step "${targetStep.name}" — run resolution pass first`,
           );

@@ -26,7 +26,7 @@ This doesn't have proper ## headers
       const result = runCli('run invalid.md', workspace);
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr.toLowerCase()).toContain('no steps');
+      expect(result.stderr).toMatch(/(no steps|at least one step)/i);
     });
 
     it('handles empty runbook file', async () => {
@@ -35,7 +35,7 @@ This doesn't have proper ## headers
       const result = runCli('run empty.md', workspace);
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr.toLowerCase()).toContain('no steps');
+      expect(result.stderr).toMatch(/(no steps|at least one step)/i);
     });
   });
 

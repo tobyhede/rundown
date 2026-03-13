@@ -155,6 +155,12 @@ function resolveBound(
     );
   }
 
+  if (!/^\d+$/.test(value.trim())) {
+    throw new Error(
+      `FOR ${position} bound "{{${bound.ref}}}" in step "${stepName}" resolved to "${value}" — must be a positive integer ≤ ${String(MAX_FOR_BOUND)}`,
+    );
+  }
+
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1 || parsed > MAX_FOR_BOUND) {
     throw new Error(
@@ -444,10 +450,14 @@ export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string>
     }
   };
 
-  const collectScoped = (text: string | undefined, suppressed: ReadonlySet<string>): void => {
+  const collectScoped = (
+    text: string | undefined,
+    suppressed: ReadonlySet<string>,
+    dottedPrefixes?: ReadonlySet<string>,
+  ): void => {
     if (!text) return;
     for (const name of collectUnresolvedVariables(text)) {
-      if (!suppressed.has(name) && !isForVariablePath(name, suppressed)) {
+      if (!suppressed.has(name) && !(dottedPrefixes && isForVariablePath(name, dottedPrefixes))) {
         unresolved.add(name);
       }
     }
@@ -473,12 +483,17 @@ export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string>
         break;
       case 'for': {
         const forSuppressed = new Set([...GLOBAL_RUNTIME_VARIABLES, ...FOR_LOOP_RUNTIME_VARIABLES]);
-        if (step.forClause.variable) forSuppressed.add(step.forClause.variable);
+        const dottedPrefixes = new Set<string>();
+        if (step.forClause.variable) {
+          forSuppressed.add(step.forClause.variable);
+          dottedPrefixes.add(step.forClause.variable);
+        }
         for (const ss of step.substeps) {
-          collectScoped(ss.description, forSuppressed);
-          collectScoped(ss.prompt, forSuppressed);
-          if (ss.command) collectScoped(ss.command.code, forSuppressed);
-          if (ss.runbooks) for (const rb of ss.runbooks) collectScoped(rb, forSuppressed);
+          collectScoped(ss.description, forSuppressed, dottedPrefixes);
+          collectScoped(ss.prompt, forSuppressed, dottedPrefixes);
+          if (ss.command) collectScoped(ss.command.code, forSuppressed, dottedPrefixes);
+          if (ss.runbooks)
+            for (const rb of ss.runbooks) collectScoped(rb, forSuppressed, dottedPrefixes);
         }
         break;
       }

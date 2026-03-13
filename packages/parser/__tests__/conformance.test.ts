@@ -2,7 +2,7 @@ import { describe, it, expect } from '@jest/globals';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseRunbookDocument } from '../src/index.js';
+import { parseRunbookDocument, RunbookSyntaxError } from '../src/index.js';
 import type { Step } from '../src/ast.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -74,7 +74,9 @@ describe('Rundown Conformance (Fixture Driven)', () => {
 
     it.each(files)('should parse valid runbook: %s', (filePath) => {
       const content = fs.readFileSync(filePath, 'utf8');
-      const { runbook } = parseRunbookDocument(content);
+      const { runbook, diagnostics } = parseRunbookDocument(content);
+      const errors = diagnostics.filter((d) => d.severity === 'error');
+      expect(errors).toHaveLength(0);
       const tags = runbook.tags ?? [];
 
       // All valid patterns must have at least one step
@@ -117,13 +119,17 @@ describe('Rundown Conformance (Fixture Driven)', () => {
       const content = fs.readFileSync(path.join(invalidDir, file), 'utf8');
       // Invalid runbooks either throw (parse-level errors like H4+, duplicate IDs)
       // or return error-severity diagnostics (validation errors like non-sequential steps)
+      let result: ReturnType<typeof parseRunbookDocument> | null = null;
       try {
-        const { diagnostics } = parseRunbookDocument(content);
-        const errors = diagnostics.filter((d) => d.severity === 'error');
-        expect(errors.length).toBeGreaterThan(0);
-      } catch {
-        // Parse-level error — expected for truly malformed markdown
+        result = parseRunbookDocument(content);
+      } catch (error) {
+        if (error instanceof RunbookSyntaxError) {
+          return; // Parse-level syntax error — expected for truly malformed markdown
+        }
+        throw error; // Re-throw unexpected errors
       }
+      const errors = result.diagnostics.filter((d) => d.severity === 'error');
+      expect(errors.length).toBeGreaterThan(0);
     });
   });
 });

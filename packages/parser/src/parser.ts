@@ -398,7 +398,7 @@ export function parseRunbookDocument(markdown: string, filename?: string): Parse
 
         // Throw if text looks like a FOR clause but didn't parse,
         // unless it contains template variables ({{...}}) that need runtime expansion
-        if (forClause === null && text.trim().startsWith('FOR ') && !text.includes('{{')) {
+        if (forClause === null && text.trim().startsWith('FOR ')) {
           throw new RunbookSyntaxError(`Invalid FOR clause: ${text.trim()}`);
         }
 
