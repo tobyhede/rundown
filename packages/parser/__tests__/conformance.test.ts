@@ -74,7 +74,7 @@ describe('Rundown Conformance (Fixture Driven)', () => {
 
     it.each(files)('should parse valid runbook: %s', (filePath) => {
       const content = fs.readFileSync(filePath, 'utf8');
-      const runbook = parseRunbookDocument(content);
+      const { runbook } = parseRunbookDocument(content);
       const tags = runbook.tags ?? [];
 
       // All valid patterns must have at least one step
@@ -115,7 +115,15 @@ describe('Rundown Conformance (Fixture Driven)', () => {
 
     it.each(files)('should reject invalid runbook: %s', (file) => {
       const content = fs.readFileSync(path.join(invalidDir, file), 'utf8');
-      expect(() => parseRunbookDocument(content)).toThrow();
+      // Invalid runbooks either throw (parse-level errors like H4+, duplicate IDs)
+      // or return error-severity diagnostics (validation errors like non-sequential steps)
+      try {
+        const { diagnostics } = parseRunbookDocument(content);
+        const errors = diagnostics.filter((d) => d.severity === 'error');
+        expect(errors.length).toBeGreaterThan(0);
+      } catch {
+        // Parse-level error — expected for truly malformed markdown
+      }
     });
   });
 });

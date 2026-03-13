@@ -7,6 +7,7 @@ import type {
   TerminalAction,
   Transitions,
 } from './schemas.js';
+import type { ValidationDiagnostic } from './validator.js';
 
 export type {
   StepId,
@@ -226,4 +227,18 @@ export interface Runbook {
   readonly tags?: readonly string[];
   /** Ordered list of runbook steps */
   readonly steps: readonly Step[];
+}
+
+/**
+ * Result of parsing a runbook document.
+ *
+ * Contains the parsed runbook AST and any validation diagnostics.
+ * Structural validation issues (non-sequential steps, missing substeps)
+ * are reported as diagnostics rather than thrown as exceptions.
+ */
+export interface ParseResult {
+  /** Parsed runbook AST */
+  readonly runbook: Runbook;
+  /** Structural validation diagnostics (errors and warnings) */
+  readonly diagnostics: readonly ValidationDiagnostic[];
 }

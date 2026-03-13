@@ -1,4 +1,4 @@
-export { parseRunbook, parseRunbookDocument, type ParseOptions } from './parser.js';
+export { parseRunbook, parseRunbookDocument } from './parser.js';
 export {
   validateRunbook,
   validateAction,

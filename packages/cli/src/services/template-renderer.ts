@@ -17,9 +17,8 @@ import type {
   ForClause,
   NumericWindow,
   SourceWindow,
-  ParsedForClause,
 } from '@rundown-org/parser';
-import { isBoundRef, isUnresolvedForClause, MAX_FOR_BOUND } from '@rundown-org/parser';
+import { isUnresolvedForClause, MAX_FOR_BOUND } from '@rundown-org/parser';
 
 /**
  * Shared placeholder matcher used across startup and runtime substitution.
@@ -159,7 +158,7 @@ function resolveBound(
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1 || parsed > MAX_FOR_BOUND) {
     throw new Error(
-      `FOR ${position} bound "{{${bound.ref}}}" in step "${stepName}" resolved to "${value}" — must be a positive integer ≤ ${MAX_FOR_BOUND}`,
+      `FOR ${position} bound "{{${bound.ref}}}" in step "${stepName}" resolved to "${value}" — must be a positive integer ≤ ${String(MAX_FOR_BOUND)}`,
     );
   }
 

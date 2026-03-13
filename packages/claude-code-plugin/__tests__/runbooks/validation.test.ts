@@ -7,7 +7,7 @@ import { describe, it, expect } from '@jest/globals';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseRunbookDocument, validateRunbook } from '@rundown-org/parser';
+import { parseRunbookDocument } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -48,15 +48,14 @@ describe('Built-in Runbook Validation', () => {
 
   describe.each(runbookEntries)('%s', (_relativePath, runbookPath) => {
     const content = readFileSync(runbookPath, 'utf-8');
-    const runbook = parseRunbookDocument(content, runbookPath, { skipValidation: true });
+    const { runbook, diagnostics } = parseRunbookDocument(content, runbookPath);
 
     it('parses without syntax errors', () => {
       expect(runbook).toBeDefined();
     });
 
     it('passes validation checks', () => {
-      const errors = validateRunbook(runbook.steps);
-      expect(errors).toEqual([]);
+      expect(diagnostics).toEqual([]);
     });
 
     it('has required metadata', () => {

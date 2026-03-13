@@ -40,7 +40,7 @@ describe('runbook compiler', () => {
   }
 
   function createRunbook(markdown: string): Step[] {
-    const runbook = parseRunbookDocument(markdown);
+    const { runbook } = parseRunbookDocument(markdown);
     return [...runbook.steps];
   }
 
@@ -119,7 +119,7 @@ describe('runbook compiler', () => {
 
 ## 2. Done
 - PASS COMPLETE
-`).steps,
+`).runbook.steps,
       ];
 
       const machine = compileRunbookToMachine(steps);

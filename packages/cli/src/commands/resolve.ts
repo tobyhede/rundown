@@ -8,27 +8,15 @@
  * @module commands/resolve
  */
 
-import * as path from 'node:path';
 import type { Command } from 'commander';
 import {
-  parseRunbookDocument,
   type DataSource,
   type ResolveSourceInfo,
   type CheckValidationWarning,
-  getErrorMessage,
 } from '@rundown-org/core';
-import { validateRunbook } from '@rundown-org/parser';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { loadAndValidateRunbook } from '../helpers/runbook-validator.js';
 import { collect } from './echo.js';
-import { resolveVariables, FileSourcePolicyError } from '../services/variable-discovery.js';
-import { buildTemplateVars, validateSources } from '../helpers/runbook-pipeline.js';
-import {
-  substituteRunbookVariables,
-  resolveForBounds,
-  collectUnresolvedRunbookVariables,
-} from '../services/template-renderer.js';
-import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
+import { prepareRunbook } from '../helpers/runbook-pipeline.js';
 
 /**
  * Build source info for JSON/text output from resolved data sources.
@@ -81,15 +69,46 @@ export function registerResolveCommand(program: Command): void {
       const output = new OutputEmitter({ json: options.json });
       const cwd = process.cwd();
 
-      // Phase 1: Structural validation (same as check)
-      const loadResult = await loadAndValidateRunbook(file, cwd);
+      const result = await prepareRunbook(
+        file,
+        { varFile: options.varFile, var: options.var },
+        cwd,
+      );
 
-      if (!loadResult.ok) {
+      if (!result.ok) {
+        // Build output from partial results (variables, stats, diagnostics) + error
+        const errors: Array<{ line?: number; message: string }> = [{ message: result.error }];
+        const warnings: CheckValidationWarning[] = [];
+
+        // Surface structural diagnostics when pipeline progressed past parse
+        if (result.diagnostics) {
+          for (const d of result.diagnostics) {
+            if (d.severity === 'error') {
+              errors.push({ line: d.line, message: d.message });
+            } else {
+              warnings.push({ line: d.line, message: d.message });
+            }
+          }
+        }
+
+        // Surface pipeline warnings
+        if (result.warnings) {
+          for (const msg of result.warnings) {
+            warnings.push({ message: msg, kind: 'variable-discovery' });
+          }
+        }
+
+        const sourceInfo = result.sources ? buildSourceInfo(result.sources) : undefined;
+
         output.detail(
           {
             kind: 'resolve' as const,
             valid: false,
-            errors: [{ message: loadResult.error }],
+            errors,
+            warnings: warnings.length > 0 ? warnings : undefined,
+            stats: result.stats,
+            variables: result.variables,
+            sources: sourceInfo && Object.keys(sourceInfo).length > 0 ? sourceInfo : undefined,
           },
           'resolve',
         );
@@ -97,92 +116,32 @@ export function registerResolveCommand(program: Command): void {
         process.exit(1);
       }
 
-      const { content: rawContent, diagnostics, stats } = loadResult.loaded;
-      const structuralErrors = diagnostics.filter((d) => d.severity === 'error');
-      const structuralWarnings = diagnostics.filter((d) => d.severity === 'warning');
+      // Build output from prepared result
+      const { prepared, diagnostics, unresolved, warnings: pipelineWarnings } = result;
+      const errors: Array<{ line?: number; message: string }> = [];
+      const warnings: CheckValidationWarning[] = [];
 
-      // Phase 2: Variable resolution pipeline
-      let mergedVariables: Record<string, string>;
-      let sources: Record<string, DataSource>;
-      const errors = structuralErrors.map((e) => ({ line: e.line, message: e.message }));
-      const warnings: CheckValidationWarning[] = structuralWarnings.map((w) => ({
-        line: w.line,
-        message: w.message,
-      }));
-
-      let resolutionFailed = false;
-      try {
-        const resolvedVariables = await resolveVariables(
-          { varFile: options.varFile, var: options.var, markdown: rawContent },
-          cwd,
-          {
-            evaluator: getPolicyEvaluator(),
-            prompter: getPolicyPrompter(),
-          },
-        );
-        mergedVariables = { ...resolvedVariables.vars };
-        sources = { ...resolvedVariables.sources };
-
-        // Surface variable discovery warnings as structured output
-        for (const msg of resolvedVariables.warnings) {
-          warnings.push({ message: msg, kind: 'variable-discovery' });
-        }
-      } catch (error) {
-        resolutionFailed = true;
-        if (error instanceof FileSourcePolicyError) {
-          errors.push({ line: undefined, message: error.message });
+      for (const d of diagnostics) {
+        if (d.severity === 'error') {
+          errors.push({ line: d.line, message: d.message });
         } else {
-          errors.push({ line: undefined, message: getErrorMessage(error) });
+          warnings.push({ line: d.line, message: d.message });
         }
-        mergedVariables = {};
-        sources = {};
       }
 
-      const templateVars = buildTemplateVars(mergedVariables);
-
-      // Phase 3: FOR clause expansion + re-parse + substitution
-      // Skip when variable resolution failed — running with empty variables would
-      // produce misleading "unresolved variable" warnings that mask the root cause.
-      let unresolvedNames: string[] = [];
-      if (!resolutionFailed) {
-        try {
-          const runbook = parseRunbookDocument(
-            rawContent,
-            path.basename(loadResult.loaded.resolvedPath),
-            { skipValidation: true },
-          );
-
-          // Validate parsed AST (mirrors run path which validates by default)
-          const postExpansionDiagnostics = validateRunbook(runbook.steps);
-          for (const d of postExpansionDiagnostics) {
-            if (d.severity === 'error') {
-              errors.push({ line: d.line, message: d.message });
-            } else {
-              warnings.push({ line: d.line, message: d.message });
-            }
+      // Surface pipeline warnings (variable discovery only — unresolved handled below)
+      if (pipelineWarnings) {
+        for (const msg of pipelineWarnings) {
+          // Skip unresolved variable warnings; they are emitted separately with kind: 'unresolved'
+          if (!msg.startsWith('Undefined variable "{{')) {
+            warnings.push({ message: msg, kind: 'variable-discovery' });
           }
-
-          // Resolve FOR clause bounds ({{Max}} → 10)
-          const resolved = resolveForBounds(runbook, templateVars);
-          const substituted = substituteRunbookVariables(resolved, templateVars);
-          unresolvedNames = [...collectUnresolvedRunbookVariables(substituted)];
-
-          // Validate sourced FOR clauses reference defined data sources
-          validateSources(substituted.steps, sources);
-        } catch (error) {
-          errors.push({
-            line: undefined,
-            message: `During variable resolution: ${getErrorMessage(error)}`,
-          });
         }
       }
 
-      // Phase 4: Build output
-      const hasErrors = errors.length > 0;
-
-      // Unresolved variables are warnings, not errors
-      if (unresolvedNames.length > 0) {
-        for (const name of unresolvedNames) {
+      // Unresolved variables as structured warnings
+      if (unresolved.length > 0) {
+        for (const name of unresolved) {
           warnings.push({
             line: undefined,
             message: `Unresolved variable: {{${name}}}`,
@@ -191,7 +150,8 @@ export function registerResolveCommand(program: Command): void {
         }
       }
 
-      const sourceInfo = buildSourceInfo(sources);
+      const sourceInfo = buildSourceInfo(prepared.sources);
+      const hasErrors = errors.length > 0;
 
       output.detail(
         {
@@ -199,10 +159,10 @@ export function registerResolveCommand(program: Command): void {
           valid: !hasErrors,
           errors,
           warnings: warnings.length > 0 ? warnings : undefined,
-          stats,
-          variables: templateVars,
+          stats: prepared.stats,
+          variables: prepared.mergedVariables,
           sources: Object.keys(sourceInfo).length > 0 ? sourceInfo : undefined,
-          unresolved: unresolvedNames.length > 0 ? unresolvedNames : undefined,
+          unresolved: unresolved.length > 0 ? unresolved : undefined,
         },
         'resolve',
       );

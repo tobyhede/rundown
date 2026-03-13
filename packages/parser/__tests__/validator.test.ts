@@ -884,10 +884,12 @@ describe('validator strict rules', () => {
   });
 
   describe('step-name uniqueness integration', () => {
-    it('parseRunbookDocument rejects duplicate named steps', async () => {
+    it('parseRunbookDocument returns error diagnostic for duplicate named steps', async () => {
       const { parseRunbookDocument } = await import('../src/index.js');
       const markdown = `# My Runbook\n\n## Setup\nFirst setup\n\n## Setup\nDuplicate setup\n`;
-      expect(() => parseRunbookDocument(markdown)).toThrow(/Duplicate step name "Setup"/);
+      const { diagnostics } = parseRunbookDocument(markdown);
+      const errors = diagnostics.filter((d) => d.severity === 'error');
+      expect(errors.some((e) => e.message.includes('Duplicate step name "Setup"'))).toBe(true);
     });
   });
 

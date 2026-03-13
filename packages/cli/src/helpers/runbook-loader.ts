@@ -53,7 +53,7 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
   }
   // New flow: raw runbookSrc + templateVars → parse, resolve FOR bounds, substitute
   if (state.templateVars) {
-    const runbook = parseRunbookDocument(state.runbookSrc, state.runbook);
+    const { runbook } = parseRunbookDocument(state.runbookSrc, state.runbook);
     const resolved = resolveForBounds(runbook, state.templateVars);
     const substituted = substituteRunbookVariables(resolved, state.templateVars);
     for (const msg of warnUnresolvedRunbookVariables(substituted)) {
@@ -62,7 +62,7 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
     return substituted.steps;
   }
 
-  const runbook = parseRunbookDocument(state.runbookSrc, state.runbook);
+  const { runbook } = parseRunbookDocument(state.runbookSrc, state.runbook);
 
   // Backward compat: old state files have pre-expanded runbookSrc, no templateVars
   return runbook.steps;

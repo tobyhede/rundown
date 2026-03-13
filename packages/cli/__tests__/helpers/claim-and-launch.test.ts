@@ -97,6 +97,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
     }
   },
   resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {}, warnings: [] }),
+  RUNTIME_RESERVED_VARIABLES: new Set(['Date', 'DateTime', 'Year', 'Month', 'Day', 'WorkPath']),
 }));
 
 // Mock template-renderer
@@ -105,6 +106,17 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   resolveForBounds: jest.fn((runbook: unknown) => runbook),
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
+  collectUnresolvedRunbookVariables: jest.fn().mockReturnValue(new Set()),
+}));
+
+// Mock extract-raw-frontmatter
+jest.unstable_mockModule('../../src/helpers/extract-raw-frontmatter', () => ({
+  extractRawFrontmatter: jest.fn().mockReturnValue({ frontmatter: null, bodyStart: 0 }),
+}));
+
+// Mock validate-frontmatter-vars
+jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
+  validateFrontmatterVars: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises

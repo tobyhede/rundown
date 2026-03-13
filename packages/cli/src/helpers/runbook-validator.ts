@@ -12,7 +12,6 @@ import * as path from 'node:path';
 import {
   parseRunbookDocument,
   stepHasSubsteps,
-  validateRunbook,
   type Step,
   type ValidationDiagnostic,
 } from '@rundown-org/parser';
@@ -30,7 +29,7 @@ export interface LoadedRunbook {
   resolvedPath: string;
   /** Raw markdown content */
   content: string;
-  /** Parsed runbook AST (with skipValidation, before variable substitution) */
+  /** Parsed runbook AST (before variable substitution) */
   runbook: Runbook;
   /** Structural and frontmatter validation diagnostics */
   diagnostics: ValidationDiagnostic[];
@@ -56,10 +55,9 @@ function countSubsteps(steps: readonly Step[]): number {
  * Performs:
  * 1. File discovery via `resolveRunbookFile`
  * 2. File read
- * 3. Parse with `skipValidation: true`
- * 4. Structural validation
- * 5. Frontmatter var validation
- * 6. Substep counting
+ * 3. Parse (returns diagnostics as data, not exceptions)
+ * 4. Frontmatter var validation
+ * 5. Substep counting
  *
  * @param file - Runbook file path or namespace:name
  * @param cwd - Current working directory for resolution
@@ -77,10 +75,10 @@ export async function loadAndValidateRunbook(
 
   try {
     const content = await fs.readFile(resolvedPath, 'utf-8');
-    const runbook = parseRunbookDocument(content, path.basename(resolvedPath), {
-      skipValidation: true,
-    });
-    const structuralDiagnostics = validateRunbook(runbook.steps);
+    const { runbook, diagnostics: structuralDiagnostics } = parseRunbookDocument(
+      content,
+      path.basename(resolvedPath),
+    );
     const { frontmatter } = extractRawFrontmatter(content);
     const varDiagnostics = validateFrontmatterVars(
       frontmatter?.vars as Record<string, unknown> | undefined,

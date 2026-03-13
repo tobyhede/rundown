@@ -22,8 +22,8 @@ tags:
 ## 1. Step
 - PASS COMPLETE
 `;
-    const result = parseRunbookDocument(markdown);
-    expect(result.tags).toEqual(['retry', 'transition']);
+    const { runbook } = parseRunbookDocument(markdown);
+    expect(runbook.tags).toEqual(['retry', 'transition']);
   });
 
   it('should handle runbook without tags', () => {
@@ -36,8 +36,8 @@ name: test-runbook
 ## 1. Step
 - PASS COMPLETE
 `;
-    const result = parseRunbookDocument(markdown);
-    expect(result.tags).toBeUndefined();
+    const { runbook } = parseRunbookDocument(markdown);
+    expect(runbook.tags).toBeUndefined();
   });
 
   it('should handle empty tags array', () => {
@@ -51,7 +51,7 @@ tags: []
 ## 1. Step
 - PASS COMPLETE
 `;
-    const result = parseRunbookDocument(markdown);
-    expect(result.tags).toEqual([]);
+    const { runbook } = parseRunbookDocument(markdown);
+    expect(runbook.tags).toEqual([]);
   });
 });

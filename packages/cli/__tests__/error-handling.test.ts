@@ -16,7 +16,7 @@ describe('error handling', () => {
 
   describe('RunbookSyntaxError', () => {
     it('displays parsing errors clearly', async () => {
-      // Create invalid runbook
+      // Create invalid runbook — no ## step headers
       const invalidRunbook = `
 # Not a valid runbook
 This doesn't have proper ## headers
@@ -26,7 +26,7 @@ This doesn't have proper ## headers
       const result = runCli('run invalid.md', workspace);
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr.toLowerCase()).toContain('syntax error');
+      expect(result.stderr.toLowerCase()).toContain('no steps');
     });
 
     it('handles empty runbook file', async () => {
@@ -35,7 +35,7 @@ This doesn't have proper ## headers
       const result = runCli('run empty.md', workspace);
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr.toLowerCase()).toContain('syntax error');
+      expect(result.stderr.toLowerCase()).toContain('no steps');
     });
   });
 
