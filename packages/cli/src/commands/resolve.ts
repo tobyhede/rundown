@@ -9,11 +9,7 @@
  */
 
 import type { Command } from 'commander';
-import {
-  type DataSource,
-  type ResolveSourceInfo,
-  type CheckValidationWarning,
-} from '@rundown-org/core';
+import type { DataSource, ResolveSourceInfo, CheckValidationWarning } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { collect } from './echo.js';
 import { prepareRunbook } from '../helpers/runbook-pipeline.js';
