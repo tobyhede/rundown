@@ -191,40 +191,6 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
 
   return { key, value };
 }
-
-/**
- * Merge variable sources with precedence.
- *
- * Precedence (highest to lowest):
- * 1. --var flags (fromFlags)
- * 2. --var-file contents (fromFile)
- * 3. Auto-discovered .rundown/config.yaml (discovered)
- * 4. Frontmatter vars (frontmatter)
- * 5. Built-in defaults (builtins) - lowest precedence
- *
- * @param builtins - Built-in default variables (lowest precedence)
- * @param frontmatter - Variables from runbook frontmatter
- * @param discovered - Variables from auto-discovery
- * @param fromFile - Variables from --var-file
- * @param fromFlags - Variables from --var flags (highest precedence)
- * @returns Merged variables object
- */
-export function mergeVariables(
-  builtins: Record<string, string>,
-  frontmatter: Record<string, string>,
-  discovered: Record<string, string>,
-  fromFile: Record<string, string>,
-  fromFlags: Record<string, string>,
-): Record<string, string> {
-  return {
-    ...builtins,
-    ...frontmatter,
-    ...discovered,
-    ...fromFile,
-    ...fromFlags,
-  };
-}
-
 /**
  * Load variables from a YAML file.
  *

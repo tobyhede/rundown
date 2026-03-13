@@ -4,7 +4,6 @@ import {
   FileSourcePolicyError,
   findConfigFile,
   parseVarFlag,
-  mergeVariables,
   loadVariablesFromFile,
   getBuiltinVariables,
   resolveVariables,
@@ -135,64 +134,6 @@ describe('getBuiltinVariables', () => {
 
     // Date should match Year-Month-Day
     expect(builtins.Date).toBe(`${builtins.Year}-${builtins.Month}-${builtins.Day}`);
-  });
-});
-
-describe('mergeVariables', () => {
-  it('should merge with --var overriding --var-file', () => {
-    const builtins = {};
-    const frontmatter = {};
-    const discovered = { a: '1', b: '2' };
-    const fromFile = { b: '3', c: '4' };
-    const fromFlags = { c: '5' };
-
-    const result = mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
-
-    expect(result).toEqual({ a: '1', b: '3', c: '5' });
-  });
-
-  it('should apply precedence: flags > file > discovered > frontmatter > builtins', () => {
-    const builtins = { shared: 'builtin', only_builtin: 'b' };
-    const frontmatter = { shared: 'frontmatter', only_frontmatter: 'fm' };
-    const discovered = { shared: 'discovered', only_discovered: 'd' };
-    const fromFile = { shared: 'file', only_file: 'f' };
-    const fromFlags = { shared: 'flag', only_flag: 'g' };
-
-    const result = mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
-
-    expect(result).toEqual({
-      shared: 'flag',
-      only_builtin: 'b',
-      only_frontmatter: 'fm',
-      only_discovered: 'd',
-      only_file: 'f',
-      only_flag: 'g',
-    });
-  });
-
-  it('should allow builtins to be overridden by frontmatter', () => {
-    const builtins = { Date: '2000-01-01', WorkPath: '.work' };
-    const frontmatter = { Date: '2024-06-15' };
-    const discovered = {};
-    const fromFile = {};
-    const fromFlags = {};
-
-    const result = mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
-
-    expect(result.Date).toBe('2024-06-15');
-    expect(result.WorkPath).toBe('.work');
-  });
-
-  it('should allow frontmatter to be overridden by discovered', () => {
-    const builtins = { Date: '2000-01-01' };
-    const frontmatter = { Date: '2024-01-01' };
-    const discovered = { Date: '2024-06-15' };
-    const fromFile = {};
-    const fromFlags = {};
-
-    const result = mergeVariables(builtins, frontmatter, discovered, fromFile, fromFlags);
-
-    expect(result.Date).toBe('2024-06-15');
   });
 });
 
