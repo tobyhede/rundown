@@ -3,7 +3,6 @@ import { mockErrorHelpers } from './mock-error-helpers';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
-  parseRunbookDocument: jest.fn(),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
@@ -60,6 +59,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
+  parseRunbookDocument: jest.fn(),
   isSourced: jest.fn(),
   isResolvedForClause: jest.fn().mockReturnValue(true),
   stepHasSubsteps: (step: { kind: string }) => step.kind === 'substeps' || step.kind === 'for',

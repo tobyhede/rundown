@@ -3,7 +3,6 @@ import { mockErrorHelpers } from './mock-error-helpers.js';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
-  parseRunbookDocument: jest.fn(),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
@@ -59,6 +58,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
+  parseRunbookDocument: jest.fn(),
   isSourced: jest.fn(),
   isResolvedForClause: jest.fn().mockReturnValue(true),
   stepHasSubsteps: (step: { kind: string }) => step.kind === 'substeps' || step.kind === 'for',
@@ -232,7 +232,7 @@ beforeEach(() => {
   (parser.isResolvedForClause as jest.Mock).mockReturnValue(true);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (
-    core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+    parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
   ).mockReturnValue({
     runbook: { steps: [makeStep()] },
     diagnostics: [],
@@ -291,7 +291,7 @@ describe('prepareRunbook', () => {
   it('returns error when runbook has no steps', async () => {
     resolveRunbookFile.mockResolvedValue('/test/empty.md');
     (
-      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue({ runbook: { steps: [] }, diagnostics: [] } as any);
 
     const result = await prepareRunbook('empty.md', {}, '/test');
@@ -306,7 +306,7 @@ describe('prepareRunbook', () => {
   it('returns prepared runbook on success', async () => {
     resolveRunbookFile.mockResolvedValue('/test/good.md');
     (
-      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue({ runbook: { steps: [makeStep()] }, diagnostics: [] } as any);
 
     const result = await prepareRunbook('good.md', {}, '/test');
@@ -321,7 +321,7 @@ describe('prepareRunbook', () => {
   it('adds context.vars aliases to merged template variables', async () => {
     resolveRunbookFile.mockResolvedValue('/test/good.md');
     (
-      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue({ runbook: { steps: [makeStep()] }, diagnostics: [] } as any);
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: { region: 'us-west' },
@@ -344,7 +344,7 @@ describe('prepareRunbook', () => {
   it('adds context.vars.* aliases for inherited user vars', async () => {
     resolveRunbookFile.mockResolvedValue('/test/child.md');
     (
-      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue({ runbook: { steps: [makeStep()] }, diagnostics: [] } as any);
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: {},
@@ -369,7 +369,7 @@ describe('prepareRunbook', () => {
   it('child vars override inherited in context.vars.* aliases', async () => {
     resolveRunbookFile.mockResolvedValue('/test/child.md');
     (
-      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue({ runbook: { steps: [makeStep()] }, diagnostics: [] } as any);
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: { Region: 'eu-central' },
@@ -395,7 +395,7 @@ describe('prepareRunbook', () => {
     resolveRunbookFile.mockResolvedValue('/test/sourced.md');
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
     (
-      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue({
       runbook: {
         steps: [makeStep({ forClause: { source: 'missing' }, substeps: [{ id: '1' }] })],
@@ -794,7 +794,7 @@ describe('claimAndLaunch', () => {
 
     resolveRunbookFile.mockResolvedValue('/test/child.md');
     (
-      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue({ runbook: { steps: [makeStep()] }, diagnostics: [] } as any);
     (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
 
@@ -1036,7 +1036,7 @@ describe('claimAndLaunch', () => {
 
     resolveRunbookFile.mockResolvedValue('/test/child.md');
     (
-      core.parseRunbookDocument as jest.MockedFunction<typeof core.parseRunbookDocument>
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue({ runbook: { steps: [makeStep()] }, diagnostics: [] } as any);
     (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
 

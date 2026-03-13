@@ -12,7 +12,7 @@
  * @throws {Error} if runbookSrc is missing (indicates corrupted state)
  */
 
-import { parseRunbookDocument, type Step } from '@rundown-org/core';
+import { parseRunbookDocument, type Step } from '@rundown-org/parser';
 import type { RunbookState } from '@rundown-org/core';
 import {
   substituteRunbookVariables,

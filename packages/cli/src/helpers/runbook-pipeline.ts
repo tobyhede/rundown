@@ -17,7 +17,6 @@ import {
   deriveActiveFrame,
   buildFrameKey,
   type FrameKey,
-  parseRunbookDocument,
   type RunbookState,
   type ExecutionEventEmitter,
   type Runbook,
@@ -34,6 +33,7 @@ import {
   getErrorMessage,
 } from '@rundown-org/core';
 import {
+  parseRunbookDocument,
   isSourced,
   isResolvedForClause,
   stepHasSubsteps,
