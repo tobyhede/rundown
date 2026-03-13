@@ -524,7 +524,7 @@ export class TextRenderer implements OutputRenderer {
     // Warnings (excluding unresolved, which are shown above)
     if (warnings && warnings.length > 0) {
       // Filter out unresolved (shown in Unresolved section) and structural (shown via renderStructuralResult)
-      const otherWarnings = warnings.filter((w) => w.kind != null && w.kind !== 'unresolved');
+      const otherWarnings = warnings.filter((w) => w.kind !== undefined && w.kind !== 'unresolved');
       if (otherWarnings.length > 0) {
         for (const w of otherWarnings) {
           const linePrefix = w.line ? `Line ${String(w.line)}: ` : '';
