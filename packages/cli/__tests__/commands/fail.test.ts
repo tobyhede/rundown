@@ -133,7 +133,7 @@ Do work.
 
       // No-active-runbook path emits an error response with kind: 'error'
       expect(output).toHaveProperty('kind', 'error');
-      expect(output).toHaveProperty('action', 'fail');
+      expect(output).toHaveProperty('command', 'fail');
       expect(output.code).toBe('NO_ACTIVE_RUNBOOK');
 
       // Validate against ErrorResponseSchema (not ActionResponseSchema)

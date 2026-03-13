@@ -306,13 +306,13 @@ export class OutputEmitter {
   /**
    * Emit "no active runbook" message.
    *
-   * @param action - Optional action/command that triggered this (for JSON output)
+   * @param command - Optional CLI command that triggered this (for JSON output)
    * @param code - Optional error code (defaults to 'NO_ACTIVE_RUNBOOK')
    */
-  noActiveRunbook(action?: string, code = 'NO_ACTIVE_RUNBOOK'): void {
+  noActiveRunbook(command?: string, code = 'NO_ACTIVE_RUNBOOK'): void {
     const event: NoActiveRunbookOutput = {
       type: 'no_active_runbook',
-      action,
+      command,
       code,
     };
     this.renderer.render(event);

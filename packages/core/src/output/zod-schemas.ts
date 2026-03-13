@@ -177,6 +177,8 @@ export const ErrorResponseSchema = z
     error: z.string().describe('Error message describing what went wrong'),
     /** Machine-readable error code for programmatic handling */
     code: ErrorCodeSchema.optional().describe('Error code for programmatic handling'),
+    /** CLI command that triggered the error (e.g., 'pass', 'fail', 'goto') */
+    command: z.string().optional().describe('CLI command that triggered the error'),
     /** Actionable context to help resolve the error */
     details: ErrorDetailsSchema.optional().describe('Additional error context'),
   })
