@@ -53,6 +53,10 @@ export async function createFileProvider(
   options?: { skipLines?: number },
 ): Promise<FileProvider> {
   const stream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+  // Safety net: prevent unhandled error events after readline detaches its listener.
+  // During normal operation, readline's own handler still fires and propagates errors
+  // through the async iterator. This only matters for errors emitted after rl.close().
+  stream.on('error', () => {});
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   const iterator = rl[Symbol.asyncIterator]();
 
