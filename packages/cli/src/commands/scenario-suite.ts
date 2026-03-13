@@ -334,16 +334,12 @@ export function registerScenarioSuiteCommand(program: Command): void {
                   failedCount++;
                 }
               } catch (err: unknown) {
-                const msg =
-                  typeof err === 'object' && err !== null && 'message' in err
-                    ? String((err as { message: unknown }).message)
-                    : String(err);
                 caseResults.push({
                   kind: 'scenario_run',
                   passed: false,
                   scenario: name,
                   expected: getEffectiveResult(c),
-                  actual: `ERROR: ${msg}`,
+                  actual: `ERROR: ${getErrorMessage(err)}`,
                 });
                 failedCount++;
               }
@@ -397,16 +393,12 @@ export function registerScenarioSuiteCommand(program: Command): void {
             try {
               caseResult = await executeSuiteCase(caseName, c, suiteDir, runQuiet, output);
             } catch (err: unknown) {
-              const msg =
-                typeof err === 'object' && err !== null && 'message' in err
-                  ? String((err as { message: unknown }).message)
-                  : String(err);
               caseResult = {
                 kind: 'scenario_run',
                 passed: false,
                 scenario: caseName,
                 expected: getEffectiveResult(c),
-                actual: `ERROR: ${msg}`,
+                actual: `ERROR: ${getErrorMessage(err)}`,
               };
             }
 

@@ -76,7 +76,7 @@ export {
  */
 export const PromptResponseSchema = z
   .object({
-    /** Response kind discriminant */
+    /** Response type discriminant */
     kind: z.literal('prompt').describe('Response type discriminant'),
     output: z.string().describe('Prompt output text'),
   })

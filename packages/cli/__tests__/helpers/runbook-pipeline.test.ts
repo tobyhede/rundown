@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from './mock-error-helpers';
+import { mockErrorHelpers } from './mock-error-helpers.js';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({

@@ -239,16 +239,6 @@ export class JSONRenderer implements OutputRenderer {
     Object.assign(this.output, event.data);
   }
 
-  /** Format-to-kind mapping for detail events. */
-  private static readonly FORMAT_TO_KIND: Record<string, string> = {
-    status: 'status',
-    check: 'check',
-    resolve: 'resolve',
-    echo: 'echo',
-    prompt: 'prompt',
-    scenario_result: 'scenario_run',
-  };
-
   /**
    * Derive response kind from a detail event's format.
    *
@@ -258,11 +248,36 @@ export class JSONRenderer implements OutputRenderer {
    * @param event - The detail output event
    */
   private deriveKindFromDetail(event: OutputEvent & { type: 'detail' }): void {
-    const kind = JSONRenderer.FORMAT_TO_KIND[event.format];
-    if (kind) {
-      this.output.kind = kind;
+    switch (event.format) {
+      case 'status':
+        this.output.kind = 'status';
+        return;
+      case 'check':
+        this.output.kind = 'check';
+        return;
+      case 'resolve':
+        this.output.kind = 'resolve';
+        return;
+      case 'echo':
+        this.output.kind = 'echo';
+        return;
+      case 'prompt':
+        this.output.kind = 'prompt';
+        return;
+      case 'scenario_result':
+        this.output.kind = 'scenario_run';
+        return;
+      case 'metadata':
+      case 'step':
+      case 'scenario':
+      case 'custom':
+        // kind set in data or by caller
+        return;
+      default: {
+        const _exhaustive: never = event.format;
+        void _exhaustive;
+      }
     }
-    // 'custom' and 'scenario' formats: kind must be in data or set by caller
   }
 
   /**

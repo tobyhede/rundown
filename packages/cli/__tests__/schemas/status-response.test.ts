@@ -85,4 +85,17 @@ describe('StatusResponseSchema', () => {
       expect(parseResult.success).toBe(true);
     });
   });
+
+  describe('required fields', () => {
+    it('rejects response without kind field', () => {
+      const statusResponse = {
+        active: false,
+        stashed: false,
+      };
+
+      const parseResult = StatusResponseSchema.safeParse(statusResponse);
+
+      expect(parseResult.success).toBe(false);
+    });
+  });
 });
