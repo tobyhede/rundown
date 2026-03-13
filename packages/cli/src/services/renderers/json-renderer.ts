@@ -96,6 +96,8 @@ export class JSONRenderer implements OutputRenderer {
         break;
       case 'detail':
         this.renderDetail(event);
+        // Derive kind from detail format
+        this.deriveKindFromDetail(event);
         break;
       case 'metadata':
         this.output.file = event.metadata.file;
@@ -112,9 +114,18 @@ export class JSONRenderer implements OutputRenderer {
         if (event.data) {
           Object.assign(this.output, event.data);
         }
+        // Derive kind from status action
+        if (event.action === 'stash') {
+          this.output.kind = 'stash';
+        } else if (event.action === 'pop') {
+          this.output.kind = 'pop';
+        } else {
+          this.output.kind = 'action';
+        }
         break;
       case 'action':
         this.renderAction(event);
+        this.output.kind = 'action';
         break;
       case 'step_separator':
         // JSON doesn't need separators, but capture position
@@ -132,6 +143,7 @@ export class JSONRenderer implements OutputRenderer {
         break;
       case 'error':
         this.output.error = event.message;
+        this.output.kind = 'error';
         if (event.code) {
           this.output.code = event.code;
         }
@@ -142,6 +154,7 @@ export class JSONRenderer implements OutputRenderer {
       case 'complete':
         this.output.action = 'complete';
         this.output.complete = true;
+        this.output.kind = 'action';
         if (event.message) {
           this.output.message = event.message;
         }
@@ -152,6 +165,7 @@ export class JSONRenderer implements OutputRenderer {
       case 'stopped':
         this.output.action = 'stop';
         this.output.stopped = true;
+        this.output.kind = 'action';
         if (event.message) {
           this.output.message = event.message;
         }
@@ -161,8 +175,9 @@ export class JSONRenderer implements OutputRenderer {
         break;
       case 'no_active_runbook':
         this.output.error = 'No active runbook';
-        if (event.action) {
-          this.output.action = event.action;
+        this.output.kind = 'error';
+        if (event.command) {
+          this.output.command = event.command;
         }
         if (event.code) {
           this.output.code = event.code;
@@ -222,6 +237,47 @@ export class JSONRenderer implements OutputRenderer {
    */
   private renderDetail(event: OutputEvent & { type: 'detail' }): void {
     Object.assign(this.output, event.data);
+  }
+
+  /**
+   * Derive response kind from a detail event's format.
+   *
+   * For named formats, maps directly to the corresponding kind.
+   * For 'custom' format, the kind should already be set in the data.
+   *
+   * @param event - The detail output event
+   */
+  private deriveKindFromDetail(event: OutputEvent & { type: 'detail' }): void {
+    switch (event.format) {
+      case 'status':
+        this.output.kind = 'status';
+        return;
+      case 'check':
+        this.output.kind = 'check';
+        return;
+      case 'resolve':
+        this.output.kind = 'resolve';
+        return;
+      case 'echo':
+        this.output.kind = 'echo';
+        return;
+      case 'prompt':
+        this.output.kind = 'prompt';
+        return;
+      case 'scenario_result':
+        this.output.kind = 'scenario_run';
+        return;
+      case 'metadata':
+      case 'step':
+      case 'scenario':
+      case 'custom':
+        // kind set in data or by caller
+        return;
+      default: {
+        const _exhaustive: never = event.format;
+        void _exhaustive;
+      }
+    }
   }
 
   /**

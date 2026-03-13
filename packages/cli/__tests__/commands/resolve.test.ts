@@ -370,8 +370,8 @@ Say {{ greeting }} to {{ recipient }}.
     expect(unresolvedWarnings).toHaveLength(0);
   });
 
-  it('includes type discriminator in JSON output', async () => {
-    const runbookPath = path.join(workspace.cwd, 'type-field.runbook.md');
+  it('includes kind discriminant in JSON output', async () => {
+    const runbookPath = path.join(workspace.cwd, 'kind-field.runbook.md');
     fs.writeFileSync(
       runbookPath,
       `## Step 1
@@ -382,7 +382,7 @@ echo hello
     const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
     const output = JSON.parse(result.stdout);
 
-    expect(output.type).toBe('resolve');
+    expect(output.kind).toBe('resolve');
   });
 
   it('surfaces variable-discovery warnings in JSON output', async () => {

@@ -233,6 +233,7 @@ export function registerAbortCommand(program: Command): void {
             if (abortResult.status === 'already_cancelled') {
               if (options.json) {
                 output.json({
+                  kind: 'abort',
                   action: 'abort',
                   status: 'already_cancelled',
                   token: hint,
@@ -304,6 +305,7 @@ export function registerAbortCommand(program: Command): void {
           // 12. Output result
           if (options.json) {
             output.json({
+              kind: 'abort',
               action: 'abort',
               status: 'cancelled',
               token: hint,

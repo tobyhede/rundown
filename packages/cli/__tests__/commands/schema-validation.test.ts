@@ -48,13 +48,27 @@ describe('CLI JSON Output Schema Validation', () => {
     try {
       return JSON.parse(stdout);
     } catch {
-      // Try JSONL format - split on newlines that start a new JSON object and parse first valid block
+      // Try JSONL format - split on newlines that start a new JSON object
       const jsonBlocks = stdout.trim().split(/\n(?=\{)/);
+      // Prefer first block with 'kind' (accumulated CLI response discriminant).
+      // Streaming events use 'type', not 'kind', so the first 'kind' block is
+      // the real CLI response — any later 'kind' block may be a process.exit artifact.
       for (const block of jsonBlocks) {
         try {
-          return JSON.parse(block);
+          const parsed = JSON.parse(block);
+          if (typeof parsed === 'object' && parsed !== null && 'kind' in parsed) {
+            return parsed;
+          }
         } catch {}
       }
+      // Fallback: last parseable block
+      let lastParsed: unknown = undefined;
+      for (const block of jsonBlocks) {
+        try {
+          lastParsed = JSON.parse(block);
+        } catch {}
+      }
+      if (lastParsed !== undefined) return lastParsed;
       // Fallback: try to find any JSON object in the output
       const jsonMatch = stdout.match(/\{[\s\S]*?\n\}|\[[\s\S]*?\n\]/g);
       if (jsonMatch && jsonMatch.length > 0) {
@@ -283,10 +297,10 @@ echo hello
         `---
 name: test-runbook
 ---
-## Step 1
+## 1 First Step
 prompt: First step
 
-## Step 2
+## 2 Second Step
 echo done
 `,
       );
@@ -322,10 +336,10 @@ echo done
         `---
 name: test-runbook
 ---
-## Step 1
+## 1 First Step
 prompt: First step
 
-## Step 2
+## 2 Second Step
 echo done
 `,
       );

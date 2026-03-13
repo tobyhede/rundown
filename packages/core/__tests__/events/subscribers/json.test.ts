@@ -80,6 +80,7 @@ describe('JSONSubscriber', () => {
     );
 
     const summary = subscriber.getSummary();
+    expect(summary.kind).toBe('execution_summary');
     expect(summary.status).toBe('complete');
     expect(summary.commandsRun).toBe(1);
     expect(summary.commandsFailed).toBe(0);

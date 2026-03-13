@@ -20,7 +20,7 @@ export function registerCheckCommand(program: Command): void {
       if (!result.ok) {
         output.detail(
           {
-            type: 'check' as const,
+            kind: 'check' as const,
             valid: false,
             errors: [{ message: result.error }],
           },
@@ -37,7 +37,7 @@ export function registerCheckCommand(program: Command): void {
       if (errors.length > 0) {
         output.detail(
           {
-            type: 'check' as const,
+            kind: 'check' as const,
             valid: false,
             errors: errors.map((e) => ({ line: e.line, message: e.message })),
             warnings: warnings.map((w) => ({ line: w.line, message: w.message })),
@@ -50,7 +50,7 @@ export function registerCheckCommand(program: Command): void {
 
       output.detail(
         {
-          type: 'check' as const,
+          kind: 'check' as const,
           valid: true,
           errors: [],
           warnings: warnings.map((w) => ({ line: w.line, message: w.message })),

@@ -75,6 +75,7 @@ export class JSONSubscriber {
     const message = completeEvent ? completeEvent.payload.message : stoppedEvent?.payload.message;
 
     return {
+      kind: 'execution_summary' as const,
       runbookId: startedEvent?.runbookId,
       runbook: startedEvent?.runbook.path ?? startedEvent?.runbook.name,
       status,

@@ -68,6 +68,21 @@ describe('stash command', () => {
     expect(afterState?.step).toBe(beforeState?.step);
     expect(afterState?.runbook).toBe(beforeState?.runbook);
   });
+
+  it('returns non-zero when another runbook is already stashed', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('stash', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+
+    const result = await runCliInProcess('stash --json', workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      kind: 'error',
+      error: 'A runbook is already stashed. Pop it first.',
+      code: 'ALREADY_STASHED',
+    });
+  });
 });
 
 describe('pop command', () => {
@@ -116,6 +131,7 @@ describe('pop command', () => {
   it('fails if nothing stashed', async () => {
     const result = await runCliInProcess('pop', workspace);
 
+    expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('No stashed runbook');
   });
 
@@ -165,6 +181,7 @@ rd echo "hello"
     const result = await runCliInProcess('pop', workspace);
 
     // Text mode should NOT be silent - should show error message on stderr
+    expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('not found');
   });
 });

@@ -183,13 +183,13 @@ export interface StoppedOutput extends BaseOutputEvent {
 /**
  * Event for "no active runbook" message.
  *
- * Optional action and code fields enable consistent JSON output
+ * Optional command and code fields enable consistent JSON output
  * that includes the triggering command and error code.
  */
 export interface NoActiveRunbookOutput extends BaseOutputEvent {
   type: 'no_active_runbook';
-  /** The action/command that triggered this (e.g., 'pass', 'fail', 'goto') */
-  action?: string;
+  /** The CLI command that triggered this (e.g., 'pass', 'fail', 'goto') */
+  command?: string;
   /** Error code for programmatic handling */
   code?: string;
 }

@@ -9,7 +9,7 @@ import {
   findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { ActionResponseSchema } from '../helpers/schema-validator.js';
+import { ActionResponseSchema, ErrorResponseSchema } from '../helpers/schema-validator.js';
 
 describe('fail command', () => {
   let workspace: TestWorkspace;
@@ -131,14 +131,13 @@ Do work.
       // Parse JSON output
       const output = JSON.parse(result.stdout);
 
-      // The output must include 'action' field per ActionResponseSchema
-      // Currently this test FAILS because output.error() does not set action
-      expect(output).toHaveProperty('action');
-      expect(output.action).toBe('fail');
+      // No-active-runbook path emits an error response with kind: 'error'
+      expect(output).toHaveProperty('kind', 'error');
+      expect(output).toHaveProperty('command', 'fail');
       expect(output.code).toBe('NO_ACTIVE_RUNBOOK');
 
-      // Validate against schema
-      const parseResult = ActionResponseSchema.safeParse(output);
+      // Validate against ErrorResponseSchema (not ActionResponseSchema)
+      const parseResult = ErrorResponseSchema.safeParse(output);
       expect(parseResult.success).toBe(true);
     });
   });

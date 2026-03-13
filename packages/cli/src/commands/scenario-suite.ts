@@ -67,6 +67,7 @@ async function executeSuiteCase(
   quiet: boolean,
   output: OutputEmitter,
 ): Promise<{
+  kind: 'scenario_run';
   passed: boolean;
   scenario: string;
   expected: string;
@@ -92,6 +93,7 @@ async function executeSuiteCase(
     } catch (err: unknown) {
       if (isNodeError(err) && err.code === 'ENOENT') {
         return {
+          kind: 'scenario_run',
           passed: false,
           scenario: caseName,
           expected: effectiveResult,
@@ -175,6 +177,7 @@ async function executeSuiteCase(
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
 
     return {
+      kind: 'scenario_run',
       passed: resultPassed && assertionsPassed,
       scenario: caseName,
       expected: effectiveResult,
@@ -331,15 +334,12 @@ export function registerScenarioSuiteCommand(program: Command): void {
                   failedCount++;
                 }
               } catch (err: unknown) {
-                const msg =
-                  typeof err === 'object' && err !== null && 'message' in err
-                    ? String((err as { message: unknown }).message)
-                    : String(err);
                 caseResults.push({
+                  kind: 'scenario_run',
                   passed: false,
                   scenario: name,
                   expected: getEffectiveResult(c),
-                  actual: `ERROR: ${msg}`,
+                  actual: `ERROR: ${getErrorMessage(err)}`,
                 });
                 failedCount++;
               }
@@ -349,12 +349,22 @@ export function registerScenarioSuiteCommand(program: Command): void {
 
             output.detail(
               {
+                kind: 'scenario_suite_run',
                 result: allPassed,
                 suite: result.suite.name,
                 total: caseResults.length,
                 passed: passedCount,
                 failed: failedCount,
-                cases: caseResults,
+                cases: caseResults.map((cr) => ({
+                  kind: cr.kind,
+                  result: cr.passed,
+                  scenario: cr.scenario,
+                  expected: cr.expected,
+                  actual: cr.actual,
+                  ...('stepAssertions' in cr && cr.stepAssertions
+                    ? { stepAssertions: cr.stepAssertions }
+                    : {}),
+                })),
               },
               'custom',
             );
@@ -392,19 +402,17 @@ export function registerScenarioSuiteCommand(program: Command): void {
             try {
               caseResult = await executeSuiteCase(caseName, c, suiteDir, runQuiet, output);
             } catch (err: unknown) {
-              const msg =
-                typeof err === 'object' && err !== null && 'message' in err
-                  ? String((err as { message: unknown }).message)
-                  : String(err);
               caseResult = {
+                kind: 'scenario_run',
                 passed: false,
                 scenario: caseName,
                 expected: getEffectiveResult(c),
-                actual: `ERROR: ${msg}`,
+                actual: `ERROR: ${getErrorMessage(err)}`,
               };
             }
 
             const detailData: Record<string, unknown> = {
+              kind: 'scenario_run',
               result: caseResult.passed,
               scenario: caseResult.scenario,
               expected: caseResult.expected,

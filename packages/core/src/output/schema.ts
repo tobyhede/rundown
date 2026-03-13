@@ -137,27 +137,17 @@ import type {
  * @returns True if the response is an ErrorResponse
  */
 export function isErrorResponse(response: CLIResponse | ErrorResponse): response is ErrorResponse {
-  return 'result' in response && !response.result && 'error' in response;
+  return 'kind' in response && response.kind === 'error';
 }
 
 /**
  * Type guard to check if a response is an action response.
  *
- * Action responses have both `result` (boolean) and `action` (string) fields.
- * This distinguishes them from ErrorResponse which has `error` instead of `action`.
- *
  * @param response - The response to check
  * @returns True if the response is an ActionResponse
  */
 export function isActionResponse(response: CLIResponse): response is ActionResponse {
-  return (
-    'result' in response &&
-    typeof response.result === 'boolean' &&
-    'action' in response &&
-    typeof response.action === 'string' &&
-    !('stashedId' in response) &&
-    !('restoredId' in response)
-  );
+  return 'kind' in response && response.kind === 'action';
 }
 
 /**
@@ -166,56 +156,33 @@ export function isActionResponse(response: CLIResponse): response is ActionRespo
  * @param response - The response to check
  * @returns True if the response is a StatusResponse
  */
-export function isStatusResponse(response: unknown): response is StatusResponse {
-  return (
-    typeof response === 'object' &&
-    response !== null &&
-    'active' in response &&
-    typeof (response as StatusResponse).active === 'boolean'
-  );
+export function isStatusResponse(response: CLIResponse): response is StatusResponse {
+  return 'kind' in response && response.kind === 'status';
 }
 
 /**
  * Type guard to check if a response is a check response.
  *
- * Discriminates on the `type` field to distinguish from ResolveResponse,
+ * Discriminates on the `kind` field to distinguish from ResolveResponse,
  * which shares the same `valid`/`errors` shape.
  *
  * @param response - The response to check
  * @returns True if the response is a CheckResponse
  */
-export function isCheckResponse(response: unknown): response is CheckResponse {
-  return (
-    typeof response === 'object' &&
-    response !== null &&
-    'type' in response &&
-    (response as { type: unknown }).type === 'check' &&
-    'valid' in response &&
-    typeof (response as CheckResponse).valid === 'boolean' &&
-    'errors' in response &&
-    Array.isArray((response as CheckResponse).errors)
-  );
+export function isCheckResponse(response: CLIResponse): response is CheckResponse {
+  return 'kind' in response && response.kind === 'check';
 }
 
 /**
  * Type guard to check if a response is a resolve response.
  *
- * Discriminates on the `type` field to distinguish from CheckResponse.
+ * Discriminates on the `kind` field to distinguish from CheckResponse.
  *
  * @param response - The response to check
  * @returns True if the response is a ResolveResponse
  */
-export function isResolveResponse(response: unknown): response is ResolveResponse {
-  return (
-    typeof response === 'object' &&
-    response !== null &&
-    'type' in response &&
-    (response as { type: unknown }).type === 'resolve' &&
-    'valid' in response &&
-    typeof (response as ResolveResponse).valid === 'boolean' &&
-    'errors' in response &&
-    Array.isArray((response as ResolveResponse).errors)
-  );
+export function isResolveResponse(response: CLIResponse): response is ResolveResponse {
+  return 'kind' in response && response.kind === 'resolve';
 }
 
 /**

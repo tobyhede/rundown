@@ -641,7 +641,7 @@ export async function claimAndLaunch(
     // Extract parent user-level vars for top-level inheritance in child
     const inheritedUserVars: Record<string, string> = {};
     for (const [key, value] of Object.entries(freshDelegation.contextSnapshot.vars)) {
-      if (!key.startsWith('context.')) {
+      if (!key.startsWith('context.') && key !== 'RunId') {
         inheritedUserVars[key] = value;
       }
     }

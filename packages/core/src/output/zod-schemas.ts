@@ -171,10 +171,14 @@ export const SuccessResponseSchema = BaseResponseSchema.extend({
  */
 export const ErrorResponseSchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('error').describe('Response type discriminant'),
     /** Human-readable error message */
     error: z.string().describe('Error message describing what went wrong'),
     /** Machine-readable error code for programmatic handling */
     code: ErrorCodeSchema.optional().describe('Error code for programmatic handling'),
+    /** CLI command that triggered the error (e.g., 'pass', 'fail', 'goto') */
+    command: z.string().optional().describe('CLI command that triggered the error'),
     /** Actionable context to help resolve the error */
     details: ErrorDetailsSchema.optional().describe('Additional error context'),
   })
@@ -195,6 +199,8 @@ export const ErrorResponseSchema = z
  */
 export const ActionResponseSchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('action').describe('Response type discriminant'),
     /** Step outcome (PASS or FAIL) */
     stepResult: z.enum(['PASS', 'FAIL']).optional().describe('Step outcome (PASS or FAIL)'),
     /** The action that was performed (e.g., "CONTINUE", "GOTO 3", "RETRY") */
@@ -256,6 +262,8 @@ export const DelegationStatusEntrySchema = z
  */
 export const StatusResponseSchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('status').describe('Response type discriminant'),
     /** Whether a runbook is currently active */
     active: z.boolean().describe('Whether a runbook is currently active'),
     /** Whether a runbook is stashed */
@@ -413,8 +421,8 @@ export const CheckValidationWarningSchema = z
  */
 export const CheckResponseSchema = z
   .object({
-    /** Response type discriminator */
-    type: z.literal('check').describe('Response type discriminator'),
+    /** Response kind discriminant */
+    kind: z.literal('check').describe('Response type discriminant'),
     /** Whether the runbook is valid */
     valid: z.boolean().describe('Whether the runbook is valid'),
     /** List of validation errors (empty if valid) */
@@ -465,8 +473,8 @@ export const ResolveSourceInfoSchema = z.discriminatedUnion('kind', [
  */
 export const ResolveResponseSchema = z
   .object({
-    /** Response type discriminator */
-    type: z.literal('resolve').describe('Response type discriminator'),
+    /** Response kind discriminant */
+    kind: z.literal('resolve').describe('Response type discriminant'),
     /** Whether the runbook resolved without errors */
     valid: z.boolean().describe('Whether the runbook resolved without errors'),
     /** Structural and resolution errors */
@@ -579,6 +587,8 @@ export const ScenarioStepAssertionResultSchema = z
  */
 export const ScenarioRunResponseSchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('scenario_run').describe('Response type discriminant'),
     /** Whether the scenario passed */
     result: z.boolean().describe('Whether the scenario passed'),
     /** Scenario name */
@@ -617,6 +627,8 @@ export const ScenarioErrorResponseSchema = z
  */
 export const EchoResponseSchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('echo').describe('Response type discriminant'),
     /** Whether the operation succeeded */
     result: z.boolean().describe('Whether the echo command succeeded'),
     /** The echoed output */
@@ -653,6 +665,8 @@ export const PruneResponseSchema = ActiveRunbookListSchema.describe(
  */
 export const StashResponseSchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('stash').describe('Response type discriminant'),
     action: z.literal('stash').describe('Action type'),
     /** ID of the stashed runbook - REQUIRED */
     stashedId: z.string().describe('ID of the stashed runbook'),
@@ -673,6 +687,8 @@ export const StashResponseSchema = z
  */
 export const PopResponseSchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('pop').describe('Response type discriminant'),
     action: z.literal('pop').describe('Action type'),
     /** ID of the restored runbook - REQUIRED */
     restoredId: z.string().describe('ID of the restored runbook'),
@@ -706,6 +722,8 @@ export const PopResponseSchema = z
  */
 export const ExecutionSummarySchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('execution_summary').describe('Response type discriminant'),
     runbookId: z.string().optional().describe('Runbook state identifier'),
     runbook: z.string().optional().describe('Runbook filename'),
     status: z.enum(['complete', 'stopped', 'running']).describe('Execution status'),
@@ -722,9 +740,10 @@ export const ExecutionSummarySchema = z
 /**
  * Combined run command response schema.
  */
-export const RunCommandResponseSchema = ExecutionSummarySchema.describe(
-  'Response from the run command',
-);
+export const RunCommandResponseSchema = ExecutionSummarySchema.extend({
+  /** Response kind discriminant (overrides base execution_summary) */
+  kind: z.literal('run').describe('Response type discriminant'),
+}).describe('Response from the run command');
 
 // ============================================================================
 // Abort Command Schema
@@ -737,6 +756,8 @@ export const RunCommandResponseSchema = ExecutionSummarySchema.describe(
  */
 export const AbortResponseSchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('abort').describe('Response type discriminant'),
     /** Action performed */
     action: z.literal('abort').describe('Action type'),
     /** Abort result status */
@@ -798,6 +819,8 @@ export const ScenarioSuiteCaseDetailSchema = ScenarioSuiteCaseEntrySchema.extend
  */
 export const ScenarioSuiteRunResponseSchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('scenario_suite_run').describe('Response type discriminant'),
     /** Whether all cases passed */
     result: z.boolean().describe('Whether all cases passed'),
     /** Suite name */
@@ -856,6 +879,8 @@ export const ScenarioSuiteRunResponseSchema = z
  */
 export const DelegateResponseSchema = z
   .object({
+    /** Response kind discriminant */
+    kind: z.literal('delegate').describe('Response type discriminant'),
     /** Action performed */
     action: z.literal('delegated').describe('Action type'),
     /** Step or substep ID that was delegated */
@@ -882,6 +907,8 @@ export const DelegateResponseSchema = z
  * runbook, so the response extends the execution summary with claim-specific fields.
  */
 export const ClaimResponseSchema = ExecutionSummarySchema.extend({
+  /** Response kind discriminant (overrides base execution_summary) */
+  kind: z.literal('claim').describe('Response type discriminant'),
   /** Action performed */
   action: z.literal('claimed').describe('Action type'),
   /** Truncated delegation token */

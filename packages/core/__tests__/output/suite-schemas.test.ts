@@ -3,6 +3,7 @@ import { ScenarioSuiteRunResponseSchema } from '../../src/output/zod-schemas.js'
 
 describe('ScenarioSuiteRunResponseSchema', () => {
   const validCase = {
+    kind: 'scenario_run' as const,
     result: true,
     scenario: 'happy-path',
     expected: 'COMPLETE',
@@ -10,6 +11,7 @@ describe('ScenarioSuiteRunResponseSchema', () => {
   };
 
   const failingCase = {
+    kind: 'scenario_run' as const,
     result: false,
     scenario: 'stop-path',
     expected: 'COMPLETE',
@@ -18,6 +20,7 @@ describe('ScenarioSuiteRunResponseSchema', () => {
 
   it('validates a correct suite run response with mixed results', () => {
     const response = {
+      kind: 'scenario_suite_run' as const,
       result: false,
       suite: 'Test Suite',
       total: 2,
@@ -32,6 +35,7 @@ describe('ScenarioSuiteRunResponseSchema', () => {
 
   it('validates a correct suite run response with all passing', () => {
     const allPassingCase = {
+      kind: 'scenario_run' as const,
       result: true,
       scenario: 'another-happy',
       expected: 'COMPLETE',
@@ -39,6 +43,7 @@ describe('ScenarioSuiteRunResponseSchema', () => {
     };
 
     const response = {
+      kind: 'scenario_suite_run' as const,
       result: true,
       suite: 'Test Suite',
       total: 2,
@@ -53,6 +58,7 @@ describe('ScenarioSuiteRunResponseSchema', () => {
 
   it('rejects when total does not equal cases.length', () => {
     const response = {
+      kind: 'scenario_suite_run' as const,
       result: true,
       suite: 'Test Suite',
       total: 5,
@@ -71,6 +77,7 @@ describe('ScenarioSuiteRunResponseSchema', () => {
 
   it('rejects when passed + failed does not equal total', () => {
     const response = {
+      kind: 'scenario_suite_run' as const,
       result: true,
       suite: 'Test Suite',
       total: 2,
@@ -89,6 +96,7 @@ describe('ScenarioSuiteRunResponseSchema', () => {
 
   it('rejects when passed count does not match cases with result === true', () => {
     const response = {
+      kind: 'scenario_suite_run' as const,
       result: true,
       suite: 'Test Suite',
       total: 2,
@@ -107,6 +115,7 @@ describe('ScenarioSuiteRunResponseSchema', () => {
 
   it('rejects when failed count does not match cases with result === false', () => {
     const response = {
+      kind: 'scenario_suite_run' as const,
       result: true,
       suite: 'Test Suite',
       total: 2,

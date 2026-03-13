@@ -36,6 +36,7 @@ export function registerPopCommand(program: Command): void {
           if (!state) {
             output.error('No stashed runbook to restore', 'NO_STASHED_RUNBOOK');
             output.flush();
+            process.exitCode = 1;
             return;
           }
 
@@ -70,6 +71,7 @@ export function registerPopCommand(program: Command): void {
               restoredId: state.id,
             });
             output.flush();
+            process.exitCode = 1;
             return;
           }
 
