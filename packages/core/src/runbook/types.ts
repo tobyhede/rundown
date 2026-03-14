@@ -67,6 +67,12 @@ export type { BreakAction } from '@rundown-org/parser';
 export type { Transitions } from '@rundown-org/parser';
 
 /**
+ * Aggregation strategy for substep/iteration results.
+ * @see `@rundown-org/parser` Aggregation
+ */
+export type { Aggregation } from '@rundown-org/parser';
+
+/**
  * A single transition configuration with kind, retry count, and action.
  * @see `@rundown-org/parser` TransitionObject
  */

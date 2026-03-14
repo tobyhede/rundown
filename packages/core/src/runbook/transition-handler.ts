@@ -1,4 +1,4 @@
-import type { Step, SubstepState, Action, StepId, Transitions } from './types.js';
+import type { Step, SubstepState, Action, StepId, Transitions, Aggregation } from './types.js';
 
 /**
  * Result of evaluating a step condition (PASS or FAIL).
@@ -96,21 +96,21 @@ export function evaluatePassCondition(step: Step, currentRetryCount = 0): Condit
  * Pure predicate shared between the transition handler (runtime evaluation) and
  * the compiler (XState guard closures) to keep ALL/ANY logic in one place.
  *
- * - ALL mode (`aggregation = 'ALL'` or `'none'`): passes only when no failures exist
- * - ANY mode (`aggregation = 'ANY'`): passes when at least one result passed
+ * - ALL mode: passes only when no failures exist
+ * - ANY mode: passes when at least one result passed
  *
  * @param hasFailed - Whether any result was a failure
  * @param passCount - Number of passing results
- * @param aggregation - Aggregation mode: 'ALL', 'ANY', or 'none' (uses ALL semantics)
+ * @param strategy - Aggregation strategy: 'ALL' or 'ANY'
  * @returns True if the aggregated outcome should be treated as PASS
  * @see {@link evaluateAggregation}
  */
 export function shouldAggregationPass(
   hasFailed: boolean,
   passCount: number,
-  aggregation: 'ALL' | 'ANY' | 'none',
+  strategy: 'ALL' | 'ANY',
 ): boolean {
-  return aggregation !== 'ANY' ? !hasFailed : passCount > 0; // 'none' defaults to ALL (pessimistic)
+  return strategy === 'ALL' ? !hasFailed : passCount > 0;
 }
 
 /**
@@ -118,18 +118,20 @@ export function shouldAggregationPass(
  *
  * @param hasFailed - Whether any result was a failure
  * @param passCount - Number of passing results
- * @param transitions - The transitions defining aggregation behavior (all/any)
+ * @param aggregation - Aggregation strategy (ALL or ANY)
+ * @param transitions - The pass/fail transitions to apply
  * @param currentRetryCount - Current retry count
  * @returns A ConditionResult indicating the action to take
  */
 function evaluateAggregation(
   hasFailed: boolean,
   passCount: number,
+  aggregation: Aggregation,
   transitions: Transitions,
   currentRetryCount: number,
 ): ConditionResult {
   return evaluateTransition(
-    shouldAggregationPass(hasFailed, passCount, transitions.aggregation)
+    shouldAggregationPass(hasFailed, passCount, aggregation.strategy)
       ? transitions.pass
       : transitions.fail,
     currentRetryCount,
@@ -140,17 +142,19 @@ function evaluateAggregation(
  * Evaluate aggregation conditions across substep results.
  *
  * When all substeps are complete, determines the parent step's outcome
- * based on the aggregation mode (ALL or ANY) defined in transitions:
+ * based on the aggregation mode (ALL or ANY):
  * - ALL mode: Pass if all substeps passed, fail if any failed
  * - ANY mode: Pass if any substep passed, fail only if all failed
  *
  * @param substepStates - The current state of all substeps
- * @param transitions - The transitions defining aggregation behavior (all/any)
+ * @param aggregation - Aggregation strategy (ALL or ANY)
+ * @param transitions - The pass/fail transitions to apply
  * @param currentRetryCount - Current retry count (defaults to 0)
  * @returns A ConditionResult if all substeps are done, null otherwise
  */
 export function evaluateSubstepAggregation(
   substepStates: readonly SubstepState[],
+  aggregation: Aggregation,
   transitions: Transitions,
   currentRetryCount = 0,
 ): ConditionResult | null {
@@ -159,24 +163,26 @@ export function evaluateSubstepAggregation(
 
   const passCount = substepStates.filter((s) => s.result === 'pass').length;
   const hasFailed = substepStates.some((s) => s.result === 'fail');
-  return evaluateAggregation(hasFailed, passCount, transitions, currentRetryCount);
+  return evaluateAggregation(hasFailed, passCount, aggregation, transitions, currentRetryCount);
 }
 
 /**
  * Evaluate aggregation conditions across iteration results.
  *
  * When all iterations of a FOR loop are complete, determines the parent step's outcome
- * based on the aggregation mode (ALL or ANY) defined in transitions:
+ * based on the aggregation mode (ALL or ANY):
  * - ALL mode: Pass if all iterations passed, fail if any failed
  * - ANY mode: Pass if any iteration passed, fail only if all failed
  *
  * @param iterationResults - The per-iteration outcomes ('pass' or 'fail')
- * @param transitions - The transitions defining aggregation behavior (all/any)
+ * @param aggregation - Aggregation strategy (ALL or ANY)
+ * @param transitions - The pass/fail transitions to apply
  * @param currentRetryCount - Current retry count (defaults to 0)
  * @returns A ConditionResult if iterations exist, null if empty
  */
 export function evaluateIterationAggregation(
   iterationResults: readonly ('pass' | 'fail')[],
+  aggregation: Aggregation,
   transitions: Transitions,
   currentRetryCount = 0,
 ): ConditionResult | null {
@@ -184,7 +190,7 @@ export function evaluateIterationAggregation(
 
   const passCount = iterationResults.filter((r) => r === 'pass').length;
   const hasFailed = iterationResults.some((r) => r === 'fail');
-  return evaluateAggregation(hasFailed, passCount, transitions, currentRetryCount);
+  return evaluateAggregation(hasFailed, passCount, aggregation, transitions, currentRetryCount);
 }
 
 /**
