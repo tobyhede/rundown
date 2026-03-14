@@ -29,6 +29,7 @@ reviews:
     - "!site/.next/**"
     - "!**/*.snap"
     - "!dist/**"
+    - "dist/runbooks/**"
     - "!coverage/**"
 
   path_instructions:
@@ -57,7 +58,7 @@ reviews:
     - path: "**/__tests__/**/*.ts"
       instructions: |
         Test files. Focus on:
-        - Use Error.isError() instead of instanceof Error (cross-ESM-realm issue)
+        - Use Error.isError() instead of instanceof Error (cross-ESM-realm issue; project targets Node 24+)
         - Mock passthrough pattern (pass through real functions that don't need mocking)
         - Test isolation and meaningful assertions
         - Edge case coverage

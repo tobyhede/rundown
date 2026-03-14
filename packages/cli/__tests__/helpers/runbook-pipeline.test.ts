@@ -431,6 +431,7 @@ describe('prepareRunbook', () => {
 
     const result = await prepareRunbook('reserved.md', {}, '/test');
 
+    expect(validateFrontmatterVars).toHaveBeenCalledWith({ context: 'bad' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
