@@ -644,7 +644,7 @@ export function parseConditional(text: string): ParseConditionalResult {
     ];
   }
 
-  if (trimmed.startsWith('PASS')) {
+  if (trimmed === 'PASS' || trimmed.startsWith('PASS ')) {
     const result = parseConditionalPrefix(trimmed.slice(4), 'pass');
     if (!result) {
       throw new RunbookSyntaxError(`Invalid PASS transition: ${trimmed}`);
@@ -652,7 +652,7 @@ export function parseConditional(text: string): ParseConditionalResult {
     return result;
   }
 
-  if (trimmed.startsWith('YES')) {
+  if (trimmed === 'YES' || trimmed.startsWith('YES ')) {
     const result = parseConditionalPrefix(trimmed.slice(3), 'yes');
     if (!result) {
       throw new RunbookSyntaxError(`Invalid YES transition: ${trimmed}`);
@@ -660,7 +660,7 @@ export function parseConditional(text: string): ParseConditionalResult {
     return result;
   }
 
-  if (trimmed.startsWith('FAIL')) {
+  if (trimmed === 'FAIL' || trimmed.startsWith('FAIL ')) {
     const result = parseConditionalPrefix(trimmed.slice(4), 'fail');
     if (!result) {
       throw new RunbookSyntaxError(`Invalid FAIL transition: ${trimmed}`);
@@ -668,12 +668,19 @@ export function parseConditional(text: string): ParseConditionalResult {
     return result;
   }
 
-  if (trimmed.startsWith('NO')) {
+  if (trimmed === 'NO' || trimmed.startsWith('NO ')) {
     const result = parseConditionalPrefix(trimmed.slice(2), 'no');
     if (!result) {
       throw new RunbookSyntaxError(`Invalid NO transition: ${trimmed}`);
     }
     return result;
+  }
+
+  // Reject transition keywords followed by invalid separators (e.g., "PASS:", "FAIL:")
+  if (/^(?:PASS|FAIL|YES|NO)[^a-zA-Z0-9\s]/.test(trimmed)) {
+    throw new RunbookSyntaxError(
+      `Invalid transition syntax: "${trimmed}". Use space-separated format (e.g., "PASS CONTINUE")`,
+    );
   }
 
   return null;

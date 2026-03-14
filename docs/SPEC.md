@@ -122,6 +122,8 @@ Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
 
 Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` (pessimistic — any failure stops), or `PASS ANY` with `FAIL ALL` (optimistic — only total failure stops). Non-complementary combinations are invalid because they create evaluation gaps (ALL/ALL) or overlaps (ANY/ANY).
 
+Transition keywords (`PASS`, `YES`, `FAIL`, `NO`) are matched as whole words in list items — the keyword must be followed by whitespace and an action. Words that merely start with a keyword (e.g., `NOTE`, `PASSING`) are not treated as transitions.
+
 **Aggregation semantics:** Aggregation always waits for all DEFER'd results before evaluating. `ALL`/`ANY` evaluates over the count of DEFER'd results, not total substeps/iterations. This mirrors `Promise.allSettled` semantics — all results are collected before the outcome is determined.
 
 **Defaults**:
@@ -235,7 +237,7 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
 *   **Depth limit**: Parent context chain addressing is capped at 32 levels. Exceeding this limit produces an error.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
-*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables.
+*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `vars:`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic.
 
 ## 7. Conformance
 

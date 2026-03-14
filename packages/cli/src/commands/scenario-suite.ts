@@ -355,6 +355,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
                 total: caseResults.length,
                 passed: passedCount,
                 failed: failedCount,
+                // Map internal `passed` boolean to schema-facing `result` field
                 cases: caseResults.map((cr) => ({
                   kind: cr.kind,
                   result: cr.passed,

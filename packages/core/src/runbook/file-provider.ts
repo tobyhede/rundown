@@ -3,6 +3,7 @@ import * as fsp from 'node:fs/promises';
 import * as readline from 'node:readline';
 import * as crypto from 'node:crypto';
 import type { FileFormat, FileSnapshot } from './types.js';
+import { logger } from '../logger.js';
 
 /** Maximum bytes to read for fingerprint computation */
 const FINGERPRINT_BYTES = 64 * 1024;
@@ -53,6 +54,15 @@ export async function createFileProvider(
   options?: { skipLines?: number },
 ): Promise<FileProvider> {
   const stream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+  // Safety net: prevent unhandled error events after readline detaches its listener.
+  // During normal operation, readline's own handler still fires and propagates errors
+  // through the async iterator. This only matters for errors emitted after rl.close().
+  stream.on('error', (err) => {
+    void logger.debug('Post-close stream error in FileProvider', {
+      path: filePath,
+      error: String(err),
+    });
+  });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   const iterator = rl[Symbol.asyncIterator]();
 

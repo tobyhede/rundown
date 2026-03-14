@@ -62,7 +62,7 @@ describe('CLI JSON Output Schema Validation', () => {
         } catch {}
       }
       // Fallback: last parseable block
-      let lastParsed: unknown = undefined;
+      let lastParsed: unknown;
       for (const block of jsonBlocks) {
         try {
           lastParsed = JSON.parse(block);
