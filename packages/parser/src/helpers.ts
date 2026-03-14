@@ -7,6 +7,7 @@ import {
 import type {
   Action,
   AccumulatingAction,
+  Aggregation,
   BreakAction,
   LoopControlAction,
   StepExitAction,
@@ -735,7 +736,7 @@ export function parseConditional(text: string): ParseConditionalResult {
 function resolveAggregationMode(
   passModifier: AggregationModifier,
   failModifier: AggregationModifier,
-): 'ALL' | 'ANY' | 'none' {
+): 'ALL' | 'ANY' | undefined {
   if (passModifier && failModifier) {
     if (passModifier === 'ALL' && failModifier === 'ANY') return 'ALL';
     if (passModifier === 'ANY' && failModifier === 'ALL') return 'ANY';
@@ -750,7 +751,7 @@ function resolveAggregationMode(
   if (failModifier === 'ANY') return 'ALL';
   if (failModifier === 'ALL') return 'ANY';
 
-  return 'none';
+  return undefined;
 }
 
 /**
@@ -808,16 +809,28 @@ export function validateDEFERUsage(
 }
 
 /**
- * Convert an array of parsed conditionals into a Transitions object.
+ * Result of converting parsed conditionals into separated transitions and aggregation.
+ */
+export type ConvertedTransitions = {
+  /** The pass/fail transition pair. */
+  transitions: Transitions;
+  /** Aggregation strategy, present only when ALL/ANY was authored. */
+  aggregation?: Aggregation;
+};
+
+/**
+ * Convert an array of parsed conditionals into separated Transitions and Aggregation.
  *
  * Combines PASS and FAIL conditionals into a unified Transitions structure,
  * resolving aggregation mode (ALL vs ANY) and providing defaults for
  * missing conditions (PASS defaults to CONTINUE, FAIL defaults to STOP).
  *
  * @param conditionals - Array of parsed conditional objects from parseConditional
- * @returns Transitions object with pass/fail handlers, or null if no conditionals provided
+ * @returns ConvertedTransitions with transitions and optional aggregation, or null if no conditionals provided
  */
-export function convertToTransitions(conditionals: ParsedConditional[]): Transitions | null {
+export function convertToTransitions(
+  conditionals: ParsedConditional[],
+): ConvertedTransitions | null {
   if (conditionals.length === 0) {
     return null;
   }
@@ -847,35 +860,32 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
     }
   }
 
-  const aggregation = resolveAggregationMode(passModifier, failModifier);
+  const strategy = resolveAggregationMode(passModifier, failModifier);
 
-  const base = { aggregation };
-
+  let transitions: Transitions;
   if (passAction && failAction) {
-    return {
-      ...base,
+    transitions = {
       pass: { kind: passKind, retry: passRetry, action: passAction },
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };
-  }
-
-  if (passAction && !failAction) {
-    return {
-      ...base,
+  } else if (passAction) {
+    transitions = {
       pass: { kind: passKind, retry: passRetry, action: passAction },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     };
-  }
-
-  if (!passAction && failAction) {
-    return {
-      ...base,
+  } else if (failAction) {
+    transitions = {
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };
+  } else {
+    return null;
   }
 
-  return null;
+  if (strategy) {
+    return { transitions, aggregation: { strategy } };
+  }
+  return { transitions };
 }
 
 /**

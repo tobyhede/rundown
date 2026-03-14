@@ -45,6 +45,7 @@ export const NumericWindowSchema = z.object({
   end: z.number().int().positive().max(MAX_FOR_BOUND),
   source: z.never().optional(),
   transitions: z.lazy(() => TransitionsSchema.optional()),
+  aggregation: z.lazy(() => AggregationSchema.optional()),
 });
 
 /**
@@ -55,6 +56,7 @@ export const FullSourceWindowSchema = z.object({
   start: z.number().int().positive().max(MAX_FOR_BOUND),
   source: z.string().regex(NAMED_IDENTIFIER_PATTERN),
   transitions: z.lazy(() => TransitionsSchema.optional()),
+  aggregation: z.lazy(() => AggregationSchema.optional()),
 });
 
 /**
@@ -111,6 +113,7 @@ export const UnresolvedNumericWindowSchema = z.object({
   end: BoundSchema,
   source: z.never().optional(),
   transitions: z.lazy(() => TransitionsSchema.optional()),
+  aggregation: z.lazy(() => AggregationSchema.optional()),
 });
 
 /**
@@ -123,6 +126,7 @@ export const UnresolvedSourceWindowSchema = z.object({
   end: BoundSchema,
   source: z.string().regex(NAMED_IDENTIFIER_PATTERN),
   transitions: z.lazy(() => TransitionsSchema.optional()),
+  aggregation: z.lazy(() => AggregationSchema.optional()),
 });
 
 /**
@@ -281,15 +285,30 @@ export type TransitionObject = Readonly<z.output<typeof TransitionObjectSchema>>
 
 /**
  * Zod schema for Transitions
+ *
+ * Pass/fail transition pair without aggregation — aggregation is an orthogonal concern
+ * handled by {@link AggregationSchema}.
  */
 export const TransitionsSchema = z.object({
-  aggregation: z.enum(['ALL', 'ANY', 'none']),
   pass: TransitionObjectSchema,
   fail: TransitionObjectSchema,
 });
 
-/** Pass/fail transition pair with aggregation mode, inferred from TransitionsSchema. */
+/** Pass/fail transition pair, inferred from TransitionsSchema. */
 export type Transitions = Readonly<z.output<typeof TransitionsSchema>>;
+
+/**
+ * Zod schema for Aggregation
+ *
+ * Defines how substep or iteration results are combined into a single pass/fail outcome.
+ * ALL = pessimistic (all must pass), ANY = optimistic (at least one must pass).
+ */
+export const AggregationSchema = z.object({
+  strategy: z.enum(['ALL', 'ANY']),
+});
+
+/** Aggregation strategy for combining substep/iteration results. */
+export type Aggregation = Readonly<z.output<typeof AggregationSchema>>;
 
 /**
  * Zod schema for Substep
@@ -300,7 +319,7 @@ export const SubstepSchema = z.object({
   runbooks: z.array(z.string()).readonly().optional(),
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
-  transitions: TransitionsSchema.optional(),
+  transitions: TransitionsSchema,
   line: z.number().optional(),
 });
 
@@ -309,7 +328,8 @@ const StepFieldsSchema = {
   name: StepNameSchema,
   description: z.string(),
   prompt: z.string().min(1).optional(),
-  transitions: TransitionsSchema.optional(),
+  transitions: TransitionsSchema,
+  aggregation: AggregationSchema.optional(),
   line: z.number().optional(),
 };
 

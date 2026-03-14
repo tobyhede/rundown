@@ -3,6 +3,7 @@ import { visit, SKIP } from 'unist-util-visit';
 import type { Node } from 'unist';
 import type { Code, Heading, List, ListItem, Paragraph, PhrasingContent } from 'mdast';
 import type { Step, Substep, Command, ParsedForClause, ParseResult } from './ast.js';
+import type { Transitions } from './schemas.js';
 import { type ParsedConditional, RunbookSyntaxError } from './types.js';
 import {
   extractStepHeader,
@@ -19,6 +20,18 @@ import {
 } from './helpers.js';
 import { validateRunbook } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
+
+/** Default transitions for steps/substeps without explicit transitions: PASS CONTINUE, FAIL STOP. */
+const DEFAULT_TRANSITIONS: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+};
+
+/** Transitions for substeps under aggregation or with runbook delegation: PASS DEFER, FAIL DEFER. */
+const DEFER_TRANSITIONS: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
+};
 
 /**
  * Type guard to narrow Node to Heading.
@@ -155,7 +168,7 @@ export function parseRunbookDocument(markdown: string, basename?: string): Parse
       // Validate NEXT usage before converting to transitions
       validateLoopControlUsage(ps.pendingConditionals, currentStep.forClause !== undefined);
 
-      const transitions = convertToTransitions(ps.pendingConditionals);
+      const converted = convertToTransitions(ps.pendingConditionals);
 
       // Build prompt from promptText and remaining content
       let promptText = ps.promptText;
@@ -170,12 +183,14 @@ export function parseRunbookDocument(markdown: string, basename?: string): Parse
         }
       }
 
+      // Substep transitions: explicit if authored, placeholder DEFAULT_TRANSITIONS if not.
+      // finalizeStep will override DEFAULT_TRANSITIONS with context-aware defaults.
       const substep: Substep = {
         id: ps.id,
         description: ps.description,
         command: ps.command,
         prompt: promptText.trim() || undefined,
-        transitions: transitions ?? undefined,
+        transitions: converted?.transitions ?? DEFAULT_TRANSITIONS,
         runbooks: runbooks.length > 0 ? runbooks : undefined,
         line: ps.line,
       };
@@ -586,12 +601,18 @@ function finalizeStep(
   validateLoopControlUsage(effectiveConditionals, step.forClause !== undefined);
   validateDEFERUsage(effectiveConditionals, false);
 
-  const transitions = convertToTransitions(effectiveConditionals);
+  const converted = convertToTransitions(effectiveConditionals);
+  const stepTransitions = converted?.transitions ?? DEFAULT_TRANSITIONS;
+  const stepAggregation = converted?.aggregation;
 
   if (step.forClause && step.forConditionals?.length) {
-    const forTrans = convertToTransitions(step.forConditionals);
-    if (forTrans) {
-      step.forClause = { ...step.forClause, transitions: forTrans };
+    const forConverted = convertToTransitions(step.forConditionals);
+    if (forConverted) {
+      step.forClause = {
+        ...step.forClause,
+        transitions: forConverted.transitions,
+        aggregation: forConverted.aggregation,
+      };
     }
   }
 
@@ -607,6 +628,18 @@ function finalizeStep(
   const runbooks = extractRunbookList(step.content);
   const prompt = promptText.trim() || undefined;
 
+  // Resolve substep defaults based on context.
+  // Substeps with explicit transitions (from authored conditionals) keep them as-is.
+  // Substeps with placeholder DEFAULT_TRANSITIONS (no authored conditionals) get
+  // context-aware defaults: DEFER under aggregation or with runbooks, DEFAULT otherwise.
+  const resolveSubstepDefaults = (substeps: Substep[]): Substep[] =>
+    substeps.map((sub) => {
+      if (sub.transitions !== DEFAULT_TRANSITIONS) return sub; // explicit — keep as-is
+      if (sub.runbooks?.length) return { ...sub, transitions: DEFER_TRANSITIONS }; // delegation
+      if (stepAggregation) return { ...sub, transitions: DEFER_TRANSITIONS }; // under aggregation
+      return sub; // DEFAULT_TRANSITIONS is correct for sequential
+    });
+
   // Step-level runbook lists are syntax sugar for implicit substeps.
   if (runbooks.length > 0) {
     if (step.command || step.substeps.length > 0) {
@@ -615,20 +648,21 @@ function finalizeStep(
       );
     }
     // Canonicalize each step-level runbook bullet into its own synthetic substep.
-    // To avoid repeating step-level prompt text for every synthetic substep, attach it
-    // only to the first generated substep.
+    // Synthetic substeps always DEFER (they delegate to runbooks).
     const syntheticSubsteps: Substep[] = runbooks.map((runbookPath, index) => ({
       id: String(index + 1),
       description: '',
       prompt: index === 0 ? prompt : undefined,
       runbooks: [runbookPath],
+      transitions: DEFER_TRANSITIONS,
       line: step.line,
     }));
 
     const shared = {
       name: step.name,
       description: step.description,
-      transitions: transitions ?? undefined,
+      transitions: stepTransitions,
+      aggregation: stepAggregation,
       line: step.line,
     };
     if (step.forClause) {
@@ -648,12 +682,16 @@ function finalizeStep(
     };
   }
 
+  // Resolve substep defaults
+  const resolvedSubsteps = resolveSubstepDefaults(step.substeps);
+
   // Build shared fields once
   const shared = {
     name: step.name,
     description: step.description,
     prompt,
-    transitions: transitions ?? undefined,
+    transitions: stepTransitions,
+    aggregation: stepAggregation,
     line: step.line,
   };
 
@@ -662,15 +700,15 @@ function finalizeStep(
       ...shared,
       kind: 'for' as const,
       forClause: step.forClause,
-      substeps: step.substeps.length > 0 ? step.substeps : [],
+      substeps: resolvedSubsteps.length > 0 ? resolvedSubsteps : [],
     };
   }
 
-  if (step.substeps.length > 0) {
+  if (resolvedSubsteps.length > 0) {
     return {
       ...shared,
       kind: 'substeps' as const,
-      substeps: step.substeps,
+      substeps: resolvedSubsteps,
     };
   }
 

@@ -2,6 +2,7 @@ import type {
   StepId,
   Action,
   AccumulatingAction,
+  Aggregation,
   LoopControlAction,
   StepExitAction,
   TerminalAction,
@@ -14,6 +15,7 @@ export type {
   StepId,
   Action,
   AccumulatingAction,
+  Aggregation,
   LoopControlAction,
   StepExitAction,
   TerminalAction,
@@ -44,6 +46,8 @@ export interface NumericWindow {
   readonly source?: never;
   /** Iteration-level transition handlers for FOR loops */
   readonly transitions?: Transitions;
+  /** Iteration-level aggregation strategy for FOR loops */
+  readonly aggregation?: Aggregation;
 }
 
 /**
@@ -60,6 +64,8 @@ export interface FullSourceWindow {
   readonly source: string;
   /** Iteration-level transition handlers for FOR loops */
   readonly transitions?: Transitions;
+  /** Iteration-level aggregation strategy for FOR loops */
+  readonly aggregation?: Aggregation;
 }
 
 /**
@@ -125,6 +131,7 @@ export interface UnresolvedNumericWindow {
   readonly end: Bound;
   readonly source?: never;
   readonly transitions?: Transitions;
+  readonly aggregation?: Aggregation;
 }
 
 /**
@@ -144,6 +151,7 @@ export interface UnresolvedSourceWindow {
   readonly end: Bound;
   readonly source: string;
   readonly transitions?: Transitions;
+  readonly aggregation?: Aggregation;
 }
 
 /** Union of unresolved FOR clause variants. */
@@ -169,8 +177,8 @@ export interface Substep {
   readonly command?: Command;
   /** Single consolidated prompt text */
   readonly prompt?: string;
-  /** Pass/fail transition handlers */
-  readonly transitions?: Transitions;
+  /** Pass/fail transition handlers (always present — parser fills defaults) */
+  readonly transitions: Transitions;
   /** Referenced runbook files (.runbook.md) */
   readonly runbooks?: readonly string[];
   /** Source line number for error reporting */
@@ -191,8 +199,10 @@ interface StepFields {
   readonly description: string;
   /** Single consolidated prompt text */
   readonly prompt?: string;
-  /** Pass/fail transition handlers */
-  readonly transitions?: Transitions;
+  /** Pass/fail transition handlers (always present — parser fills defaults) */
+  readonly transitions: Transitions;
+  /** Aggregation strategy for combining substep/iteration results */
+  readonly aggregation?: Aggregation;
   /** Source line number for error reporting */
   readonly line?: number;
 }
