@@ -1,6 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   isAccumulatingAction,
+  isBreakAction,
   isLoopControlAction,
   isStepExitAction,
   isTerminalAction,
@@ -43,6 +44,12 @@ describe('action type guards', () => {
   describe('isTerminalAction', () => {
     it('matches STOP, COMPLETE, and GOTO', () => {
       expect(typesMatching(isTerminalAction)).toEqual(['STOP', 'COMPLETE', 'GOTO']);
+    });
+  });
+
+  describe('isBreakAction', () => {
+    it('matches BREAK only', () => {
+      expect(typesMatching(isBreakAction)).toEqual(['BREAK']);
     });
   });
 

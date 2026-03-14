@@ -6,8 +6,16 @@ import {
   hasRunbooks,
   hasForClause,
   isSourced,
+  isBaseStep,
+  isStepWithCommand,
+  isStepWithSubsteps,
+  isStepWithFor,
+  stepHasSubsteps,
+  isResolvedStep,
+  resolvedStepHasSubsteps,
+  areAllStepsResolved,
 } from '../src/guards.js';
-import type { Step, Substep, ForClause } from '../src/ast.js';
+import type { Step, Substep, ForClause, ResolvedStep } from '../src/ast.js';
 
 const createStep = (overrides: Record<string, unknown> = {}): Step => {
   const obj: Record<string, unknown> = { name: '1', description: 'Test step', ...overrides };
@@ -272,5 +280,197 @@ describe('isSourced', () => {
       const _end: number = fc.end;
       expect(_end).toBe(10);
     }
+  });
+});
+
+describe('isBaseStep', () => {
+  it('returns true for a base step', () => {
+    expect(isBaseStep(createStep())).toBe(true);
+  });
+
+  it('returns false for a command step', () => {
+    expect(isBaseStep(createStep({ command: { code: 'echo hi' } }))).toBe(false);
+  });
+
+  it('returns false for a substeps step', () => {
+    expect(isBaseStep(createStep({ substeps: [createSubstep()] }))).toBe(false);
+  });
+
+  it('returns false for a for step', () => {
+    expect(
+      isBaseStep(createStep({ forClause: { start: 1, end: 3 }, substeps: [createSubstep()] })),
+    ).toBe(false);
+  });
+});
+
+describe('isStepWithCommand', () => {
+  it('returns true for a command step', () => {
+    expect(isStepWithCommand(createStep({ command: { code: 'npm test' } }))).toBe(true);
+  });
+
+  it('returns false for a base step', () => {
+    expect(isStepWithCommand(createStep())).toBe(false);
+  });
+
+  it('returns false for a substeps step', () => {
+    expect(isStepWithCommand(createStep({ substeps: [createSubstep()] }))).toBe(false);
+  });
+
+  it('narrows to StepWithCommand', () => {
+    const step = createStep({ command: { code: 'echo test' } });
+    if (isStepWithCommand(step)) {
+      expect(step.command.code).toBe('echo test');
+    }
+  });
+});
+
+describe('isStepWithSubsteps', () => {
+  it('returns true for a substeps step', () => {
+    expect(isStepWithSubsteps(createStep({ substeps: [createSubstep()] }))).toBe(true);
+  });
+
+  it('returns false for a base step', () => {
+    expect(isStepWithSubsteps(createStep())).toBe(false);
+  });
+
+  it('returns false for a for step', () => {
+    expect(
+      isStepWithSubsteps(
+        createStep({ forClause: { start: 1, end: 3 }, substeps: [createSubstep()] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('narrows to StepWithSubsteps', () => {
+    const step = createStep({ substeps: [createSubstep({ id: 'sub1' })] });
+    if (isStepWithSubsteps(step)) {
+      expect(step.substeps[0].id).toBe('sub1');
+    }
+  });
+});
+
+describe('isStepWithFor', () => {
+  it('returns true for a for step', () => {
+    expect(
+      isStepWithFor(createStep({ forClause: { start: 1, end: 5 }, substeps: [createSubstep()] })),
+    ).toBe(true);
+  });
+
+  it('returns false for a base step', () => {
+    expect(isStepWithFor(createStep())).toBe(false);
+  });
+
+  it('returns false for a substeps step', () => {
+    expect(isStepWithFor(createStep({ substeps: [createSubstep()] }))).toBe(false);
+  });
+
+  it('narrows to StepWithFor', () => {
+    const step = createStep({
+      forClause: { variable: 'i', start: 1, end: 3 },
+      substeps: [createSubstep()],
+    });
+    if (isStepWithFor(step)) {
+      expect(step.forClause.start).toBe(1);
+      expect(step.forClause.end).toBe(3);
+    }
+  });
+});
+
+describe('stepHasSubsteps', () => {
+  it('returns true for a substeps step', () => {
+    expect(stepHasSubsteps(createStep({ substeps: [createSubstep()] }))).toBe(true);
+  });
+
+  it('returns true for a for step', () => {
+    expect(
+      stepHasSubsteps(createStep({ forClause: { start: 1, end: 3 }, substeps: [createSubstep()] })),
+    ).toBe(true);
+  });
+
+  it('returns false for a base step', () => {
+    expect(stepHasSubsteps(createStep())).toBe(false);
+  });
+
+  it('returns false for a command step', () => {
+    expect(stepHasSubsteps(createStep({ command: { code: 'echo hi' } }))).toBe(false);
+  });
+});
+
+describe('isResolvedStep', () => {
+  it('returns true for a base step', () => {
+    expect(isResolvedStep(createStep())).toBe(true);
+  });
+
+  it('returns true for a command step', () => {
+    expect(isResolvedStep(createStep({ command: { code: 'echo hi' } }))).toBe(true);
+  });
+
+  it('returns true for a substeps step', () => {
+    expect(isResolvedStep(createStep({ substeps: [createSubstep()] }))).toBe(true);
+  });
+
+  it('returns true for a for step with resolved bounds', () => {
+    expect(
+      isResolvedStep(createStep({ forClause: { start: 1, end: 5 }, substeps: [createSubstep()] })),
+    ).toBe(true);
+  });
+
+  it('returns false for a for step with unresolved bounds', () => {
+    const step = createStep({
+      forClause: { unresolved: true as const, start: 1, end: { ref: 'Max' } },
+      substeps: [createSubstep()],
+    });
+    expect(isResolvedStep(step)).toBe(false);
+  });
+});
+
+describe('resolvedStepHasSubsteps', () => {
+  it('returns true for a substeps step', () => {
+    const step = createStep({ substeps: [createSubstep()] }) as ResolvedStep;
+    expect(resolvedStepHasSubsteps(step)).toBe(true);
+  });
+
+  it('returns true for a resolved for step', () => {
+    const step = createStep({
+      forClause: { start: 1, end: 3 },
+      substeps: [createSubstep()],
+    }) as ResolvedStep;
+    expect(resolvedStepHasSubsteps(step)).toBe(true);
+  });
+
+  it('returns false for a base step', () => {
+    const step = createStep() as ResolvedStep;
+    expect(resolvedStepHasSubsteps(step)).toBe(false);
+  });
+
+  it('returns false for a command step', () => {
+    const step = createStep({ command: { code: 'echo hi' } }) as ResolvedStep;
+    expect(resolvedStepHasSubsteps(step)).toBe(false);
+  });
+});
+
+describe('areAllStepsResolved', () => {
+  it('returns true for an empty array', () => {
+    expect(areAllStepsResolved([])).toBe(true);
+  });
+
+  it('returns true when all steps are resolved', () => {
+    const steps: Step[] = [
+      createStep(),
+      createStep({ command: { code: 'echo hi' } }),
+      createStep({ forClause: { start: 1, end: 3 }, substeps: [createSubstep()] }),
+    ];
+    expect(areAllStepsResolved(steps)).toBe(true);
+  });
+
+  it('returns false when any step has unresolved bounds', () => {
+    const steps: Step[] = [
+      createStep(),
+      createStep({
+        forClause: { unresolved: true as const, start: 1, end: { ref: 'Max' } },
+        substeps: [createSubstep()],
+      }),
+    ];
+    expect(areAllStepsResolved(steps)).toBe(false);
   });
 });
