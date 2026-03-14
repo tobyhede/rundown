@@ -143,7 +143,7 @@ where variable_name is:
 
 where frontmatter is:
   "---"
-    [ "name:" slug ]
+    [ "name:" name_string ]
     [ "description:" text ]
     [ "version:" text ]
     [ "author:" text ]
@@ -155,9 +155,10 @@ Additional fields beyond those listed are preserved in the parsed frontmatter (o
 
 Note: The frontmatter `description` field is used for runbook discovery and listing (e.g., `rd ls --all`). The Runbook's structural `description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
 
-where slug is:
-  [a-zA-Z0-9_-]+
-  (alphanumeric with underscores and hyphens)
+where name_string is:
+  [a-zA-Z0-9_-]([a-zA-Z0-9_ -]*[a-zA-Z0-9_-])?
+  (alphanumeric with underscores, hyphens, and internal spaces;
+   must not start or end with a space)
 
 where tag_list is:
   "- " tag { "- " tag }

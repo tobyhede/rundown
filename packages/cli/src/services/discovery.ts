@@ -6,12 +6,25 @@ import { extractFrontmatter, nameFromFilename } from '@rundown-org/parser';
 import { getBundledRunbooksPath } from '../helpers/bundled-runbooks.js';
 
 /**
+ * Normalize a name to a slug for lookup comparison.
+ * Converts spaces to hyphens, lowercases, collapses repeated hyphens.
+ *
+ * @param name - The name to normalize
+ * @returns Slug-normalized string for comparison
+ */
+function toSlug(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, '-').replace(/-+/g, '-');
+}
+
+/**
  * Metadata for a discovered runbook file.
  * Contains information about the runbook's location, source, and frontmatter metadata.
  */
 export interface DiscoveredRunbook {
   /** Runbook name from frontmatter or derived from filename */
   name: string;
+  /** Filename stem (without .runbook.md extension), always populated */
+  filenameStem: string;
   /** Absolute path to the runbook file */
   path: string;
   /** Source directory where the runbook was found */
@@ -95,11 +108,12 @@ export async function scanDirectory(
             const content = await fs.readFile(fullPath, 'utf-8');
             const { frontmatter } = extractFrontmatter(content);
 
-            // Match by frontmatter name or filename stem
-            const runbookName = frontmatter?.name ?? nameFromFilename(entry.name);
+            const filenameStem = nameFromFilename(entry.name);
+            const runbookName = frontmatter?.name ?? filenameStem;
 
             runbooks.push({
               name: runbookName,
+              filenameStem,
               path: fullPath,
               source,
               description: frontmatter?.description,
@@ -133,10 +147,11 @@ export async function discoverRunbooks(cwd: string): Promise<DiscoveredRunbook[]
 
     for (const runbook of runbooks) {
       // Skip if already seen (project takes precedence over plugin)
-      if (seen.has(runbook.name)) continue;
+      const slug = toSlug(runbook.name);
+      if (seen.has(slug)) continue;
 
       allRunbooks.push(runbook);
-      seen.add(runbook.name);
+      seen.add(slug);
     }
   }
 
@@ -159,8 +174,9 @@ export async function findRunbookByName(
   for (const { path: dirPath, source } of searchPaths) {
     const runbooks = await scanDirectory(dirPath, source);
 
+    const lookupSlug = toSlug(name);
     for (const runbook of runbooks) {
-      if (runbook.name === name) {
+      if (toSlug(runbook.name) === lookupSlug || toSlug(runbook.filenameStem) === lookupSlug) {
         return runbook;
       }
     }
@@ -190,8 +206,9 @@ export async function findRunbookByNameInSource(
 
     const runbooks = await scanDirectory(dirPath, source);
 
+    const lookupSlug = toSlug(name);
     for (const runbook of runbooks) {
-      if (runbook.name === name) {
+      if (toSlug(runbook.name) === lookupSlug || toSlug(runbook.filenameStem) === lookupSlug) {
         return runbook;
       }
     }
