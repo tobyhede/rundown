@@ -14,7 +14,7 @@ import {
  * @returns Array of validation diagnostics (errors only)
  */
 export function validateFrontmatterVars(
-  vars: Record<string, unknown> | undefined,
+  vars: Record<string, string | number | boolean> | undefined,
 ): ValidationDiagnostic[] {
   if (!vars) return [];
   const diagnostics: ValidationDiagnostic[] = [];

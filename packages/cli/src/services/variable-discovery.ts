@@ -453,9 +453,7 @@ async function collectRawLayers(
   const inherited: Record<string, unknown> = options.inheritedVars ?? {};
 
   // 2. Frontmatter vars — pre-extracted from parser's validated RunbookFrontmatter
-  const frontmatter: Record<string, unknown> = options.frontmatterVars
-    ? { ...options.frontmatterVars }
-    : {};
+  const frontmatter: Record<string, unknown> = options.frontmatterVars ?? {};
 
   // 3. Auto-discovered config
   const discovered: Record<string, unknown> = await discoverRawVariables(cwd);

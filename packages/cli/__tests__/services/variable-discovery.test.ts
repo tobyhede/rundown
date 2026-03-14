@@ -546,6 +546,9 @@ describe('resolveVariables', () => {
   });
 
   describe('frontmatter routing', () => {
+    // Frontmatter vars are typed Record<string, string | number | boolean> by the
+    // parser's Zod schema — arrays are intentionally excluded. Array routing is
+    // tested via config/var-file layers in the YAML array/multiline tests above.
     it('routes frontmatter scalar to vars only', async () => {
       const result = await resolveVariables({ frontmatterVars: { env: 'staging' } }, tmpDir);
       expect(result.vars.env).toBe('staging');

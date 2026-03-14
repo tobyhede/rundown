@@ -273,7 +273,13 @@ export function countSubsteps(steps: readonly Step[]): number {
   }, 0);
 }
 
-/** Success result from {@link loadAndParseRunbook}. */
+/**
+ * Success result from {@link loadAndParseRunbook}.
+ *
+ * Contains the parsed runbook AST, validated frontmatter, structural
+ * diagnostics, and step/substep counts — everything needed to proceed
+ * to variable resolution or to report check results.
+ */
 export interface LoadAndParseSuccess {
   ok: true;
   /** Absolute path to the resolved runbook file */
@@ -290,7 +296,11 @@ export interface LoadAndParseSuccess {
   stats: { steps: number; substeps: number };
 }
 
-/** Failure result from {@link loadAndParseRunbook}. */
+/**
+ * Failure result from {@link loadAndParseRunbook}.
+ *
+ * Returned when the runbook file cannot be found or when parsing throws.
+ */
 export interface LoadAndParseFailure {
   ok: false;
   error: string;
