@@ -69,7 +69,7 @@ invalid yaml: [unclosed bracket
 
   it('returns null frontmatter when name format is invalid', () => {
     const markdown = `---
-name: invalid name with spaces
+name: invalid@name!
 ---
 # Content`;
 
@@ -343,14 +343,15 @@ name: My_Runbook-v2
     expect(result.frontmatter?.name).toBe('My_Runbook-v2');
   });
 
-  it('rejects name with spaces', () => {
+  it('accepts name with spaces', () => {
     const markdown = `---
 name: my runbook
 ---
 # Content`;
 
     const result = extractFrontmatter(markdown);
-    expect(result.frontmatter).toBeNull();
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('my runbook');
   });
 });
 
