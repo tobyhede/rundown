@@ -14,7 +14,6 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as yaml from 'js-yaml';
-import { extractRawFrontmatter } from '../helpers/extract-raw-frontmatter.js';
 import type { DataSource, FileFormat, PolicyEvaluator, PolicyPrompter } from '@rundown-org/core';
 
 /**
@@ -428,10 +427,10 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
  * The inherited layer ensures that parent ContextId survives into child
  * runbooks during delegation, rather than being replaced by a fresh builtin.
  *
- * @param options - Variable sources from CLI flags, var-file, markdown, and inherited vars
+ * @param options - Variable sources from CLI flags, var-file, frontmatter vars, and inherited vars
  * @param options.varFile - Path to YAML file containing variable definitions
  * @param options.var - Array of key=value flag strings from CLI
- * @param options.markdown - Raw markdown content for frontmatter extraction
+ * @param options.frontmatterVars - Pre-extracted frontmatter vars (from parser's validated RunbookFrontmatter)
  * @param options.inheritedVars - Variables inherited from parent delegation
  * @param cwd - Current working directory for resolving relative paths
  * @param warnings - Optional array to collect discovery warnings
@@ -441,7 +440,7 @@ async function collectRawLayers(
   options: {
     varFile?: string;
     var?: string[];
-    markdown?: string;
+    frontmatterVars?: Record<string, string | number | boolean>;
     inheritedVars?: Record<string, unknown>;
   },
   cwd: string,
@@ -453,14 +452,8 @@ async function collectRawLayers(
   // 1b. Inherited vars from parent delegation (overrides builtins)
   const inherited: Record<string, unknown> = options.inheritedVars ?? {};
 
-  // 2. Frontmatter — extract vars from raw markdown
-  let frontmatter: Record<string, unknown> = {};
-  if (options.markdown) {
-    const { frontmatter: fm } = extractRawFrontmatter(options.markdown);
-    if (fm && typeof fm.vars === 'object' && fm.vars !== null) {
-      frontmatter = fm.vars as Record<string, unknown>;
-    }
-  }
+  // 2. Frontmatter vars — pre-extracted from parser's validated RunbookFrontmatter
+  const frontmatter: Record<string, unknown> = options.frontmatterVars ?? {};
 
   // 3. Auto-discovered config
   const discovered: Record<string, unknown> = await discoverRawVariables(cwd);
@@ -536,10 +529,10 @@ async function enforceFileSourcePolicy(
  * - Multiline string → both vars and sources (array of lines)
  * - Scalar → vars only
  *
- * @param options - Variable sources from CLI flags, var-file, markdown, and inherited vars
+ * @param options - Variable sources from CLI flags, var-file, frontmatter vars, and inherited vars
  * @param options.varFile - Path to YAML file containing variable definitions
  * @param options.var - Array of key=value flag strings from CLI
- * @param options.markdown - Raw markdown content for frontmatter extraction
+ * @param options.frontmatterVars - Pre-extracted frontmatter vars (from parser's validated RunbookFrontmatter)
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param cwd - Current working directory for resolving relative paths
  * @param security - Optional security context for file source policy enforcement
@@ -550,7 +543,7 @@ export async function resolveVariables(
   options: {
     varFile?: string;
     var?: string[];
-    markdown?: string;
+    frontmatterVars?: Record<string, string | number | boolean>;
     inheritedVars?: Record<string, string>;
   },
   cwd: string,

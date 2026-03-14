@@ -366,6 +366,49 @@ name: plugin-runbook
       }
     });
 
+    it('deduplicates slug-equivalent names across sources', async () => {
+      // Set up plugin directory
+      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
+      const pluginRoot = join(tempDir, 'plugin-root');
+      const pluginRunbookDir = join(pluginRoot, 'runbooks');
+      await mkdir(pluginRunbookDir, { recursive: true });
+      process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+
+      try {
+        // Project has "Write Plan" (spaces), plugin has "write-plan" (hyphens)
+        const projectRunbook = `---
+name: Write Plan
+description: Project version
+---
+
+## 1. Step
+`;
+
+        const pluginRunbook = `---
+name: write-plan
+description: Plugin version
+---
+
+## 1. Step
+`;
+
+        await writeFile(join(projectRunbooksDir, 'write-plan.runbook.md'), projectRunbook);
+        await writeFile(join(pluginRunbookDir, 'write-plan.runbook.md'), pluginRunbook);
+
+        const runbooks = await discoverRunbooks(tempDir);
+
+        // Should deduplicate to one (project takes precedence)
+        const writePlanRunbooks = runbooks.filter(
+          (r) => r.name === 'Write Plan' || r.name === 'write-plan',
+        );
+        expect(writePlanRunbooks).toHaveLength(1);
+        expect(writePlanRunbooks[0].source).toBe('project');
+        expect(writePlanRunbooks[0].description).toBe('Project version');
+      } finally {
+        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+      }
+    });
+
     it('extracts metadata from all discovered runbooks', async () => {
       const runbook = `---
 name: test-runbook
@@ -428,7 +471,7 @@ Content without frontmatter
       expect(runbook).toBeNull();
     });
 
-    it('is case-sensitive for runbook names', async () => {
+    it('normalizes case for runbook name lookup', async () => {
       const runbookContent = `---
 name: my-runbook
 ---
@@ -440,7 +483,44 @@ name: my-runbook
 
       const runbook = await findRunbookByName(tempDir, 'My-Runbook');
 
-      expect(runbook).toBeNull();
+      expect(runbook).not.toBeNull();
+      expect(runbook?.name).toBe('my-runbook');
+    });
+
+    it('finds runbook with spaces in frontmatter name via slug lookup', async () => {
+      const runbookContent = `---
+name: Write Plan
+description: Plans with spaces
+---
+
+## 1. Step
+`;
+
+      await writeFile(join(projectRunbooksDir, 'write-plan.runbook.md'), runbookContent);
+
+      const runbook = await findRunbookByName(tempDir, 'write-plan');
+
+      expect(runbook).not.toBeNull();
+      expect(runbook?.name).toBe('Write Plan');
+      expect(runbook?.description).toBe('Plans with spaces');
+    });
+
+    it('finds runbook by filename stem when frontmatter name differs', async () => {
+      const runbookContent = `---
+name: Code Review Checklist
+description: Review code
+---
+
+## 1. Step
+`;
+
+      await writeFile(join(projectRunbooksDir, 'code-review.runbook.md'), runbookContent);
+
+      // Lookup by filename stem
+      const runbook = await findRunbookByName(tempDir, 'code-review');
+
+      expect(runbook).not.toBeNull();
+      expect(runbook?.name).toBe('Code Review Checklist');
     });
 
     it('respects project precedence when finding by name', async () => {

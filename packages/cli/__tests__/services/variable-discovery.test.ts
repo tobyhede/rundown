@@ -422,38 +422,27 @@ describe('resolveVariables', () => {
     });
   });
 
-  describe('markdown frontmatter extraction', () => {
-    it('extracts vars from markdown frontmatter', async () => {
-      const markdown = `---
-name: test-runbook
-vars:
-  greeting: Hello
-  count: 42
----
-# Content`;
-      const result = await resolveVariables({ markdown }, tmpDir);
+  describe('frontmatter vars', () => {
+    it('uses pre-extracted frontmatterVars', async () => {
+      const result = await resolveVariables(
+        { frontmatterVars: { greeting: 'Hello', count: 42 } },
+        tmpDir,
+      );
       expect(result.vars.greeting).toBe('Hello');
       expect(result.vars.count).toBe('42');
     });
 
-    it('returns no frontmatter vars when markdown has no vars field', async () => {
-      const markdown = `---
-name: test-runbook
----
-# Content`;
-      const result = await resolveVariables({ markdown }, tmpDir);
+    it('returns no frontmatter vars when frontmatterVars is undefined', async () => {
+      const result = await resolveVariables({}, tmpDir);
       // Only built-in vars should be present
       expect(result.vars.greeting).toBeUndefined();
     });
 
     it('CLI --var overrides frontmatter vars', async () => {
-      const markdown = `---
-name: test-runbook
-vars:
-  env: development
----
-# Content`;
-      const result = await resolveVariables({ markdown, var: ['env=production'] }, tmpDir);
+      const result = await resolveVariables(
+        { frontmatterVars: { env: 'development' }, var: ['env=production'] },
+        tmpDir,
+      );
       expect(result.vars.env).toBe('production');
     });
   });
@@ -557,17 +546,13 @@ vars:
   });
 
   describe('frontmatter routing', () => {
-    it('routes frontmatter array to both maps', async () => {
-      const markdown = `---
-name: test
-vars:
-  servers:
-    - a
-    - b
----
-# Content`;
-      const result = await resolveVariables({ markdown }, tmpDir);
-      expect(result.sources.servers).toEqual({ kind: 'array', items: ['a', 'b'] });
+    // Frontmatter vars are typed Record<string, string | number | boolean> by the
+    // parser's Zod schema — arrays are intentionally excluded. Array routing is
+    // tested via config/var-file layers in the YAML array/multiline tests above.
+    it('routes frontmatter scalar to vars only', async () => {
+      const result = await resolveVariables({ frontmatterVars: { env: 'staging' } }, tmpDir);
+      expect(result.vars.env).toBe('staging');
+      expect(result.sources.env).toBeUndefined();
     });
   });
 
@@ -581,7 +566,7 @@ vars:
       const result = await resolveVariables(
         {
           inheritedVars: { myVar: 'inherited' },
-          markdown: '---\nvars:\n  myVar: frontmatter\n---\n# Test\n',
+          frontmatterVars: { myVar: 'frontmatter' },
         },
         tmpDir,
       );
@@ -592,7 +577,7 @@ vars:
       const result = await resolveVariables(
         {
           inheritedVars: { ContextId: 'parent123' },
-          markdown: '---\nvars:\n  otherVar: value\n---\n# Test\n',
+          frontmatterVars: { otherVar: 'value' },
         },
         tmpDir,
       );
@@ -648,7 +633,7 @@ vars:
       await fs.writeFile(varFile, 'servers:\n  - a\n  - b\n');
 
       const result = await resolveVariables(
-        { markdown: '---\nvars:\n  servers: single\n---\n# Test\n', varFile },
+        { frontmatterVars: { servers: 'single' }, varFile },
         tmpDir,
       );
       expect(result.sources.servers).toEqual({
@@ -657,14 +642,15 @@ vars:
       });
     });
 
-    it('deterministic outcome: var-file scalar clears frontmatter array source', async () => {
+    it('deterministic outcome: var-file scalar clears config array source', async () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'items: override\n');
 
-      const result = await resolveVariables(
-        { markdown: '---\nvars:\n  items:\n    - x\n    - "y"\n---\n# Test\n', varFile },
-        tmpDir,
-      );
+      const configDir = path.join(tmpDir, '.rundown');
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(path.join(configDir, 'config.yaml'), 'items:\n  - x\n  - "y"\n');
+
+      const result = await resolveVariables({ varFile }, tmpDir);
       expect(result.vars.items).toBe('override');
       expect(result.sources.items).toBeUndefined();
     });

@@ -1,0 +1,106 @@
+# .coderabbit.yaml
+language: "en-US"
+tone_instructions: >-
+  Focus on type safety, state machine correctness, and design principles
+  from CLAUDE.md. Be direct and specific. Flag action-type mapping violations.
+
+reviews:
+  profile: "assertive"
+  high_level_summary: true
+  sequence_diagrams: true
+  poem: false
+  collapse_walkthrough: true
+  changed_files_summary: true
+  request_changes_workflow: false
+  estimate_code_review_effort: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_title_keywords:
+      - "WIP"
+    base_branches:
+      - main
+
+  path_filters:
+    - "!.worktrees/**"
+    - "!.work/**"
+    - "!site/node_modules/**"
+    - "!site/.next/**"
+    - "!**/*.snap"
+    - "!dist/**"
+    - "dist/runbooks/**"
+    - "!coverage/**"
+
+  path_instructions:
+    - path: "packages/parser/**/*.ts"
+      instructions: |
+        This is a Markdown runbook parser. Focus on:
+        - Correctness of AST generation from markdown
+        - Edge cases in frontmatter parsing (YAML)
+        - Proper handling of code blocks, step definitions, and transitions
+        - ParseResult validation diagnostics
+    - path: "packages/core/**/*.ts"
+      instructions: |
+        This is the XState state machine compiler and runtime. Focus on:
+        - Type-driven dispatch: types and events should drive logic, not string checks
+        - No silent mapping: STOP, COMPLETE, BREAK must propagate as themselves
+        - No synthetic IDs: use XState native event system
+        - Guard functions must express domain conditions only
+        - Discriminated unions and type narrowing correctness
+    - path: "packages/cli/**/*.ts"
+      instructions: |
+        CLI package. Focus on:
+        - OutputEmitter usage for consistent output
+        - CLI output standards (UPPERCASE headers, 2-space separators)
+        - Proper error handling and user-facing messages
+        - Command option validation
+    - path: "**/__tests__/**/*.ts"
+      instructions: |
+        Test files. Focus on:
+        - Use Error.isError() instead of instanceof Error (cross-ESM-realm issue; project targets Node 24+)
+        - Mock passthrough pattern (pass through real functions that don't need mocking)
+        - Test isolation and meaningful assertions
+        - Edge case coverage
+    - path: "packages/claude-code-plugin/**/*.ts"
+      instructions: |
+        Claude Code plugin for runbook orchestration. Focus on:
+        - MCP integration correctness
+        - Runbook discovery and namespace resolution
+        - State management across plugin lifecycle
+
+  tools:
+    eslint:
+      enabled: false      # jsdoc plugin not in allowlist; type-checked rules disabled
+    biome:
+      enabled: true       # Uses project biome.json
+    markdownlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    ast-grep:
+      essential_rules: true
+
+  pre_merge_checks:
+    title:
+      mode: "warning"
+    description:
+      mode: "warning"
+    docstrings:
+      mode: "off"         # Handled by eslint-plugin-jsdoc in CI
+
+  finishing_touches:
+    docstrings:
+      enabled: true
+    unit_tests:
+      enabled: true
+    simplify:
+      enabled: false
+
+knowledge_base:
+  learnings:
+    scope: "local"
+  code_guidelines:
+    enabled: true          # Auto-detects CLAUDE.md

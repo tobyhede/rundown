@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { loadAndValidateRunbook } from '../helpers/runbook-validator.js';
+import { loadAndParseRunbook } from '../helpers/runbook-pipeline.js';
 
 /**
  * Registers the 'check' command for validating runbook files.
@@ -15,7 +15,7 @@ export function registerCheckCommand(program: Command): void {
       const output = new OutputEmitter({ json: options.json });
       const cwd = process.cwd();
 
-      const result = await loadAndValidateRunbook(file, cwd);
+      const result = await loadAndParseRunbook(file, cwd);
 
       if (!result.ok) {
         output.detail(
@@ -30,7 +30,7 @@ export function registerCheckCommand(program: Command): void {
         process.exit(1);
       }
 
-      const { diagnostics, stats } = result.loaded;
+      const { diagnostics, stats } = result;
       const errors = diagnostics.filter((d) => d.severity === 'error');
       const warnings = diagnostics.filter((d) => d.severity === 'warning');
 

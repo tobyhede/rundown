@@ -7,7 +7,7 @@ import {
 import { join, dirname, basename, delimiter, isAbsolute, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isNodeError, getErrorMessage } from '@rundown-org/core';
-import { extractRawFrontmatter } from '../../src/helpers/extract-raw-frontmatter.js';
+import { extractFrontmatter } from '@rundown-org/parser';
 import {
   parseScenarios,
   getEffectiveResult,
@@ -70,7 +70,7 @@ function loadPatternsWithScenariosSync(): {
     const relativePath = filePath.substring(RUNBOOKS_DIR.length + 1);
     allRunbookFiles.push(relativePath);
     const content = readFileSync(filePath, 'utf-8');
-    const { frontmatter } = extractRawFrontmatter(content);
+    const { frontmatter } = extractFrontmatter(content);
     if (!frontmatter) continue;
     const { scenarios } = parseScenarios(frontmatter);
     if (scenarios && Object.keys(scenarios).length > 0) {

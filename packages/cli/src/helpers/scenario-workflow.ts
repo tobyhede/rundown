@@ -20,7 +20,7 @@ import {
   type ScenarioExpect,
 } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from './resolve-runbook.js';
-import { extractRawFrontmatter } from './extract-raw-frontmatter.js';
+import { extractFrontmatter } from '@rundown-org/parser';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import {
   executeCommandSequence,
@@ -83,7 +83,7 @@ export async function loadScenarios(file: string, cwd: string): Promise<Scenario
   }
 
   const content = await readFile(filePath, 'utf-8');
-  const { frontmatter } = extractRawFrontmatter(content);
+  const { frontmatter } = extractFrontmatter(content);
 
   if (!frontmatter) {
     return { ok: false, error: 'No frontmatter found in this runbook', code: 'VALIDATION_ERROR' };
@@ -104,9 +104,8 @@ export async function loadScenarios(file: string, cwd: string): Promise<Scenario
     return { ok: false, error: 'No scenarios defined in this runbook', code: 'VALIDATION_ERROR' };
   }
 
-  const name = (typeof frontmatter.name === 'string' ? frontmatter.name : undefined) ?? file;
-  const description =
-    typeof frontmatter.description === 'string' ? frontmatter.description : undefined;
+  const name = frontmatter.name ?? file;
+  const description = frontmatter.description;
 
   return { ok: true, loaded: { filePath, name, description, scenarios } };
 }

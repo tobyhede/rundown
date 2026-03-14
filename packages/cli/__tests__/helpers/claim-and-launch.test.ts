@@ -109,11 +109,6 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   collectUnresolvedRunbookVariables: jest.fn().mockReturnValue(new Set()),
 }));
 
-// Mock extract-raw-frontmatter
-jest.unstable_mockModule('../../src/helpers/extract-raw-frontmatter', () => ({
-  extractRawFrontmatter: jest.fn().mockReturnValue({ frontmatter: null, bodyStart: 0 }),
-}));
-
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateFrontmatterVars: jest.fn().mockReturnValue([]),

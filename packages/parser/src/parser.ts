@@ -565,6 +565,7 @@ export function parseRunbookDocument(markdown: string, basename?: string): Parse
       tags: frontmatter?.tags,
       steps,
     },
+    frontmatter,
     diagnostics,
   };
 }
