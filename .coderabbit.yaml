@@ -19,14 +19,14 @@ reviews:
     drafts: false
     ignore_title_keywords:
       - "WIP"
-      - "wip"
     base_branches:
       - main
 
   path_filters:
     - "!.worktrees/**"
     - "!.work/**"
-    - "!site/**"
+    - "!site/node_modules/**"
+    - "!site/.next/**"
     - "!**/*.snap"
     - "!dist/**"
     - "!coverage/**"

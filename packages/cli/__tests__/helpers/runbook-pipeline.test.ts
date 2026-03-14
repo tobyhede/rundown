@@ -391,6 +391,53 @@ describe('prepareRunbook', () => {
     );
   });
 
+  it('passes parser frontmatter vars into variable resolution', async () => {
+    resolveRunbookFile.mockResolvedValue('/test/good.md');
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { vars: { Region: 'us-west' } },
+      }),
+    );
+
+    await prepareRunbook('good.md', {}, '/test');
+
+    expect(resolveVariables).toHaveBeenCalledWith(
+      expect.objectContaining({
+        frontmatterVars: { Region: 'us-west' },
+      }),
+      '/test',
+      expect.anything(),
+    );
+  });
+
+  it('returns VALIDATION_ERROR when frontmatter vars use reserved names', async () => {
+    resolveRunbookFile.mockResolvedValue('/test/reserved.md');
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { vars: { context: 'bad' } },
+      }),
+    );
+    (validateFrontmatterVars as jest.Mock).mockReturnValue([
+      {
+        severity: 'error',
+        message:
+          'Frontmatter var "context" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
+      },
+    ]);
+
+    const result = await prepareRunbook('reserved.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('reserved runtime variable name');
+    }
+  });
+
   it('returns error when validateSources throws', async () => {
     resolveRunbookFile.mockResolvedValue('/test/sourced.md');
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
