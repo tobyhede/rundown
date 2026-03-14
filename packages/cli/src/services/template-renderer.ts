@@ -156,14 +156,14 @@ function resolveBound(
   }
 
   const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) {
+  if (!/^[1-9]\d*$/.test(trimmed)) {
     throw new Error(
       `FOR ${position} bound "{{${bound.ref}}}" in step "${stepName}" resolved to "${value}" — must be a positive integer ≤ ${String(MAX_FOR_BOUND)}`,
     );
   }
 
   const parsed = Number.parseInt(trimmed, 10);
-  if (parsed < 1 || parsed > MAX_FOR_BOUND) {
+  if (parsed > MAX_FOR_BOUND) {
     throw new Error(
       `FOR ${position} bound "{{${bound.ref}}}" in step "${stepName}" resolved to "${value}" — must be a positive integer ≤ ${String(MAX_FOR_BOUND)}`,
     );
@@ -191,8 +191,8 @@ export function resolveForBounds(
   const resolvedSteps = runbook.steps.map((step): ResolvedStep => {
     if (step.kind !== 'for') return step;
     if (!isUnresolvedForClause(step.forClause)) {
-      // Already resolved — safe cast: forClause is ForClause (not ParsedForClause)
-      return step as ResolvedStepWithFor;
+      const { forClause, ...rest } = step;
+      return { ...rest, forClause } as ResolvedStepWithFor;
     }
 
     const fc = step.forClause;
@@ -225,17 +225,11 @@ export function resolveForBounds(
       };
     }
 
+    const { forClause: _, ...rest } = step;
     const resolvedForStep: ResolvedStepWithFor = {
-      kind: 'for',
-      name: step.name,
-      description: step.description,
+      ...rest,
       forClause: resolved,
-      substeps: step.substeps,
-      ...(step.prompt !== undefined && { prompt: step.prompt }),
-      ...(step.transitions !== undefined && { transitions: step.transitions }),
-      ...(step.line !== undefined && { line: step.line }),
-      ...(step.substepsDerivedFromRunbookList && { substepsDerivedFromRunbookList: true }),
-    };
+    } as ResolvedStepWithFor;
     return resolvedForStep;
   });
 

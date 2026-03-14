@@ -776,6 +776,17 @@ describe('resolveForBounds', () => {
     expect(result.steps[0].forClause).toEqual({ start: 1, end: 5 });
   });
 
+  it('throws for leading-zero value', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Padded' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, { Padded: '05' })).toThrow('must be a positive integer');
+  });
+
   it('throws for negative integer value', () => {
     const unresolved: ParsedForClause = {
       unresolved: true as const,
