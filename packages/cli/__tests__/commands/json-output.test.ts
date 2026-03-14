@@ -180,7 +180,7 @@ echo hello
 
       const output = JSON.parse(result.stdout);
       expect(output.valid).toBe(false);
-      expect(output.errors[0].message).toContain('File not found');
+      expect(output.errors[0].message).toContain('Runbook not found');
     });
   });
 

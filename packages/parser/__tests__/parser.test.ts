@@ -1390,6 +1390,43 @@ This is the preamble description.
     const { runbook: doc } = parseRunbookDocument(md);
     expect(doc.name).toBeUndefined();
   });
+
+  it('returns null frontmatter when no frontmatter present', () => {
+    const md = `## 1 Step
+- PASS COMPLETE
+`;
+    const { frontmatter } = parseRunbookDocument(md);
+    expect(frontmatter).toBeNull();
+  });
+
+  it('returns validated frontmatter when present', () => {
+    const md = `---
+name: my-runbook
+vars:
+  greeting: Hello
+  count: 42
+---
+## 1 Step
+- PASS COMPLETE
+`;
+    const { frontmatter } = parseRunbookDocument(md);
+    expect(frontmatter).not.toBeNull();
+    expect(frontmatter?.name).toBe('my-runbook');
+    expect(frontmatter?.vars).toEqual({ greeting: 'Hello', count: 42 });
+  });
+
+  it('preserves extension fields in frontmatter via passthrough', () => {
+    const md = `---
+name: test
+skill: code-review
+---
+## 1 Step
+- PASS COMPLETE
+`;
+    const { frontmatter } = parseRunbookDocument(md);
+    expect(frontmatter).not.toBeNull();
+    expect(frontmatter?.skill).toBe('code-review');
+  });
 });
 
 describe('H1 step detection regex', () => {

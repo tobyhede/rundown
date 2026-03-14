@@ -39,6 +39,8 @@ import {
   type Step,
   type ResolvedStep,
   type ValidationDiagnostic,
+  type RunbookFrontmatter,
+  type Runbook,
 } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
 import { runExecutionLoop } from '../services/execution.js';
@@ -51,20 +53,7 @@ import {
   collectUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
-import { extractRawFrontmatter } from './extract-raw-frontmatter.js';
 import { validateFrontmatterVars } from './validate-frontmatter-vars.js';
-
-/**
- * Extract vars from raw frontmatter with proper typing.
- *
- * @param frontmatter - Raw frontmatter object (or null)
- * @returns Vars as Record, or undefined if absent
- */
-export function getFrontmatterVars(
-  frontmatter: Record<string, unknown> | null | undefined,
-): Record<string, unknown> | undefined {
-  return frontmatter?.vars as Record<string, unknown> | undefined;
-}
 
 /**
  * Variable options from CLI flags.
@@ -284,6 +273,87 @@ export function countSubsteps(steps: readonly Step[]): number {
   }, 0);
 }
 
+/** Success result from {@link loadAndParseRunbook}. */
+export interface LoadAndParseSuccess {
+  ok: true;
+  /** Absolute path to the resolved runbook file */
+  filePath: string;
+  /** Raw markdown content */
+  rawContent: string;
+  /** Parsed runbook AST (before variable substitution) */
+  runbook: Runbook;
+  /** Validated frontmatter, or null if absent/invalid */
+  frontmatter: RunbookFrontmatter | null;
+  /** Structural and frontmatter validation diagnostics */
+  diagnostics: readonly ValidationDiagnostic[];
+  /** Step/substep counts */
+  stats: { steps: number; substeps: number };
+}
+
+/** Failure result from {@link loadAndParseRunbook}. */
+export interface LoadAndParseFailure {
+  ok: false;
+  error: string;
+  code: string;
+  details?: Record<string, unknown>;
+}
+
+/** Discriminated union result of {@link loadAndParseRunbook}. */
+export type LoadAndParseResult = LoadAndParseSuccess | LoadAndParseFailure;
+
+/**
+ * Load a runbook file, parse it, and run structural validation.
+ *
+ * Performs:
+ * 1. File discovery via `resolveRunbookFile`
+ * 2. File read
+ * 3. Parse (returns diagnostics as data, not exceptions)
+ * 4. Frontmatter var validation (reserved variable names)
+ * 5. Substep counting
+ *
+ * @param file - Runbook file path or namespace:name
+ * @param cwd - Current working directory for resolution
+ * @returns Discriminated union: ok with loaded data, or error with message
+ */
+export async function loadAndParseRunbook(file: string, cwd: string): Promise<LoadAndParseResult> {
+  const filePath = await resolveRunbookFile(cwd, file);
+
+  if (!filePath) {
+    return {
+      ok: false,
+      error: `Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`,
+      code: 'RUNBOOK_NOT_FOUND',
+      details: { runbook: file },
+    };
+  }
+
+  try {
+    const rawContent = await fs.readFile(filePath, 'utf8');
+    const {
+      runbook,
+      frontmatter,
+      diagnostics: parseDiagnostics,
+    } = parseRunbookDocument(rawContent, path.basename(filePath));
+
+    const varDiagnostics = validateFrontmatterVars(frontmatter?.vars);
+    const diagnostics: readonly ValidationDiagnostic[] = [...parseDiagnostics, ...varDiagnostics];
+
+    const stats = {
+      steps: runbook.steps.length,
+      substeps: countSubsteps(runbook.steps),
+    };
+
+    return { ok: true, filePath, rawContent, runbook, frontmatter, diagnostics, stats };
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+      code: 'PARSE_ERROR',
+      details: { runbook: file },
+    };
+  }
+}
+
 /**
  * Prepare a runbook from file: resolve, load, parse, substitute variables.
  *
@@ -310,35 +380,10 @@ export async function prepareRunbook(
     inheritedUserVars?: Readonly<Record<string, string>>;
   },
 ): Promise<PrepareResult> {
-  const filePath = await resolveRunbookFile(cwd, file);
-
-  if (!filePath) {
-    return {
-      ok: false,
-      error: `Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`,
-      code: 'RUNBOOK_NOT_FOUND',
-      details: { runbook: file },
-    };
-  }
-
-  const rawContent = await fs.readFile(filePath, 'utf8');
-
-  // Parse raw markdown (parser accepts {{vars}} in FOR bounds as BoundRef)
-  const { runbook: rawRunbook, diagnostics: parseDiagnostics } = parseRunbookDocument(
-    rawContent,
-    path.basename(filePath),
-  );
-
-  // Frontmatter validation
-  const { frontmatter } = extractRawFrontmatter(rawContent);
-  const varDiagnostics = validateFrontmatterVars(getFrontmatterVars(frontmatter));
-  const diagnostics: readonly ValidationDiagnostic[] = [...parseDiagnostics, ...varDiagnostics];
-
-  // Compute stats from parsed AST
-  const stats = {
-    steps: rawRunbook.steps.length,
-    substeps: countSubsteps(rawRunbook.steps),
-  };
+  // Phase 1-2: Parse + Validate
+  const parsed = await loadAndParseRunbook(file, cwd);
+  if (!parsed.ok) return parsed;
+  const { filePath, rawContent, runbook: rawRunbook, frontmatter, diagnostics, stats } = parsed;
 
   // Variable resolution
   let mergedVariables: Record<string, string>;
@@ -349,7 +394,7 @@ export async function prepareRunbook(
       {
         varFile: varOpts.varFile,
         var: varOpts.var,
-        markdown: rawContent,
+        frontmatterVars: frontmatter?.vars,
         inheritedVars: options?.inheritedUserVars,
       },
       cwd,

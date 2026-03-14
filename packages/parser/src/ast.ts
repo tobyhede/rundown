@@ -8,6 +8,7 @@ import type {
   Transitions,
 } from './schemas.js';
 import type { ValidationDiagnostic } from './validator.js';
+import type { RunbookFrontmatter } from './frontmatter.js';
 
 export type {
   StepId,
@@ -259,6 +260,8 @@ export interface ResolvedRunbook extends Omit<Runbook, 'steps'> {
 export interface ParseResult {
   /** Parsed runbook AST */
   readonly runbook: Runbook;
+  /** Validated frontmatter from YAML header, or null if absent/invalid */
+  readonly frontmatter: RunbookFrontmatter | null;
   /** Structural validation diagnostics (errors and warnings) */
   readonly diagnostics: readonly ValidationDiagnostic[];
 }
