@@ -1063,7 +1063,7 @@ describe('validator strict rules', () => {
       expect(deferErrors).toHaveLength(0);
     });
 
-    it('does not fire when parent transitions have no explicit aggregation', () => {
+    it('does not fire when step has no aggregation and no substep uses DEFER', () => {
       const steps = [
         mockStep({
           name: '1',
@@ -1086,6 +1086,108 @@ describe('validator strict rules', () => {
       const diagnostics = validateRunbook(steps);
       const deferErrors = diagnostics.filter((d) => d.message.includes('no substep uses DEFER'));
       expect(deferErrors).toHaveLength(0);
+    });
+  });
+
+  describe('FOR iteration-level aggregation', () => {
+    it('errors when forClause.aggregation exists but no substep uses DEFER', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 3, aggregation: { strategy: 'ALL' } },
+          transitions: { ...DEFAULT_TRANSITIONS },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics).filter((d) =>
+        d.message.includes('iteration-level aggregation but no substep uses DEFER'),
+      );
+      expect(errors).toHaveLength(1);
+    });
+
+    it('passes when forClause.aggregation exists and substep uses DEFER', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 3, aggregation: { strategy: 'ALL' } },
+          transitions: { ...DEFAULT_TRANSITIONS },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics).filter((d) =>
+        d.message.includes('iteration-level aggregation'),
+      );
+      expect(errors).toHaveLength(0);
+    });
+
+    it('warns when substep uses DEFER but no forClause.aggregation', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          transitions: { ...DEFAULT_TRANSITIONS },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const warnings = filterWarnings(diagnostics).filter((d) =>
+        d.message.includes('no iteration-level aggregation'),
+      );
+      expect(warnings).toHaveLength(1);
+    });
+
+    it('does not warn when no substep uses DEFER and no forClause.aggregation', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          transitions: { ...DEFAULT_TRANSITIONS },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const warnings = filterWarnings(diagnostics).filter((d) =>
+        d.message.includes('iteration-level aggregation'),
+      );
+      expect(warnings).toHaveLength(0);
     });
   });
 });
