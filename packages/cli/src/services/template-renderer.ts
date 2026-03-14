@@ -17,6 +17,8 @@ import type {
   ResolvedRunbook,
   ResolvedStep,
   ResolvedStepWithFor,
+  StepWithSubsteps,
+  UnresolvedForClause,
 } from '@rundown-org/parser';
 import { isUnresolvedForClause, MAX_FOR_BOUND } from '@rundown-org/parser';
 
@@ -173,21 +175,87 @@ function resolveBound(
 }
 
 /**
+ * Result of resolving FOR clause bounds in a runbook.
+ */
+export interface ResolveForBoundsResult {
+  /** Runbook with all resolvable FOR bounds resolved. */
+  readonly runbook: ResolvedRunbook;
+  /** Warnings for steps where bounds could not be resolved (preserved as prompt text). */
+  readonly warnings: readonly string[];
+}
+
+/**
+ * Render a single FOR bound back to its source text form.
+ *
+ * @param bound - Numeric literal or unresolved template reference
+ * @returns String representation suitable for reconstruction
+ */
+function boundToString(bound: Bound): string {
+  return typeof bound === 'number' ? String(bound) : `{{${bound.ref}}}`;
+}
+
+/**
+ * Reconstruct the original FOR line text from an unresolved FOR clause.
+ *
+ * Used when falling back to prompt text for steps with undefined bound variables.
+ *
+ * @param fc - Unresolved FOR clause to reconstruct
+ * @returns Reconstructed FOR line text
+ */
+function reconstructForLine(fc: UnresolvedForClause): string {
+  if (fc.source !== undefined) {
+    const prefix = `FOR ${fc.variable} IN`;
+    if (fc.end !== undefined) {
+      return `${prefix} ${boundToString(fc.start)} TO ${boundToString(fc.end)} OF {{ ${fc.source} }}`;
+    }
+    return `${prefix} {{ ${fc.source} }}`;
+  }
+  const prefix = fc.variable ? `FOR ${fc.variable} IN` : 'FOR';
+  return `${prefix} ${boundToString(fc.start)} TO ${boundToString(fc.end)}`;
+}
+
+/**
+ * Check whether all BoundRef variables in an unresolved FOR clause are defined.
+ *
+ * @param fc - Unresolved FOR clause to check
+ * @param variables - Template variable map
+ * @returns `true` if every BoundRef variable resolves to a defined value
+ */
+function allBoundRefsDefined(
+  fc: UnresolvedForClause,
+  variables: Readonly<Record<string, unknown>>,
+): boolean {
+  if (typeof fc.start !== 'number') {
+    if (resolveTemplatePath(fc.start.ref, variables) === undefined) return false;
+  }
+  if (fc.end !== undefined && typeof fc.end !== 'number') {
+    if (resolveTemplatePath(fc.end.ref, variables) === undefined) return false;
+  }
+  return true;
+}
+
+/**
  * Resolve unresolved FOR clause bounds in a parsed runbook.
  *
  * Walks all steps, resolving any `BoundRef` values in FOR clauses to concrete
  * numbers using the provided template variables. Steps without FOR clauses or
  * with already-resolved bounds are passed through unchanged.
  *
+ * When a bound variable is undefined, the step falls back to a `StepWithSubsteps`
+ * with the FOR line preserved as prompt text. This matches the spec behavior:
+ * "the FOR clause is not parsed and the line is preserved as literal prompt text."
+ *
  * @param runbook - Parsed runbook AST (may contain unresolved FOR bounds)
  * @param variables - Template variable map for bound resolution
- * @returns New runbook AST with all FOR bounds resolved to numbers
- * @throws {Error} When a bound variable is undefined or resolves to a non-integer
+ * @returns Result with resolved runbook and any fallback warnings
+ * @throws {Error} When a bound variable is defined but resolves to a non-integer or out-of-range value
  */
 export function resolveForBounds(
   runbook: Runbook,
   variables: Readonly<Record<string, unknown>>,
-): ResolvedRunbook {
+): ResolveForBoundsResult {
+  const warnings: string[] = [];
+
   const resolvedSteps = runbook.steps.map((step): ResolvedStep => {
     if (step.kind !== 'for') return step;
     if (!isUnresolvedForClause(step.forClause)) {
@@ -196,6 +264,21 @@ export function resolveForBounds(
     }
 
     const fc = step.forClause;
+
+    // If any BoundRef variable is undefined, fall back to prompt text
+    if (!allBoundRefsDefined(fc, variables)) {
+      const forLine = reconstructForLine(fc);
+      const { forClause: _, kind: __, ...rest } = step;
+      const fallbackStep: StepWithSubsteps = {
+        ...rest,
+        kind: 'substeps',
+        substeps: step.substeps,
+        prompt: forLine + (step.prompt ? `\n${step.prompt}` : ''),
+      };
+      warnings.push(`Step "${step.name}": unresolved FOR bound — preserved as prompt text`);
+      return fallbackStep;
+    }
+
     const start = resolveBound(fc.start, variables, step.name, 'start');
     const end =
       fc.end !== undefined ? resolveBound(fc.end, variables, step.name, 'end') : undefined;
@@ -233,7 +316,7 @@ export function resolveForBounds(
     return resolvedForStep;
   });
 
-  return { ...runbook, steps: resolvedSteps };
+  return { runbook: { ...runbook, steps: resolvedSteps }, warnings };
 }
 
 // ─── Secure AST-level substitution ───────────────────────────────────────────

@@ -104,7 +104,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
 // Mock template-renderer
 jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
-  resolveForBounds: jest.fn((runbook: unknown) => runbook),
+  resolveForBounds: jest.fn((runbook: unknown) => ({ runbook, warnings: [] })),
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
   collectUnresolvedRunbookVariables: jest.fn().mockReturnValue(new Set()),
@@ -225,7 +225,10 @@ beforeEach(() => {
   (resolveVariables as jest.Mock).mockResolvedValue({ vars: {}, sources: {}, warnings: [] });
   (buildStepVariables as jest.Mock).mockReturnValue({ Step: '1.1' });
   (substituteRunbookVariables as jest.Mock).mockImplementation((runbook: unknown) => runbook);
-  (resolveForBounds as jest.Mock).mockImplementation((runbook: unknown) => runbook);
+  (resolveForBounds as jest.Mock).mockImplementation((runbook: unknown) => ({
+    runbook,
+    warnings: [],
+  }));
   (expandLoopVariables as jest.Mock).mockImplementation((text: string) => text);
   (warnUnresolvedRunbookVariables as jest.Mock).mockReturnValue([]);
   (collectUnresolvedRunbookVariables as jest.Mock).mockReturnValue(new Set());
@@ -482,7 +485,7 @@ describe('prepareRunbook', () => {
     expect(substituteRunbookVariables).not.toHaveBeenCalled();
   });
 
-  it('returns PrepareFailure when resolveForBounds encounters unresolved variable', async () => {
+  it('returns PrepareFailure when resolveForBounds throws for invalid value', async () => {
     resolveRunbookFile.mockResolvedValue('/test/for-bounds.md');
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -499,14 +502,16 @@ describe('prepareRunbook', () => {
       }),
     );
     (resolveForBounds as jest.Mock).mockImplementation(() => {
-      throw new Error('Unresolved FOR bound "{{Max}}" in step "1" — variable "Max" is not defined');
+      throw new Error(
+        'FOR end bound "{{Max}}" in step "1" resolved to "hello" — must be a positive integer',
+      );
     });
 
     const result = await prepareRunbook('for-bounds.md', {}, '/test');
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
-      expect(result.error).toContain('Unresolved FOR bound');
+      expect(result.error).toContain('must be a positive integer');
     }
   });
 

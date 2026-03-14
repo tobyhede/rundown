@@ -43,13 +43,15 @@ Named identifiers must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
 ### 2.2 Content Order
 Step content must appear in this strict order:
 1.  **FOR Annotation**: Loop definition (optional). Must appear immediately after the step header as a bullet item.
-2.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after FOR (or after step header if no FOR). Any text between the header and transitions is an error.
+2.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after FOR (or after step header if no FOR). Transitions must appear before any prompt text or body content.
 3.  **Prompt**: Text instructions.
 4.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
 
 ## 3. Step Bodies
 
 A step must contain exactly one type of body content.
+
+Steps are represented as a discriminated union on `kind`: `'base'` (prompt-only), `'command'` (executable code block), `'substeps'` (nested H3 steps), `'for'` (loop with substeps).
 
 ### 3.1 Code Blocks
 Executes a command or displays a prompt. Max one code block per step.
@@ -137,7 +139,8 @@ When only one transition side specifies an aggregation modifier, the defaulted s
 
 | Action | Context | Effect |
 | :--- | :--- | :--- |
-| `CONTINUE` | Any | Proceed to next sequential unit. |
+| `CONTINUE` | Step | Proceed to next step. |
+| `CONTINUE` | FOR Iteration-Level | Exit loop (result accumulated). |
 | `DEFER` | Substep, FOR Iteration-Level | Pass result up one level for aggregation. |
 | `STOP [msg]` | Any | Terminate execution immediately (failure). |
 | `COMPLETE [msg]` | Any | Terminate execution immediately (success). |
@@ -155,6 +158,8 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 *   `GOTO 3` (FOR step, no AT): Defaults to the loop's start value (e.g., `1` for `FOR 1 TO 10`, `5` for `FOR 5 TO 1`).
 *   `GOTO 3 AT 1`: Jump to Step 3, iteration 1 (if FOR step).
 *   `GOTO 3 AT {{Index}}`: Re-enter Step 3 at current iteration.
+
+> **Internal:** The compiler uses a `GOTO NEXT` representation internally to advance to the next step. This cannot be written in markdown syntax — `NEXT` is rejected as a GOTO target by the parser.
 
 ## 5. Iteration (FOR)
 
@@ -181,7 +186,8 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
 *   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.
-*   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause execute per iteration. Allowed actions: `DEFER` (default, loop back with accumulation), `NEXT` (loop back without accumulation), `CONTINUE` (exit loop), `BREAK` (exit loop), `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
+*   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause are stored on the `forClause.transitions` field and execute per iteration. Allowed actions: `DEFER` (default, loop back with accumulation), `NEXT` (loop back without accumulation), `CONTINUE` (exit loop), `BREAK` (exit loop), `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
+*   **CONTINUE at iteration scope**: At step level, CONTINUE proceeds to the next step. At FOR iteration level, CONTINUE exits the loop — the current iteration result IS accumulated (unlike NEXT/BREAK which do not accumulate), and execution continues with the step after the FOR step.
 *   **Nested bullet rule**: Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid and fail parse.
 *   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action. RETRY is universal — it fires for ALL substep actions (including `BREAK` and `NEXT`) based on the iteration result, not the substep action. After retries are exhausted, the substep's action takes effect:
     *   `BREAK` → exit loop (non-accumulating, same as NEXT)
@@ -235,14 +241,21 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Undefined**: Preserved as literal text. A warning is emitted to stderr for each undefined variable.
 *   **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
 *   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
-*   **Depth limit**: Parent context chain addressing is capped at 32 levels. Exceeding this limit produces an error.
+*   **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
 *   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `vars:`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic.
+*   **Precedence** (highest to lowest):
+    1. `--var` flags
+    2. `--var-file` contents
+    3. `.rundown/config.yaml` (auto-discovered)
+    4. Frontmatter `vars:` field
+    5. Inherited delegation variables (parent context)
+    6. Built-in defaults (`Date`, `RunId`, `WorkPath`, etc.)
 
 ## 7. Conformance
 
 1.  **Strict Hierarchy**: H2 -> H3. No H4.
-2.  **Sequential IDs**: 1, 2, 3... (gaps invalid).
+2.  **Sequential IDs**: Numeric steps must be sequential (1, 2, 3...; gaps invalid). Named steps do not participate in sequential numbering.
 3.  **Strict Ordering**: FOR -> Transitions -> Prompt -> Body.
 4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
 5.  **Single Code Block**: Max one code block per step (executable or display-only).

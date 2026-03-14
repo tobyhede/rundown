@@ -66,7 +66,7 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
   if (state.templateVars) {
     const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook);
     checkDiagnostics(diagnostics);
-    const resolved = resolveForBounds(runbook, state.templateVars);
+    const { runbook: resolved } = resolveForBounds(runbook, state.templateVars);
     const substituted = substituteRunbookVariables(resolved, state.templateVars);
     // Unresolved variable warnings were already shown at startup via the pipeline path.
     // Suppress them here to avoid duplicating warnings and leaking into --json output.
