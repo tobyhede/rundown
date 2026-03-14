@@ -195,6 +195,41 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
           );
         }
       }
+
+      // FOR iteration-level aggregation checks
+      if (step.forClause.aggregation) {
+        const allSubstepsExplicitNonDefer = step.substeps.every((sub) => {
+          return (
+            !isAccumulatingAction(sub.transitions.pass.action) &&
+            !isAccumulatingAction(sub.transitions.fail.action)
+          );
+        });
+        if (allSubstepsExplicitNonDefer && step.substeps.length > 0) {
+          diagnostics.push(
+            error(
+              step.line,
+              `FOR step "${step.name}" has iteration-level aggregation but no substep uses DEFER. ` +
+                `Use DEFER on at least one substep to propagate results.`,
+            ),
+          );
+        }
+      } else {
+        const hasSubstepDefer = step.substeps.some((sub) => {
+          return (
+            isAccumulatingAction(sub.transitions.pass.action) ||
+            isAccumulatingAction(sub.transitions.fail.action)
+          );
+        });
+        if (hasSubstepDefer) {
+          diagnostics.push(
+            warn(
+              step.line,
+              `FOR step "${step.name}" has substep using DEFER but no iteration-level aggregation (ALL/ANY). ` +
+                `DEFER results have no consumer.`,
+            ),
+          );
+        }
+      }
     }
 
     if (step.transitions) {
