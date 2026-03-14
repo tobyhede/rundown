@@ -322,11 +322,11 @@ describe('evaluateIterationAggregation', () => {
   const failAction = { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } };
   const allAggregation = { strategy: 'ALL' as const };
   const anyAggregation = { strategy: 'ANY' as const };
-  const allTransitions = { pass: passAction, fail: failAction };
-  const anyTransitions = { pass: passAction, fail: failAction };
+  // Transitions are identical — aggregation strategy is now a separate parameter
+  const transitions = { pass: passAction, fail: failAction };
 
   it('returns null for empty iteration results', () => {
-    expect(evaluateIterationAggregation([], allAggregation, allTransitions)).toBeNull();
+    expect(evaluateIterationAggregation([], allAggregation, transitions)).toBeNull();
   });
 
   describe('ALL mode', () => {
@@ -334,7 +334,7 @@ describe('evaluateIterationAggregation', () => {
       const result = evaluateIterationAggregation(
         ['pass', 'pass', 'pass'],
         allAggregation,
-        allTransitions,
+        transitions,
       );
       expect(result).toEqual({ action: 'continue' });
     });
@@ -343,13 +343,13 @@ describe('evaluateIterationAggregation', () => {
       const result = evaluateIterationAggregation(
         ['pass', 'fail', 'pass'],
         allAggregation,
-        allTransitions,
+        transitions,
       );
       expect(result).toEqual({ action: 'stopped' });
     });
 
     it('returns fail transition when all iterations failed', () => {
-      const result = evaluateIterationAggregation(['fail', 'fail'], allAggregation, allTransitions);
+      const result = evaluateIterationAggregation(['fail', 'fail'], allAggregation, transitions);
       expect(result).toEqual({ action: 'stopped' });
     });
   });
@@ -359,7 +359,7 @@ describe('evaluateIterationAggregation', () => {
       const result = evaluateIterationAggregation(
         ['fail', 'pass', 'fail'],
         anyAggregation,
-        anyTransitions,
+        transitions,
       );
       expect(result).toEqual({ action: 'continue' });
     });
@@ -368,13 +368,13 @@ describe('evaluateIterationAggregation', () => {
       const result = evaluateIterationAggregation(
         ['fail', 'fail', 'fail'],
         anyAggregation,
-        anyTransitions,
+        transitions,
       );
       expect(result).toEqual({ action: 'stopped' });
     });
 
     it('returns pass transition when single iteration passed', () => {
-      const result = evaluateIterationAggregation(['pass'], anyAggregation, anyTransitions);
+      const result = evaluateIterationAggregation(['pass'], anyAggregation, transitions);
       expect(result).toEqual({ action: 'continue' });
     });
   });
