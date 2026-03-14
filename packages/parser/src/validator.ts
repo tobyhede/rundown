@@ -227,29 +227,44 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
           );
         }
 
-        if (substep.transitions) {
-          validateAction(substep.transitions.pass.action, substep.id, steps, step, diagnostics);
-          validateAction(substep.transitions.fail.action, substep.id, steps, step, diagnostics);
-        }
+        validateAction(substep.transitions.pass.action, substep.id, steps, step, diagnostics);
+        validateAction(substep.transitions.fail.action, substep.id, steps, step, diagnostics);
       }
 
-      // For non-FOR steps with explicit aggregation (ALL/ANY): parent aggregation uses
-      // deferredResults. Only DEFER populates deferredResults —
-      // CONTINUE/NEXT/BREAK are flow control only. Substeps without DEFER make
-      // aggregation vacuous. Steps without aggregation use sequential flow control.
+      // Rule 4: Aggregation ON but no substep DEFERs — aggregation is vacuous.
       if (step.aggregation && step.kind !== 'for') {
-        const allSubstepsExplicitNonDefer = step.substeps.every((sub) => {
+        const allSubstepsNonDefer = step.substeps.every((sub) => {
           const passIsDefer = isAccumulatingAction(sub.transitions.pass.action);
           const failIsDefer = isAccumulatingAction(sub.transitions.fail.action);
           return !passIsDefer && !failIsDefer;
         });
 
-        if (allSubstepsExplicitNonDefer && step.substeps.length > 0) {
+        if (allSubstepsNonDefer && step.substeps.length > 0) {
           diagnostics.push(
             error(
               step.line,
               `Step "${step.name}" has substeps but no substep uses DEFER. ` +
                 `Use DEFER on at least one substep to propagate results to parent.`,
+            ),
+          );
+        }
+      }
+
+      // Rule 5: DEFER without aggregation — DEFER results have no consumer.
+      if (!step.aggregation && step.kind !== 'for') {
+        const hasSubstepDefer = step.substeps.some((sub) => {
+          return (
+            isAccumulatingAction(sub.transitions.pass.action) ||
+            isAccumulatingAction(sub.transitions.fail.action)
+          );
+        });
+
+        if (hasSubstepDefer) {
+          diagnostics.push(
+            warn(
+              step.line,
+              `Step "${step.name}" has substep using DEFER but no aggregation (ALL/ANY). ` +
+                `DEFER results have no consumer.`,
             ),
           );
         }

@@ -30,7 +30,6 @@ describe('validator strict rules', () => {
         mockStep({
           name: '1',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
@@ -120,7 +119,7 @@ describe('validator strict rules', () => {
         mockStep({
           number: '1',
           prompt: 'P',
-          substeps: [{ id: '1', description: 'S' }],
+          substeps: [{ id: '1', description: 'S', transitions: { ...DEFAULT_TRANSITIONS } }],
         }),
       ];
       const errors = validateRunbook(steps);
@@ -135,7 +134,7 @@ describe('validator strict rules', () => {
         mockStep({
           number: '1',
           command: { code: 'echo', language: 'bash' },
-          substeps: [{ id: '1', description: 'S' }],
+          substeps: [{ id: '1', description: 'S', transitions: { ...DEFAULT_TRANSITIONS } }],
         }),
       ];
       const errors = validateRunbook(steps);
@@ -152,6 +151,7 @@ describe('validator strict rules', () => {
               description: 'S',
               command: { code: 'echo', language: 'bash' },
               runbooks: ['w.runbook.md'],
+              transitions: { ...DEFAULT_TRANSITIONS },
             },
           ],
         }),
@@ -370,8 +370,9 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'Step with FOR but no substeps',
           forClause: { start: 1, end: 10 },
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [],
-        } as any as Step,
+        } as Step,
       ];
       const errors = validateRunbook(steps);
       expect(errors.some((e) => e.message.includes('must have at least one substep'))).toBe(true);

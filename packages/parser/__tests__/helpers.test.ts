@@ -1098,7 +1098,7 @@ describe('convertToTransitions aggregation conflicts', () => {
     expect(result?.transitions.pass.action).toEqual({ type: 'CONTINUE' });
   });
 
-  it('sets aggregation to none when both modifiers are null', () => {
+  it('sets aggregation to undefined when both modifiers are null', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', retry: 0, action: { type: 'CONTINUE' }, modifier: null, raw: 'CONTINUE' },
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
@@ -1107,7 +1107,7 @@ describe('convertToTransitions aggregation conflicts', () => {
     expect(result?.aggregation).toBeUndefined();
   });
 
-  it('sets aggregation to none when only pass provided with null modifier', () => {
+  it('sets aggregation to undefined when only pass provided with null modifier', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'pass', retry: 0, action: { type: 'COMPLETE' }, modifier: null, raw: 'COMPLETE' },
     ];
@@ -1115,7 +1115,7 @@ describe('convertToTransitions aggregation conflicts', () => {
     expect(result?.aggregation).toBeUndefined();
   });
 
-  it('sets aggregation to none when only fail provided with null modifier', () => {
+  it('sets aggregation to undefined when only fail provided with null modifier', () => {
     const conditionals: ParsedConditional[] = [
       { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
     ];

@@ -810,6 +810,10 @@ export function validateDEFERUsage(
 
 /**
  * Result of converting parsed conditionals into separated transitions and aggregation.
+ *
+ * Returned by {@link convertToTransitions} when at least one conditional was provided.
+ * Transitions (pass/fail pair) are always present; aggregation is present only when
+ * the author specified ALL or ANY modifiers.
  */
 export type ConvertedTransitions = {
   /** The pass/fail transition pair. */
