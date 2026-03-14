@@ -15,7 +15,8 @@ import {
   type ActionBlockData,
   type Step,
   type Substep,
-  type ResolveSourceInfo,
+  type CheckResponse,
+  type ResolveResponse,
   getWriter,
   printMetadata,
   printActionBlock,
@@ -454,12 +455,7 @@ export class TextRenderer implements OutputRenderer {
    * @param data - Check result data with validity flag, stats, errors, and warnings
    */
   private renderCheckDetail(data: Record<string, unknown>): void {
-    const { valid, stats, errors, warnings } = data as {
-      valid?: boolean;
-      stats?: { steps?: number; substeps?: number };
-      errors?: { line?: number; message: string }[];
-      warnings?: { line?: number; message: string }[];
-    };
+    const { valid, stats, errors, warnings } = data as CheckResponse;
 
     this.renderStructuralResult({ valid, stats, errors, warnings });
   }
@@ -472,15 +468,8 @@ export class TextRenderer implements OutputRenderer {
    * @param data - Resolve result data
    */
   private renderResolveDetail(data: Record<string, unknown>): void {
-    const { valid, stats, errors, warnings, variables, sources, unresolved } = data as {
-      valid?: boolean;
-      stats?: { steps?: number; substeps?: number };
-      errors?: { line?: number; message: string }[];
-      warnings?: { line?: number; message: string; kind?: string }[];
-      variables?: Record<string, string>;
-      sources?: Record<string, ResolveSourceInfo>;
-      unresolved?: string[];
-    };
+    const { valid, stats, errors, warnings, variables, sources, unresolved } =
+      data as ResolveResponse;
 
     // Structural result (same as check) — pass only structural warnings (no kind)
     const structuralWarnings = warnings?.filter((w) => !w.kind);

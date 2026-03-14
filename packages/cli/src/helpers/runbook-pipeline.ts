@@ -17,10 +17,9 @@ import {
   deriveActiveFrame,
   buildFrameKey,
   type FrameKey,
-  parseRunbookDocument,
   type RunbookState,
   type ExecutionEventEmitter,
-  type Runbook,
+  type ResolvedRunbook,
   type DataSource,
   type DelegationLinkage,
   STATE_DIR,
@@ -33,7 +32,14 @@ import {
   ErrorCodes,
   getErrorMessage,
 } from '@rundown-org/core';
-import { isSourced, stepHasSubsteps, type Step } from '@rundown-org/parser';
+import {
+  parseRunbookDocument,
+  isSourced,
+  stepHasSubsteps,
+  type Step,
+  type ResolvedStep,
+  type ValidationDiagnostic,
+} from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
@@ -41,10 +47,24 @@ import { createBridgedEmitter } from './execution-emitter.js';
 import { FileSourcePolicyError, resolveVariables } from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
-  expandForClauseVariables,
-  warnUnresolvedRunbookVariables,
+  resolveForBounds,
+  collectUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
+import { extractRawFrontmatter } from './extract-raw-frontmatter.js';
+import { validateFrontmatterVars } from './validate-frontmatter-vars.js';
+
+/**
+ * Extract vars from raw frontmatter with proper typing.
+ *
+ * @param frontmatter - Raw frontmatter object (or null)
+ * @returns Vars as Record, or undefined if absent
+ */
+export function getFrontmatterVars(
+  frontmatter: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | undefined {
+  return frontmatter?.vars as Record<string, unknown> | undefined;
+}
 
 /**
  * Variable options from CLI flags.
@@ -82,12 +102,14 @@ export interface PreparedRunbook {
   filePath: string;
   /** Raw markdown content of the runbook file */
   rawContent: string;
-  /** Parsed and variable-substituted runbook AST */
-  runbook: Runbook;
+  /** Parsed and variable-substituted runbook AST (all FOR bounds resolved) */
+  runbook: ResolvedRunbook;
   /** Merged template variables from all sources */
   mergedVariables: Record<string, string>;
   /** Resolved data sources for FOR loop iteration */
   sources: Record<string, DataSource>;
+  /** Step and substep counts */
+  stats: { steps: number; substeps: number };
 }
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
@@ -138,18 +160,18 @@ export type ClaimResult =
 /**
  * Validate that all sourced FOR clauses reference defined data sources.
  *
- * @param steps - Parsed runbook steps
+ * @param steps - Resolved runbook steps (all FOR bounds already resolved)
  * @param sources - Resolved data sources
  * @throws {Error} if any step references an undefined source
  */
 export function validateSources(
-  steps: readonly Step[],
+  steps: readonly ResolvedStep[],
   sources: Readonly<Record<string, unknown>>,
 ): void {
   for (const step of steps) {
     if (step.kind === 'for' && isSourced(step.forClause)) {
       const name = step.forClause.source;
-      if (!(name in sources)) {
+      if (!Object.hasOwn(sources, name)) {
         throw new Error(
           `FOR loop references undefined data source "{{${name}}}". ` +
             `Define "${name}" in .rundown/config.yaml or pass --var-file with an array value.`,
@@ -222,10 +244,53 @@ export function buildTemplateVars(
   };
 }
 
+/** Success result from {@link prepareRunbook}. */
+export interface PrepareSuccess {
+  ok: true;
+  prepared: PreparedRunbook;
+  warnings?: readonly string[];
+  /** Structural validation diagnostics from parser + frontmatter */
+  diagnostics: readonly ValidationDiagnostic[];
+  /** Unresolved template variable names after substitution */
+  unresolved: readonly string[];
+}
+
+/** Failure result from {@link prepareRunbook}. */
+export interface PrepareFailure {
+  ok: false;
+  error: string;
+  code: string;
+  details?: Record<string, unknown>;
+  /** Partial results — available when pipeline progressed past parse */
+  variables?: Record<string, string>;
+  sources?: Record<string, DataSource>;
+  stats?: { steps: number; substeps: number };
+  diagnostics?: readonly ValidationDiagnostic[];
+  warnings?: readonly string[];
+}
+
+/** Discriminated union result of {@link prepareRunbook}. */
+export type PrepareResult = PrepareSuccess | PrepareFailure;
+
+/**
+ * Count substeps across all steps in a runbook.
+ *
+ * @param steps - Parsed runbook steps
+ * @returns Total number of substeps
+ */
+export function countSubsteps(steps: readonly Step[]): number {
+  return steps.reduce((count, step) => {
+    return count + (stepHasSubsteps(step) ? step.substeps.length : 0);
+  }, 0);
+}
+
 /**
  * Prepare a runbook from file: resolve, load, parse, substitute variables.
  *
- * This is the shared pipeline used by file start and delegation claim.
+ * This is the shared pipeline used by file start, delegation claim, and resolve.
+ * Returns diagnostics and unresolved variable names alongside the prepared runbook.
+ * On failure, partial results (variables, stats, diagnostics) are included when
+ * the pipeline progressed past the parse stage.
  *
  * @param file - Runbook file path or name
  * @param varOpts - Variable options from CLI flags
@@ -233,7 +298,7 @@ export function buildTemplateVars(
  * @param options - Optional settings including inherited variables from parent runbook
  * @param options.inheritedContextVars - Context variables inherited from a parent delegation
  * @param options.inheritedUserVars - User variables inherited from a parent delegation
- * @returns PreparedRunbook or error result
+ * @returns PrepareResult — success with full data, or failure with partial results
  * @throws {Error} On unexpected errors during variable resolution or parsing
  */
 export async function prepareRunbook(
@@ -244,10 +309,7 @@ export async function prepareRunbook(
     inheritedContextVars?: Readonly<Record<string, string>>;
     inheritedUserVars?: Readonly<Record<string, string>>;
   },
-): Promise<
-  | { ok: true; prepared: PreparedRunbook; warnings?: readonly string[] }
-  | { ok: false; error: string; code: string; details?: Record<string, unknown> }
-> {
+): Promise<PrepareResult> {
   const filePath = await resolveRunbookFile(cwd, file);
 
   if (!filePath) {
@@ -260,9 +322,28 @@ export async function prepareRunbook(
   }
 
   const rawContent = await fs.readFile(filePath, 'utf8');
+
+  // Parse raw markdown (parser accepts {{vars}} in FOR bounds as BoundRef)
+  const { runbook: rawRunbook, diagnostics: parseDiagnostics } = parseRunbookDocument(
+    rawContent,
+    path.basename(filePath),
+  );
+
+  // Frontmatter validation
+  const { frontmatter } = extractRawFrontmatter(rawContent);
+  const varDiagnostics = validateFrontmatterVars(getFrontmatterVars(frontmatter));
+  const diagnostics: readonly ValidationDiagnostic[] = [...parseDiagnostics, ...varDiagnostics];
+
+  // Compute stats from parsed AST
+  const stats = {
+    steps: rawRunbook.steps.length,
+    substeps: countSubsteps(rawRunbook.steps),
+  };
+
+  // Variable resolution
   let mergedVariables: Record<string, string>;
   let sources: Record<string, DataSource>;
-  let discoveryWarnings: readonly string[] = [];
+  const allWarnings: string[] = [];
   try {
     const resolvedVariables = await resolveVariables(
       {
@@ -279,7 +360,7 @@ export async function prepareRunbook(
     );
     mergedVariables = { ...resolvedVariables.vars };
     sources = { ...resolvedVariables.sources };
-    discoveryWarnings = resolvedVariables.warnings;
+    allWarnings.push(...resolvedVariables.warnings);
   } catch (error) {
     if (error instanceof FileSourcePolicyError) {
       return {
@@ -292,28 +373,60 @@ export async function prepareRunbook(
           filePath: error.filePath,
           reason: error.reason,
         },
+        stats,
+        diagnostics,
       };
     }
-    throw error;
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+      code: 'VARIABLE_RESOLUTION_ERROR',
+      details: { runbook: file },
+      variables: {},
+      sources: {},
+      stats,
+      diagnostics,
+    };
   }
   const templateVars = buildTemplateVars(mergedVariables, options);
 
-  // Pre-expand FOR clause bounds (parser needs numeric values)
-  const forExpandedContent = expandForClauseVariables(
-    rawContent,
-    templateVars,
-    new Set(Object.keys(sources)),
-  );
+  // Bail early if there are structural errors — don't pass a broken AST to transform passes
+  const earlyErrors = diagnostics.filter((d) => d.severity === 'error');
+  if (earlyErrors.length > 0) {
+    return {
+      ok: false,
+      error: earlyErrors[0].message,
+      code: 'VALIDATION_ERROR',
+      details: { runbook: file },
+      variables: templateVars,
+      sources,
+      stats,
+      diagnostics,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
+    };
+  }
 
-  // Parse markdown
-  const rawRunbook = parseRunbookDocument(forExpandedContent, path.basename(filePath));
+  // Resolve FOR clause bounds ({{Max}} → 10)
+  let resolvedRunbook: ResolvedRunbook;
+  try {
+    resolvedRunbook = resolveForBounds(rawRunbook, templateVars);
+  } catch (err) {
+    return {
+      ok: false,
+      error: getErrorMessage(err),
+      code: 'VALIDATION_ERROR',
+      details: { runbook: file },
+      variables: templateVars,
+      sources,
+      stats,
+      diagnostics,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
+    };
+  }
 
   // Substitute variables into parsed AST
-  const runbook = substituteRunbookVariables(rawRunbook, templateVars);
-  const unresolvedWarnings = warnUnresolvedRunbookVariables(runbook);
-  if (unresolvedWarnings.length > 0) {
-    discoveryWarnings = [...discoveryWarnings, ...unresolvedWarnings];
-  }
+  const runbook = substituteRunbookVariables(resolvedRunbook, templateVars);
+  const unresolvedNames = [...collectUnresolvedRunbookVariables(runbook)];
 
   // Validate sourced FOR clauses reference defined data sources
   try {
@@ -324,6 +437,11 @@ export async function prepareRunbook(
       error: getErrorMessage(err),
       code: 'VALIDATION_ERROR',
       details: { runbook: file },
+      variables: templateVars,
+      sources,
+      stats,
+      diagnostics,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
     };
   }
 
@@ -333,13 +451,20 @@ export async function prepareRunbook(
       error: 'Runbook has no steps',
       code: 'VALIDATION_ERROR',
       details: { runbook: file },
+      variables: templateVars,
+      sources,
+      stats,
+      diagnostics,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
     };
   }
 
   return {
     ok: true,
-    prepared: { filePath, rawContent, runbook, mergedVariables: templateVars, sources },
-    warnings: discoveryWarnings.length > 0 ? discoveryWarnings : undefined,
+    prepared: { filePath, rawContent, runbook, mergedVariables: templateVars, sources, stats },
+    warnings: allWarnings.length > 0 ? allWarnings : undefined,
+    diagnostics,
+    unresolved: unresolvedNames,
   };
 }
 
@@ -664,6 +789,9 @@ export async function claimAndLaunch(
       for (const msg of prepResult.warnings) {
         output.warning(msg);
       }
+    }
+    for (const name of prepResult.unresolved) {
+      output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
     }
 
     // Build delegation linkage for the child run

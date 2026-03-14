@@ -3,7 +3,6 @@ import { mockErrorHelpers } from './mock-error-helpers';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
-  parseRunbookDocument: jest.fn(),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
@@ -60,7 +59,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
+  parseRunbookDocument: jest.fn(),
   isSourced: jest.fn(),
+  isResolvedForClause: jest.fn().mockReturnValue(true),
   stepHasSubsteps: (step: { kind: string }) => step.kind === 'substeps' || step.kind === 'for',
 }));
 
@@ -96,14 +97,26 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
     }
   },
   resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {}, warnings: [] }),
+  RUNTIME_RESERVED_VARIABLES: new Set(['Date', 'DateTime', 'Year', 'Month', 'Day', 'WorkPath']),
 }));
 
 // Mock template-renderer
 jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
-  expandForClauseVariables: jest.fn((content: string) => content),
+  resolveForBounds: jest.fn((runbook: unknown) => runbook),
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
+  collectUnresolvedRunbookVariables: jest.fn().mockReturnValue(new Set()),
+}));
+
+// Mock extract-raw-frontmatter
+jest.unstable_mockModule('../../src/helpers/extract-raw-frontmatter', () => ({
+  extractRawFrontmatter: jest.fn().mockReturnValue({ frontmatter: null, bodyStart: 0 }),
+}));
+
+// Mock validate-frontmatter-vars
+jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
+  validateFrontmatterVars: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises

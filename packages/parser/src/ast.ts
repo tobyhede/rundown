@@ -7,6 +7,7 @@ import type {
   TerminalAction,
   Transitions,
 } from './schemas.js';
+import type { ValidationDiagnostic } from './validator.js';
 
 export type {
   StepId,
@@ -71,6 +72,65 @@ export interface SourceWindow {
 export type ForClause = NumericWindow | SourceWindow;
 
 /**
+ * A reference to an unresolved template variable used as a FOR bound.
+ *
+ * Produced by `parseForClause` when a bound position contains `{{VarName}}`
+ * instead of a literal integer. Resolution to a concrete number happens
+ * in a later pipeline phase.
+ */
+export interface BoundRef {
+  readonly ref: string;
+}
+
+/**
+ * A FOR clause bound: either a resolved integer or an unresolved template reference.
+ */
+export type Bound = number | BoundRef;
+
+/**
+ * Numeric-range FOR window with at least one unresolved bound.
+ *
+ * Structurally mirrors {@link NumericWindow} but allows `BoundRef` values
+ * in `start` and/or `end`. Tagged with `unresolved: true` so consumers
+ * can narrow with `'unresolved' in fc`.
+ */
+export interface UnresolvedNumericWindow {
+  readonly unresolved: true;
+  readonly variable?: string;
+  readonly start: Bound;
+  readonly end: Bound;
+  readonly source?: never;
+  readonly transitions?: Transitions;
+}
+
+/**
+ * Data-source FOR window with at least one unresolved bound.
+ *
+ * Structurally mirrors {@link SourceWindow} but allows `BoundRef` values
+ * in `start` and/or `end`. Tagged with `unresolved: true` so consumers
+ * can narrow with `'unresolved' in fc`.
+ */
+export interface UnresolvedSourceWindow {
+  readonly unresolved: true;
+  readonly variable: string;
+  readonly start: Bound;
+  readonly end?: Bound;
+  readonly source: string;
+  readonly transitions?: Transitions;
+}
+
+/** Union of unresolved FOR clause variants. */
+export type UnresolvedForClause = UnresolvedNumericWindow | UnresolvedSourceWindow;
+
+/**
+ * A parsed FOR clause — either fully resolved or containing unresolved template references.
+ *
+ * Consumers that require resolved bounds should narrow with
+ * `isResolvedForClause(fc)` or `!('unresolved' in fc)`.
+ */
+export type ParsedForClause = ForClause | UnresolvedForClause;
+
+/**
  * A substep within a step (H3 header)
  */
 export interface Substep {
@@ -132,6 +192,15 @@ export interface StepWithSubsteps extends StepFields {
 /** FOR loop step — always has substeps + forClause. */
 export interface StepWithFor extends StepFields {
   readonly kind: 'for';
+  readonly forClause: ParsedForClause;
+  readonly substeps: readonly Substep[];
+  /** Parser canonicalization marker for step-level runbook-list shorthand. */
+  readonly substepsDerivedFromRunbookList?: true;
+}
+
+/** FOR loop step with fully resolved bounds — all BoundRef values resolved to numbers. */
+export interface ResolvedStepWithFor extends StepFields {
+  readonly kind: 'for';
   readonly forClause: ForClause;
   readonly substeps: readonly Substep[];
   /** Parser canonicalization marker for step-level runbook-list shorthand. */
@@ -146,8 +215,14 @@ export interface StepWithFor extends StepFields {
  */
 export type Step = BaseStep | StepWithCommand | StepWithSubsteps | StepWithFor;
 
+/** A step where all FOR bounds are resolved. */
+export type ResolvedStep = BaseStep | StepWithCommand | StepWithSubsteps | ResolvedStepWithFor;
+
 /** Utility type for functions that accept any step with substeps. */
 export type StepHavingSubsteps = StepWithSubsteps | StepWithFor;
+
+/** Utility type for resolved steps with substeps. */
+export type ResolvedStepHavingSubsteps = StepWithSubsteps | ResolvedStepWithFor;
 
 /**
  * Parsed runbook definition
@@ -167,4 +242,23 @@ export interface Runbook {
   readonly tags?: readonly string[];
   /** Ordered list of runbook steps */
   readonly steps: readonly Step[];
+}
+
+/** A runbook where all FOR clause bounds are resolved to concrete numbers. */
+export interface ResolvedRunbook extends Omit<Runbook, 'steps'> {
+  readonly steps: readonly ResolvedStep[];
+}
+
+/**
+ * Result of parsing a runbook document.
+ *
+ * Contains the parsed runbook AST and any validation diagnostics.
+ * Structural validation issues (non-sequential steps, missing substeps)
+ * are reported as diagnostics rather than thrown as exceptions.
+ */
+export interface ParseResult {
+  /** Parsed runbook AST */
+  readonly runbook: Runbook;
+  /** Structural validation diagnostics (errors and warnings) */
+  readonly diagnostics: readonly ValidationDiagnostic[];
 }

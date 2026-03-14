@@ -12,13 +12,9 @@
  * @throws {Error} if runbookSrc is missing (indicates corrupted state)
  */
 
-import { parseRunbookDocument, type Step } from '@rundown-org/core';
+import { parseRunbookDocument, areAllStepsResolved, type ResolvedStep } from '@rundown-org/parser';
 import type { RunbookState } from '@rundown-org/core';
-import {
-  substituteRunbookVariables,
-  expandForClauseVariables,
-  warnUnresolvedRunbookVariables,
-} from '../services/template-renderer.js';
+import { substituteRunbookVariables, resolveForBounds } from '../services/template-renderer.js';
 
 /**
  * Load and parse runbook steps from state.
@@ -28,8 +24,9 @@ import {
  *
  * @param state - Runbook state containing runbookSrc and optionally templateVars
  * @param _cwd - Unused, kept for signature compatibility
- * @returns Parsed steps from runbookSrc (with variables substituted if templateVars present)
+ * @returns Parsed steps with all FOR bounds resolved
  * @throws {Error} if runbookSrc is missing (corrupted state)
+ * @throws {Error} if backward-compat path encounters unresolved FOR bounds (stale state)
  * @throws {RunbookSyntaxError} if runbookSrc fails to parse as a runbook document
  *         (thrown by parseRunbookDocument)
  *
@@ -44,27 +41,48 @@ import {
  * const currentStep = steps.find(s => s.name === state.step);
  * ```
  */
-export function getRunbookFromState(state: RunbookState, _cwd: string): readonly Step[] {
+export function getRunbookFromState(state: RunbookState, _cwd: string): readonly ResolvedStep[] {
   if (!state.runbookSrc) {
     throw new Error(
       `State file ${state.id} is missing runbookSrc. ` +
         `This indicates corrupted state. Delete and re-run the runbook.`,
     );
   }
-  // New flow: raw runbookSrc + templateVars → pre-expand FOR clauses, parse, substitute
-  if (state.templateVars) {
-    const sourceKeys = new Set(Object.keys(state.sources ?? {}));
-    const forExpanded = expandForClauseVariables(state.runbookSrc, state.templateVars, sourceKeys);
-    const runbook = parseRunbookDocument(forExpanded, state.runbook);
-    const substituted = substituteRunbookVariables(runbook, state.templateVars);
-    for (const msg of warnUnresolvedRunbookVariables(substituted)) {
-      console.warn(`Warning: ${msg}`);
+
+  // Check for parser diagnostics
+  const checkDiagnostics = (
+    diagnostics: readonly { severity: string; message: string }[],
+  ): void => {
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    if (errors.length > 0) {
+      throw new Error(
+        `Runbook ${state.runbook} has structural errors: ${errors[0].message}. ` +
+          `Delete state and re-run the runbook.`,
+      );
     }
+  };
+
+  // New flow: raw runbookSrc + templateVars → parse, resolve FOR bounds, substitute
+  if (state.templateVars) {
+    const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook);
+    checkDiagnostics(diagnostics);
+    const resolved = resolveForBounds(runbook, state.templateVars);
+    const substituted = substituteRunbookVariables(resolved, state.templateVars);
+    // Unresolved variable warnings were already shown at startup via the pipeline path.
+    // Suppress them here to avoid duplicating warnings and leaking into --json output.
     return substituted.steps;
   }
 
-  const runbook = parseRunbookDocument(state.runbookSrc, state.runbook);
-
   // Backward compat: old state files have pre-expanded runbookSrc, no templateVars
+  const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook);
+  checkDiagnostics(diagnostics);
+
+  if (!areAllStepsResolved(runbook.steps)) {
+    throw new Error(
+      `Runbook ${state.runbook} has unresolved FOR bounds in pre-expanded state. ` +
+        `This indicates stale state. Delete and re-run the runbook.`,
+    );
+  }
+
   return runbook.steps;
 }

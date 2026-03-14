@@ -16,3 +16,6 @@ docs/plans/
 # Stryker mutation testing
 packages/*/reports/
 packages/*/.stryker-tmp/
+
+# TypeScript incremental build
+*.tsbuildinfo

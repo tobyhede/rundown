@@ -5,10 +5,16 @@ import type {
   ForClause,
   SourceWindow,
   StepHavingSubsteps,
+  ResolvedStep,
+  ResolvedStepHavingSubsteps,
   BaseStep,
   StepWithCommand,
   StepWithSubsteps,
   StepWithFor,
+  BoundRef,
+  Bound,
+  ParsedForClause,
+  UnresolvedForClause,
 } from './ast.js';
 
 /**
@@ -135,4 +141,68 @@ export function isStepWithFor(step: Step): step is StepWithFor {
  */
 export function stepHasSubsteps(step: Step): step is StepHavingSubsteps {
   return step.kind === 'substeps' || step.kind === 'for';
+}
+
+/**
+ * Type guard: checks if a bound is an unresolved template reference.
+ *
+ * @param bound - The bound value to check
+ * @returns True if `bound` is a `BoundRef` (`bound is BoundRef`), guaranteeing `bound.ref` is a string
+ */
+export function isBoundRef(bound: Bound): bound is BoundRef {
+  return typeof bound === 'object' && 'ref' in bound;
+}
+
+/**
+ * Type guard: checks if a parsed FOR clause contains unresolved template references.
+ *
+ * @param fc - The parsed FOR clause to check
+ * @returns True if `fc` is an `UnresolvedForClause` (`fc is UnresolvedForClause`), meaning it has unresolved bounds
+ */
+export function isUnresolvedForClause(fc: ParsedForClause): fc is UnresolvedForClause {
+  return 'unresolved' in fc;
+}
+
+/**
+ * Type guard: checks if a parsed FOR clause is fully resolved.
+ *
+ * @param fc - The parsed FOR clause to check
+ * @returns True if `fc` is a `ForClause` (`fc is ForClause`), meaning all bounds are concrete numbers
+ */
+export function isResolvedForClause(fc: ParsedForClause): fc is ForClause {
+  return !('unresolved' in fc);
+}
+
+/**
+ * Type guard: checks if a step has fully resolved FOR bounds.
+ *
+ * Returns true for non-FOR steps (which trivially have no unresolved bounds)
+ * and for FOR steps whose forClause is a resolved {@link ForClause}.
+ *
+ * @param step - The Step to check
+ * @returns True if `step` is a `ResolvedStep`, meaning all FOR bounds are concrete numbers
+ */
+export function isResolvedStep(step: Step): step is ResolvedStep {
+  if (step.kind !== 'for') return true;
+  return isResolvedForClause(step.forClause);
+}
+
+/**
+ * Type guard: checks if a resolved step has substeps (either StepWithSubsteps or ResolvedStepWithFor).
+ *
+ * @param step - The ResolvedStep to check
+ * @returns True if `step` is a `ResolvedStepHavingSubsteps`, guaranteeing `step.substeps` exists
+ */
+export function resolvedStepHasSubsteps(step: ResolvedStep): step is ResolvedStepHavingSubsteps {
+  return step.kind === 'substeps' || step.kind === 'for';
+}
+
+/**
+ * Type guard: checks if all steps in an array have fully resolved FOR bounds.
+ *
+ * @param steps - The steps to check
+ * @returns True if every step is a `ResolvedStep`
+ */
+export function areAllStepsResolved(steps: readonly Step[]): steps is readonly ResolvedStep[] {
+  return steps.every(isResolvedStep);
 }

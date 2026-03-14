@@ -23,6 +23,7 @@ bashisms
 behaviour
 biome
 biomejs
+callsites
 categorises
 centralise
 changeset

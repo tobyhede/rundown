@@ -1,5 +1,5 @@
 import type { Step, Action, Transitions, TransitionObject, Substep, Runbook } from '../types.js';
-import type { ForClause } from '@rundown-org/parser';
+import type { ParsedForClause } from '@rundown-org/parser';
 import { stepIdToString } from '../step-id.js';
 import { renderCodeFence, renderHeading } from './primitives.js';
 
@@ -104,8 +104,13 @@ export function renderSubstep(substep: Substep, parentStepName: string): string 
  *
  * @param forClause - The FOR clause to render
  * @returns Array of DSL strings (e.g., ["- FOR pass IN 1 TO 2", "  - PASS ANY CONTINUE"])
+ * @throws {Error} When the FOR clause contains unresolved template references
  */
-function renderForClause(forClause: ForClause): string[] {
+function renderForClause(forClause: ParsedForClause): string[] {
+  if ('unresolved' in forClause) {
+    throw new Error('Cannot render unresolved FOR clause bounds');
+  }
+
   const lines: string[] = [];
 
   if (forClause.source !== undefined) {

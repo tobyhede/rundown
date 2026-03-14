@@ -20,7 +20,8 @@ import {
   isReservedWord,
   NAMED_IDENTIFIER_PATTERN,
 } from './step-id.js';
-import type { ForClause } from './ast.js';
+import type { ParsedForClause, Bound } from './ast.js';
+import { isBoundRef } from './guards.js';
 
 /**
  * Check if an action accumulates results into parent aggregation (DEFER only).
@@ -381,13 +382,31 @@ function parseNamedForPrefix(rest: string): { variable: string; rangeStr: string
  * - `FOR variable IN {{ source }}` (all items from data source)
  * - `FOR variable IN start TO end OF {{ source }}` (windowed data source)
  *
- * Bounds must be positive integers. Unresolved template variables (e.g., `{{Count}}`)
- * cause the clause to be rejected (returns null).
+ * Bounds must be positive integers or template variable references (`{{VarName}}`).
+ * When any bound is a template reference, the returned clause is tagged with
+ * `unresolved: true` and bounds may contain `BoundRef` values.
  *
  * @param text - The bullet text (after `- ` prefix), e.g. "FOR batch IN 1 TO 10"
- * @returns Parsed ForClause, or null if text is not a valid FOR clause
+ * @returns Parsed ForClause or unresolved variant, or null if text is not a valid FOR clause
  */
-export function parseForClause(text: string): ForClause | null {
+/** Regex fragment matching a bound token: positive integer or mustache variable reference. */
+const BOUND_TOKEN = '(?:[1-9]\\d*|\\{\\{\\s*[a-zA-Z_][a-zA-Z0-9_]*\\s*\\}\\})';
+
+/** Matches "start TO end" range patterns. */
+const TO_RE = new RegExp(`^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})$`);
+
+/** Matches "start TO end OF {{ source }}" windowed source patterns. */
+const WINDOWED_SOURCE_RE = new RegExp(
+  `^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})\\s+OF\\s+\\{\\{\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\}\\}$`,
+);
+
+/**
+ * Parse a FOR clause header into a structured clause descriptor.
+ *
+ * @param text - Raw header text starting with "FOR ..."
+ * @returns Parsed FOR clause (resolved or unresolved), or null if not a valid FOR clause
+ */
+export function parseForClause(text: string): ParsedForClause | null {
   const trimmed = text.trim();
   if (!trimmed.startsWith('FOR ')) return null;
 
@@ -399,6 +418,25 @@ export function parseForClause(text: string): ForClause | null {
     const num = parseInt(s, 10);
     if (!Number.isNaN(num) && String(num) === s && num > 0 && num <= MAX_FOR_BOUND) return num;
     return null;
+  };
+
+  // Try to parse a bound or template variable reference
+  const parseBoundOrRef = (s: string): Bound | null => {
+    const num = parseBound(s);
+    if (num !== null) return num;
+    const refMatch = /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}$/.exec(s);
+    if (refMatch) return { ref: refMatch[1] };
+    return null;
+  };
+
+  // Build numeric (no-source) result, marking unresolved if any bound is a BoundRef
+  const buildNumericResult = (start: Bound, end: Bound, variable?: string): ParsedForClause => {
+    if (isBoundRef(start) || isBoundRef(end)) {
+      return variable
+        ? { unresolved: true as const, variable, start, end }
+        : { unresolved: true as const, start, end };
+    }
+    return variable ? { variable, start, end } : { start, end };
   };
 
   // Pattern 1: FOR variable IN start TO end
@@ -419,51 +457,59 @@ export function parseForClause(text: string): ForClause | null {
     }
 
     // Windowed source pattern: start TO end OF {{ source }}
-    const windowedSourceMatch =
-      /^(\S+)\s+TO\s+(\S+)\s+OF\s+\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}$/.exec(rangeStr);
+    const windowedSourceMatch = WINDOWED_SOURCE_RE.exec(rangeStr);
     if (windowedSourceMatch) {
-      const start = parseBound(windowedSourceMatch[1]);
-      const end = parseBound(windowedSourceMatch[2]);
+      const start = parseBoundOrRef(windowedSourceMatch[1]);
+      const end = parseBoundOrRef(windowedSourceMatch[2]);
       const source = windowedSourceMatch[3];
       if (start !== null && end !== null) {
+        if (isBoundRef(start) || isBoundRef(end)) {
+          return { unresolved: true as const, variable, start, end, source };
+        }
         return { variable, start, end, source };
       }
       return null;
     }
 
     // Try "start TO end"
-    const toMatch = /^(\S+)\s+TO\s+(\S+)$/.exec(rangeStr);
+    const toMatch = TO_RE.exec(rangeStr);
     if (toMatch) {
-      const start = parseBound(toMatch[1]);
-      const end = parseBound(toMatch[2]);
+      const start = parseBoundOrRef(toMatch[1]);
+      const end = parseBoundOrRef(toMatch[2]);
       if (start !== null && end !== null) {
-        return { variable, start, end };
+        return buildNumericResult(start, end, variable);
       }
       return null;
     }
 
-    // Try single count value
-    const end = parseBound(rangeStr);
+    // Try single count value (or ref)
+    const end = parseBoundOrRef(rangeStr);
     if (end !== null) {
+      if (isBoundRef(end)) {
+        return { unresolved: true as const, variable, start: 1, end };
+      }
       return { variable, start: 1, end };
     }
     return null;
   }
 
   // Pattern 3: FOR start TO end (unnamed)
-  const rangeMatch = /^(\S+)\s+TO\s+(\S+)$/.exec(rest);
+  const rangeMatch = TO_RE.exec(rest);
   if (rangeMatch) {
-    const start = parseBound(rangeMatch[1]);
-    const end = parseBound(rangeMatch[2]);
+    const start = parseBoundOrRef(rangeMatch[1]);
+    const end = parseBoundOrRef(rangeMatch[2]);
     if (start !== null && end !== null) {
-      return { start, end };
+      return buildNumericResult(start, end);
     }
     return null;
   }
 
-  // Pattern 4: FOR count (unnamed, count only)
-  const end = parseBound(rest);
+  // Pattern 4: FOR count (unnamed, count only — or ref)
+  const end = parseBoundOrRef(rest);
   if (end !== null) {
+    if (isBoundRef(end)) {
+      return { unresolved: true as const, start: 1, end };
+    }
     return { start: 1, end };
   }
 

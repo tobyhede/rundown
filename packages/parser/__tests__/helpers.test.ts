@@ -14,7 +14,12 @@ import {
   validateLoopControlUsage,
   validateDEFERUsage,
   parseForClause,
+  isBoundRef,
+  isUnresolvedForClause,
+  isResolvedForClause,
   type ParsedConditional,
+  type Bound,
+  type ParsedForClause,
 } from '../src/index.js';
 import { formatAction, isExecutableCodeBlock } from '../src/helpers.js';
 
@@ -1488,37 +1493,117 @@ describe('parseForClause', () => {
     });
   });
 
-  describe('rejects unresolved template variables', () => {
-    it('rejects named variable with template end', () => {
-      expect(parseForClause('FOR batch IN 1 TO {{Max}}')).toBeNull();
+  describe('accepts unresolved template variables as BoundRef', () => {
+    it('accepts named variable with template end', () => {
+      expect(parseForClause('FOR batch IN 1 TO {{Max}}')).toEqual({
+        unresolved: true,
+        variable: 'batch',
+        start: 1,
+        end: { ref: 'Max' },
+      });
     });
 
-    it('rejects named variable with template start and end', () => {
-      expect(parseForClause('FOR item IN {{Start}} TO {{End}}')).toBeNull();
+    it('accepts named variable with template start and end', () => {
+      expect(parseForClause('FOR item IN {{Start}} TO {{End}}')).toEqual({
+        unresolved: true,
+        variable: 'item',
+        start: { ref: 'Start' },
+        end: { ref: 'End' },
+      });
     });
 
-    it('rejects unnamed range with template end', () => {
-      expect(parseForClause('FOR 1 TO {{Max}}')).toBeNull();
+    it('accepts unnamed range with template end', () => {
+      expect(parseForClause('FOR 1 TO {{Max}}')).toEqual({
+        unresolved: true,
+        start: 1,
+        end: { ref: 'Max' },
+      });
     });
 
-    it('rejects unnamed range with template start', () => {
-      expect(parseForClause('FOR {{Start}} TO 10')).toBeNull();
+    it('accepts unnamed range with template start', () => {
+      expect(parseForClause('FOR {{Start}} TO 10')).toEqual({
+        unresolved: true,
+        start: { ref: 'Start' },
+        end: 10,
+      });
     });
 
-    it('rejects named variable with template start', () => {
-      expect(parseForClause('FOR batch IN {{Start}} TO 10')).toBeNull();
+    it('accepts named variable with template start', () => {
+      expect(parseForClause('FOR batch IN {{Start}} TO 10')).toEqual({
+        unresolved: true,
+        variable: 'batch',
+        start: { ref: 'Start' },
+        end: 10,
+      });
     });
 
-    it('rejects named variable with numeric start and template end', () => {
-      expect(parseForClause('FOR batch IN 1 TO {{End}}')).toBeNull();
+    it('accepts named variable with numeric start and template end', () => {
+      expect(parseForClause('FOR batch IN 1 TO {{End}}')).toEqual({
+        unresolved: true,
+        variable: 'batch',
+        start: 1,
+        end: { ref: 'End' },
+      });
     });
 
-    // Note: The following tests now accept {{ identifier }} as a source reference
-    // because the source syntax uses the same {{ }} braces.
-    // These are no longer template variables but source references.
+    it('accepts unnamed count as BoundRef', () => {
+      expect(parseForClause('FOR {{Count}}')).toEqual({
+        unresolved: true,
+        start: 1,
+        end: { ref: 'Count' },
+      });
+    });
 
-    it('accepts named count as source reference (previously template variable)', () => {
-      // FOR batch IN {{ Count }} is now valid - it references source "Count"
+    it('parses named count with no-space braces as source reference', () => {
+      // FOR batch IN {{Count}} matches source pattern (single {{ }} after IN)
+      expect(parseForClause('FOR batch IN {{Count}}')).toEqual({
+        variable: 'batch',
+        start: 1,
+        source: 'Count',
+      });
+    });
+
+    it('accepts windowed source with template end', () => {
+      expect(parseForClause('FOR batch IN 1 TO {{Max}} OF {{ items }}')).toEqual({
+        unresolved: true,
+        variable: 'batch',
+        start: 1,
+        end: { ref: 'Max' },
+        source: 'items',
+      });
+    });
+
+    it('accepts windowed source with both bounds as refs', () => {
+      expect(parseForClause('FOR batch IN {{Start}} TO {{End}} OF {{ items }}')).toEqual({
+        unresolved: true,
+        variable: 'batch',
+        start: { ref: 'Start' },
+        end: { ref: 'End' },
+        source: 'items',
+      });
+    });
+
+    it('accepts windowed source with template start and numeric end', () => {
+      expect(parseForClause('FOR item IN {{Start}} TO 10 OF {{ items }}')).toEqual({
+        unresolved: true,
+        variable: 'item',
+        start: { ref: 'Start' },
+        end: 10,
+        source: 'items',
+      });
+    });
+
+    it('accepts template ref with spaces in braces', () => {
+      expect(parseForClause('FOR 1 TO {{ Max }}')).toEqual({
+        unresolved: true,
+        start: 1,
+        end: { ref: 'Max' },
+      });
+    });
+
+    // Source reference syntax is unchanged — single {{ }} after IN is still a source
+    it('accepts named count as source reference (not BoundRef)', () => {
+      // FOR batch IN {{ Count }} is a source reference, not a bound
       expect(parseForClause('FOR batch IN {{ Count }}')).toEqual({
         variable: 'batch',
         start: 1,
@@ -1526,9 +1611,13 @@ describe('parseForClause', () => {
       });
     });
 
-    it('rejects unnamed count that looks like template', () => {
-      // FOR {{ Count }} without variable is not valid - source syntax requires a variable
-      expect(parseForClause('FOR {{ Count }}')).toBeNull();
+    it('accepts unnamed count with spaces in braces as BoundRef', () => {
+      // FOR {{ Count }} without variable IN prefix is an unnamed count ref, not a source
+      expect(parseForClause('FOR {{ Count }}')).toEqual({
+        unresolved: true,
+        start: 1,
+        end: { ref: 'Count' },
+      });
     });
   });
 
@@ -1642,8 +1731,13 @@ describe('parseForClause', () => {
       expect(parseForClause('FOR PASS IN {{ items }}')).toBeNull();
     });
 
-    it('rejects source syntax without variable', () => {
-      expect(parseForClause('FOR {{ items }}')).toBeNull();
+    it('parses unnamed {{ }} as count ref (not source without variable)', () => {
+      // Without variable IN prefix, {{ items }} is parsed as unnamed count ref
+      expect(parseForClause('FOR {{ items }}')).toEqual({
+        unresolved: true,
+        start: 1,
+        end: { ref: 'items' },
+      });
     });
 
     it('rejects source name with invalid characters', () => {
@@ -1668,6 +1762,65 @@ describe('parseForClause', () => {
 
     it('rejects empty windowed source name', () => {
       expect(parseForClause('FOR item IN 1 TO 10 OF {{ }}')).toBeNull();
+    });
+  });
+});
+
+describe('BoundRef type guards', () => {
+  describe('isBoundRef', () => {
+    it('returns true for BoundRef', () => {
+      const bound: Bound = { ref: 'Max' };
+      expect(isBoundRef(bound)).toBe(true);
+    });
+
+    it('returns false for number', () => {
+      const bound: Bound = 10;
+      expect(isBoundRef(bound)).toBe(false);
+    });
+  });
+
+  describe('isUnresolvedForClause', () => {
+    it('returns true for unresolved numeric clause', () => {
+      const fc: ParsedForClause = { unresolved: true, start: 1, end: { ref: 'Max' } };
+      expect(isUnresolvedForClause(fc)).toBe(true);
+    });
+
+    it('returns true for unresolved source clause', () => {
+      const fc: ParsedForClause = {
+        unresolved: true,
+        variable: 'item',
+        start: 1,
+        end: { ref: 'Max' },
+        source: 'items',
+      };
+      expect(isUnresolvedForClause(fc)).toBe(true);
+    });
+
+    it('returns false for resolved numeric clause', () => {
+      const fc: ParsedForClause = { start: 1, end: 10 };
+      expect(isUnresolvedForClause(fc)).toBe(false);
+    });
+
+    it('returns false for resolved source clause', () => {
+      const fc: ParsedForClause = { variable: 'item', start: 1, source: 'items' };
+      expect(isUnresolvedForClause(fc)).toBe(false);
+    });
+  });
+
+  describe('isResolvedForClause', () => {
+    it('returns true for resolved numeric clause', () => {
+      const fc: ParsedForClause = { start: 1, end: 10 };
+      expect(isResolvedForClause(fc)).toBe(true);
+    });
+
+    it('returns true for resolved source clause', () => {
+      const fc: ParsedForClause = { variable: 'item', start: 1, source: 'items' };
+      expect(isResolvedForClause(fc)).toBe(true);
+    });
+
+    it('returns false for unresolved clause', () => {
+      const fc: ParsedForClause = { unresolved: true, start: 1, end: { ref: 'Max' } };
+      expect(isResolvedForClause(fc)).toBe(false);
     });
   });
 });

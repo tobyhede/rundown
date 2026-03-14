@@ -8,7 +8,17 @@
  * @module
  */
 
-import type { Runbook, Step, Substep, Command } from '@rundown-org/parser';
+import type {
+  Runbook,
+  Substep,
+  Command,
+  Bound,
+  ForClause,
+  ResolvedRunbook,
+  ResolvedStep,
+  ResolvedStepWithFor,
+} from '@rundown-org/parser';
+import { isUnresolvedForClause, MAX_FOR_BOUND } from '@rundown-org/parser';
 
 /**
  * Shared placeholder matcher used across startup and runtime substitution.
@@ -115,35 +125,115 @@ export function expandLoopVariables(text: string, variables: Record<string, unkn
   });
 }
 
-// ─── FOR clause pre-expansion ────────────────────────────────────────────────
-
-/** Matches bullet list items that start with `- FOR ` (FOR clause lines) */
-const FOR_CLAUSE_LINE = /^\s*-\s+FOR\s.+$/gm;
+// ─── FOR clause bound resolution ─────────────────────────────────────────────
 
 /**
- * Expand template variables in FOR clause bullet lines only.
+ * Resolve a single FOR clause bound to a concrete number.
  *
- * FOR clause bounds (e.g., `FOR item IN 1 TO {{Max}}`) must be numeric at parse
- * time. This function expands placeholders in lines matching `- FOR ...` so
- * the parser receives numeric bounds.
+ * If the bound is already a number, returns it unchanged. If it is a
+ * `BoundRef`, resolves the referenced variable and validates the result.
  *
- * @param markdown - Raw markdown source before parsing
- * @param variables - Variables used for placeholder expansion
- * @param sourceKeys - Optional source identifiers that must remain unexpanded
- * @returns Markdown with FOR bounds expanded where resolvable
+ * @param bound - Numeric bound or unresolved template reference
+ * @param variables - Template variable map for resolution
+ * @param stepName - Step identifier for error messages
+ * @param position - Whether this is the 'start' or 'end' bound (for error messages)
+ * @returns Resolved numeric bound
+ * @throws {Error} When the referenced variable is undefined or resolves to an invalid value
  */
-export function expandForClauseVariables(
-  markdown: string,
+function resolveBound(
+  bound: Bound,
   variables: Readonly<Record<string, unknown>>,
-  sourceKeys?: ReadonlySet<string>,
-): string {
-  return markdown.replace(FOR_CLAUSE_LINE, (line) => {
-    return line.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
-      // Don't expand source references — they're consumed by the parser as data source identifiers.
-      if (sourceKeys?.has(path)) return match;
-      return resolveTemplatePath(path, variables) ?? match;
-    });
+  stepName: string,
+  position: 'start' | 'end',
+): number {
+  if (typeof bound === 'number') return bound;
+
+  const value = resolveTemplatePath(bound.ref, variables);
+  if (value === undefined) {
+    throw new Error(
+      `Unresolved FOR bound "{{${bound.ref}}}" in step "${stepName}" — variable "${bound.ref}" is not defined`,
+    );
+  }
+
+  const trimmed = value.trim();
+  if (!/^[1-9]\d*$/.test(trimmed)) {
+    throw new Error(
+      `FOR ${position} bound "{{${bound.ref}}}" in step "${stepName}" resolved to "${value}" — must be a positive integer ≤ ${String(MAX_FOR_BOUND)}`,
+    );
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (parsed > MAX_FOR_BOUND) {
+    throw new Error(
+      `FOR ${position} bound "{{${bound.ref}}}" in step "${stepName}" resolved to "${value}" — must be a positive integer ≤ ${String(MAX_FOR_BOUND)}`,
+    );
+  }
+
+  return parsed;
+}
+
+/**
+ * Resolve unresolved FOR clause bounds in a parsed runbook.
+ *
+ * Walks all steps, resolving any `BoundRef` values in FOR clauses to concrete
+ * numbers using the provided template variables. Steps without FOR clauses or
+ * with already-resolved bounds are passed through unchanged.
+ *
+ * @param runbook - Parsed runbook AST (may contain unresolved FOR bounds)
+ * @param variables - Template variable map for bound resolution
+ * @returns New runbook AST with all FOR bounds resolved to numbers
+ * @throws {Error} When a bound variable is undefined or resolves to a non-integer
+ */
+export function resolveForBounds(
+  runbook: Runbook,
+  variables: Readonly<Record<string, unknown>>,
+): ResolvedRunbook {
+  const resolvedSteps = runbook.steps.map((step): ResolvedStep => {
+    if (step.kind !== 'for') return step;
+    if (!isUnresolvedForClause(step.forClause)) {
+      const { forClause, ...rest } = step;
+      return { ...rest, forClause } as ResolvedStepWithFor;
+    }
+
+    const fc = step.forClause;
+    const start = resolveBound(fc.start, variables, step.name, 'start');
+    const end =
+      fc.end !== undefined ? resolveBound(fc.end, variables, step.name, 'end') : undefined;
+
+    let resolved: ForClause;
+    if (fc.source !== undefined) {
+      // SourceWindow — end is optional
+      resolved = {
+        variable: fc.variable,
+        start,
+        source: fc.source,
+        ...(end !== undefined && { end }),
+        ...(fc.transitions && { transitions: fc.transitions }),
+      };
+    } else {
+      // NumericWindow — end is required (UnresolvedNumericWindow.end: Bound is non-optional)
+      if (end === undefined) {
+        throw new Error(
+          `FOR end bound in step "${step.name}" is required for numeric range — this indicates a parser bug`,
+        );
+      }
+      resolved = {
+        start,
+        end,
+        ...(fc.variable !== undefined && { variable: fc.variable }),
+        ...(fc.transitions && { transitions: fc.transitions }),
+      };
+    }
+
+    const { forClause: _, ...rest } = step;
+    const resolvedForStep: ResolvedStepWithFor = {
+      ...rest,
+      forClause: resolved,
+    } as ResolvedStepWithFor;
+    return resolvedForStep;
   });
+
+  return { ...runbook, steps: resolvedSteps };
 }
 
 // ─── Secure AST-level substitution ───────────────────────────────────────────
@@ -225,7 +315,7 @@ function substituteSubstep(substep: Substep, variables: Record<string, unknown>)
  * @param variables - Variable map for substitution
  * @returns Step with all string fields expanded
  */
-function substituteStep(step: Step, variables: Record<string, unknown>): Step {
+function substituteStep(step: ResolvedStep, variables: Record<string, unknown>): ResolvedStep {
   const base = {
     name: step.name,
     description: substituteText(step.description, variables),
@@ -272,9 +362,9 @@ function substituteStep(step: Step, variables: Record<string, unknown>): Step {
  * @returns New runbook AST with substitutions applied
  */
 export function substituteRunbookVariables(
-  runbook: Runbook,
+  runbook: ResolvedRunbook,
   variables: Record<string, unknown>,
-): Runbook {
+): ResolvedRunbook {
   return {
     ...runbook,
     title: runbook.title ? substituteText(runbook.title, variables) : runbook.title,
@@ -317,45 +407,51 @@ function isForVariablePath(name: string, forVars: ReadonlySet<string>): boolean 
   return forVars.has(name.slice(0, dotIndex));
 }
 
-/** Variables resolved at runtime per-step — not "undefined" after static substitution. */
-const RUNTIME_VARIABLES = new Set([
+/** Variables resolved at runtime per-step globally, outside FOR loops. */
+const GLOBAL_RUNTIME_VARIABLES = new Set([
   'Step',
   'step',
-  'Index',
-  'index',
   'context.current.step',
   'context.current.substep',
-  'context.current.index',
   'context.current.at',
 ]);
+
+/** Variables resolved at runtime only inside FOR loop substeps. */
+const FOR_LOOP_RUNTIME_VARIABLES = new Set(['Index', 'index', 'context.current.index']);
 
 /**
  * Collect unresolved template variable names from a substituted runbook.
  *
  * Walks the runbook AST collecting all remaining `{{...}}` placeholders
- * and returns them as a deduplicated set. Runtime variables (Step, Index,
- * context.current.*) are always suppressed. FOR loop variables are only
- * suppressed within their own FOR step's substeps.
+ * and returns them as a deduplicated set. Global runtime variables (Step,
+ * context.current.*) are always suppressed. FOR loop-specific variables
+ * (Index, context.current.index) are only suppressed within their own
+ * FOR step's substeps. FOR loop variables are only suppressed within
+ * their own FOR step's substeps.
  *
  * @param runbook - Runbook AST after variable substitution
  * @returns Set of unresolved variable names found in the runbook
  */
-export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string> {
+export function collectUnresolvedRunbookVariables(runbook: ResolvedRunbook): Set<string> {
   const unresolved = new Set<string>();
 
   const collect = (text: string | undefined): void => {
     if (!text) return;
     for (const name of collectUnresolvedVariables(text)) {
-      if (!RUNTIME_VARIABLES.has(name)) {
+      if (!GLOBAL_RUNTIME_VARIABLES.has(name)) {
         unresolved.add(name);
       }
     }
   };
 
-  const collectScoped = (text: string | undefined, suppressed: ReadonlySet<string>): void => {
+  const collectScoped = (
+    text: string | undefined,
+    suppressed: ReadonlySet<string>,
+    dottedPrefixes?: ReadonlySet<string>,
+  ): void => {
     if (!text) return;
     for (const name of collectUnresolvedVariables(text)) {
-      if (!suppressed.has(name) && !isForVariablePath(name, suppressed)) {
+      if (!suppressed.has(name) && !(dottedPrefixes && isForVariablePath(name, dottedPrefixes))) {
         unresolved.add(name);
       }
     }
@@ -380,13 +476,18 @@ export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string>
         }
         break;
       case 'for': {
-        const forSuppressed = new Set(RUNTIME_VARIABLES);
-        if (step.forClause.variable) forSuppressed.add(step.forClause.variable);
+        const forSuppressed = new Set([...GLOBAL_RUNTIME_VARIABLES, ...FOR_LOOP_RUNTIME_VARIABLES]);
+        const dottedPrefixes = new Set<string>();
+        if (step.forClause.variable) {
+          forSuppressed.add(step.forClause.variable);
+          dottedPrefixes.add(step.forClause.variable);
+        }
         for (const ss of step.substeps) {
-          collectScoped(ss.description, forSuppressed);
-          collectScoped(ss.prompt, forSuppressed);
-          if (ss.command) collectScoped(ss.command.code, forSuppressed);
-          if (ss.runbooks) for (const rb of ss.runbooks) collectScoped(rb, forSuppressed);
+          collectScoped(ss.description, forSuppressed, dottedPrefixes);
+          collectScoped(ss.prompt, forSuppressed, dottedPrefixes);
+          if (ss.command) collectScoped(ss.command.code, forSuppressed, dottedPrefixes);
+          if (ss.runbooks)
+            for (const rb of ss.runbooks) collectScoped(rb, forSuppressed, dottedPrefixes);
         }
         break;
       }
@@ -406,7 +507,7 @@ export function collectUnresolvedRunbookVariables(runbook: Runbook): Set<string>
  * @param runbook - Runbook AST after variable substitution
  * @returns Array of warning strings for each unresolved variable
  */
-export function warnUnresolvedRunbookVariables(runbook: Runbook): string[] {
+export function warnUnresolvedRunbookVariables(runbook: ResolvedRunbook): string[] {
   const unresolved = collectUnresolvedRunbookVariables(runbook);
   const warnings: string[] = [];
   for (const name of unresolved) {

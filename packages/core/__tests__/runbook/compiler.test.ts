@@ -3,20 +3,21 @@ import { createActor } from 'xstate';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import { compileRunbookToMachine, MAX_FILE_ITERATIONS } from '../../src/runbook/compiler.js';
 import type {
-  Step,
+  ResolvedStep,
   BaseStep,
   StepWithCommand,
   StepWithSubsteps,
-  StepWithFor,
+  ResolvedStepWithFor,
 } from '../../src/runbook/types.js';
+import { areAllStepsResolved } from '@rundown-org/parser';
 
 describe('runbook compiler', () => {
-  /** Input type: Step variants without the `kind` discriminant. */
+  /** Input type: Resolved step variants without the `kind` discriminant. */
   type StepInput =
     | Omit<BaseStep, 'kind'>
     | Omit<StepWithCommand, 'kind'>
     | Omit<StepWithSubsteps, 'kind'>
-    | Omit<StepWithFor, 'kind'>;
+    | Omit<ResolvedStepWithFor, 'kind'>;
 
   const DEFAULT_TRANSITIONS = {
     aggregation: 'ALL' as const,
@@ -24,8 +25,8 @@ describe('runbook compiler', () => {
     fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
   };
 
-  /** Infer and inject `kind` on each step object so raw literals satisfy the Step union. */
-  function inferSteps(raw: StepInput[]): Step[] {
+  /** Infer and inject `kind` on each step object so raw literals satisfy the ResolvedStep union. */
+  function inferSteps(raw: StepInput[]): ResolvedStep[] {
     return raw.map((s) => {
       const kind =
         'forClause' in s
@@ -35,13 +36,17 @@ describe('runbook compiler', () => {
             : 'command' in s
               ? 'command'
               : 'base';
-      return { ...s, kind } as Step;
+      return { ...s, kind } as ResolvedStep;
     });
   }
 
-  function createRunbook(markdown: string): Step[] {
-    const runbook = parseRunbookDocument(markdown);
-    return [...runbook.steps];
+  function createRunbook(markdown: string): ResolvedStep[] {
+    const { runbook } = parseRunbookDocument(markdown);
+    const steps = [...runbook.steps];
+    if (!areAllStepsResolved(steps)) {
+      throw new Error('Test runbook has unresolved FOR bounds');
+    }
+    return [...steps];
   }
 
   describe('static step compilation', () => {
@@ -119,7 +124,7 @@ describe('runbook compiler', () => {
 
 ## 2. Done
 - PASS COMPLETE
-`).steps,
+`).runbook.steps,
       ];
 
       const machine = compileRunbookToMachine(steps);
@@ -1915,6 +1920,12 @@ describe('runbook compiler', () => {
       expect(ctx.forStack[0].end).toBe(3);
       expect(ctx.iterationResults).toEqual([]);
     });
+
+    // Unresolved FOR bounds are now rejected at compile time via the type system:
+    // compileRunbookToMachine accepts ResolvedStep[] (not Step[]), so steps with
+    // UnresolvedForClause cannot be passed. The three runtime error tests
+    // (first FOR step, transition into FOR, GOTO into FOR) were replaced by this
+    // compile-time guarantee. See ResolvedStep / ResolvedStepWithFor in parser/ast.ts.
   });
 
   describe('implicit 1..1 loop model', () => {

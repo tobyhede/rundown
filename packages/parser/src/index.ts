@@ -1,4 +1,4 @@
-export { parseRunbook, parseRunbookDocument, type ParseOptions } from './parser.js';
+export { parseRunbook, parseRunbookDocument } from './parser.js';
 export {
   validateRunbook,
   validateAction,
@@ -7,6 +7,7 @@ export {
 export type { ValidationError, ValidationDiagnostic } from './validator.js';
 export { RunbookSyntaxError, MAX_STEP_NUMBER } from './types.js';
 export type { ParsedConditional, ParseConditionalResult, AggregationModifier } from './types.js';
+export type { ParseResult } from './ast.js';
 export type * from './ast.js';
 export * from './schemas.js';
 export {
@@ -65,4 +66,10 @@ export {
   isStepWithSubsteps,
   isStepWithFor,
   stepHasSubsteps,
+  isBoundRef,
+  isUnresolvedForClause,
+  isResolvedForClause,
+  isResolvedStep,
+  resolvedStepHasSubsteps,
+  areAllStepsResolved,
 } from './guards.js';

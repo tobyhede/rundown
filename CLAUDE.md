@@ -287,16 +287,13 @@ All exported symbols must have TSDoc documentation following these requirements:
  *
  * @param markdown - The raw markdown content to parse
  * @param filename - Optional filename used to derive runbook name if not in frontmatter
- * @param options - Optional parsing options (e.g., skipValidation)
- * @returns Complete Runbook object with metadata and steps
- * @throws {RunbookSyntaxError} When the markdown contains invalid syntax
+ * @returns ParseResult with runbook AST and structural validation diagnostics
  * @see parseRunbook for simplified parsing returning only steps
  */
 export function parseRunbookDocument(
   markdown: string,
   filename?: string,
-  options?: ParseOptions
-): Runbook { ... }
+): ParseResult { ... }
 ```
 
 ## CLI Output Standards

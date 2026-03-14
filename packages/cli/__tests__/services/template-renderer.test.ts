@@ -1,12 +1,20 @@
 import { describe, it, expect } from '@jest/globals';
 import { parseRunbookDocument } from '@rundown-org/core';
+import type {
+  Runbook,
+  Step,
+  BaseStep,
+  StepWithFor,
+  ParsedForClause,
+  Transitions,
+} from '@rundown-org/parser';
 import {
   expandLoopVariables,
   shellEscapeValue,
   substituteText,
   substituteRunbookVariables,
   expandLoopVariablesForCommand,
-  expandForClauseVariables,
+  resolveForBounds,
   collectUnresolvedVariables,
   warnUnresolvedRunbookVariables,
 } from '../../src/services/template-renderer.js';
@@ -146,21 +154,21 @@ describe('substituteText', () => {
 describe('substituteRunbookVariables', () => {
   it('should substitute description without escaping', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy {{environment}}\n\nDeploy to {{environment}}.';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { environment: 'staging & prod' });
     expect(result.steps[0].description).toBe('Deploy staging & prod');
   });
 
   it('should substitute prompt without escaping', () => {
     const rawMarkdown = '# Test\n\n## 1. Check\n\n> Is {{service}} running?\n';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { service: 'my service' });
     expect(result.steps[0].prompt).toContain('my service');
   });
 
   it('should shell-escape command.code values', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { BRANCH: 'main; rm -rf /' });
     expect(result.steps[0].command).toBeDefined();
     expect(result.steps[0].command!.code).toBe("git checkout 'main; rm -rf /'");
@@ -168,7 +176,7 @@ describe('substituteRunbookVariables', () => {
 
   it('should pass through safe values unquoted in commands', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { BRANCH: 'main' });
     expect(result.steps[0].command).toBeDefined();
     expect(result.steps[0].command!.code).toBe('git checkout main');
@@ -176,7 +184,7 @@ describe('substituteRunbookVariables', () => {
 
   it('should preserve undefined variables', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, {});
     expect(result.steps[0].command).toBeDefined();
     expect(result.steps[0].command!.code).toBe('git checkout {{BRANCH}}');
@@ -184,14 +192,14 @@ describe('substituteRunbookVariables', () => {
 
   it('should substitute runbook title', () => {
     const rawMarkdown = '# {{project}} Runbook\n\n## 1. Start\n\nGo.';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { project: 'MyApp' });
     expect(result.title).toBe('MyApp Runbook');
   });
 
   it('should substitute runbook description', () => {
     const rawMarkdown = '# Test\n\nDeploy {{app}} to production.\n\n## 1. Start\n\nGo.';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { app: 'MyApp' });
     expect(result.description).toContain('MyApp');
   });
@@ -209,7 +217,7 @@ describe('substituteRunbookVariables', () => {
       '```',
       '',
     ].join('\n');
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, {
       service: 'web server',
       url: 'http://example.com/path?q=1&x=2',
@@ -223,7 +231,7 @@ describe('substituteRunbookVariables', () => {
 
   it('prevents shell injection via variable substitution', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { BRANCH: 'main; rm -rf /' });
     // The injected command should be safely quoted
     expect(result.steps[0].command?.code).toBe("git checkout 'main; rm -rf /'");
@@ -233,14 +241,14 @@ describe('substituteRunbookVariables', () => {
 
   it('prevents backtick injection', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\necho {{MSG}}\n```';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { MSG: '`whoami`' });
     expect(result.steps[0].command?.code).toBe("echo '`whoami`'");
   });
 
   it('prevents dollar-sign injection', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\necho {{MSG}}\n```';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { MSG: '$(cat /etc/passwd)' });
     expect(result.steps[0].command?.code).toBe("echo '$(cat /etc/passwd)'");
   });
@@ -446,14 +454,14 @@ describe('collectUnresolvedVariables', () => {
 describe('warnUnresolvedRunbookVariables', () => {
   it('should warn for unresolved variables in description', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\nDeploy to {{environment}}.';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toContain('Undefined variable "{{environment}}" preserved as literal text');
   });
 
   it('should warn for unresolved variables in command code', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toContain('Undefined variable "{{BRANCH}}" preserved as literal text');
   });
@@ -461,14 +469,14 @@ describe('warnUnresolvedRunbookVariables', () => {
   it('should deduplicate warnings for same variable', () => {
     const rawMarkdown =
       '# Test\n\n## 1. Deploy {{env}}\n\nDeploy to {{env}}.\n\n## 2. Verify {{env}}\n\nCheck {{env}}.';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
   });
 
   it('should not warn when all variables are resolved', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\nDeploy to {{environment}}.';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const substituted = substituteRunbookVariables(runbook, { environment: 'staging' });
     const warnings = warnUnresolvedRunbookVariables(substituted);
     expect(warnings).toHaveLength(0);
@@ -476,14 +484,14 @@ describe('warnUnresolvedRunbookVariables', () => {
 
   it('should warn for unresolved variables in title', () => {
     const rawMarkdown = '# {{project}} Runbook\n\n## 1. Start\n\nGo.';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toContain('Undefined variable "{{project}}" preserved as literal text');
   });
 
   it('should warn for unresolved variables in prompt', () => {
     const rawMarkdown = '# Test\n\n## 1. Check\n\n> Is {{service}} running?\n';
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toContain('Undefined variable "{{service}}" preserved as literal text');
   });
@@ -498,7 +506,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       '- deploy-{{region}}.runbook.md',
     ].join('\n');
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toContain('Undefined variable "{{region}}" preserved as literal text');
   });
@@ -514,7 +522,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Handle {{item}}.',
     ].join('\n');
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(0);
   });
@@ -534,13 +542,13 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Handle {{item}}.',
     ].join('\n');
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
     expect(warnings).toContain('Undefined variable "{{item}}" preserved as literal text');
   });
 
-  it('should suppress Index/index everywhere (runtime variable)', () => {
+  it('should scope Index/index suppression to FOR substeps only', () => {
     const rawMarkdown = [
       '# Test',
       '',
@@ -555,9 +563,10 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Iteration {{Index}}.',
     ].join('\n');
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
-    expect(warnings).toHaveLength(0);
+    expect(warnings).toHaveLength(1);
+    expect(warnings).toContain('Undefined variable "{{Index}}" preserved as literal text');
   });
 
   it('should warn for FOR variable in FOR step own description', () => {
@@ -571,7 +580,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Handle {{item}}.',
     ].join('\n');
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
     expect(warnings).toContain('Undefined variable "{{item}}" preserved as literal text');
@@ -595,7 +604,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Check {{server}} in {{env}}.',
     ].join('\n');
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
     expect(warnings).toContain('Undefined variable "{{server}}" preserved as literal text');
@@ -612,89 +621,192 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Name: {{item.name}}, Region: {{item.region}}.',
     ].join('\n');
-    const runbook = parseRunbookDocument(rawMarkdown);
+    const { runbook } = parseRunbookDocument(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(0);
   });
 });
 
-describe('expandForClauseVariables', () => {
-  it('pre-expands FOR clause then substitutes command variables', () => {
-    const rawMarkdown = [
-      '---',
-      'name: test',
-      '---',
-      '# Test Runbook',
-      '',
-      '## 1. Deploy',
-      '- FOR env IN 1 TO {{Max}}',
-      '',
-      '### 1.1 Run deploy',
-      '',
-      '```bash',
-      'deploy {{ENV}}',
-      '```',
-      '',
-      '## 2. Done',
-      '- PASS COMPLETE',
-    ].join('\n');
+describe('resolveForBounds', () => {
+  /** Build a minimal Runbook with given steps. */
+  function makeRunbook(steps: Step[]): Runbook {
+    return { steps };
+  }
 
-    const expanded = expandForClauseVariables(rawMarkdown, { Max: '3' });
-    const runbook = parseRunbookDocument(expanded);
-    const result = substituteRunbookVariables(runbook, { ENV: 'staging' });
+  /** Build a base (non-FOR) step. */
+  function makeBaseStep(name = '1'): BaseStep {
+    return { kind: 'base', name, description: 'A step' };
+  }
 
-    expect(result.steps[0].forClause).toEqual({ variable: 'env', start: 1, end: 3 });
-    expect(result.steps[0].substeps).toHaveLength(1);
-    expect(result.steps[0].substeps?.[0].command?.code).toBe('deploy staging');
+  /** Build a FOR step with a given forClause. */
+  function makeForStep(forClause: ParsedForClause, name = '1'): StepWithFor {
+    return {
+      kind: 'for',
+      name,
+      description: 'Loop step',
+      forClause,
+      substeps: [{ id: '1', description: 'Sub' }],
+    };
+  }
+
+  it('passes through runbook with no FOR steps', () => {
+    const runbook = makeRunbook([makeBaseStep()]);
+    const result = resolveForBounds(runbook, {});
+    expect(result.steps).toEqual(runbook.steps);
   });
 
-  it('preserves source reference when sourceKeys is provided', () => {
-    const markdown = '- FOR server IN {{ servers }}';
-    const result = expandForClauseVariables(
-      markdown,
-      { servers: 'prod,staging' },
-      new Set(['servers']),
-    );
-    expect(result).toBe('- FOR server IN {{ servers }}');
+  it('passes through already-resolved FOR clause', () => {
+    const resolved: ParsedForClause = { variable: 'item', start: 1, end: 10 };
+    const runbook = makeRunbook([makeForStep(resolved)]);
+    const result = resolveForBounds(runbook, {});
+    expect(result.steps[0].forClause).toEqual(resolved);
   });
 
-  it('expands non-source vars while preserving source references', () => {
-    const markdown = '- FOR item IN 1 TO {{ Max }} OF {{ items }}';
-    const result = expandForClauseVariables(
-      markdown,
-      { Max: '10', items: 'data' },
-      new Set(['items']),
-    );
-    expect(result).toBe('- FOR item IN 1 TO 10 OF {{ items }}');
+  it('resolves single BoundRef (end)', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'batch',
+      start: 1,
+      end: { ref: 'Max' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { Max: '5' });
+    expect(result.steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 5 });
   });
 
-  it('expands all FOR vars when sourceKeys is undefined', () => {
-    const markdown = '- FOR item IN {{ items }}';
-    const result = expandForClauseVariables(markdown, { items: 'a,b,c' });
-    expect(result).toBe('- FOR item IN a,b,c');
+  it('resolves both bounds as BoundRef', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: { ref: 'Min' },
+      end: { ref: 'Max' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { Min: '2', Max: '8' });
+    expect(result.steps[0].forClause).toEqual({ variable: 'item', start: 2, end: 8 });
   });
 
-  it('only expands variables on FOR clause lines', () => {
-    const lines = [
-      '- FOR server IN {{ servers }}',
-      '',
-      'Some text with {{ Max }} in it',
-      '',
-      '```bash',
-      'echo {{ Max }}',
-      '```',
-    ];
-    const markdown = lines.join('\n');
-    const result = expandForClauseVariables(markdown, { servers: 'a', Max: '5' });
-    const expected = [
-      '- FOR server IN a',
-      '',
-      'Some text with {{ Max }} in it',
-      '',
-      '```bash',
-      'echo {{ Max }}',
-      '```',
-    ].join('\n');
-    expect(result).toBe(expected);
+  it('resolves windowed source with BoundRef', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'x',
+      start: 1,
+      end: { ref: 'N' },
+      source: 'items',
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { N: '5' });
+    expect(result.steps[0].forClause).toEqual({ variable: 'x', start: 1, end: 5, source: 'items' });
+  });
+
+  it('throws for undefined variable', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Missing' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, {})).toThrow('not defined');
+  });
+
+  it('throws for non-integer value', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Bad' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, { Bad: 'hello' })).toThrow('must be a positive integer');
+  });
+
+  it('throws for zero value', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Zero' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, { Zero: '0' })).toThrow('must be a positive integer');
+  });
+
+  it('throws for value exceeding MAX_FOR_BOUND', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Huge' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, { Huge: '10001' })).toThrow('10000');
+  });
+
+  it('preserves transitions on resolved clause', () => {
+    const transitions: Transitions = {
+      pass: { action: 'continue' as const, retry: 0 },
+      fail: { action: 'stop' as const, retry: 0 },
+    };
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'N' },
+      transitions,
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { N: '3' });
+    expect(result.steps[0].forClause).toEqual({
+      variable: 'item',
+      start: 1,
+      end: 3,
+      transitions,
+    });
+  });
+
+  it('resolves unnamed numeric range (no variable)', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      start: 1,
+      end: { ref: 'Count' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { Count: '5' });
+    expect(result.steps[0].forClause).toEqual({ start: 1, end: 5 });
+  });
+
+  it('throws for leading-zero value', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Padded' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, { Padded: '05' })).toThrow('must be a positive integer');
+  });
+
+  it('throws for negative integer value', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Neg' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    expect(() => resolveForBounds(runbook, { Neg: '-5' })).toThrow('must be a positive integer');
+  });
+
+  it('resolves source window with start BoundRef and no end', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: { ref: 'Begin' },
+      source: 'items',
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const result = resolveForBounds(runbook, { Begin: '3' });
+    expect(result.steps[0].forClause).toEqual({ variable: 'item', start: 3, source: 'items' });
   });
 });

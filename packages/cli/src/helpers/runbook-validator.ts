@@ -1,24 +1,20 @@
 /**
  * Shared runbook file-resolution and structural-validation logic.
  *
- * Used by both `check` and `resolve` commands to avoid duplication
- * of the load-parse-validate pipeline.
+ * Used by the `check` command for syntax/structure-only validation.
+ * The `resolve` command uses `prepareRunbook` from `runbook-pipeline.ts`
+ * for full variable/source resolution.
  *
  * @module helpers/runbook-validator
  */
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import {
-  parseRunbookDocument,
-  stepHasSubsteps,
-  validateRunbook,
-  type Step,
-  type ValidationDiagnostic,
-} from '@rundown-org/parser';
+import { parseRunbookDocument, type ValidationDiagnostic } from '@rundown-org/parser';
 import type { Runbook } from '@rundown-org/core';
 import { getErrorMessage } from '@rundown-org/core';
 import { resolveRunbookFile } from './resolve-runbook.js';
+import { countSubsteps, getFrontmatterVars } from './runbook-pipeline.js';
 import { extractRawFrontmatter } from './extract-raw-frontmatter.js';
 import { validateFrontmatterVars } from './validate-frontmatter-vars.js';
 
@@ -30,7 +26,7 @@ export interface LoadedRunbook {
   resolvedPath: string;
   /** Raw markdown content */
   content: string;
-  /** Parsed runbook AST (with skipValidation, before variable substitution) */
+  /** Parsed runbook AST (before variable substitution) */
   runbook: Runbook;
   /** Structural and frontmatter validation diagnostics */
   diagnostics: ValidationDiagnostic[];
@@ -39,27 +35,14 @@ export interface LoadedRunbook {
 }
 
 /**
- * Count substeps across all steps in a runbook.
- *
- * @param steps - Parsed runbook steps
- * @returns Total number of substeps
- */
-function countSubsteps(steps: readonly Step[]): number {
-  return steps.reduce((count, step) => {
-    return count + (stepHasSubsteps(step) ? step.substeps.length : 0);
-  }, 0);
-}
-
-/**
  * Load a runbook file, parse it, and run structural validation.
  *
  * Performs:
  * 1. File discovery via `resolveRunbookFile`
  * 2. File read
- * 3. Parse with `skipValidation: true`
- * 4. Structural validation
- * 5. Frontmatter var validation
- * 6. Substep counting
+ * 3. Parse (returns diagnostics as data, not exceptions)
+ * 4. Frontmatter var validation
+ * 5. Substep counting
  *
  * @param file - Runbook file path or namespace:name
  * @param cwd - Current working directory for resolution
@@ -77,14 +60,12 @@ export async function loadAndValidateRunbook(
 
   try {
     const content = await fs.readFile(resolvedPath, 'utf-8');
-    const runbook = parseRunbookDocument(content, path.basename(resolvedPath), {
-      skipValidation: true,
-    });
-    const structuralDiagnostics = validateRunbook(runbook.steps);
-    const { frontmatter } = extractRawFrontmatter(content);
-    const varDiagnostics = validateFrontmatterVars(
-      frontmatter?.vars as Record<string, unknown> | undefined,
+    const { runbook, diagnostics: structuralDiagnostics } = parseRunbookDocument(
+      content,
+      path.basename(resolvedPath),
     );
+    const { frontmatter } = extractRawFrontmatter(content);
+    const varDiagnostics = validateFrontmatterVars(getFrontmatterVars(frontmatter));
     const diagnostics = [...structuralDiagnostics, ...varDiagnostics];
     const stats = {
       steps: runbook.steps.length,

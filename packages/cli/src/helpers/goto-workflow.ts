@@ -17,7 +17,7 @@ import {
   parseStepIdFromString,
   stepIdToString,
   countNumberedSteps,
-  type Step,
+  type ResolvedStep,
   type StepId,
   type RunbookState,
 } from '@rundown-org/core';
@@ -41,7 +41,7 @@ export interface GotoContext {
   /** Current active runbook state */
   state: RunbookState;
   /** Parsed steps from the active runbook */
-  steps: Step[];
+  steps: ResolvedStep[];
   /** Current working directory for file resolution */
   cwd: string;
 }
@@ -98,7 +98,10 @@ export async function buildGotoContext(
  * @param steps - Parsed runbook steps
  * @returns Validation result with parsed target or error details
  */
-export function validateGotoTarget(stepArg: string, steps: readonly Step[]): GotoValidationResult {
+export function validateGotoTarget(
+  stepArg: string,
+  steps: readonly ResolvedStep[],
+): GotoValidationResult {
   const target = parseStepIdFromString(stepArg);
   if (!target) {
     return {

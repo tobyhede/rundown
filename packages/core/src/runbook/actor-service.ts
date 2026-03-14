@@ -13,7 +13,7 @@
  */
 
 import { createActor, type AnyActorRef } from 'xstate';
-import type { Step, RunbookState, ForContext } from './types.js';
+import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent } from './compiler.js';
 import { stepHasSubsteps } from '@rundown-org/parser';
@@ -65,7 +65,7 @@ export class RunbookActorService {
    * @param steps - Parsed runbook steps for machine compilation
    * @returns Started actor, or null if state not found
    */
-  async createActor(id: string, steps: Step[]): Promise<AnyActorRef | null> {
+  async createActor(id: string, steps: ResolvedStep[]): Promise<AnyActorRef | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
 
@@ -140,7 +140,7 @@ export class RunbookActorService {
   async updateFromActor(
     id: string,
     actor: AnyActorRef,
-    steps: Step[],
+    steps: ResolvedStep[],
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const snapshot = actor.getPersistedSnapshot() as any;
@@ -248,7 +248,7 @@ export class RunbookActorService {
    * @param steps - Parsed runbook steps
    * @returns Updated state, or null if state not found
    */
-  async initializeState(id: string, steps: Step[]): Promise<RunbookState | null> {
+  async initializeState(id: string, steps: ResolvedStep[]): Promise<RunbookState | null> {
     const actor = await this.createActor(id, steps);
     if (!actor) return null;
     try {
@@ -276,7 +276,7 @@ export class RunbookActorService {
    */
   async sendAndSync(
     id: string,
-    steps: Step[],
+    steps: ResolvedStep[],
     event: RunbookEvent,
   ): Promise<ActorSyncResult | null> {
     const actor = await this.createActor(id, steps);

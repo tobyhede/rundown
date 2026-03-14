@@ -2,7 +2,7 @@ import { fromMarkdown } from 'mdast-util-from-markdown';
 import { visit, SKIP } from 'unist-util-visit';
 import type { Node } from 'unist';
 import type { Code, Heading, List, ListItem, Paragraph, PhrasingContent } from 'mdast';
-import type { Step, Substep, Runbook, Command, ForClause } from './ast.js';
+import type { Step, Substep, Command, ParsedForClause, ParseResult } from './ast.js';
 import { type ParsedConditional, RunbookSyntaxError } from './types.js';
 import {
   extractStepHeader,
@@ -82,7 +82,7 @@ interface StepBuilder {
   pendingSubstep?: SubstepBuilder;
   content: string;
   line?: number;
-  forClause?: ForClause;
+  forClause?: ParsedForClause;
   hasSeenForClause: boolean;
   forConditionals?: ParsedConditional[];
   stepConditionals?: ParsedConditional[];
@@ -96,21 +96,20 @@ interface StepBuilder {
  * discarding runbook metadata. For full document parsing including
  * title, description, and frontmatter, use {@link parseRunbookDocument}.
  *
+ * Throws on error-severity diagnostics for backward compatibility.
+ *
  * @param markdown - The raw markdown content to parse
  * @returns Array of parsed Step objects representing the runbook
+ * @throws {RunbookSyntaxError} When validation produces error-severity diagnostics
  * @see parseRunbookDocument for full runbook parsing with metadata
  */
 export function parseRunbook(markdown: string): Step[] {
-  const doc = parseRunbookDocument(markdown);
-  return [...doc.steps];
-}
-
-/**
- * Options for controlling runbook parsing behavior.
- */
-export interface ParseOptions {
-  /** If true, skip validation and don't throw on errors */
-  skipValidation?: boolean;
+  const { runbook, diagnostics } = parseRunbookDocument(markdown);
+  const errors = diagnostics.filter((d) => d.severity === 'error');
+  if (errors.length > 0) {
+    throw new RunbookSyntaxError(errors[0].message);
+  }
+  return [...runbook.steps];
 }
 
 /**
@@ -123,20 +122,19 @@ export interface ParseOptions {
  * - H3 substep definitions
  * - Runbook references (nested runbook lists)
  *
+ * Structural validation issues (non-sequential steps, missing substeps) are
+ * returned as diagnostics rather than thrown. True parse failures (malformed
+ * markdown, H4+ headings, duplicate substep IDs) remain exceptions.
+ *
  * @param markdown - The raw markdown content to parse
- * @param filename - Optional filename used to derive runbook name if not in frontmatter
- * @param options - Optional parsing options (e.g., skipValidation)
- * @returns Complete Runbook object with metadata and steps
+ * @param basename - Optional basename (e.g. "deploy.runbook.md") used to derive runbook name if not in frontmatter
+ * @returns ParseResult containing the Runbook AST and validation diagnostics
  * @throws {RunbookSyntaxError} When the markdown contains invalid syntax,
  *   such as H4+ headings, duplicate substep IDs, multiple code blocks per step,
  *   or other specification violations
  * @see parseRunbook for simplified parsing returning only steps
  */
-export function parseRunbookDocument(
-  markdown: string,
-  filename?: string,
-  options?: ParseOptions,
-): Runbook {
+export function parseRunbookDocument(markdown: string, basename?: string): ParseResult {
   const { frontmatter, content } = extractFrontmatter(markdown);
   const tree = fromMarkdown(content);
 
@@ -400,7 +398,7 @@ export function parseRunbookDocument(
 
         // Throw if text looks like a FOR clause but didn't parse,
         // unless it contains template variables ({{...}}) that need runtime expansion
-        if (forClause === null && text.trim().startsWith('FOR ') && !text.includes('{{')) {
+        if (forClause === null && text.trim().startsWith('FOR ')) {
           throw new RunbookSyntaxError(`Invalid FOR clause: ${text.trim()}`);
         }
 
@@ -555,23 +553,19 @@ export function parseRunbookDocument(
     steps.push(finalizeStep(currentStep, pendingConditionals, implicitText));
   }
 
-  if (!options?.skipValidation) {
-    const diagnostics = validateRunbook(steps);
-    const errors = diagnostics.filter((d) => d.severity === 'error');
-    if (errors.length > 0) {
-      // For backwards compatibility, throw the first error
-      throw new RunbookSyntaxError(errors[0].message);
-    }
-  }
+  const diagnostics = validateRunbook(steps);
 
   return {
-    title,
-    description: preamble.trim() || undefined,
-    name: frontmatter?.name ?? (filename ? nameFromFilename(filename) : undefined),
-    version: frontmatter?.version,
-    author: frontmatter?.author,
-    tags: frontmatter?.tags,
-    steps,
+    runbook: {
+      title,
+      description: preamble.trim() || undefined,
+      name: frontmatter?.name ?? (basename ? nameFromFilename(basename) : undefined),
+      version: frontmatter?.version,
+      author: frontmatter?.author,
+      tags: frontmatter?.tags,
+      steps,
+    },
+    diagnostics,
   };
 }
 

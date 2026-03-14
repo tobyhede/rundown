@@ -263,6 +263,17 @@ describe('renderForClause coverage', () => {
     const result = renderStep(step);
     expect(result).toContain('- FOR 5');
   });
+
+  it('throws when rendering FOR step with unresolved bounds', () => {
+    const step: Step = {
+      kind: 'for',
+      name: '1',
+      description: 'Iterate',
+      forClause: { unresolved: true as const, variable: 'item', start: 1, end: { ref: 'Max' } },
+      substeps: [{ id: '1', description: 'Process' }],
+    } as Step;
+    expect(() => renderStep(step)).toThrow('Cannot render unresolved FOR clause bounds');
+  });
 });
 
 describe('renderSubstep with parent prefix', () => {
@@ -514,14 +525,14 @@ describe('FOR clause with nested transitions', () => {
 echo check
 \`\`\``;
 
-    const parsed1 = parseRunbookDocument(markdown);
+    const { runbook: parsed1 } = parseRunbookDocument(markdown);
     expect(parsed1.steps).toHaveLength(1);
     expect((parsed1.steps[0] as any).forClause?.transitions).toBeDefined();
     expect((parsed1.steps[0] as any).forClause?.transitions?.pass.action.type).toBe('CONTINUE');
     expect((parsed1.steps[0] as any).forClause?.transitions?.fail.action.type).toBe('BREAK');
 
     const rendered = renderStep(parsed1.steps[0]);
-    const parsed2 = parseRunbookDocument(rendered);
+    const { runbook: parsed2 } = parseRunbookDocument(rendered);
 
     // Verify transitions survive round-trip
     expect((parsed2.steps[0] as any).forClause?.transitions).toBeDefined();

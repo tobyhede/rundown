@@ -876,6 +876,31 @@ echo batch
     expect(steps[0].substeps).toHaveLength(1);
   });
 
+  it('parses unresolved FOR clause with template variable from full markdown', () => {
+    const md = `## 1. Process batches
+- FOR batch IN 1 TO {{Max}}
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Handle batch
+\`\`\`bash
+echo batch
+\`\`\`
+
+## 2. Done
+- PASS COMPLETE
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].forClause).toEqual({
+      unresolved: true,
+      variable: 'batch',
+      start: 1,
+      end: { ref: 'Max' },
+    });
+    expect(steps[0].kind).toBe('for');
+    expect(steps[0].substeps).toHaveLength(1);
+  });
+
   describe('FOR clause nested transitions', () => {
     it('parses FOR with nested transitions (PASS ALL / FAIL ANY)', () => {
       const markdown = `## 1. Review
@@ -1326,7 +1351,7 @@ describe('parseRunbookDocument metadata', () => {
 ## 1 Step
 - PASS COMPLETE
 `;
-    const doc = parseRunbookDocument(md);
+    const { runbook: doc } = parseRunbookDocument(md);
     expect(doc.title).toBe('First Title');
   });
 
@@ -1338,7 +1363,7 @@ This is the preamble description.
 ## 1 Step
 - PASS COMPLETE
 `;
-    const doc = parseRunbookDocument(md);
+    const { runbook: doc } = parseRunbookDocument(md);
     expect(doc.description).toBe('This is the preamble description.');
   });
 
@@ -1346,7 +1371,7 @@ This is the preamble description.
     const md = `## 1 Step
 - PASS COMPLETE
 `;
-    const doc = parseRunbookDocument(md);
+    const { runbook: doc } = parseRunbookDocument(md);
     expect(doc.description).toBeUndefined();
   });
 
@@ -1354,7 +1379,7 @@ This is the preamble description.
     const md = `## 1 Step
 - PASS COMPLETE
 `;
-    const doc = parseRunbookDocument(md, 'my-runbook.md');
+    const { runbook: doc } = parseRunbookDocument(md, 'my-runbook.md');
     expect(doc.name).toBe('my-runbook.md');
   });
 
@@ -1362,7 +1387,7 @@ This is the preamble description.
     const md = `## 1 Step
 - PASS COMPLETE
 `;
-    const doc = parseRunbookDocument(md);
+    const { runbook: doc } = parseRunbookDocument(md);
     expect(doc.name).toBeUndefined();
   });
 });
@@ -1399,7 +1424,7 @@ describe('H1 step detection regex', () => {
 ## 1 Step
 - PASS COMPLETE
 `;
-    const doc = parseRunbookDocument(md);
+    const { runbook: doc } = parseRunbookDocument(md);
     expect(doc.title).toBe('My Runbook Title');
   });
 });
@@ -1544,36 +1569,38 @@ echo outside
 ## 1 Step
 - PASS COMPLETE
 `;
-    const doc = parseRunbookDocument(md);
+    const { runbook: doc } = parseRunbookDocument(md);
     expect(doc.steps).toHaveLength(1);
     expect(doc.steps[0].command).toBeUndefined();
   });
 
-  it('parses markdown with no steps at all and skipValidation', () => {
+  it('parses markdown with no steps and returns diagnostics', () => {
     const md = `# Just a title
 
 Some text but no steps.
 `;
-    const doc = parseRunbookDocument(md, undefined, { skipValidation: true });
+    const { runbook: doc, diagnostics } = parseRunbookDocument(md);
     expect(doc.steps).toHaveLength(0);
     expect(doc.title).toBe('Just a title');
+    expect(diagnostics.some((d) => d.severity === 'error')).toBe(true);
   });
 
-  it('runs validation by default and throws for invalid runbooks', () => {
+  it('returns error diagnostics for invalid runbooks instead of throwing', () => {
     const md = `## 1 Step
 - PASS GOTO 99
 - FAIL STOP
 `;
-    expect(() => parseRunbookDocument(md)).toThrow();
-  });
-
-  it('skips validation when skipValidation is true', () => {
-    const md = `## 1 Step
-- PASS GOTO 99
-- FAIL STOP
-`;
-    const doc = parseRunbookDocument(md, undefined, { skipValidation: true });
+    const { runbook: doc, diagnostics } = parseRunbookDocument(md);
     expect(doc.steps).toHaveLength(1);
+    expect(diagnostics.some((d) => d.severity === 'error')).toBe(true);
+  });
+
+  it('parseRunbook throws on error diagnostics for backward compatibility', () => {
+    const md = `## 1 Step
+- PASS GOTO 99
+- FAIL STOP
+`;
+    expect(() => parseRunbook(md)).toThrow();
   });
 
   it('parses text after substep as a new step', () => {
@@ -1705,7 +1732,7 @@ Here is a list:
 ## 1 Step
 - PASS COMPLETE
 `;
-    const doc = parseRunbookDocument(md);
+    const { runbook: doc } = parseRunbookDocument(md);
     expect(doc.steps).toHaveLength(1);
     expect(doc.description).toContain('Here is a list:');
   });

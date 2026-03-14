@@ -1,10 +1,18 @@
 import { setup, assign } from 'xstate';
-import type { Step, Action, Transitions, LastAction, ForContext, DataSource } from './types.js';
+import type {
+  Action,
+  Transitions,
+  LastAction,
+  ForContext,
+  DataSource,
+  ResolvedStep,
+  ResolvedStepHavingSubsteps,
+} from './types.js';
 import type { StepId } from './step-id.js';
-import type { ForClause, StepHavingSubsteps } from '@rundown-org/parser';
+import type { ForClause } from '@rundown-org/parser';
 import {
   isSourced,
-  stepHasSubsteps,
+  resolvedStepHasSubsteps,
   isAccumulatingAction,
   isBreakAction,
   isTerminalAction,
@@ -144,7 +152,7 @@ interface ParentStateConfig {
   substepId?: string;
   transitions: Transitions;
   isParentState: true;
-  parentStep: StepHavingSubsteps;
+  parentStep: ResolvedStepHavingSubsteps;
 }
 
 /**
@@ -274,14 +282,14 @@ function buildGotoLastActionFromEvent(
  */
 function getStepForFirstSubstep(
   stateId: string,
-  steps: Step[],
-): { step: Step; forClause: ForClause; implicit: boolean } | null {
+  steps: ResolvedStep[],
+): { step: ResolvedStepHavingSubsteps; forClause: ForClause; implicit: boolean } | null {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
 
   const [, stepName, substepId] = match;
   const step = steps.find((s) => s.name === stepName);
-  if (!step || !stepHasSubsteps(step)) return null;
+  if (!step || !resolvedStepHasSubsteps(step)) return null;
 
   if (substepId === step.substeps[0].id) {
     return {
@@ -305,11 +313,11 @@ function getStepForFirstSubstep(
 function isLastSubstepOfStep(
   stepName: string,
   substepId: string | undefined,
-  steps: Step[],
+  steps: ResolvedStep[],
 ): boolean {
   if (!substepId) return false;
   const step = steps.find((s) => s.name === stepName);
-  if (!step || !stepHasSubsteps(step)) return false;
+  if (!step || !resolvedStepHasSubsteps(step)) return false;
 
   const lastSubstepId = step.substeps[step.substeps.length - 1].id;
   return substepId === lastSubstepId;
@@ -491,6 +499,7 @@ function createForContext(
  * @param implicit - Whether the FOR loop is implicit (no explicit FOR clause)
  * @param sources - Optional data sources for sourced FOR loops
  * @returns The forStack to assign
+ * @throws {Error} When the FOR clause contains unresolved template references
  */
 function initForStack(
   currentForStack: readonly ForContext[],
@@ -543,13 +552,13 @@ function initIterationResults(
  */
 function getStepForSubstep(
   stateId: string,
-  steps: Step[],
-): { step: Step; forClause: ForClause; implicit: boolean } | null {
+  steps: ResolvedStep[],
+): { step: ResolvedStepHavingSubsteps; forClause: ForClause; implicit: boolean } | null {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
   const [, stepName] = match;
   const step = steps.find((s) => s.name === stepName);
-  if (!step || !stepHasSubsteps(step)) return null;
+  if (!step || !resolvedStepHasSubsteps(step)) return null;
   return {
     step,
     forClause: step.kind === 'for' ? step.forClause : { start: 1, end: 1 },
@@ -627,7 +636,7 @@ const DEFAULT_FOR_TRANSITIONS: Transitions = {
  * @param step - The step to check
  * @returns True if the step name is purely numeric
  */
-function isNumberedStep(step: Step): boolean {
+function isNumberedStep(step: ResolvedStep): boolean {
   // Numeric step names: 1, 2, 3, etc.
   return /^\d+$/.test(step.name);
 }
@@ -652,7 +661,7 @@ function buildTransition(
   currentStateId: string,
   stepName: string,
   substepId: string | undefined,
-  steps: Step[],
+  steps: ResolvedStep[],
   sources?: Readonly<Record<string, DataSource>>,
 ): TransitionConfig {
   const { retry, action, kind } = transition;
@@ -677,7 +686,11 @@ function buildTransition(
  * @param steps - All parsed runbook steps
  * @returns The next state ID, or 'COMPLETE' if at the end
  */
-function findNextStateId(stepName: string, substepId: string | undefined, steps: Step[]): string {
+function findNextStateId(
+  stepName: string,
+  substepId: string | undefined,
+  steps: ResolvedStep[],
+): string {
   // Find current step by name
   const currentStepIndex = steps.findIndex((s) => s.name === stepName);
   if (currentStepIndex === -1) return 'COMPLETE';
@@ -725,11 +738,12 @@ function findNextStateId(stepName: string, substepId: string | undefined, steps:
  * @param steps - The full steps array (for GOTO target lookup)
  * @param sources - Optional data sources for GOTO to FOR step initialization
  * @returns XState assign action
+ * @throws {Error} When a GOTO target's FOR clause contains unresolved template references
  */
 function buildParentExitAssign(
   parentAction: Action,
   exitTarget: string,
-  steps: Step[],
+  steps: ResolvedStep[],
   sources?: Readonly<Record<string, DataSource>>,
 ): ReturnType<typeof runbookSetup.assign> {
   const baseAssign = {
@@ -763,7 +777,7 @@ function buildParentExitAssign(
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
         });
       }
-      const targetHasSubsteps = targetStep && stepHasSubsteps(targetStep);
+      const targetHasSubsteps = targetStep && resolvedStepHasSubsteps(targetStep);
       const targetHasAggregationTransitions = !!targetStep?.transitions;
       return runbookSetup.assign({
         ...baseAssign,
@@ -831,7 +845,7 @@ function buildParentExitAssign(
  */
 function buildParentStateConfig(
   config: ParentStateConfig,
-  steps: Step[],
+  steps: ResolvedStep[],
   sources?: Readonly<Record<string, DataSource>>,
 ): { always: AlwaysTransition[]; entry?: unknown } {
   const parentStep = config.parentStep;
@@ -1281,7 +1295,7 @@ function buildRetryStateConfig(
   currentStateId: string,
   stepName: string,
   substepId: string | undefined,
-  steps: Step[],
+  steps: ResolvedStep[],
   resultKind: 'pass' | 'fail',
   sources?: Readonly<Record<string, DataSource>>,
 ): { always: AlwaysTransition[] } {
@@ -1326,7 +1340,7 @@ function buildRetryStateConfig(
  * @throws {Error} If GOTO target step does not exist in the steps array
  * @throws {Error} If NEXT or BREAK appears as a parent-step action (compiler invariant violation)
  */
-function resolveActionTarget(action: Action, stepName: string, steps: Step[]): string {
+function resolveActionTarget(action: Action, stepName: string, steps: ResolvedStep[]): string {
   switch (action.type) {
     case 'CONTINUE':
       return findNextStateId(stepName, undefined, steps);
@@ -1397,7 +1411,7 @@ function buildTerminalTransition(
 function buildLoopControlTransition(
   actionType: 'NEXT' | 'BREAK',
   stepName: string,
-  steps: Step[],
+  steps: ResolvedStep[],
 ): TransitionConfig {
   const currentStep = steps.find((s) => s.name === stepName);
   if (currentStep?.kind !== 'for') {
@@ -1451,13 +1465,13 @@ function buildLoopControlTransition(
 function buildDeferTransition(
   stepName: string,
   substepId: string | undefined,
-  steps: Step[],
+  steps: ResolvedStep[],
   kind: 'pass' | 'fail',
 ): TransitionConfig {
   const currentStep = steps.find((s) => s.name === stepName);
 
   // Substeps: DEFER always routes to parent (enables fail-fast ALL/ANY evaluation)
-  if (substepId && currentStep && stepHasSubsteps(currentStep)) {
+  if (substepId && currentStep && resolvedStepHasSubsteps(currentStep)) {
     const isLast = isLastSubstepOfStep(stepName, substepId, steps);
     return {
       target: formatStateId(stepName),
@@ -1497,12 +1511,12 @@ function buildDeferTransition(
 function buildContinueTransition(
   stepName: string,
   substepId: string | undefined,
-  steps: Step[],
+  steps: ResolvedStep[],
 ): TransitionConfig {
   const currentStep = steps.find((s) => s.name === stepName);
 
   // Substeps: uniform routing regardless of parent type (FOR or non-FOR)
-  if (substepId && currentStep && stepHasSubsteps(currentStep)) {
+  if (substepId && currentStep && resolvedStepHasSubsteps(currentStep)) {
     const isLast = isLastSubstepOfStep(stepName, substepId, steps);
     if (isLast) {
       // Last substep: route to parent (iteration-level or final aggregation)
@@ -1564,7 +1578,7 @@ function buildGotoTransition(
   target: StepId,
   stepName: string,
   substepId: string | undefined,
-  steps: Step[],
+  steps: ResolvedStep[],
   sources?: Readonly<Record<string, DataSource>>,
 ): TransitionConfig {
   const targetStep = target.step;
@@ -1576,7 +1590,7 @@ function buildGotoTransition(
   }
 
   // Handle GOTO to step with substeps (explicit FOR or implicit 1..1)
-  if (stepHasSubsteps(targetStepObj)) {
+  if (resolvedStepHasSubsteps(targetStepObj)) {
     const forClause = targetStepObj.kind === 'for' ? targetStepObj.forClause : { start: 1, end: 1 };
     const isImplicit = targetStepObj.kind !== 'for';
     // Target either the specified substep or default to first
@@ -1673,7 +1687,7 @@ function buildActionTransition(
   action: Action,
   stepName: string,
   substepId: string | undefined,
-  steps: Step[],
+  steps: ResolvedStep[],
   kind: 'pass' | 'fail',
   sources?: Readonly<Record<string, DataSource>>,
 ): TransitionConfig {
@@ -1817,7 +1831,7 @@ function checkedStateInsert(states: Record<string, unknown>, id: string, config:
 // Explicit annotation would erase XState's inferred event types, breaking actor.send() downstream.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function compileRunbookToMachine(
-  steps: Step[],
+  steps: ResolvedStep[],
   options?: { sources?: Readonly<Record<string, DataSource>> },
 ) {
   const states: Record<
@@ -1834,7 +1848,7 @@ export function compileRunbookToMachine(
 
   steps.forEach((step) => {
     const stepName = step.name;
-    if (stepHasSubsteps(step)) {
+    if (resolvedStepHasSubsteps(step)) {
       step.substeps.forEach((substep) => {
         const hasRunbooks = !!(substep.runbooks && substep.runbooks.length > 0);
         const hasParentAggregation = !!(
