@@ -23,7 +23,13 @@ import type {
   TransitionObject,
   Action,
 } from '@rundown-org/parser';
-import { isUnresolvedForClause, MAX_FOR_BOUND, stepIdToString } from '@rundown-org/parser';
+import {
+  isUnresolvedForClause,
+  isLoopControlAction,
+  MAX_FOR_BOUND,
+  stepIdToString,
+  RunbookSyntaxError,
+} from '@rundown-org/parser';
 
 /**
  * Shared placeholder matcher used across startup and runtime substitution.
@@ -274,6 +280,87 @@ function allBoundRefsDefined(
 }
 
 /**
+ * Collect all actions from a transitions object.
+ *
+ * @param transitions - Pass/fail transition pair
+ * @returns Array of actions from both pass and fail handlers
+ */
+function collectActionsFromTransitions(transitions: Transitions): Action[] {
+  return [transitions.pass.action, transitions.fail.action];
+}
+
+/**
+ * Validate that loop-only controls (GOTO...AT, NEXT, BREAK) don't reference demoted steps.
+ *
+ * After `resolveForBounds()` demotes FOR steps with unresolved bounds to `kind: 'substeps'`,
+ * any loop-only controls that were validated against the original `kind: 'for'` become invalid.
+ * This function detects those cases and throws a `RunbookSyntaxError`.
+ *
+ * @param steps - Resolved steps after FOR bound resolution
+ * @param demotedStepNames - Set of step names that were demoted from FOR to substeps
+ * @throws {RunbookSyntaxError} When loop-only controls reference demoted steps
+ */
+function validateDemotedForSteps(
+  steps: readonly ResolvedStep[],
+  demotedStepNames: ReadonlySet<string>,
+): void {
+  if (demotedStepNames.size === 0) return;
+
+  const errors: string[] = [];
+
+  // Build a quick lookup of step names for GOTO AT target resolution
+  const stepNames = new Set(steps.map((s) => s.name));
+
+  const checkAction = (action: Action, parentStepName: string, inDemotedStep: boolean): void => {
+    // GOTO with AT targeting a demoted step
+    if (action.type === 'GOTO' && action.target.at !== undefined) {
+      const targetStep = action.target.step === 'NEXT' ? undefined : action.target.step;
+      if (targetStep && demotedStepNames.has(targetStep)) {
+        errors.push(
+          `GOTO AT targets step "${targetStep}" which has an unresolved FOR clause — AT requires a resolved loop`,
+        );
+      }
+    }
+
+    // NEXT/BREAK in substeps of a demoted step
+    if (isLoopControlAction(action) && inDemotedStep) {
+      errors.push(
+        `${action.type} in step "${parentStepName}" requires a FOR loop, but the FOR clause is unresolved`,
+      );
+    }
+  };
+
+  const checkTransitions = (
+    transitions: Transitions | undefined,
+    parentStepName: string,
+    inDemotedStep: boolean,
+  ): void => {
+    if (!transitions) return;
+    for (const action of collectActionsFromTransitions(transitions)) {
+      checkAction(action, parentStepName, inDemotedStep);
+    }
+  };
+
+  for (const step of steps) {
+    const inDemoted = demotedStepNames.has(step.name);
+
+    // Check step-level transitions
+    checkTransitions(step.transitions, step.name, false);
+
+    // Check substep transitions
+    if (step.kind === 'substeps' || step.kind === 'for') {
+      for (const substep of step.substeps) {
+        checkTransitions(substep.transitions, step.name, inDemoted);
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new RunbookSyntaxError(errors[0]);
+  }
+}
+
+/**
  * Resolve unresolved FOR clause bounds in a parsed runbook.
  *
  * Walks all steps, resolving any `BoundRef` values in FOR clauses to concrete
@@ -284,16 +371,21 @@ function allBoundRefsDefined(
  * with the FOR line preserved as prompt text. This matches the spec behavior:
  * "the FOR clause is not parsed and the line is preserved as literal prompt text."
  *
+ * After resolution, validates that loop-only controls (GOTO...AT, NEXT, BREAK)
+ * don't reference steps whose FOR clauses were demoted due to unresolved bounds.
+ *
  * @param runbook - Parsed runbook AST (may contain unresolved FOR bounds)
  * @param variables - Template variable map for bound resolution
  * @returns Result with resolved runbook and any fallback warnings
  * @throws {Error} When a bound variable is defined but resolves to a non-integer or out-of-range value
+ * @throws {RunbookSyntaxError} When loop-only controls reference demoted FOR steps
  */
 export function resolveForBounds(
   runbook: Runbook,
   variables: Readonly<Record<string, unknown>>,
 ): ResolveForBoundsResult {
   const warnings: string[] = [];
+  const demotedStepNames = new Set<string>();
 
   const resolvedSteps = runbook.steps.map((step): ResolvedStep => {
     if (step.kind !== 'for') return step;
@@ -318,6 +410,7 @@ export function resolveForBounds(
         prompt: forText + (step.prompt ? `\n${step.prompt}` : ''),
       };
       warnings.push(`Step "${step.name}": unresolved FOR bound — preserved as prompt text`);
+      demotedStepNames.add(step.name);
       return fallbackStep;
     }
 
@@ -352,7 +445,12 @@ export function resolveForBounds(
     return resolvedForStep;
   });
 
-  return { runbook: { ...runbook, steps: resolvedSteps }, warnings };
+  const resolvedRunbook: ResolvedRunbook = { ...runbook, steps: resolvedSteps };
+
+  // Post-resolution validation: detect loop-only controls referencing demoted steps
+  validateDemotedForSteps(resolvedSteps, demotedStepNames);
+
+  return { runbook: resolvedRunbook, warnings };
 }
 
 // ─── Secure AST-level substitution ───────────────────────────────────────────

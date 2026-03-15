@@ -8,7 +8,9 @@ import type {
   StepWithSubsteps,
   ParsedForClause,
   Transitions,
+  Substep,
 } from '@rundown-org/parser';
+import { RunbookSyntaxError } from '@rundown-org/parser';
 import {
   expandLoopVariables,
   shellEscapeValue,
@@ -982,5 +984,165 @@ describe('resolveForBounds', () => {
     expect(step.prompt).toContain('FOR x IN 1 TO {{N}} OF items');
     expect(step.prompt).toContain('- PASS ANY NEXT');
     expect(step.prompt).toContain('- FAIL ALL COMPLETE');
+  });
+
+  describe('post-resolution validation of demoted FOR steps', () => {
+    /** Build a FOR step with substeps that have transitions. */
+    function makeForStepWithSubstepTransitions(
+      forClause: ParsedForClause,
+      substeps: Substep[],
+      name = '1',
+    ): StepWithFor {
+      return {
+        kind: 'for',
+        name,
+        description: 'Loop step',
+        forClause,
+        substeps,
+      };
+    }
+
+    it('throws when GOTO AT targets a step with unresolved FOR bounds', () => {
+      // Step 1 is a FOR step with unresolved bounds (will be demoted)
+      const unresolvedFor: ParsedForClause = {
+        unresolved: true as const,
+        variable: 'item',
+        start: 1,
+        end: { ref: 'Missing' },
+      };
+      const forStep = makeForStep(unresolvedFor, '1');
+
+      // Step 2 has GOTO 1 AT 3 — targets step 1 which will be demoted
+      const gotoStep: BaseStep = {
+        kind: 'base',
+        name: '2',
+        description: 'Jump back',
+        transitions: {
+          aggregation: 'none' as const,
+          pass: {
+            kind: 'pass' as const,
+            retry: 0,
+            action: { type: 'GOTO' as const, target: { step: '1', at: 3 } },
+          },
+          fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+        },
+      };
+
+      const runbook = makeRunbook([forStep, gotoStep]);
+      expect(() => resolveForBounds(runbook, {})).toThrow(RunbookSyntaxError);
+      expect(() => resolveForBounds(runbook, {})).toThrow(
+        'GOTO AT targets step "1" which has an unresolved FOR clause',
+      );
+    });
+
+    it('throws when NEXT is in substep of a step with unresolved FOR bounds', () => {
+      const unresolvedFor: ParsedForClause = {
+        unresolved: true as const,
+        variable: 'item',
+        start: 1,
+        end: { ref: 'Missing' },
+      };
+      const substeps: Substep[] = [
+        {
+          id: '1',
+          description: 'Sub',
+          transitions: {
+            aggregation: 'none' as const,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ];
+      const forStep = makeForStepWithSubstepTransitions(unresolvedFor, substeps, '1');
+      const runbook = makeRunbook([forStep]);
+      expect(() => resolveForBounds(runbook, {})).toThrow(RunbookSyntaxError);
+      expect(() => resolveForBounds(runbook, {})).toThrow(
+        'NEXT in step "1" requires a FOR loop, but the FOR clause is unresolved',
+      );
+    });
+
+    it('throws when BREAK is in substep of a step with unresolved FOR bounds', () => {
+      const unresolvedFor: ParsedForClause = {
+        unresolved: true as const,
+        variable: 'item',
+        start: 1,
+        end: { ref: 'Missing' },
+      };
+      const substeps: Substep[] = [
+        {
+          id: '1',
+          description: 'Sub',
+          transitions: {
+            aggregation: 'none' as const,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
+          },
+        },
+      ];
+      const forStep = makeForStepWithSubstepTransitions(unresolvedFor, substeps, '1');
+      const runbook = makeRunbook([forStep]);
+      expect(() => resolveForBounds(runbook, {})).toThrow(RunbookSyntaxError);
+      expect(() => resolveForBounds(runbook, {})).toThrow(
+        'BREAK in step "1" requires a FOR loop, but the FOR clause is unresolved',
+      );
+    });
+
+    it('does not throw for GOTO (without AT) to a demoted step', () => {
+      const unresolvedFor: ParsedForClause = {
+        unresolved: true as const,
+        variable: 'item',
+        start: 1,
+        end: { ref: 'Missing' },
+      };
+      const forStep = makeForStep(unresolvedFor, '1');
+
+      // Step 2 has GOTO 1 (no AT) — this is valid even for demoted steps
+      const gotoStep: BaseStep = {
+        kind: 'base',
+        name: '2',
+        description: 'Jump back',
+        transitions: {
+          aggregation: 'none' as const,
+          pass: {
+            kind: 'pass' as const,
+            retry: 0,
+            action: { type: 'GOTO' as const, target: { step: '1' } },
+          },
+          fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+        },
+      };
+
+      const runbook = makeRunbook([forStep, gotoStep]);
+      const { runbook: result, warnings } = resolveForBounds(runbook, {});
+      // Should succeed with just the fallback warning
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('preserved as prompt text');
+    });
+
+    it('does not throw for NEXT/BREAK in substep of a successfully resolved FOR step', () => {
+      const resolvedFor: ParsedForClause = {
+        unresolved: true as const,
+        variable: 'item',
+        start: 1,
+        end: { ref: 'Max' },
+      };
+      const substeps: Substep[] = [
+        {
+          id: '1',
+          description: 'Sub',
+          transitions: {
+            aggregation: 'none' as const,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
+          },
+        },
+      ];
+      const forStep = makeForStepWithSubstepTransitions(resolvedFor, substeps, '1');
+      const runbook = makeRunbook([forStep]);
+      // Provide the variable so the FOR clause resolves successfully
+      const { runbook: result, warnings } = resolveForBounds(runbook, { Max: '5' });
+      expect(warnings).toHaveLength(0);
+      expect(result.steps[0].kind).toBe('for');
+    });
   });
 });
