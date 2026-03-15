@@ -67,7 +67,7 @@ invalid yaml: [unclosed bracket
     expect(result.content).toBe(markdown);
   });
 
-  it('returns raw data when name format is invalid', () => {
+  it('drops invalid name field', () => {
     const markdown = `---
 name: invalid@name!
 ---
@@ -75,10 +75,9 @@ name: invalid@name!
 
     const result = extractFrontmatter(markdown);
 
-    // Raw data preserved so valid fields (vars, scenarios) survive
+    // Invalid name is dropped (becomes undefined), content still stripped
     expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.name).toBe('invalid@name!');
-    // gray-matter strips frontmatter even when validation fails
+    expect(result.frontmatter?.name).toBeUndefined();
     expect(result.content.trim()).toBe('# Content');
   });
 
@@ -185,7 +184,7 @@ vars: {}
     expect(result.frontmatter?.vars).toEqual({});
   });
 
-  it('returns raw data when vars contains invalid types (arrays)', () => {
+  it('drops vars when containing invalid types (arrays)', () => {
     const markdown = `---
 name: my-runbook
 vars:
@@ -197,14 +196,14 @@ vars:
 
     const result = extractFrontmatter(markdown);
 
-    // Raw data preserved so valid fields survive validation failure
+    // Invalid vars dropped, valid name preserved
     expect(result.frontmatter).not.toBeNull();
     expect(result.frontmatter?.name).toBe('my-runbook');
-    // gray-matter strips frontmatter even when validation fails
+    expect(result.frontmatter?.vars).toBeUndefined();
     expect(result.content.trim()).toBe('# Content');
   });
 
-  it('returns raw data when vars contains invalid types (nested objects)', () => {
+  it('drops vars when containing invalid types (nested objects)', () => {
     const markdown = `---
 name: my-runbook
 vars:
@@ -215,10 +214,10 @@ vars:
 
     const result = extractFrontmatter(markdown);
 
-    // Raw data preserved so valid fields survive validation failure
+    // Invalid vars dropped, valid name preserved
     expect(result.frontmatter).not.toBeNull();
     expect(result.frontmatter?.name).toBe('my-runbook');
-    // gray-matter strips frontmatter even when validation fails
+    expect(result.frontmatter?.vars).toBeUndefined();
     expect(result.content.trim()).toBe('# Content');
   });
 
@@ -358,28 +357,28 @@ name: my runbook
     expect(result.frontmatter?.name).toBe('my runbook');
   });
 
-  it('preserves raw data when name is only whitespace', () => {
+  it('drops name when only whitespace', () => {
     const markdown = `---
 name: "   "
 ---
 # Content`;
 
     const result = extractFrontmatter(markdown);
-    // Raw data preserved so valid fields survive validation failure
+    // Whitespace-only name fails regex validation, dropped to undefined
     expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.name).toBe('   ');
+    expect(result.frontmatter?.name).toBeUndefined();
   });
 
-  it('preserves raw data when name has leading or trailing spaces', () => {
+  it('drops name when it has leading or trailing spaces', () => {
     const markdown = `---
 name: " my runbook "
 ---
 # Content`;
 
     const result = extractFrontmatter(markdown);
-    // Raw data preserved so valid fields survive validation failure
+    // Leading/trailing spaces fail regex validation, name dropped to undefined
     expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.name).toBe(' my runbook ');
+    expect(result.frontmatter?.name).toBeUndefined();
   });
 });
 
