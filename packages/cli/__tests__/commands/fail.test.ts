@@ -285,7 +285,7 @@ Final step.
       expect(state?.retryCount).toBe(2);
       expect(state?.step).toBe('1');
 
-      // Third fail - exhausted retries, should use on_fail (implicit STOP)
+      // Third fail - exhausted retries, triggers explicit STOP fallback
       result = await runCliInProcess('fail', workspace);
       expect(result.exitCode).toBe(1);
     });

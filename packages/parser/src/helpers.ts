@@ -608,7 +608,11 @@ function parseRetryWithArgs(rest: string): { retry: number; action: Action } | n
   if (!(digitEnd >= remaining.length || /\s/.test(remaining[digitEnd]))) {
     return null;
   }
-  const retry = parseInt(remaining.slice(0, digitEnd), 10);
+  const retryText = remaining.slice(0, digitEnd);
+  if (retryText[0] === '0') {
+    return null;
+  }
+  const retry = parseInt(retryText, 10);
   remaining = remaining.slice(digitEnd).trimStart();
 
   if (!remaining) {

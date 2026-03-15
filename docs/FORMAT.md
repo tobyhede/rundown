@@ -22,7 +22,7 @@ See [SPEC.md](./SPEC.md) for execution semantics.
 
 ## Document Structure
 
-```
+```ebnf
 runbook  ::= frontmatter? title? preamble? step+
 title    ::= "# " text newline
 preamble ::= text+
@@ -30,13 +30,13 @@ preamble ::= text+
 
 ## Frontmatter
 
-```
+```ebnf
 frontmatter ::= "---" newline yaml_block "---" newline
 ```
 
 Known fields:
 
-```
+```ebnf
 name_field    ::= "name:" ws name_string
 desc_field    ::= "description:" ws text
 version_field ::= "version:" ws text
@@ -55,7 +55,7 @@ Additional fields beyond those listed are preserved (open schema). All fields ar
 
 ## Steps
 
-```
+```ebnf
 step ::= "## " step_id separator? text? newline
          for_clause?
          transition*
@@ -67,7 +67,7 @@ Content must appear in the order shown: FOR, transitions, prompt, body.
 
 ## Substeps
 
-```
+```ebnf
 substep ::= "### " substep_id separator? text? newline
             transition*
             prompt?
@@ -78,7 +78,7 @@ Substeps cannot contain nested substeps.
 
 ## Identifiers
 
-```
+```ebnf
 step_id      ::= positive_integer | named_id
 substep_id   ::= positive_integer | named_id | qualified_id
 named_id     ::= [A-Za-z_] [A-Za-z0-9_]*
@@ -90,7 +90,7 @@ step_ref     ::= positive_integer | named_id
 
 ## Separators
 
-```
+```ebnf
 separator ::= ( "." | ":" | "\u2014" | "\u2192" | "-" | ")" | " " )+
 ```
 
@@ -100,7 +100,7 @@ Separators are matched greedily — the longest sequence of separator characters
 
 ## FOR Clauses
 
-```
+```ebnf
 for_clause  ::= "- FOR" ws for_variant newline
                 nested_transition*
 
@@ -131,7 +131,7 @@ Template variables (`{{var}}`) may appear in range bound positions. Source refer
 
 ## Transitions
 
-```
+```ebnf
 transition     ::= "- " result_keyword ( ws aggregation )? ws action newline
                  | "- " result_keyword ( ws aggregation )? ws "RETRY" ws positive_integer ws action newline
                  | "- DEFER" newline
@@ -142,11 +142,11 @@ aggregation    ::= "ALL" | "ANY"
 
 `YES` is a syntactic alias for `PASS`. `NO` is a syntactic alias for `FAIL`. Transitions must use `-` bullet prefix. Transition keywords are matched as whole words — the keyword must be followed by whitespace.
 
-**Disambiguation:** A `- ` bullet inside a step is resolved by priority: (1) FOR clause (`FOR` keyword), (2) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (3) runbook reference (`.runbook.md` suffix), (4) prompt text.
+**Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) FOR clause (`FOR` keyword), (2) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (3) runbook reference (`.runbook.md` suffix), (4) prompt text.
 
 ## Actions
 
-```
+```ebnf
 action ::= "CONTINUE"
          | "DEFER"
          | "NEXT"
@@ -170,7 +170,7 @@ FOR nested transitions allow: `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STO
 
 ## Targets
 
-```
+```ebnf
 target ::= ( step_id | substep_id ) ( ws "AT" ws index )?
 index  ::= positive_integer | template_variable
 ```
@@ -179,7 +179,7 @@ index  ::= positive_integer | template_variable
 
 ## Messages
 
-```
+```ebnf
 message       ::= bare_message | quoted_string
 bare_message  ::= named_id    /* must not be a reserved word */
 quoted_string ::= '"' text '"'
@@ -189,7 +189,7 @@ quoted_string ::= '"' text '"'
 
 ## Code Blocks
 
-```
+```ebnf
 code_block ::= backtick_fence info_string newline content backtick_fence newline
 
 info_string ::= executable_lang ( ws "prompt" )?
@@ -204,7 +204,7 @@ Opening fence is 3 or more backticks. Closing fence must use at least as many ba
 
 ## Template Variables
 
-```
+```ebnf
 template_variable ::= "{{" ws? variable_path ws? "}}"
 variable_path     ::= variable_name ( "." ( variable_name | digit+ ) )*
 variable_name     ::= [a-zA-Z_] [a-zA-Z0-9_]*
@@ -212,7 +212,7 @@ variable_name     ::= [a-zA-Z_] [a-zA-Z0-9_]*
 
 ## Runbook Lists
 
-```
+```ebnf
 runbook_list ::= ( "- " file_path newline )+
 ```
 
@@ -220,7 +220,7 @@ Step-level runbook lists are shorthand for implicit sequential substeps.
 
 ## Body
 
-```
+```ebnf
 body ::= code_block | substep+ | runbook_list
 ```
 
@@ -228,7 +228,7 @@ A step contains at most one body type.
 
 ## Prompt
 
-```
+```ebnf
 prompt ::= text+
 ```
 
@@ -242,7 +242,7 @@ Case-sensitive: `NEXT` is reserved; `Next` and `NextStep` are valid.
 
 ## Lexical Rules
 
-```
+```ebnf
 positive_integer ::= [1-9] [0-9]*
 digit            ::= [0-9]
 text             ::= [^\n]+

@@ -1387,6 +1387,14 @@ describe('strict RETRY syntax enforcement', () => {
     expect(() => parseConditional('FAIL RETRY STOP')).toThrow('Invalid FAIL transition');
   });
 
+  it('rejects RETRY with zero count', () => {
+    expect(() => parseConditional('FAIL RETRY 0 STOP')).toThrow('Invalid FAIL transition');
+  });
+
+  it('rejects RETRY with leading-zero count', () => {
+    expect(() => parseConditional('FAIL RETRY 03 STOP')).toThrow('Invalid FAIL transition');
+  });
+
   it('accepts RETRY with count and action', () => {
     const result = parseConditional('FAIL RETRY 3 STOP');
     expect(result).toEqual({
