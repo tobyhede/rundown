@@ -888,7 +888,6 @@ describe('resolveForBounds', () => {
 
   it('preserves iteration transitions in fallback prompt text', () => {
     const transitions: Transitions = {
-      aggregation: 'none' as const,
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
     };
@@ -909,7 +908,6 @@ describe('resolveForBounds', () => {
 
   it('preserves transitions with aggregation modifiers in fallback', () => {
     const transitions: Transitions = {
-      aggregation: 'ALL' as const,
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
     };
@@ -919,6 +917,7 @@ describe('resolveForBounds', () => {
       start: 1,
       end: { ref: 'N' },
       transitions,
+      aggregation: { strategy: 'ALL' as const },
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, {});
@@ -929,7 +928,6 @@ describe('resolveForBounds', () => {
 
   it('preserves transitions with retry in fallback', () => {
     const transitions: Transitions = {
-      aggregation: 'none' as const,
       pass: { kind: 'pass' as const, retry: 3, action: { type: 'CONTINUE' as const } },
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
     };
@@ -964,7 +962,6 @@ describe('resolveForBounds', () => {
 
   it('preserves transitions on windowed source fallback', () => {
     const transitions: Transitions = {
-      aggregation: 'ANY' as const,
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'COMPLETE' as const } },
     };
@@ -975,6 +972,7 @@ describe('resolveForBounds', () => {
       end: { ref: 'N' },
       source: 'items',
       transitions,
+      aggregation: { strategy: 'ANY' as const },
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, {});

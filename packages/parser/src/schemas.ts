@@ -68,6 +68,7 @@ export const WindowedSourceWindowSchema = z.object({
   end: z.number().int().positive().max(MAX_FOR_BOUND),
   source: z.string().regex(NAMED_IDENTIFIER_PATTERN),
   transitions: z.lazy(() => TransitionsSchema.optional()),
+  aggregation: z.lazy(() => AggregationSchema.optional()),
 });
 
 /**

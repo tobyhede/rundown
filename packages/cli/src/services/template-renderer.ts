@@ -25,6 +25,7 @@ import type {
   Transitions,
   TransitionObject,
   Action,
+  Aggregation,
 } from '@rundown-org/parser';
 import { isUnresolvedForClause, MAX_FOR_BOUND, stepIdToString } from '@rundown-org/parser';
 
@@ -265,9 +266,10 @@ function aggregationModifier(aggregation: 'ALL' | 'ANY' | 'none', kind: 'pass' |
   return aggregation === 'ALL' ? ' ANY' : ' ALL';
 }
 
-function renderTransitionsText(transitions: Transitions): string {
-  const passAgg = aggregationModifier(transitions.aggregation, 'pass');
-  const failAgg = aggregationModifier(transitions.aggregation, 'fail');
+function renderTransitionsText(transitions: Transitions, aggregation?: Aggregation): string {
+  const agg = aggregation?.strategy ?? 'none';
+  const passAgg = aggregationModifier(agg, 'pass');
+  const failAgg = aggregationModifier(agg, 'fail');
   return [
     `- PASS${passAgg} ${renderTransitionActionText(transitions.pass)}`,
     `- FAIL${failAgg} ${renderTransitionActionText(transitions.fail)}`,
@@ -329,7 +331,7 @@ export function resolveForBounds(
     if (!allBoundRefsDefined(fc, variables)) {
       let forText = reconstructForLine(fc);
       if (fc.transitions) {
-        forText += `\n${renderTransitionsText(fc.transitions)}`;
+        forText += `\n${renderTransitionsText(fc.transitions, fc.aggregation)}`;
       }
       const { forClause: _, kind: __, ...rest } = step;
       const fallbackStep: StepWithSubsteps = {

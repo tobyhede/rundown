@@ -84,6 +84,8 @@ export interface WindowedSourceWindow {
   readonly source: string;
   /** Iteration-level transition handlers for FOR loops */
   readonly transitions?: Transitions;
+  /** Iteration-level aggregation strategy for FOR loops */
+  readonly aggregation?: Aggregation;
 }
 
 /**
