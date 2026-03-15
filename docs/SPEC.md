@@ -22,6 +22,14 @@ A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML fron
 *   **H3**: Substep.
 *   **H4+**: Invalid.
 
+### 1.2 Frontmatter
+
+Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, and `vars` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
+
+The frontmatter `description` field provides a summary for runbook discovery and listing (`rd ls --all`). The `Runbook.description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
+
+*Note: A follow-up task will rename `Runbook.description` → `Runbook.preamble` to eliminate this naming ambiguity.*
+
 ## 2. Steps
 
 Steps are the fundamental units of execution defined by H2 headers.
