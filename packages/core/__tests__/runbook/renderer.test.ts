@@ -582,11 +582,13 @@ Review the following items carefully.
     expect(parsed1[0].kind).toBe('for');
 
     const rendered = parsed1.map(renderStep).join('\n\n');
+    expect(rendered).toContain('Review the following items carefully.');
     const parsed2 = parseRunbook(rendered);
 
     expect(parsed2[0].kind).toBe('for');
     expect((parsed2[0] as any).forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
     expect((parsed2[0] as any).substepsDerivedFromRunbookList).toBe(true);
+    expect(parsed2[0].substeps?.[0].prompt).toBe('Review the following items carefully.');
   });
 
   it('round-trips FOR with default transitions and step prompt', () => {

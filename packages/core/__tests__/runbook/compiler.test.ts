@@ -212,7 +212,9 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
       actor.send({ type: 'FAIL' }); // 1.2 STOP → STOPPED
 
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.lastAction).toEqual({ type: 'STOP' });
     });
 
     it('last substep transitions to parent state', () => {
@@ -6359,11 +6361,13 @@ echo "processing"
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step::1::1');
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+      expect(actor.getSnapshot().context.iterationResults).toEqual([]);
 
       // Iteration 2
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step::1::1');
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(3);
+      expect(actor.getSnapshot().context.iterationResults).toEqual([]);
 
       // Iteration 3 — last iteration → exit loop → step::2
       actor.send({ type: 'PASS' });
@@ -6371,6 +6375,7 @@ echo "processing"
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.forStack).toEqual([]);
+      expect(snapshot.context.iterationResults).toEqual([]);
     });
 
     it('multiple substeps, all pass', () => {
@@ -6491,6 +6496,8 @@ echo "processing"
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.forStack).toEqual([]);
+      expect(snapshot.context.iterationResults).toEqual([]);
+      expect(snapshot.context.lastAction).toEqual({ type: 'BREAK' });
     });
 
     it('NEXT advances iteration without accumulation', () => {
@@ -6534,6 +6541,8 @@ echo "processing"
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('step::1::1');
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+      expect(actor.getSnapshot().context.iterationResults).toEqual([]);
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'NEXT' });
 
       // Iteration 2: both substeps pass
       actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
@@ -6546,6 +6555,7 @@ echo "processing"
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
       expect(snapshot.context.forStack).toEqual([]);
+      expect(snapshot.context.iterationResults).toEqual([]);
     });
 
     it('parent aggregation activates iteration machinery even without forClause transitions', () => {

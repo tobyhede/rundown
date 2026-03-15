@@ -1,7 +1,7 @@
 /**
  * fast-check property tests for FOR loop compilation.
  *
- * Thirteen invariant properties that hold for ANY valid ForLoopConfig:
+ * Fifteen invariant properties that hold for ANY valid ForLoopConfig:
  * 1. Termination — always reaches COMPLETE or STOPPED
  * 2. forStack empty at terminal — no dangling loop context
  * 3. PASS ALL + all pass → parent passes
@@ -15,6 +15,8 @@
  * 11. PASS ALL + all fail → STOPPED
  * 12. PASS ANY + all fail → STOPPED
  * 13. parentFailAction COMPLETE produces COMPLETE on fail path
+ * 14. Fully sequential FOR always terminates
+ * 15. Fully sequential FOR all-pass yields COMPLETE
  */
 
 import fc from 'fast-check';
